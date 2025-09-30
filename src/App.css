@@ -1,0 +1,235 @@
+/* Custom styles for formatted AI responses */
+
+/* Enhanced message content styling */
+.ai-message-content {
+  line-height: 1.6;
+  color: #374151;
+}
+
+/* Bullet point styling */
+.ai-bullet-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ai-bullet-point .bullet {
+  color: #6b7280;
+  margin-top: 0.125rem;
+  font-size: 1.125rem;
+  flex-shrink: 0;
+}
+
+.ai-bullet-point .content {
+  flex: 1;
+}
+
+/* Numbered list styling */
+.ai-numbered-list {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ai-numbered-list .number {
+  color: #6b7280;
+  font-weight: 500;
+  min-width: 1.5rem;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.ai-numbered-list .content {
+  flex: 1;
+}
+
+/* Header styling */
+.ai-header {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 2px solid #d1d5db;
+}
+
+/* Regular line styling */
+.ai-regular-line {
+  margin-bottom: 0.5rem;
+}
+
+/* Empty line styling */
+.ai-empty-line {
+  height: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Bold text styling */
+.ai-bold {
+  font-weight: 600;
+  color: #111827;
+}
+
+/* Italic text styling */
+.ai-italic {
+  font-style: italic;
+  color: #374151;
+}
+
+/* Code block styling */
+.ai-code-block {
+  background-color: #f9fafb;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.875rem;
+  color: #374151;
+  margin: 0.5rem 0;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Enhanced chat message styling for AI responses */
+/* ChatGPT-like AI bubble: clean card on light background */
+.chat-message-ai {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 1rem; /* rounded-2xl */
+  padding: 1rem; /* px-4 py-4 */
+  box-shadow: 0 2px 6px rgba(17, 24, 39, 0.06);
+  position: relative;
+}
+
+/* Add a subtle accent line to AI messages */
+/* Remove accent line for a minimal card look */
+.chat-message-ai::before { content: none; }
+
+/* Enhanced styling for AI message content */
+.chat-message-ai .ai-message-content { color: #111827; }
+
+/* Enhanced bullet points in AI messages */
+.chat-message-ai .ai-bullet-point .bullet {
+  color: #4b5563; /* Updated bullet color */
+  font-weight: 600;
+}
+
+/* Enhanced numbered lists in AI messages */
+.chat-message-ai .ai-numbered-list .number {
+  color: #4b5563; /* Updated number color */
+  font-weight: 600;
+}
+
+/* Enhanced headers in AI messages */
+.chat-message-ai .ai-header {
+  color: #374151; /* Updated header color */
+  border-bottom-color: #9ca3af; /* Updated border color */
+}
+
+/* Enhanced bold text in AI messages */
+.chat-message-ai .ai-bold {
+  color: #111827; /* Updated bold text color */
+}
+
+/* Enhanced italic text in AI messages */
+.chat-message-ai .ai-italic {
+  color: #374151;
+}
+
+/* Enhanced code blocks in AI messages */
+.chat-message-ai .ai-code-block {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Pre-created message buttons styling */
+.quick-message-btn {
+  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.5rem;
+  color: #475569;
+  font-size: 0.7rem;
+  
+  font-weight: 500;
+  transition: all 0.2s ease-in-out;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.quick-message-btn:hover {
+  background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+  border-color: #94a3b8;
+  color: #1e293b;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.quick-message-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Drag and Drop Script Rows Styling */
+.script-row-dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+  transition: all 0.2s ease-in-out;
+}
+
+.script-row-drag-over {
+  box-shadow: 0 0 0 2px #3b82f6, 0 0 0 4px rgba(59, 130, 246, 0.2);
+  border-radius: 0.5rem;
+  transition: all 0.2s ease-in-out;
+}
+
+.script-row-drag-handle {
+  cursor: grab;
+  transition: color 0.2s ease-in-out;
+}
+
+/* Utility: hide scrollbars while keeping scroll functionality */
+.scroll-y-invisible {
+  overflow-y: auto;
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.scroll-y-invisible::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+}
+
+.script-row-drag-handle:hover {
+  color: #6b7280;
+}
+
+.script-row-drag-handle:active {
+  cursor: grabbing;
+  color: #374151;
+}
+
+/* Drag preview styling */
+.script-row-drag-preview {
+  background: rgba(59, 130, 246, 0.1);
+  border: 2px dashed #3b82f6;
+  border-radius: 0.5rem;
+  opacity: 0.8;
+}
+/* User magenta bubble (right-aligned) */
+.chat-user-bubble {
+  background: #a83b7a; /* magenta-like */
+  color: #ffffff;
+  border-radius: 1.25rem; /* ~rounded-3xl */
+  padding: 0.875rem 1rem;
+}
+
+/* AI plain text message (no bubble) */
+.chat-ai-plain {
+  background: transparent;
+  color: #111827; /* slate-900 for light theme */
+}
+
+/* Optional dark theme variants (used if container is dark) */
+.dark .chat-ai-plain { color: #e5e7eb; }
+.dark .chat-user-bubble { background: #a83b7a; color: #fff; }

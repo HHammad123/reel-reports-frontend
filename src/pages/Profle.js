@@ -1,0 +1,32 @@
+import React, { useEffect } from 'react';
+import { Play, Image, LogOut, User, Zap, Settings, Crown } from 'lucide-react';
+import Sidebar from '../Components/Sidebar';
+import Topbar from '../Components/Topbar';
+import ProfileSidebar from '../Components/Profile/ProfileSidebar';
+import ProfileContent from '../Components/Profile/ProfileContent';
+import { useNavigate } from 'react-router-dom';
+
+const Profile= () => {
+  const navigate = useNavigate()
+  const userProfile = localStorage.getItem('user');
+  console.log(userProfile)
+  useEffect(()=>{
+    if(localStorage.getItem('auth') === 'false'){
+      navigate('/login')
+    }
+  },[localStorage.getItem('auth')])
+  return (
+    <div className='flex h-screen bg-[#E5E2FF]'>
+    <Sidebar/>
+    <div className="w-full mx-[2rem] mt-[1rem]">
+      <Topbar/>
+    <div className='h-[77vh] my-2 flex items-start justify-start'>
+    <ProfileSidebar />
+    <ProfileContent userProfile={userProfile} />
+    </div>
+    </div>
+  </div>
+  );
+};
+
+export default Profile;
