@@ -231,6 +231,14 @@ const Guidlines = () => {
             ? assets.voiceover
             : (assets?.voices || []))
         setBrandVoices(voices)
+        const logos = Array.isArray(assets?.logos)
+          ? assets.logos
+          : (Array.isArray(assets?.logo)
+            ? assets.logo
+            : (Array.isArray(assets?.images)
+              ? assets.images.filter(it => typeof it === 'string' && /\.(png|jpe?g|svg|webp)$/i.test(it))
+              : []))
+        setBrandLogos(logos)
         try {
           const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean)
           localStorage.setItem('brand_voiceover_urls', JSON.stringify(urls))
@@ -410,6 +418,11 @@ const Guidlines = () => {
 
   const [isOpenLogo, setIsOpenLogo] = useState(false);
   const [selectedLogo, setSelectedLogo] = useState("no"); // Default to "No"
+  const [brandLogos, setBrandLogos] = useState([]);
+  const [selectedLogoUrl, setSelectedLogoUrl] = useState('');
+  const [logoSelectMode, setLogoSelectMode] = useState('assets'); // 'assets' | 'upload'
+  const [isLogoUploading, setIsLogoUploading] = useState(false);
+  const logoFileInputRef = useRef(null);
 
   const optionsLogo = [
     { id: "yes", label: "Yes" },
@@ -585,6 +598,7 @@ const Guidlines = () => {
   const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
   const [voiceFilesForUpload, setVoiceFilesForUpload] = useState([]);
   const [voiceSaveMsg, setVoiceSaveMsg] = useState('');
+  const [isSavingBrandVoices, setIsSavingBrandVoices] = useState(false);
 
   const optionsVoice = [
     { id: "yes", label: "Yes" },
@@ -614,6 +628,41 @@ const Guidlines = () => {
   };
 
   const toggleOpenTone = () => setIsOpenTone(!isOpenTone);
+
+  // Recording helper: sample script based on selected tone/style
+  const getRecordingSample = () => {
+    const tone = selectedTone;
+    if (tone === 'other' && otherTexttone) {
+      return `Sample (${otherTexttone}): Hi there, let me walk you through the highlights.`;
+    }
+    switch (tone) {
+      case 'professional':
+        return 'Sample (Professional): Hello, and welcome. Let’s review the key points.';
+      case 'casual':
+        return 'Sample (Casual): Hey! Super excited to show you what we’ve got.';
+      case 'humorous':
+        return 'Sample (Humorous): Alright, buckle up—this will be fun and informative!';
+      case 'inspiring':
+        return 'Sample (Inspiring): Together, we can achieve more—let’s dive in.';
+      case 'formal':
+        return 'Sample (Formal): Good day. This presentation outlines the essential details.';
+      default:
+        return 'Sample: Hi there, let me walk you through the highlights.';
+    }
+  };
+
+  // Voice modal tab: 'record' or 'upload'
+  const [voiceModalTab, setVoiceModalTab] = useState('record');
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    let t;
+    if (isRecording) {
+      setElapsedSec(0);
+      t = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    }
+    return () => { if (t) clearInterval(t); };
+  }, [isRecording]);
 
   // 
   const [isOpenFeatures, setIsOpenFeatures] = useState(false);
@@ -923,6 +972,65 @@ const Guidlines = () => {
                   </label>
                 </div>
               ))}
+              {selectedLogo === 'yes' && (
+                <div className="mt-2 border rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-3">
+                    <button onClick={() => setLogoSelectMode('assets')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode==='assets' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>From Brand Assets</button>
+                    <button onClick={() => setLogoSelectMode('upload')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode==='upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>Upload Image</button>
+                  </div>
+                  {logoSelectMode === 'assets' ? (
+                    <div>
+                      {Array.isArray(brandLogos) && brandLogos.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                          {brandLogos.map((u, i) => {
+                            const url = typeof u === 'string' ? u : (u?.url || '');
+                            if (!url) return null;
+                            const active = selectedLogoUrl === url;
+                            return (
+                              <button key={i} onClick={() => setSelectedLogoUrl(url)} className={`border rounded-lg p-2 flex items-center justify-center bg-white hover:bg-gray-50 ${active ? 'border-blue-600 ring-2 ring-blue-200' : 'border-gray-200'}`}>
+                                <img src={url} alt={`Logo ${i+1}`} className="max-h-16 object-contain" />
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-600">No logos found in Brand Assets.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <input ref={logoFileInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                        const file = e.target.files && e.target.files[0];
+                        if (!file) return;
+                        try {
+                          setIsLogoUploading(true);
+                          await uploadBrandAssets({ userId: token, files: { logos: [file] } });
+                          const refreshed = await getBrandAssets(token);
+                          const list = Array.isArray(refreshed?.logos) ? refreshed.logos : (Array.isArray(refreshed?.logo) ? refreshed.logo : []);
+                          setBrandLogos(list);
+                          const latest = list && list.length ? (typeof list[list.length-1] === 'string' ? list[list.length-1] : (list[list.length-1]?.url || '')) : '';
+                          if (latest) setSelectedLogoUrl(latest);
+                        } catch (_) { /* noop */ }
+                        finally { setIsLogoUploading(false); e.target.value=''; }
+                      }} />
+                      <button onClick={() => logoFileInputRef.current && logoFileInputRef.current.click()} className={`px-3 py-2 rounded-md text-sm ${isLogoUploading ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`} disabled={isLogoUploading}>
+                        <span className="inline-flex items-center gap-2">
+                          {isLogoUploading && (<span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />)}
+                          {isLogoUploading ? 'Uploading…' : 'Choose Image'}
+                        </span>
+                      </button>
+                      {selectedLogoUrl && (
+                        <div className="mt-3">
+                          <p className="text-xs text-gray-600 mb-1">Selected logo preview</p>
+                          <div className="border rounded-lg p-2 inline-flex bg-white">
+                            <img src={selectedLogoUrl} alt="Selected logo" className="h-16 object-contain" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="w-full flex-col mt-0 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
@@ -1344,18 +1452,7 @@ const Guidlines = () => {
                    </div>
                   
                      {/* Voice Description Input */}
-                     <div className="mt-4">
-                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                         Voice Description (optional)
-                       </label>
-                       <textarea
-                         value={descVoice}
-                         onChange={(e) => setDescVoice(e.target.value)}
-                         placeholder="Describe the voice tone, style, or any specific requirements..."
-                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                         rows="3"
-                       />
-                     </div>
+                     
                      {/* Pending voice previews + Save */}
                      {(pendingVoiceUrls && pendingVoiceUrls.length > 0) && (
                        <div className="mt-3">
@@ -1373,9 +1470,14 @@ const Guidlines = () => {
                            className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium ${
                              (isVoiceUploading || pendingVoiceBlobs.length === 0) ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'
                            }`}
-                         >
-                           {isVoiceUploading ? 'Saving…' : 'Save to Brand Assets'}
-                         </button>
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            {isVoiceUploading && (
+                              <span className="inline-block w-4 h-4 border-2 border-white/70 border-t-white rounded-full animate-spin" />
+                            )}
+                            {isVoiceUploading ? 'Saving…' : 'Save to Brand Assets'}
+                          </span>
+                        </button>
                        </div>
                      )}
                   </div>
@@ -1526,8 +1628,10 @@ const Guidlines = () => {
                     desc: descShareable
                   }
                 ],
-                                 style_and_visual_pref: {
-                   logo_inclusion: selectedLogo ? [{ answer: (optionsLogo.find(o => o.id === selectedLogo)?.label || ''), imageLink: '' }] : [],
+                 style_and_visual_pref: {
+                   logo_inclusion: selectedLogo === 'yes'
+                     ? [{ answer: 'Yes', imageLink: (selectedLogoUrl || '') }]
+                     : (selectedLogo === 'no' ? [{ answer: 'No', imageLink: '' }] : []),
                    color_pallete: selectedColor === 'yes' ? Array.from(selectedColors) : [],
                    font_style: selectedFont === 'yes' ? selectedFonts : [],
                    images: [
@@ -1604,13 +1708,79 @@ const Guidlines = () => {
       {/* Voice Add Modal */}
       {isVoiceModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white w-[92%] max-w-xl rounded-lg shadow-xl p-5">
+          <div className="bg-white w-[96%] max-w-4xl rounded-xl shadow-2xl p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-gray-900">Add Voice</h3>
               <button onClick={() => setIsVoiceModalOpen(false)} className="text-gray-500 hover:text-gray-700">✕</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Upload */}
+            {/* Tabs */}
+            <div className="flex items-center gap-2 mb-4">
+              <button
+                onClick={() => setVoiceModalTab('record')}
+                className={`${voiceModalTab==='record' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
+              >Record</button>
+              <button
+                onClick={() => setVoiceModalTab('upload')}
+                className={`${voiceModalTab==='upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
+              >Upload</button>
+            </div>
+
+            {/* Record view */}
+            {voiceModalTab === 'record' && (
+              <div>
+                {/* Tone sample at top */}
+                <div className="mb-4 text-base text-gray-800 bg-gray-50 border border-gray-200 rounded px-4 py-3">
+                  {getRecordingSample()}
+                </div>
+                <div className="border rounded-xl p-6 flex flex-col gap-4">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <p className="text-sm text-gray-700 font-medium">Record Voice</p>
+                    <div className="flex items-center gap-3">
+                      {isRecording && (
+                        <div className="flex items-center gap-2 text-red-600 font-medium">
+                          <span className="inline-block w-2 h-2 bg-red-600 rounded-full animate-pulse" />
+                          Recording…
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-600 tabular-nums">
+                        {String(Math.floor(elapsedSec / 60)).padStart(2, '0')}:{String(elapsedSec % 60).padStart(2, '0')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-center">
+                    {!isRecording ? (
+                      <button onClick={startRecording} className="w-20 h-20 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md transition-colors">
+                        <FaMicrophone className="w-7 h-7" />
+                      </button>
+                    ) : (
+                      <button onClick={stopRecording} className="w-20 h-20 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-md transition-colors">
+                        <FaMicrophone className="w-7 h-7" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Simple animated level bars for visual feedback */}
+                  <div className="flex items-end justify-center gap-1 h-8">
+                    {[0,1,2,3,4].map((i) => (
+                      <span key={i} className={`w-1.5 bg-green-500 rounded-sm animate-pulse`} style={{height: `${6 + i*6}px`, animationDelay: `${i*120}ms`}} />
+                    ))}
+                  </div>
+
+                  {pendingVoiceUrls && pendingVoiceUrls.length > 0 && (
+                    <div className="mt-2">
+                      <audio ref={audioPreviewRef} src={pendingVoiceUrls[pendingVoiceUrls.length-1]} controls className="w-full" />
+                      <div className="mt-2 flex items-center gap-2">
+                        <button onClick={() => { setPendingVoiceBlobs([]); setPendingVoiceUrls([]); }} className="px-3 py-1.5 rounded-md text-sm bg-gray-100 hover:bg-gray-200 text-gray-800">Re-record</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Upload view */}
+            {voiceModalTab === 'upload' && (
               <div className="border rounded-lg p-4">
                 <p className="text-sm text-gray-700 font-medium mb-2">Upload Voice File</p>
                 <input
@@ -1628,25 +1798,14 @@ const Guidlines = () => {
                   </ul>
                 )}
               </div>
-              {/* Record */}
-              <div className="border rounded-lg p-4 flex flex-col gap-2">
-                <p className="text-sm text-gray-700 font-medium">Record Voice</p>
-                {!isRecording ? (
-                  <button onClick={startRecording} className="px-3 py-2 rounded-md bg-blue-100 border border-blue-300 text-blue-700 hover:bg-blue-200 text-sm flex items-center gap-2"><FaMicrophone className="w-4 h-4" /> Start Recording</button>
-                ) : (
-                  <button onClick={stopRecording} className="px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 text-sm flex items-center gap-2"><FaMicrophone className="w-4 h-4" /> Stop</button>
-                )}
-                {pendingVoiceUrls && pendingVoiceUrls.length > 0 && (
-                  <audio ref={audioPreviewRef} src={pendingVoiceUrls[pendingVoiceUrls.length-1]} controls className="mt-1" />
-                )}
-              </div>
-            </div>
+            )}
             <div className="mt-4 flex items-center justify-end gap-2">
-              <button onClick={() => setIsVoiceModalOpen(false)} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200">Cancel</button>
+                <button onClick={() => setIsVoiceModalOpen(false)} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
               <button
                 onClick={async () => {
                   try {
                     setVoiceSaveMsg('');
+                    setIsSavingBrandVoices(true);
                     const toMp3File = (blob, idx) => new File([blob], `recorded_${Date.now()}_${idx}.mp3`, { type: 'audio/mpeg' });
                     const filesFromBlobs = (pendingVoiceBlobs || []).map((b, i) => toMp3File(b, i));
                     const combined = [...(voiceFilesForUpload || []), ...filesFromBlobs];
@@ -1665,12 +1824,20 @@ const Guidlines = () => {
                     setIsVoiceModalOpen(false);
                   } catch (e) {
                     setVoiceSaveMsg(e?.message || 'Failed to save');
+                  } finally {
+                    setIsSavingBrandVoices(false);
                   }
                 }}
-                className="px-4 py-2 rounded-md bg-green-600 hover:bg-green-700 text-white"
+                disabled={isSavingBrandVoices}
+                className={`px-4 py-2 rounded-md text-white ${isSavingBrandVoices ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
               >Save to Brand Assets</button>
             </div>
-            {voiceSaveMsg && (<div className="text-sm mt-2 text-gray-700">{voiceSaveMsg}</div>)}
+            <div className="flex items-center gap-2 mt-2 min-h-[1.25rem]">
+              {isSavingBrandVoices && (
+                <span className="inline-block w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
+              )}
+              {voiceSaveMsg && (<div className="text-sm text-gray-700">{voiceSaveMsg}</div>)}
+            </div>
           </div>
         </div>
       )}

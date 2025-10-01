@@ -16,6 +16,114 @@ const computeTimelineForIndex = (arr, idx) => {
   } catch (_) { return '0 - 10 seconds'; }
 };
 
+// Hook: centralizes scene-by-scene script state and updates
+const useScriptScenes = (initial = []) => {
+  const [script, setScript] = useState(Array.isArray(initial) ? initial.map(s => ({ ...(s || {}) })) : []);
+
+  const modelToType = (model) => {
+    const m = String(model || '').toUpperCase();
+    if (m === 'VEO3' || m.includes('VEO')) return 'Avatar Based';
+    if (m === 'SORA') return 'Infographic';
+    return 'Infographic';
+  };
+  const typeToModel = (type) => {
+    const t = String(type || '').toLowerCase();
+    if (t === 'avatar based') return 'VEO3';
+    if (t === 'infographic') return 'SORA';
+    return 'SORA';
+  };
+  const perSceneDurationByModel = (model) => (String(model || '').toUpperCase().includes('VEO') ? 8 : 10);
+  const computeTimelineForIndexByScript = (idx) => {
+    try {
+      let start = 0;
+      for (let i = 0; i < idx; i++) start += perSceneDurationByModel(script[i]?.model || '');
+      const end = start + perSceneDurationByModel(script[idx]?.model || '');
+      return `${start} - ${end} seconds`;
+    } catch (_) { return '0 - 10 seconds'; }
+  };
+
+  const setFromApi = (arr) => {
+    const normalized = mapResponseToScenes(arr);
+    let start = 0;
+    const out = normalized.map((s, i) => {
+      const model = typeToModel(s.type || '');
+      const end = start + perSceneDurationByModel(model);
+      const row = {
+        scene_number: i + 1,
+        scene_title: s.title || '',
+        model,
+        timeline: `${start} - ${end} seconds`,
+        narration: s.narration || '',
+        desc: s.description || '',
+        ref_image: Array.isArray(s.ref_image) ? s.ref_image.slice() : [],
+        folderLink: s.folderLink || ''
+      };
+      start = end;
+      return row;
+    });
+    setScript(out);
+  };
+
+  const updateScene = (idx, patch) => {
+    setScript(prev => prev.map((sc, i) => {
+      if (i !== idx) return sc;
+      const next = { ...(sc || {}), ...(patch || {}) };
+      // Keep scene_number consistent
+      next.scene_number = i + 1;
+      // Recompute timeline if model changed
+      if (Object.prototype.hasOwnProperty.call(patch || {}, 'model')) {
+        next.timeline = computeTimelineForIndexByScript(i);
+      }
+      return next;
+    }));
+  };
+
+  const addSceneSimple = () => {
+    setScript(prev => {
+      const idx = prev.length;
+      const start = (() => { let s = 0; for (let i = 0; i < idx; i++) s += perSceneDurationByModel(prev[i]?.model||''); return s; })();
+      const model = 'SORA';
+      const end = start + perSceneDurationByModel(model);
+      return [...prev, {
+        scene_number: idx + 1,
+        scene_title: '',
+        model,
+        timeline: `${start} - ${end} seconds`,
+        narration: '',
+        desc: '',
+        ref_image: [],
+        folderLink: ''
+      }];
+    });
+  };
+
+  return { script, setScript, setFromApi, updateScene, addSceneSimple, modelToType, typeToModel, computeTimelineForIndexByScript };
+};
+
+// Normalize backend script/airesponse array into UI scenes array.
+// Ensures: ordered by scene_number, unique object per scene, correct field mapping.
+const mapResponseToScenes = (arr) => {
+  const src = Array.isArray(arr) ? arr : [];
+  // Index by scene_number when provided, else keep order
+  const bucket = [];
+  src.forEach((r, i) => {
+    const sn = Number(r?.scene_number) || (i + 1);
+    const m = String(r?.model || '').toUpperCase();
+    const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : (m.includes('SORA') ? 'Infographic' : (r?.type || 'Infographic'));
+    bucket[sn - 1] = {
+      title: r?.scene_title || '',
+      description: r?.desc || r?.description || '',
+      narration: r?.narration || '',
+      type,
+      avatar: null,
+      ref_image: Array.isArray(r?.ref_image) ? r.ref_image.slice() : [],
+      folderLink: r?.folderLink || ''
+    };
+  });
+  // Remove holes and return
+  return bucket.filter(Boolean).map(s => ({ ...(s || {}) }));
+};
+
 const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) => {
   const industries = useMemo(() => [], []);
 
@@ -51,6 +159,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const [logoLink, setLogoLink] = useState('');
   const [logoFileName, setLogoFileName] = useState('');
   const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
+  const [brandLogos, setBrandLogos] = useState([]);
+  const [isLogoUploading, setIsLogoUploading] = useState(false);
+  const logoFileInputRef = useRef(null);
   const [audioAnswer, setAudioAnswer] = useState('Yes');
   const [voiceLink, setVoiceLink] = useState('');
   const [preferredVoiceName, setPreferredVoiceName] = useState('');
@@ -86,7 +197,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const [videoLength, setVideoLength] = useState('1 -2 minutes');
   const [contentEmphasisCsv, setContentEmphasisCsv] = useState('');
 
-  // Load brand voices from Brand Assets API
+  // Load brand voices and logos from Brand Assets API
   useEffect(() => {
     const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
     if (!token) return;
@@ -98,6 +209,11 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
           : (Array.isArray(assets?.voiceover) ? assets.voiceover : (assets?.voices || []));
         const urls = (voices || []).map(v => (typeof v === 'string' ? v : (v?.url || v?.link || ''))).filter(Boolean);
         setBrandVoices(urls);
+        const logos = Array.isArray(assets?.logos)
+          ? assets.logos
+          : (Array.isArray(assets?.logo) ? assets.logo : []);
+        const logoUrls = (logos || []).map(l => (typeof l === 'string' ? l : (l?.url || l?.link || ''))).filter(Boolean);
+        setBrandLogos(logoUrls);
       } catch (_) { /* noop */ }
     })();
   }, [getBrandAssets]);
@@ -446,24 +562,56 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                   ))}
                 </div>
                 {logoAnswer==='Yes' && (
-                  <div className='mt-2'>
-                    <input
-                      type='file'
-                      accept='image/*'
-                      onChange={(e)=>{
-                        const f = e.target.files && e.target.files[0];
-                        if (!f) return;
-                        setLogoFileName(f.name);
-                        const url = URL.createObjectURL(f);
-                        setLogoPreviewUrl(url);
-                        setLogoLink('');
-                      }}
-                      className='block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200'
-                    />
+                  <div className='mt-3'>
+                    <p className='text-sm text-gray-700 mb-2'>Choose from your brand assets:</p>
+                    <div className='flex flex-wrap gap-4 items-start'>
+                      {Array.isArray(brandLogos) && brandLogos.length > 0 && brandLogos.map((url, i) => (
+                        <div key={i} className='flex flex-col items-center gap-1'>
+                          <button
+                            type='button'
+                            onClick={() => { setLogoPreviewUrl(url); setLogoLink(url); setLogoFileName(`Logo ${i+1}`); }}
+                            className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${ (logoPreviewUrl||logoLink)===url ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'}`}
+                          >
+                            <img src={url} alt={`Logo ${i+1}`} className='w-12 h-12 object-contain' />
+                          </button>
+                          <span className='text-xs text-gray-600'>Logo {i+1}</span>
+                        </div>
+                      ))}
+                      {/* Add new logo */}
+                      <div className='flex flex-col items-center gap-1'>
+                        <input ref={logoFileInputRef} type='file' accept='image/*' className='hidden' onChange={async (e) => {
+                          const file = e.target.files && e.target.files[0];
+                          if (!file) return;
+                          const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
+                          if (!token) return;
+                          try {
+                            setIsLogoUploading(true);
+                            await uploadBrandAssets({ userId: token, files: { logos: [file] } });
+                            const refreshed = await getBrandAssets(token);
+                            const list = Array.isArray(refreshed?.logos) ? refreshed.logos : (Array.isArray(refreshed?.logo) ? refreshed.logo : []);
+                            const logoUrls = (list || []).map(l => (typeof l === 'string' ? l : (l?.url || l?.link || ''))).filter(Boolean);
+                            setBrandLogos(logoUrls);
+                            const latest = logoUrls[logoUrls.length - 1];
+                            if (latest) { setLogoPreviewUrl(latest); setLogoLink(latest); setLogoFileName(file.name || 'Uploaded logo'); }
+                          } catch (_) { /* noop */ }
+                          finally { setIsLogoUploading(false); if (e.target) e.target.value=''; }
+                        }} />
+                        <button type='button' onClick={() => logoFileInputRef.current && logoFileInputRef.current.click()} className={`w-20 h-20 rounded-full flex items-center justify-center border border-dashed ${isLogoUploading ? 'border-gray-300 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-400 text-gray-500 hover:bg-gray-50'}`} title='Add logo' disabled={isLogoUploading}>
+                          {isLogoUploading ? (
+                            <span className='inline-block w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin' />
+                          ) : (
+                            <FaPlus className='w-6 h-6' />
+                          )}
+                        </button>
+                        <span className='text-xs text-gray-600'>Add</span>
+                      </div>
+                    </div>
                     {(logoPreviewUrl || logoLink) && (
-                      <div className='mt-2 flex items-center gap-3'>
-                        <img src={logoPreviewUrl || logoLink} alt='Logo preview' className='w-12 h-12 object-contain border rounded' />
-                        <span className='text-sm text-gray-600 truncate'>{logoFileName || 'Selected logo'}</span>
+                      <div className='mt-3'>
+                        <p className='text-xs text-gray-600 mb-1'>Selected logo preview</p>
+                        <div className='border rounded-lg p-2 inline-flex bg-white'>
+                          <img src={logoPreviewUrl || logoLink} alt='Logo preview' className='h-16 object-contain' />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -685,9 +833,10 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
 
 const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [scenes, setScenes] = useState(values.scenes.length ? values.scenes : [
-    { title: '', description: '', narration: '', type: 'Avatar Based', avatar: null },
-  ]);
+  // Use centralized script state
+  const { script, setFromApi, updateScene: updateScriptScene, addSceneSimple, modelToType, typeToModel, computeTimelineForIndexByScript } = useScriptScenes(
+    Array.isArray(values?.scripts?.[0]?.airesponse) ? values.scripts[0].airesponse : (Array.isArray(values?.script) ? values.script : [])
+  );
   const [videoDurationSec, setVideoDurationSec] = useState(10);
   const [isAdding, setIsAdding] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
@@ -695,48 +844,35 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
   const [isUploadingSceneImage, setIsUploadingSceneImage] = useState(false);
 
   // Helpers to persist current scenes before enhance
-  const mapTypeToModel = (type) => {
-    const t = String(type || '').toLowerCase();
-    if (t === 'avatar based') return 'VEO3';
-    if (t === 'infographic') return 'SORA';
-    return type || '';
-  };
-  const buildAiResponseFromScenes = (arr) => {
-    const rows = Array.isArray(arr) ? arr : [];
-    return rows.map((s, idx) => ({
-      scene_number: idx + 1,
-      scene_title: s?.title || '',
-      model: mapTypeToModel(s?.type),
-      timeline: computeTimelineForIndex(rows, idx),
-      narration: s?.narration || '',
-      desc: s?.description || '',
-      ref_image: Array.isArray(s?.ref_image) ? s.ref_image : [],
-      folderLink: s?.folderLink || ''
-    }));
-  };
+  const scenes = useMemo(() => (Array.isArray(script) ? script.map((r) => ({
+    title: r?.scene_title || '',
+    description: r?.desc || r?.description || '',
+    narration: r?.narration || '',
+    type: modelToType(r?.model),
+    ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
+    folderLink: r?.folderLink || ''
+  })) : []), [script, modelToType]);
   const saveScenesToServer = async () => {
     const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-    const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-    if (!sessionId || !token) throw new Error('Missing session_id or token');
-    const session = {
-      session_id: sessionId,
-      user_id: token,
-      content: [],
-      document_summary: [],
-      videoduration: '60',
-      created_at: new Date().toISOString(),
-      totalsummary: [],
-      messages: [],
-      scripts: [
-        {
-          userquery: [],
-          airesponse: buildAiResponseFromScenes(scenes),
-          version: 'v1'
-        }
-      ],
-      videos: []
+    if (!sessionId) throw new Error('Missing session_id');
+    const airesponse = Array.isArray(script) ? script : [];
+    let uq = [];
+    try {
+      const raw = localStorage.getItem('buildreel_userquery');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
+      }
+    } catch (_) { /* noop */ }
+    if (!Array.isArray(uq)) uq = [];
+    const body = {
+      session_id: sessionId || '',
+      current_script: {
+        userquery: uq,
+        airesponse
+      },
+      action: 'save'
     };
-    const body = { session, action: 'save' };
     const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
@@ -757,64 +893,61 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
   };
 
   const setScene = (idx, patch) => {
-    setScenes((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+    if (!patch) return;
+    const p = { ...patch };
+    if (Object.prototype.hasOwnProperty.call(p, 'type')) {
+      p.model = typeToModel(p.type);
+      delete p.type;
+    }
+    // Map UI keys to script keys
+    if (Object.prototype.hasOwnProperty.call(p, 'title')) { p.scene_title = p.title; delete p.title; }
+    if (Object.prototype.hasOwnProperty.call(p, 'description')) { p.desc = p.description; delete p.description; }
+    // Write into script
+    updateScriptScene(idx, p);
     if (patch && Object.prototype.hasOwnProperty.call(patch, 'type')) {
       setVideoDurationSec(getPerSceneDuration(patch.type));
     }
   };
 
+  // If values.script is provided (from parent), initialize/replace script state
+  useEffect(() => {
+    const scriptFromParent = Array.isArray(values?.script) ? values.script : [];
+    if (scriptFromParent.length > 0) setFromApi(scriptFromParent);
+  }, [values?.script]);
+
   const addScene = async () => {
     try {
       if (isAdding) return;
       setIsAdding(true);
-      // 1) Load current session snapshot
+      // 1) Load session id (frontend sends userquery + current scenes)
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-      if (!sessionId || !token) throw new Error('Missing session_id or token');
-      const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
-      });
-      if (!sessResp.ok) {
-        const t = await sessResp.text();
-        throw new Error(`user-session/data failed: ${sessResp.status} ${t}`);
-      }
-      const sessionDataResponse = await sessResp.json();
-      const sd = sessionDataResponse?.session_data || {};
+      if (!sessionId) throw new Error('Missing session_id');
 
       // 2) Build airesponse from current UI scenes (include current scenes as-is)
-      const airesponse = (Array.isArray(scenes) ? scenes : []).map((s, idx) => ({
-        scene_number: idx + 1,
-        scene_title: s?.title || '',
-        model: (String(s?.type).toLowerCase() === 'avatar based') ? 'VEO3' : (String(s?.type).toLowerCase() === 'infographic' ? 'SORA' : (s?.type || '')),
-        timeline: computeTimelineForIndex(scenes, idx),
-        narration: s?.narration || '',
-        desc: s?.description || '',
-        ref_image: [],
-        folderLink: ''
-      }));
+      const airesponse = Array.isArray(script) ? script : [];
 
-      // 3) Prepare request body per provided schema
-      const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        title: sd.title ?? null,
-        video_duration: sd.video_duration ?? 60,
-        created_at: sd.created_at || new Date().toISOString(),
-        updated_at: sd.updated_at || new Date().toISOString(),
-        document_summary: sd.document_summary || [],
-        messages: Array.isArray(sd.messages) ? sd.messages : [],
-        total_summary: sd.total_summary || [],
-        scripts: [
-          {
-            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
-            airesponse,
-            version: 'v1'
+      // 3) Prepare request body per new schema — include userquery and current scenes from frontend
+      let uq = [];
+      try {
+        if (values && values.userquery && Array.isArray(values.userquery.userquery)) {
+          uq = values.userquery.userquery;
+        } else {
+          const raw = localStorage.getItem('buildreel_userquery');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
           }
-        ],
-        videos: sd.videos || []
+        }
+      } catch (_) { /* noop */ }
+      if (!Array.isArray(uq)) uq = [];
+      const body = {
+        session_id: sessionId || '',
+        current_script: {
+          userquery: uq,
+          airesponse
+        },
+        action: 'add'
       };
-      const body = { session: sessionForBody, action: 'add' };
 
       // 4) Call create-from-scratch to append a new scene
       const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
@@ -827,16 +960,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
       const aiArr = data?.session_patch?.append_message?.airesponse
         ?? data?.assistant_message?.airesponse
         ?? data?.airesponse
+        ?? data?.script
         ?? [];
-      const mapped = (Array.isArray(aiArr) ? aiArr : []).map((r) => ({
-        title: r?.scene_title || '',
-        description: r?.desc || '',
-        narration: r?.narration || '',
-        type: (r?.model && String(r.model).toUpperCase().includes('VEO')) ? 'Avatar Based' : ((r?.model && String(r.model).toUpperCase().includes('SORA')) ? 'Infographic' : 'Infographic'),
-        avatar: null,
-      }));
-      setScenes(mapped);
-      setActiveIndex(Math.max(0, mapped.length - 1));
+      setFromApi(aiArr);
+      setActiveIndex(Math.max(0, (Array.isArray(aiArr) ? aiArr.length : 1) - 1));
     } catch (e) {
       console.error('Add Scene failed:', e);
       alert('Failed to add scene. Please try again.');
@@ -931,46 +1058,17 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                   try {
                     setIsEnhancing(true);
                     const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-                    const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-                    if (!sessionId || !token) throw new Error('Missing session_id or token');
-                    const sessionReqBody = { user_id: token, session_id: sessionId };
-                    const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody) });
-                    const sessText = await sessResp.text();
-                    let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
-                    if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
-                    const sd = sessData?.session_data || {};
-                    const sessionForBody = {
-                      session_id: sessionId,
-                      user_id: token,
-                      content: sd.content || [],
-                      document_summary: sd.document_summary || [],
-                      videoduration: (sd.video_duration?.toString?.() || '60'),
-                      created_at: sd.created_at || new Date().toISOString(),
-                      totalsummary: sd.total_summary || [],
-                      messages: sd.messages || [],
-                      scripts: [],
-                      videos: sd.videos || []
-                    };
+                    if (!sessionId) throw new Error('Missing session_id');
                     const curIdx = activeIndex;
-                    const cur = scenes[curIdx] || {};
-                    const currentScenePayload = {
-                      scene_number: curIdx + 1,
-                      scene_title: cur?.title || '',
-                      model: mapTypeToModel(cur?.type),
-                      timeline: computeTimelineForIndex(scenes, curIdx),
-                      narration: cur?.narration || '',
-                      desc: cur?.description || '',
-                      ref_image: Array.isArray(cur?.ref_image) ? cur.ref_image : [],
-                      folderLink: cur?.folderLink || ''
-                    };
-                    // Use existing scripts array and only replace airesponse at index 0 with current full scenes data
-                    const scriptsOut = Array.isArray(sd?.scripts) ? JSON.parse(JSON.stringify(sd.scripts)) : [];
-                    if (!scriptsOut[0]) scriptsOut[0] = { userquery: [], airesponse: [], version: 'v1' };
-                    scriptsOut[0].airesponse = buildAiResponseFromScenes(scenes);
-                    if (!Array.isArray(scriptsOut[0].userquery)) scriptsOut[0].userquery = [];
-                    if (!scriptsOut[0].version) scriptsOut[0].version = 'v1';
-                    sessionForBody.scripts = scriptsOut;
-                    const enhanceBody = { session: sessionForBody, scene_number: (curIdx + 1), action: 'desc' };
+                    // Build current_script from UI and local userquery
+                    const airesponse = Array.isArray(script) ? script : [];
+                    let uq = [];
+                    try {
+                      const raw = localStorage.getItem('buildreel_userquery');
+                      if (raw) { const parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery; }
+                    } catch (_) { /* noop */ }
+                    if (!Array.isArray(uq)) uq = [];
+                    const enhanceBody = { session_id: sessionId, current_script: { userquery: uq, airesponse }, scene_number: (curIdx + 1), action: 'desc' };
                     const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/enhance-field';
                     const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(enhanceBody) });
                     const text = await resp.text();
@@ -978,13 +1076,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                     if (!resp.ok) throw new Error(`enhance-field failed: ${resp.status} ${text}`);
                     const updated = Array.isArray(data?.script) ? data.script : [];
                     if (updated.length > 0) {
-                      setScenes(prev => {
-                        const copy = [...prev];
-                        const u = updated[0] || {};
-                        const cur = copy[activeIndex] || {};
-                        copy[activeIndex] = { ...cur, description: u.desc ?? cur.description };
-                        return copy;
-                      });
+                      const targetSn = curIdx + 1;
+                      const match = updated.find(s => Number(s?.scene_number) === targetSn) || updated[curIdx] || updated[0];
+                      if (match && typeof match.desc === 'string') {
+                        updateScriptScene(activeIndex, { desc: match.desc });
+                      }
                     }
                   } catch (e) {
                     console.error('Enhance description failed:', e);
@@ -1014,45 +1110,16 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                   try {
                     setIsEnhancing(true);
                     const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-                    const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-                    if (!sessionId || !token) throw new Error('Missing session_id or token');
-                    const sessionReqBody = { user_id: token, session_id: sessionId };
-                    const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody) });
-                    const sessText = await sessResp.text();
-                    let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
-                    if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
-                    const sd = sessData?.session_data || {};
-                    const sessionForBody = {
-                      session_id: sessionId,
-                      user_id: token,
-                      content: sd.content || [],
-                      document_summary: sd.document_summary || [],
-                      videoduration: (sd.video_duration?.toString?.() || '60'),
-                      created_at: sd.created_at || new Date().toISOString(),
-                      totalsummary: sd.total_summary || [],
-                      messages: sd.messages || [],
-                      scripts: [],
-                      videos: sd.videos || []
-                    };
+                    if (!sessionId) throw new Error('Missing session_id');
                     const curIdxN = activeIndex;
-                    const scN = scenes[curIdxN] || {};
-                    const currentScenePayloadN = {
-                      scene_number: curIdxN + 1,
-                      scene_title: scN?.title || '',
-                      model: mapTypeToModel(scN?.type),
-                      timeline: computeTimelineForIndex(scenes, curIdxN),
-                      narration: scN?.narration || '',
-                      desc: scN?.description || '',
-                      ref_image: Array.isArray(scN?.ref_image) ? scN.ref_image : [],
-                      folderLink: scN?.folderLink || ''
-                    };
-                    const scriptsOutN = Array.isArray(sd?.scripts) ? JSON.parse(JSON.stringify(sd.scripts)) : [];
-                    if (!scriptsOutN[0]) scriptsOutN[0] = { userquery: [], airesponse: [], version: 'v1' };
-                    scriptsOutN[0].airesponse = buildAiResponseFromScenes(scenes);
-                    if (!Array.isArray(scriptsOutN[0].userquery)) scriptsOutN[0].userquery = [];
-                    if (!scriptsOutN[0].version) scriptsOutN[0].version = 'v1';
-                    sessionForBody.scripts = scriptsOutN;
-                    const enhanceBody = { session: sessionForBody, scene_number: (curIdxN + 1), action: 'narration' };
+                    const airesponse = Array.isArray(script) ? script : [];
+                    let uq = [];
+                    try {
+                      const raw = localStorage.getItem('buildreel_userquery');
+                      if (raw) { const parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery; }
+                    } catch (_) { /* noop */ }
+                    if (!Array.isArray(uq)) uq = [];
+                    const enhanceBody = { session_id: sessionId, current_script: { userquery: uq, airesponse }, scene_number: (curIdxN + 1), action: 'narration' };
                     const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/enhance-field';
                     const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(enhanceBody) });
                     const text = await resp.text();
@@ -1060,13 +1127,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                     if (!resp.ok) throw new Error(`enhance-field failed: ${resp.status} ${text}`);
                     const updated = Array.isArray(data?.script) ? data.script : [];
                     if (updated.length > 0) {
-                      setScenes(prev => {
-                        const copy = [...prev];
-                        const u = updated[0] || {};
-                        const cur = copy[activeIndex] || {};
-                        copy[activeIndex] = { ...cur, narration: u.narration ?? cur.narration };
-                        return copy;
-                      });
+                      const targetSnN = curIdxN + 1;
+                      const matchN = updated.find(s => Number(s?.scene_number) === targetSnN) || updated[curIdxN] || updated[0];
+                      if (matchN && typeof matchN.narration === 'string') {
+                        updateScriptScene(activeIndex, { narration: matchN.narration });
+                      }
                     }
                   } catch (e) {
                     console.error('Enhance narration failed:', e);
@@ -1108,7 +1173,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                 </div>
                 <div className='flex items-center gap-3'>
                   {(() => {
-                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image : [];
+                  const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image : [];
                     if (imgs.length > 0) {
                       return imgs.slice(0,3).map((url, idx) => (
                         <div key={idx} className='w-16 h-16 rounded-lg border overflow-hidden'>
@@ -1130,14 +1195,8 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                         setIsUploadingSceneImage(true);
                         const urls = await uploadSceneImage(file);
                         if (urls.length > 0) {
-                          setScenes(prev => {
-                            const copy = [...prev];
-                            const cur = { ...(copy[activeIndex] || {}) };
-                            const ref = Array.isArray(cur.ref_image) ? cur.ref_image.slice(0,2) : [];
-                            cur.ref_image = [urls[0], ...ref];
-                            copy[activeIndex] = cur;
-                            return copy;
-                          });
+                          const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0,2) : [];
+                          updateScriptScene(activeIndex, { ref_image: [urls[0], ...curRefs] });
                         }
                       } finally {
                         setIsUploadingSceneImage(false);
@@ -1166,7 +1225,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
             <div className='text-2xl font-semibold'>
               {(() => {
                 try {
-                  const tl = computeTimelineForIndex(scenes, activeIndex);
+                  const tl = computeTimelineForIndexByScript(activeIndex);
                   return tl.replace('seconds','sec');
                 } catch (_) { return `0 – ${videoDurationSec} sec`; }
               })()}
@@ -1177,8 +1236,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
 
       <div className='flex justify-end gap-3 mt-8'>
         <button onClick={onBack} className='px-5 py-2 rounded-lg border'>Back</button>
-        {/* <button onClick={() => onSave(scenes)} className='px-5 py-2 rounded-lg bg-indigo-600 text-white'>Save</button> */}
-        <button onClick={async () => { await onGenerate(scenes); }} className='px-5 py-2 rounded-lg bg-black text-white'>Generate</button>
+        <button onClick={async () => { await onGenerate(script); }} className='px-5 py-2 rounded-lg bg-black text-white'>Generate</button>
       </div>
     </div>
   );
@@ -1189,6 +1247,7 @@ const BuildReelWizard = () => {
   const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], userquery: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
+  const [showShortGenPopup, setShowShortGenPopup] = useState(false);
 
   const handleChange = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -1196,63 +1255,36 @@ const BuildReelWizard = () => {
     setForm((f) => ({ ...f, scenes }));
   };
 
-  const handleGenerate = async (scenes) => {
+  const handleGenerate = async (script) => {
     try {
       setIsGenerating(true);
       // Validate all scenes have narration and description
-      const missing = (Array.isArray(scenes) ? scenes : []).some(s => !String(s?.narration || '').trim() || !String(s?.description || '').trim());
+      const missing = (Array.isArray(script) ? script : []).some(s => !String(s?.narration || '').trim() || !String((s?.desc || s?.description || '')).trim());
       if (missing) {
         try { toast.error('Please fill narration and description for all scenes'); } catch(_) { alert('Please fill narration and description for all scenes'); }
         return;
       }
-      setForm((f) => ({ ...f, scenes }));
+      setForm((f) => ({ ...f, script }));
 
-      // 1) Fetch latest session snapshot
+      // 1) Build save payload in the simplified format
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-      if (!sessionId || !token) throw new Error('Missing session_id or token');
-      const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
-      });
-      const sessText = await sessResp.text();
-      let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
-      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
-      const sd = sessData?.session_data || {};
-
-      // 2) Build create-from-scratch request with action 'save'
-      const airesponse = (Array.isArray(scenes) ? scenes : []).map((s, idx) => ({
-        scene_number: idx + 1,
-        scene_title: s?.title || '',
-        model: (String(s?.type).toLowerCase() === 'avatar based') ? 'VEO3' : (String(s?.type).toLowerCase() === 'infographic' ? 'SORA' : (s?.type || '')),
-        timeline: computeTimelineForIndex(scenes, idx),
-        narration: s?.narration || '',
-        desc: s?.description || '',
-        ref_image: Array.isArray(s?.ref_image) ? s.ref_image : [],
-        folderLink: s?.folderLink || ''
-      }));
-
-      const sessionForBody = {
+      if (!sessionId) throw new Error('Missing session_id');
+      let uq = [];
+      try {
+        if (form && form.userquery && Array.isArray(form.userquery.userquery)) {
+          uq = form.userquery.userquery;
+        } else {
+          const raw = localStorage.getItem('buildreel_userquery');
+          if (raw) { const parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery; }
+        }
+      } catch (_) { /* noop */ }
+      if (!Array.isArray(uq)) uq = [];
+      const airesponse = Array.isArray(script) ? script : [];
+      const body = {
         session_id: sessionId,
-        user_id: token,
-        title: sd.title ?? null,
-        video_duration: sd.video_duration ?? 60,
-        created_at: sd.created_at || new Date().toISOString(),
-        updated_at: sd.updated_at || new Date().toISOString(),
-        document_summary: sd.document_summary || [],
-        messages: Array.isArray(sd.messages) ? sd.messages : [],
-        total_summary: sd.total_summary || [],
-        scripts: [
-          {
-            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
-            airesponse,
-            version: 'v1'
-          }
-        ],
-        videos: sd.videos || []
+        current_script: { userquery: uq, airesponse },
+        action: 'save'
       };
-
-      const body = { session: sessionForBody, action: 'save' };
       console.log('[BuildReel] create-from-scratch(save) request:', body);
       const saveResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -1262,7 +1294,7 @@ const BuildReelWizard = () => {
       if (!saveResp.ok) throw new Error(`create-from-scratch(save) failed: ${saveResp.status} ${saveText}`);
       console.log('[BuildReel] create-from-scratch(save) response:', saveData);
 
-      // 3) Refresh session snapshot to pass to video generation
+      // 2) Refresh session snapshot to pass to video generation
       const getResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/get', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
       });
@@ -1271,7 +1303,7 @@ const BuildReelWizard = () => {
       if (!getResp.ok) throw new Error(`sessions/get failed: ${getResp.status} ${getText}`);
       console.log('[BuildReel] sessions/get response:', sessionForGenerate);
 
-      // 4) Call generate video using refreshed session
+      // 3) Call generate video using refreshed session (job-based)
       const genResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionForGenerate)
       });
@@ -1280,30 +1312,13 @@ const BuildReelWizard = () => {
       if (!genResp.ok) throw new Error(`videos/generate failed: ${genResp.status} ${genText}`);
       console.log('[BuildReel] videos/generate response:', genData);
       const jobId = genData?.job_id || genData?.jobId || genData?.id;
-      try { if (jobId) localStorage.setItem('job_id', jobId); } catch(_){}
-      // 5) Poll job status then redirect to /result
-      if (jobId) {
-        const jobsBase = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1';
-        const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-        const isSuccess = (status) => {
-          const s = String(status || '').toLowerCase();
-          return ['succeeded','success','completed','done','finished'].includes(s);
-        };
-        for (let attempt = 1; attempt <= 60; attempt++) {
-          try {
-            const jr = await fetch(`${jobsBase}/jobs/${encodeURIComponent(jobId)}`, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
-            const jt = await jr.text();
-            let jd; try { jd = JSON.parse(jt); } catch(_) { jd = jt; }
-            const status = jd?.status || jd?.job_status || jd?.state;
-            if (isSuccess(status)) {
-              try { localStorage.setItem('job_result', JSON.stringify(jd)); } catch(_){}
-              try { window.location.href = '/result'; } catch(_){}
-              break;
-            }
-          } catch (_) { /* keep polling */ }
-          await sleep(5000);
-        }
-      }
+      try { if (jobId) localStorage.setItem('current_video_job_id', jobId); } catch(_){}
+      // 4) Show 5s popup then redirect to My Media where queueing/polling occurs
+      setShowShortGenPopup(true);
+      setTimeout(() => {
+        setShowShortGenPopup(false);
+        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
+      }, 5000);
     } catch (e) {
       console.error('Generate failed:', e);
       try { toast.error(e?.message || 'Failed to generate'); } catch(_) { alert(e?.message || 'Failed to generate'); }
@@ -1314,21 +1329,8 @@ const BuildReelWizard = () => {
     if (isCreatingScenes) return;
     try {
       setIsCreatingScenes(true);
-      // Build session object
+      // Build request per new format
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-      const session = {
-        session_id: sessionId || '',
-        user_id: token || '',
-        content: [],
-        document_summary: [],
-        videoduration: '60',
-        created_at: new Date().toISOString(),
-        totalsummary: [],
-        messages: [],
-        scripts: [],
-        videos: [],
-      };
       // Userquery payload from form/localStorage (already shaped as [{ additonalprop1: {...} }])
       let uq = [];
       try {
@@ -1345,9 +1347,12 @@ const BuildReelWizard = () => {
       // As a final guard, ensure shape is an array
       if (!Array.isArray(uq)) uq = [];
       const body = {
-        session,
-        userquery: Array.isArray(uq) ? uq : [],
-        action: 'add',
+        session_id: sessionId || '',
+        current_script: {
+          userquery: Array.isArray(uq) ? uq : [],
+          airesponse: []
+        },
+        action: 'add'
       };
       const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
       const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1355,20 +1360,24 @@ const BuildReelWizard = () => {
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
       if (!resp.ok) throw new Error(`create-from-scratch failed: ${resp.status} ${text}`);
 
-      // Extract scenes array from session_patch.append_message.airesponse (fallbacks included)
+      // Extract scenes array from response; support both old airesponse and new script format
       const aiArr = data?.session_patch?.append_message?.airesponse
         ?? data?.assistant_message?.airesponse
         ?? data?.airesponse
+        ?? data?.script
         ?? [];
-      const mapped = (Array.isArray(aiArr) ? aiArr : []).map((r) => ({
-        title: r?.scene_title || '',
-        description: r?.desc || '',
-        narration: r?.narration || '',
-        type: (r?.model && String(r.model).toUpperCase().includes('VEO')) ? 'Avatar Based' : 'Infographic',
-        avatar: null,
-      }));
-      // Update form and go to step 2
-      setForm((f) => ({ ...f, scenes: mapped }));
+      const mapped = mapResponseToScenes(aiArr);
+      // Update form with script (canonical) and go to step 2
+      setForm((f) => ({ ...f, script: mapped.map((s, i) => ({
+        scene_number: i + 1,
+        scene_title: s.title || '',
+        model: (String(s.type || '').toLowerCase() === 'avatar based') ? 'VEO3' : 'SORA',
+        timeline: computeTimelineForIndex(mapped, i),
+        narration: s.narration || '',
+        desc: s.description || '',
+        ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
+        folderLink: s.folderLink || ''
+      })) }));
       setStep(2);
     } catch (e) {
       console.error(e);
@@ -1376,21 +1385,34 @@ const BuildReelWizard = () => {
     } finally { setIsCreatingScenes(false); }
   };
 
-  return step === 1 ? (
-    <StepOne
-      values={form}
-      onChange={handleChange}
-      onSetUserQuery={(uq) => setForm((f) => ({ ...f, ...uq }))}
-      onNext={() => setStep(2)}
-      onCreateScenes={createFromScratch}
-    />
-  ) : (
-    <StepTwo
-      values={form}
-      onBack={() => setStep(1)}
-      onSave={handleSaveScenes}
-      onGenerate={handleGenerate}
-    />
+  return (
+    <>
+      {step === 1 ? (
+        <StepOne
+          values={form}
+          onChange={handleChange}
+          onSetUserQuery={(uq) => setForm((f) => ({ ...f, ...uq }))}
+          onNext={() => setStep(2)}
+          onCreateScenes={createFromScratch}
+        />
+      ) : (
+        <StepTwo
+          values={form}
+          onBack={() => setStep(1)}
+          onSave={handleSaveScenes}
+          onGenerate={handleGenerate}
+        />
+      )}
+      {showShortGenPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <h4 className="text-lg font-semibold text-gray-900">Generating Video…</h4>
+            <p className="mt-1 text-sm text-gray-600">You’ll be redirected to My Media shortly.</p>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
