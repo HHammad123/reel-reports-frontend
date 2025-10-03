@@ -75,6 +75,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isAddingScene, setIsAddingScene] = useState(false);
   const [isSavingReorder, setIsSavingReorder] = useState(false);
   const [isDeletingScene, setIsDeletingScene] = useState(false);
+  // Per-scene text include input buffer
+  const [textIncludeInput, setTextIncludeInput] = useState('');
   // Script history controls (undo/redo)
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -728,7 +730,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           scene_title: coalesce(row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
           narration: coalesce(row?.narration, row?.voice_over_script, row?.voice_over, row?.voiceover, row?.voice),
           description: coalesce(row?.description, row?.desc, row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
-          additional: coalesce(row?.additional, row?.additional_info, row?.notes, row?.extra, row?.additionalInformation)
+          additional: coalesce(row?.additional, row?.additional_info, row?.notes, row?.extra, row?.additionalInformation),
+          text_to_be_included: Array.isArray(row?.text_to_be_included)
+            ? row.text_to_be_included.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
+            : (typeof row?.text_to_include === 'string' && row.text_to_include.trim() ? [row.text_to_include.trim()] : [])
         };
       };
 
@@ -860,6 +865,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const currentRef = Array.isArray(scene?.ref_image) && scene.ref_image.length > 0 ? (scene.ref_image[0] || null) : null;
       setSelectedAvatar(currentRef || null);
     } catch (_) { /* noop */ }
+  }, [currentSceneIndex, scriptRows]);
+
+  // Reset text input buffer when switching scenes
+  useEffect(() => {
+    try {
+      const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+      const arr = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
+      setTextIncludeInput('');
+    } catch (_) { setTextIncludeInput(''); }
   }, [currentSceneIndex, scriptRows]);
 
   const openScriptModal = (script) => {
@@ -2248,6 +2262,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         timeline: r?.timeline ?? '',
         narration: r?.narration ?? '',
         desc: r?.description ?? '',
+        text_to_be_included: Array.isArray(r?.text_to_be_included)
+          ? r.text_to_be_included
+          : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
         ref_image: filterImageUrls(
           Array.isArray(r?.ref_image)
             ? r.ref_image
@@ -2368,6 +2385,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         timeline: r?.timeline ?? '',
         narration: r?.narration ?? '',
         desc: r?.description ?? '',
+        text_to_be_included: Array.isArray(r?.text_to_be_included)
+          ? r.text_to_be_included
+          : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
         ref_image: filterImageUrls(
           Array.isArray(r?.ref_image)
             ? r.ref_image
@@ -3099,22 +3119,73 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                      </div>
 
                      {/* Description Section */}
-                     <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                       <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
-                       {isEditingScene ? (
-                         <textarea
-                           value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].description || '' : ''}
-                           onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
-                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                           rows={4}
-                           placeholder="Enter scene description"
-                         />
-                       ) : (
-                         <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
-                           {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].description || '-') : '-'}
-                         </div>
-                       )}
-                     </div>
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
+                        {isEditingScene ? (
+                          <textarea
+                            value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].description || '' : ''}
+                            onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                            rows={4}
+                            placeholder="Enter scene description"
+                          />
+                        ) : (
+                          <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
+                            {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].description || '-') : '-'}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Text To Be Included */}
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <h4 className="text-lg font-semibold text-gray-800 mb-2">Text To Be Included</h4>
+                        {(() => {
+                          const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                          const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
+                          if (!isEditingScene) {
+                            return (
+                              <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
+                                {items.length ? items.join(', ') : '-'}
+                              </div>
+                            );
+                          }
+                          const removeAt = (idx) => {
+                            const copy = items.slice();
+                            copy.splice(idx,1);
+                            handleSceneUpdate(currentSceneIndex, 'text_to_be_included', copy);
+                          };
+                          const addItem = () => {
+                            const val = (textIncludeInput || '').trim();
+                            if (!val) return;
+                            const next = [...items, val];
+                            handleSceneUpdate(currentSceneIndex, 'text_to_be_included', next);
+                            setTextIncludeInput('');
+                          };
+                          return (
+                            <div>
+                              <div className="flex flex-wrap gap-2 mb-2">
+                                {items.map((t, i) => (
+                                  <span key={i} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm">
+                                    {t}
+                                    <button type="button" onClick={() => removeAt(i)} className="text-gray-500 hover:text-red-600">×</button>
+                                  </span>
+                                ))}
+                              </div>
+                              <input
+                                type="text"
+                                value={textIncludeInput}
+                                onChange={(e) => setTextIncludeInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                placeholder="Type text and press Enter to add"
+                              />
+                              <div className="mt-2 flex justify-end">
+                                <button type="button" onClick={addItem} className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-sm">Add</button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
 
                                            {/* Video Type Selection */}
                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
