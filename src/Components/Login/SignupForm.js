@@ -11,9 +11,10 @@ import {
   selectUserLoading, 
   selectUserError 
 } from '../../redux/slices/userSlice';
+import { loginUser } from '../../redux/slices/userSlice';
 
 const AUTH_BASE = 'https://auth-js-g3hnh7gbc4c5fje4.uaenorth-01.azurewebsites.net';
-const OAUTH_BASE = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+const OAUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
 
 const SignupForm = ({activeTab,setActiveTab}) => {
     const navigate = useNavigate();
@@ -83,8 +84,22 @@ const SignupForm = ({activeTab,setActiveTab}) => {
       }));
       
       if (signupUser.fulfilled.match(result)) {
-        toast.success('Account created successfully!');
-        navigate('/');
+        toast.success('Account created successfully! Logging you in…');
+        try {
+          const loginRes = await dispatch(loginUser({
+            email: formData.email,
+            password: formData.password
+          }));
+          if (loginUser.fulfilled.match(loginRes)) {
+            navigate('/onboarding');
+          } else {
+            toast.error('Auto-login failed. Please log in.');
+            navigate('/login');
+          }
+        } catch (_) {
+          toast.error('Auto-login failed. Please log in.');
+          navigate('/login');
+        }
       } else if (signupUser.rejected.match(result)) {
         // Error is already set in Redux state
         toast.error(result.payload || 'Signup failed');
@@ -94,6 +109,7 @@ const SignupForm = ({activeTab,setActiveTab}) => {
     const handleGoogleSignup = async () => {
       try {
         console.log('Initiating Google OAuth signup...');
+        try { localStorage.setItem('post_oauth_redirect', '/onboarding'); } catch (_) {}
         
         // Step 2: Frontend calls /v1/auth/init to get OAuth URL
         const response = await axios.post(`${OAUTH_BASE}/v1/auth/init`, {
@@ -125,6 +141,7 @@ const SignupForm = ({activeTab,setActiveTab}) => {
     const handleMicrosoftSignup = async () => {
       try {
         console.log('Initiating Microsoft OAuth signup...');
+        try { localStorage.setItem('post_oauth_redirect', '/onboarding'); } catch (_) {}
         
         // Step 2: Frontend calls /v1/auth/init to get OAuth URL
         const response = await axios.post(`${OAUTH_BASE}/v1/auth/init`, {

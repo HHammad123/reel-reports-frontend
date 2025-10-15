@@ -15,9 +15,12 @@ import Scenesettings from './pages/Scenesettings';
 import Subscription from './pages/Subscription';
 import Result from './pages/Result';
 import Details from './pages/Details';
+import Onboarding from './pages/Onboarding';
 import VideoGuidelines from './pages/VideoGuidelines';
 import MyMedia from './pages/MyMedia';
 import BuildReel from './pages/BuildReel';
+import ScenesImages from './pages/ScenesImages';
+import PriceGuidelines from './pages/PriceGuidelines';
 import OAuthCallback2 from './Components/OAuthCallback2';
 import ProtectedRoute from './Components/ProtectedRoute';
 import OAuthCallback from './Components/Login/OAuthCallback';
@@ -36,7 +39,7 @@ function App() {
        <Routes>
          {/* Public routes */}
          <Route path="/login" element={<Login/>} />
-         <Route path="/onboarding" element={<Details/>}/>
+         <Route path="/onboarding" element={<Onboarding/>}/>
    
        
     <Route path="/v1/auth/callback/:provider" element={<OAuthCallback />} />
@@ -106,6 +109,16 @@ function App() {
          <Route path="/media" element={
            <ProtectedRoute>
              <MyMedia />
+           </ProtectedRoute>
+         } />
+         <Route path="/price-guidelines" element={
+           <ProtectedRoute>
+             <PriceGuidelines />
+           </ProtectedRoute>
+         } />
+         <Route path="/scenes-images" element={
+           <ProtectedRoute>
+             <ScenesImages />
            </ProtectedRoute>
          } />
        </Routes>

@@ -100,6 +100,11 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
      try {
        const sessionId = localStorage.getItem('session_id');
        const token = localStorage.getItem('token');
+       // Try to resolve a real user id (prefer user meta over token fallback)
+       let userMetaLocal = {};
+       try { userMetaLocal = JSON.parse(localStorage.getItem('user') || '{}') || {}; } catch (_) {}
+       const storedUserId = localStorage.getItem('user_id');
+       const effectiveUserId = userMetaLocal?.id || storedUserId || token || '';
        const guidelinesRaw = localStorage.getItem('guidelines_payload');
        const guidelines = guidelinesRaw ? JSON.parse(guidelinesRaw) : null;
  
@@ -121,24 +126,19 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
        // Fetch current session data from API (do not create a new object)
        let sessionPayload = undefined;
        try {
-         const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+         const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ user_id: token, session_id: sessionId })
+           body: JSON.stringify({ user_id: effectiveUserId, session_id: sessionId })
          });
          if (resp.ok) {
            const sessionDataResponse = await resp.json();
            const sd = sessionDataResponse?.session_data || {};
-           // Map API session_data to expected payload keys without manufacturing defaults
+           // Prefer passing through the session object mostly as-is; ensure ids present
            sessionPayload = {
-             session_id: sessionId || '',
-             user_id: token || '',
-             content: sd.content,
-             document_summary: sd.document_summary,
-             videoduration: sd.video_duration?.toString?.(),
-             created_at: sd.created_at,
-             totalsummary: sd.total_summary,
-             messages: sd.messages
+             ...(typeof sd === 'object' ? sd : {}),
+             session_id: sd.session_id || sessionId || '',
+             user_id: sd.user_id || effectiveUserId || ''
            };
          } else {
            console.warn('Failed to load session data; status:', resp.status);
@@ -146,24 +146,79 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
        } catch (e) {
          console.error('Error fetching current session data:', e);
        }
- 
-       const requestPayload = {
-         session: sessionPayload || {},
-         video_length: 60,
-         video_tone: 'professional',
-         questionnaire_context,
-         is_followup: false,
-         user_query: ''
-       };
- 
-       console.log('Generate Script request:', requestPayload);
-       setIsGenerating(true);
+
+      // Derive video type from latest session data or localStorage
+      let qVideoType = 'hybrid';
+      try {
+        const sd = sessionPayload || {};
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      const scriptEndpoint = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/generate'
+        : 'scripts/hybrid/generate';
+
+      // Build full payload with user + session + questionnaire context
+      let userMeta = {};
+      try { userMeta = JSON.parse(localStorage.getItem('user') || '{}') || {}; } catch (_) { userMeta = {}; }
+      let brandAssets = {};
+      try {
+        const userId = token || '';
+        brandAssets = JSON.parse(localStorage.getItem(`brand_assets_analysis:${userId}`) || localStorage.getItem('brand_assets_analysis') || '{}') || {};
+      } catch (_) { brandAssets = {}; }
+      const bi = brandAssets?.brand_identity || {};
+      const tv = brandAssets?.tone_and_voice || {};
+      const lf = brandAssets?.look_and_feel || {};
+      const templatesArr = brandAssets?.template || brandAssets?.templates || [];
+      const voiceoverArr = brandAssets?.voiceover || brandAssets?.voiceovers || [];
+
+      const userPayload = {
+        id: userMeta?.id || effectiveUserId || '',
+        email: userMeta?.email || '',
+        display_name: userMeta?.display_name || userMeta?.name || '',
+        created_at: userMeta?.created_at || new Date().toISOString(),
+        avatar_url: userMeta?.avatar_url || '',
+        folder_url: brandAssets?.folder_url || '',
+        brand_identity: {
+          logo: bi?.logo || [],
+          fonts: bi?.fonts || [],
+          icons: bi?.icon || bi?.icons || [],
+          colors: bi?.colors || [],
+          spacing: bi?.spacing,
+          tagline: bi?.tagline
+        },
+        tone_and_voice: {
+          context: tv?.context || '',
+          brand_personality: tv?.brand_personality || [],
+          communication_style_pace: tv?.communication_style_pace || []
+        },
+        look_and_feel: {
+          iconography: lf?.iconography || [],
+          graphic_elements: lf?.graphic_elements || [],
+          aesthetic_consistency: lf?.aesthetic_consistency || []
+        },
+        templates: templatesArr,
+        voiceover: voiceoverArr
+      };
+
+      const fullPayload = {
+        user: userPayload,
+        session: (sessionPayload || {}),
+        video_length: Number((sessionPayload && sessionPayload.video_duration) ? sessionPayload.video_duration : 60),
+        video_tone: (sessionPayload && sessionPayload.video_tone) ? sessionPayload.video_tone : 'professional',
+        questionnaire_context,
+        is_followup: false,
+        user_query: ''
+      };
+
+      console.log('Generate Script request:', scriptEndpoint, fullPayload);
+      setIsGenerating(true);
       setProgress(0);
-       try {
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/generate', {
+      try {
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${scriptEndpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestPayload)
+          body: JSON.stringify(fullPayload)
         });
         if (!resp.ok || !resp.body) {
           throw new Error(`HTTP error! status: ${resp.status}`);

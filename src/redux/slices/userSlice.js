@@ -20,6 +20,15 @@ const clearAuthFromStorage = () => {
     localStorage.removeItem('user');
     localStorage.removeItem('token');
     localStorage.removeItem('isAuthenticated');
+    // Also clear any stored brand assets analysis for any user
+    try {
+      const keys = Object.keys(localStorage);
+      keys.forEach(k => {
+        if (k.startsWith('brand_assets_analysis:') || k.startsWith('last_analyzed_website:')) {
+          localStorage.removeItem(k);
+        }
+      });
+    } catch (_) { /* noop */ }
   } catch (error) {
     console.error('Error clearing auth data from localStorage:', error);
   }
@@ -130,7 +139,7 @@ export const handleOAuthCallback = createAsyncThunk(
   'user/oauthCallback',
   async ({ code, state, provider }, { rejectWithValue }) => {
     try {
-      const OAUTH_BASE = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+      const OAUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
       
       console.log(`Processing ${provider} OAuth callback with code:`, code);
       

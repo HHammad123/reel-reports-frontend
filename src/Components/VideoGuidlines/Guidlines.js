@@ -171,10 +171,18 @@ const Guidlines = () => {
       })
       const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/brand-assets', { method: 'POST', body: form })
       if (!resp.ok) throw new Error(`brand-assets upload failed: ${resp.status}`)
-      const getResp = await fetch(`https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/${encodeURIComponent(token)}/brand-assets`)
+      const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`)
       const assets = await getResp.json().catch(() => ({}))
       const voices = Array.isArray(assets?.voiceovers) ? assets.voiceovers : (assets?.voices || [])
       setBrandVoices(voices)
+      // Prefill fonts and colors from brand assets
+      try {
+        const bi = assets?.brand_identity || {}
+        const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
+        const colors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+        if (fonts.length) setSelectedFonts(fonts)
+        if (colors.length) setSelectedColors(new Set(colors))
+      } catch (_) { /* noop */ }
       try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch {}
       setPendingVoiceBlobs([])
       setPendingVoiceUrls([])
@@ -223,7 +231,7 @@ const Guidlines = () => {
     if (!token) return
     ;(async () => {
       try {
-        const resp = await fetch(`https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/${encodeURIComponent(token)}/brand-assets`)
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`)
         const assets = await resp.json().catch(() => ({}))
         const voices = Array.isArray(assets?.voiceovers)
           ? assets.voiceovers
@@ -231,14 +239,24 @@ const Guidlines = () => {
             ? assets.voiceover
             : (assets?.voices || []))
         setBrandVoices(voices)
-        const logos = Array.isArray(assets?.logos)
-          ? assets.logos
-          : (Array.isArray(assets?.logo)
-            ? assets.logo
-            : (Array.isArray(assets?.images)
-              ? assets.images.filter(it => typeof it === 'string' && /\.(png|jpe?g|svg|webp)$/i.test(it))
-              : []))
+        const logos = Array.isArray(assets?.brand_identity?.logo)
+          ? assets.brand_identity.logo
+          : (Array.isArray(assets?.logos)
+            ? assets.logos
+            : (Array.isArray(assets?.logo)
+              ? assets.logo
+              : (Array.isArray(assets?.images)
+                ? assets.images.filter(it => typeof it === 'string' && /\.(png|jpe?g|svg|webp)$/i.test(it))
+                : [])))
         setBrandLogos(logos)
+        // Prefill fonts and colors
+        try {
+          const bi = assets?.brand_identity || {}
+          const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
+          const colors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+          if (fonts.length) setSelectedFonts(fonts)
+          if (colors.length) setSelectedColors(new Set(colors))
+        } catch (_) { /* noop */ }
         try {
           const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean)
           localStorage.setItem('brand_voiceover_urls', JSON.stringify(urls))
@@ -594,7 +612,7 @@ const Guidlines = () => {
   const [descVoice, setDescVoice] = useState("");
 
   // Brand assets integration (voice save button flow)
-  const { uploadBrandAssets, getBrandAssets } = useBrandAssets();
+  const { uploadBrandAssets, getBrandAssets, uploadBrandFiles, updateBrandAssets, getBrandAssetsByUserId } = useBrandAssets();
   const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
   const [voiceFilesForUpload, setVoiceFilesForUpload] = useState([]);
   const [voiceSaveMsg, setVoiceSaveMsg] = useState('');
@@ -1004,12 +1022,39 @@ const Guidlines = () => {
                         if (!file) return;
                         try {
                           setIsLogoUploading(true);
-                          await uploadBrandAssets({ userId: token, files: { logos: [file] } });
-                          const refreshed = await getBrandAssets(token);
-                          const list = Array.isArray(refreshed?.logos) ? refreshed.logos : (Array.isArray(refreshed?.logo) ? refreshed.logo : []);
-                          setBrandLogos(list);
-                          const latest = list && list.length ? (typeof list[list.length-1] === 'string' ? list[list.length-1] : (list[list.length-1]?.url || '')) : '';
-                          if (latest) setSelectedLogoUrl(latest);
+                          // 1) Upload via upload-file
+                          await uploadBrandFiles({ userId: token, fileType: 'logo', files: [file] });
+                          // 2) GET full latest brand assets
+                          const latest = await getBrandAssetsByUserId(token);
+                          const current = latest || {};
+                          const bi = current?.brand_identity || {};
+                          const logosNow = Array.isArray(bi.logo) ? bi.logo : (Array.isArray(current?.logos) ? current.logos : (Array.isArray(current?.logo) ? current.logo : []));
+                          // 3) UPDATE full assets payload, ensuring logo includes any new URLs from GET
+                          const payload = {
+                            brand_identity: {
+                              fonts: bi.fonts || [],
+                              icon: bi.icon || bi.icons || [],
+                              colors: bi.colors || [],
+                              spacing: bi.spacing,
+                              tagline: bi.tagline,
+                              logo: logosNow || []
+                            },
+                            tone_and_voice: current?.tone_and_voice || {},
+                            look_and_feel: current?.look_and_feel || {},
+                            template: current?.template || current?.templates || [],
+                            voiceover: current?.voiceover || current?.voiceovers || []
+                          };
+                          await updateBrandAssets({ userId: token, payload });
+                          // 4) GET again and refresh UI list
+                          const finalAssets = await getBrandAssetsByUserId(token);
+                          const finalLogos = Array.isArray(finalAssets?.brand_identity?.logo)
+                            ? finalAssets.brand_identity.logo
+                            : (Array.isArray(finalAssets?.logos)
+                              ? finalAssets.logos
+                              : (Array.isArray(finalAssets?.logo) ? finalAssets.logo : []));
+                          setBrandLogos(finalLogos);
+                          const lastSel = finalLogos && finalLogos.length ? (typeof finalLogos[finalLogos.length-1] === 'string' ? finalLogos[finalLogos.length-1] : (finalLogos[finalLogos.length-1]?.url || '')) : '';
+                          if (lastSel) setSelectedLogoUrl(lastSel);
                         } catch (_) { /* noop */ }
                         finally { setIsLogoUploading(false); e.target.value=''; }
                       }} />

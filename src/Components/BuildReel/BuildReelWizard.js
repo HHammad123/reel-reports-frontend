@@ -3,6 +3,8 @@ import { FaPlus, FaAngleRight, FaEyeDropper } from 'react-icons/fa';
 import { HexColorPicker } from 'react-colorful';
 import useBrandAssets from '../../hooks/useBrandAssets';
 import { toast } from 'react-hot-toast';
+import ImageList from '../Scenes/ImageList';
+import VideosList from '../Scenes/VideosList';
 
 // Module-scope helpers so both StepOne (generate) and StepTwo can use them
 const getPerSceneDurationGlobal = (type) => (String(type).toLowerCase() === 'avatar based' ? 8 : 10);
@@ -55,6 +57,7 @@ const useScriptScenes = (initial = []) => {
         timeline: `${start} - ${end} seconds`,
         narration: s.narration || '',
         desc: s.description || '',
+        text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
         ref_image: Array.isArray(s.ref_image) ? s.ref_image.slice() : [],
         folderLink: s.folderLink || ''
       };
@@ -114,6 +117,7 @@ const mapResponseToScenes = (arr) => {
       title: r?.scene_title || '',
       description: r?.desc || r?.description || '',
       narration: r?.narration || '',
+      text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
       type,
       avatar: null,
       ref_image: Array.isArray(r?.ref_image) ? r.ref_image.slice() : [],
@@ -842,12 +846,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const imageFileInputRef = useRef(null);
   const [isUploadingSceneImage, setIsUploadingSceneImage] = useState(false);
+  const [textIncludeInput, setTextIncludeInput] = useState('');
 
   // Helpers to persist current scenes before enhance
   const scenes = useMemo(() => (Array.isArray(script) ? script.map((r) => ({
     title: r?.scene_title || '',
     description: r?.desc || r?.description || '',
     narration: r?.narration || '',
+    text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [],
     type: modelToType(r?.model),
     ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
     folderLink: r?.folderLink || ''
@@ -1151,6 +1157,49 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
               placeholder='Narration for this scene'
             />
           </div>
+          {/* Text To Be Included */}
+          <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+            <h4 className='text-lg font-semibold text-gray-800 mb-2'>Text To Be Included</h4>
+            {(() => {
+              const r = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+              const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
+              const removeAt = (idx) => {
+                const next = items.slice();
+                next.splice(idx,1);
+                updateScriptScene(activeIndex, { text_to_be_included: next });
+              };
+              const addItem = () => {
+                const val = (textIncludeInput || '').trim();
+                if (!val) return;
+                const next = [...items, val];
+                updateScriptScene(activeIndex, { text_to_be_included: next });
+                setTextIncludeInput('');
+              };
+              return (
+                <div>
+                  <div className='flex flex-wrap gap-2 mb-2'>
+                    {items.map((t,i) => (
+                      <span key={i} className='inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm'>
+                        {t}
+                        <button type='button' onClick={() => removeAt(i)} className='text-gray-500 hover:text-red-600'>×</button>
+                      </span>
+                    ))}
+                  </div>
+                  <input
+                    type='text'
+                    value={textIncludeInput}
+                    onChange={(e) => setTextIncludeInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+                    className='w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent'
+                    placeholder='Type text and press Enter to add'
+                  />
+                  <div className='mt-2 flex justify-end'>
+                    <button type='button' onClick={addItem} className='px-3 py-1.5 rounded-md bg-[#13008B] text-white text-sm'>Add</button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
           <div className='rounded-xl border p-4'>
             <div className='grid grid-cols-12 gap-4 items-start'>
               <div className='col-span-12 md:col-span-6'>
@@ -1248,6 +1297,14 @@ const BuildReelWizard = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false);
+  // Sub-flow: images and videos views similar to Home
+  const [subView, setSubView] = useState('editor'); // 'editor' | 'images' | 'videos'
+  const [imagesJobId, setImagesJobId] = useState('');
+  const [videosJobId, setVideosJobId] = useState('');
+  const [hasVideosAvailable, setHasVideosAvailable] = useState(false);
+  const [showVideoPopup, setShowVideoPopup] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+  const [showImagesPopup, setShowImagesPopup] = useState(false);
 
   const handleChange = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -1294,35 +1351,193 @@ const BuildReelWizard = () => {
       if (!saveResp.ok) throw new Error(`create-from-scratch(save) failed: ${saveResp.status} ${saveText}`);
       console.log('[BuildReel] create-from-scratch(save) response:', saveData);
 
-      // 2) Refresh session snapshot to pass to video generation
-      const getResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/get', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
+      // 2) Load current session snapshot (as per Home flow) and kick off images generation
+      const token = localStorage.getItem('token');
+      if (!token) throw new Error('Missing login token');
+      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
-      const getText = await getResp.text();
-      let sessionForGenerate; try { sessionForGenerate = JSON.parse(getText); } catch(_) { sessionForGenerate = getText; }
-      if (!getResp.ok) throw new Error(`sessions/get failed: ${getResp.status} ${getText}`);
-      console.log('[BuildReel] sessions/get response:', sessionForGenerate);
+      const sessText = await sessResp.text();
+      let sessionData; try { sessionData = JSON.parse(sessText); } catch (_) { sessionData = sessText; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
 
-      // 3) Call generate video using refreshed session (job-based)
-      const genResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionForGenerate)
+      // Build request body per /v1/images/generate schema
+      const sd = sessionData?.session_data || {};
+      const sessionForBody = {
+        id: sd.session_id || sessionId,
+        user_id: token,
+        created_at: sd.created_at || new Date().toISOString(),
+        updated_at: sd.updated_at || new Date().toISOString(),
+        content: sd.content || [],
+        summarydocument: sd.document_summary || [],
+        videoduration: String(sd.video_duration ?? 60),
+        totalsummary: sd.total_summary || [],
+        messages: Array.isArray(sd.messages) ? sd.messages : [],
+        scripts: [
+          {
+            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
+            airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
+            version: sd?.scripts?.[0]?.version || 'v1'
+          }
+        ],
+        videos: sd.videos || [],
+        additionalProp1: {}
+      };
+      const imgBody = { session: sessionForBody };
+      const imgResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/images/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(imgBody)
       });
-      const genText = await genResp.text();
-      let genData; try { genData = JSON.parse(genText); } catch(_) { genData = genText; }
-      if (!genResp.ok) throw new Error(`videos/generate failed: ${genResp.status} ${genText}`);
-      console.log('[BuildReel] videos/generate response:', genData);
-      const jobId = genData?.job_id || genData?.jobId || genData?.id;
-      try { if (jobId) localStorage.setItem('current_video_job_id', jobId); } catch(_){}
-      // 4) Show 5s popup then redirect to My Media where queueing/polling occurs
-      setShowShortGenPopup(true);
-      setTimeout(() => {
-        setShowShortGenPopup(false);
-        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
+      const imgText = await imgResp.text();
+      let imgData; try { imgData = JSON.parse(imgText); } catch (_) { imgData = imgText; }
+      if (!imgResp.ok) throw new Error(`images/generate failed: ${imgResp.status} ${imgText}`);
+
+      // Persist job response (job_id, status, status_url, scenes_to_process)
+      const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
+      if (jobId) {
+        try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
+        setImagesJobId(jobId);
+      }
+
+      // Show popup for 5s and then open Images list
+      setShowImagesPopup(true);
+      setTimeout(async () => {
+        setShowImagesPopup(false);
+        await sendUserSessionData();
+        setSubView('images');
       }, 5000);
     } catch (e) {
       console.error('Generate failed:', e);
       try { toast.error(e?.message || 'Failed to generate'); } catch(_) { alert(e?.message || 'Failed to generate'); }
     } finally { setIsGenerating(false); }
+  };
+
+  // Session helper used in sub-views
+  const sendUserSessionData = async () => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) return null;
+      const response = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const text = await response.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!response.ok) throw new Error(`user-session/data failed: ${response.status} ${text}`);
+      const sd = data?.session_data || {};
+      const vids = Array.isArray(sd?.videos) ? sd.videos : [];
+      setHasVideosAvailable(vids.length > 0);
+      return data;
+    } catch (_) { return null; }
+  };
+
+  // Generate videos from session images
+  const handleGenerateVideosFromImages = async () => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) { alert('Login expired'); return; }
+      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessResp.text();
+      let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+      const sd = sessData?.session_data || {};
+      const sessionForBody = {
+        id: sd.session_id || sessionId,
+        user_id: token,
+        title: sd.title || '',
+        video_duration: String(sd.video_duration ?? 60),
+        created_at: sd.created_at || new Date().toISOString(),
+        updated_at: sd.updated_at || new Date().toISOString(),
+        document_summary: sd.document_summary || [],
+        messages: Array.isArray(sd.messages) ? sd.messages : [],
+        total_summary: sd.total_summary || [],
+        scripts: [
+          {
+            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
+            airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
+            version: sd?.scripts?.[0]?.version || 'v1'
+          }
+        ],
+        videos: sd.videos || [],
+        images: Array.isArray(sd.images) ? sd.images : (sd.images || [])
+      };
+      const body = { session: sessionForBody };
+      const genResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/generate-from-session', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const genText = await genResp.text();
+      let genData; try { genData = JSON.parse(genText); } catch (_) { genData = genText; }
+      if (!genResp.ok) throw new Error(`videos/generate-from-session failed: ${genResp.status} ${genText}`);
+      const jobId = genData?.job_id || genData?.jobId || genData?.id;
+      if (jobId) {
+        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) {}
+        setVideosJobId(jobId);
+      }
+      setShowVideoPopup(true);
+      setTimeout(() => { setShowVideoPopup(false); setSubView('videos'); }, 5000);
+    } catch (e) {
+      alert(e?.message || 'Failed to start video generation');
+    }
+  };
+
+  // Merge final video (same as Home flow)
+  const handleGenerateFinalMerge = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const sessionId = localStorage.getItem('session_id');
+      if (!token || !sessionId) { alert('Missing login or session. Please sign in again.'); return; }
+      setIsMerging(true);
+      setShowVideoPopup(true);
+      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessionText = await sessionResp.text();
+      let sessionData; try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessionText}`);
+      const sd = sessionData?.session_data || {};
+      const sessionForBody = {
+        id: sd.session_id || sessionId,
+        user_id: token,
+        title: sd.title || sd.session_title || 'My Video',
+        videoduration: (sd.video_duration?.toString?.() || '60'),
+        created_at: sd.created_at || new Date().toISOString(),
+        updated_at: sd.updated_at || new Date().toISOString(),
+        document_summary: sd.document_summary || sd.summarydocument || [],
+        messages: sd.messages || [],
+        content: sd.content || [],
+        total_summary: sd.total_summary || [],
+        scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+        videos: sd.videos || [],
+        images: sd.images || [],
+      };
+      const body = { session: sessionForBody };
+      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/merge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`videos/merge failed: ${resp.status} ${text}`);
+      const jobId = data?.job_id || data?.jobId || data?.id;
+      const statusUrl = data?.status_url || null;
+      const status = data?.status || 'queued';
+      if (jobId) {
+        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { /* noop */ }
+        try { if (statusUrl) localStorage.setItem('current_video_job_status_url', statusUrl); } catch (_) { /* noop */ }
+        try { localStorage.setItem('current_video_job_type', 'merge'); } catch (_) { /* noop */ }
+        try { localStorage.setItem('job_status', status); } catch (_) { /* legacy */ }
+      }
+      setTimeout(() => {
+        setShowVideoPopup(false);
+        setIsMerging(false);
+        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
+      }, 5000);
+    } catch (e) {
+      setIsMerging(false);
+      setShowVideoPopup(false);
+      alert(e?.message || 'Failed to start video merge');
+    }
   };
 
   const createFromScratch = async () => {
@@ -1375,6 +1590,7 @@ const BuildReelWizard = () => {
         timeline: computeTimelineForIndex(mapped, i),
         narration: s.narration || '',
         desc: s.description || '',
+        text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
         ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
         folderLink: s.folderLink || ''
       })) }));
@@ -1396,12 +1612,39 @@ const BuildReelWizard = () => {
           onCreateScenes={createFromScratch}
         />
       ) : (
-        <StepTwo
-          values={form}
-          onBack={() => setStep(1)}
-          onSave={handleSaveScenes}
-          onGenerate={handleGenerate}
-        />
+        <>
+          {subView === 'editor' && (
+            <StepTwo
+              values={form}
+              onBack={() => setStep(1)}
+              onSave={handleSaveScenes}
+              onGenerate={handleGenerate}
+            />
+          )}
+          {subView === 'images' && (
+            <div className='bg-white rounded-lg w-full'>
+              <ImageList
+                jobId={imagesJobId}
+                hasVideos={hasVideosAvailable}
+                onGoToVideos={() => setSubView('videos')}
+                onClose={async () => { await sendUserSessionData(); setSubView('editor'); }}
+                onGenerateVideos={async () => { await handleGenerateVideosFromImages(); }}
+              />
+            </div>
+          )}
+          {subView === 'videos' && (
+            <div className='bg-white rounded-lg w-full'>
+              <div className='flex items-center justify-between p-4 border-b border-gray-200'>
+                <h3 className='text-lg font-semibold text-[#13008B]'>Videos</h3>
+                <div className='flex items-center gap-2'>
+                  <button onClick={async () => { await sendUserSessionData(); setSubView('images'); }} className='px-3 py-1.5 rounded-lg border text-sm'>Back</button>
+                  <button onClick={handleGenerateFinalMerge} className='px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800'>Generate Video</button>
+                </div>
+              </div>
+              <VideosList jobId={videosJobId} onClose={async () => { await sendUserSessionData(); setSubView('images'); }} />
+            </div>
+          )}
+        </>
       )}
       {showShortGenPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -1409,6 +1652,24 @@ const BuildReelWizard = () => {
             <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
             <h4 className="text-lg font-semibold text-gray-900">Generating Video…</h4>
             <p className="mt-1 text-sm text-gray-600">You’ll be redirected to My Media shortly.</p>
+          </div>
+        </div>
+      )}
+      {showVideoPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <h4 className="text-lg font-semibold text-gray-900">{isMerging ? 'Merging video…' : 'Generating Video…'}</h4>
+            <p className="mt-1 text-sm text-gray-600">{isMerging ? 'Redirecting to Media…' : 'Opening Videos list…'}</p>
+          </div>
+        </div>
+      )}
+      {showImagesPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <h4 className="text-lg font-semibold text-gray-900">Generating Images…</h4>
+            <p className="mt-1 text-sm text-gray-600">Opening Images list…</p>
           </div>
         </div>
       )}

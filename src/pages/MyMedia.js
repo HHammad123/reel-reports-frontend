@@ -43,6 +43,7 @@ const MyMedia = () => {
   const [library, setLibrary] = useState({ today: [], week: [], month: [], year: [] });
   const [isLoadingLib, setIsLoadingLib] = useState(false);
   const [libError, setLibError] = useState('');
+  const [showShortPopup, setShowShortPopup] = useState(false);
 
   // Initialize Redux job from localStorage if user hit this page via redirect
   useEffect(() => {
@@ -54,7 +55,7 @@ const MyMedia = () => {
     } catch (_) { /* noop */ }
   }, [videoJob?.jobId, dispatch]);
 
-  // Poll job status if jobId exists and not terminal (original behavior)
+  // Poll job status if jobId exists and not terminal (adjust to merge jobs when needed)
   useEffect(() => {
     if (!videoJob?.jobId) return;
     if (videoJob.status === 'succeeded' || videoJob.status === 'failed') return;
@@ -64,7 +65,16 @@ const MyMedia = () => {
     const startTime = Date.now();
     const poll = async () => {
       try {
-        const url = videoJob.statusUrl || `https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/jobs/${encodeURIComponent(videoJob.jobId)}`;
+        let url = videoJob.statusUrl;
+        if (!url) {
+          const jobType = (() => { try { return localStorage.getItem('current_video_job_type'); } catch (_) { return null; } })();
+          const base = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+          if (jobType === 'merge') {
+            url = `${base}/v1/jobs/merge/${encodeURIComponent(videoJob.jobId)}`;
+          } else {
+            url = `${base}/v1/jobs/${encodeURIComponent(videoJob.jobId)}`;
+          }
+        }
         const resp = await fetch(url);
         const text = await resp.text();
         let data; try { data = JSON.parse(text); } catch (_) { data = text; }
@@ -91,6 +101,75 @@ const MyMedia = () => {
     poll();
     return () => { cancelled = true; };
   }, [videoJob?.jobId, videoJob?.status, videoJob?.statusUrl, dispatch]);
+
+  // Trigger video generation (merge) from media page
+  const handleGenerateVideoMerge = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const sessionId = localStorage.getItem('session_id');
+      if (!token || !sessionId) { alert('Missing login or session. Please sign in again.'); return; }
+
+      // Fetch full session data first
+      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessionText = await sessionResp.text();
+      let sessionData; try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessionText}`);
+      const sd = sessionData?.session_data || {};
+
+      // Build session payload expected by merge API
+      const sessionForBody = {
+        id: sd.session_id || sessionId,
+        user_id: token,
+        title: sd.title || sd.session_title || 'My Video',
+        videoduration: (sd.video_duration?.toString?.() || '60'),
+        created_at: sd.created_at || new Date().toISOString(),
+        updated_at: sd.updated_at || new Date().toISOString(),
+        document_summary: sd.document_summary || sd.summarydocument || [],
+        messages: sd.messages || [],
+        content: sd.content || [],
+        total_summary: sd.total_summary || [],
+        scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+        videos: sd.videos || [],
+        images: sd.images || [],
+      };
+
+      const body = { session: sessionForBody };
+      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/merge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`videos/merge failed: ${resp.status} ${text}`);
+
+      const jobId = data?.job_id || data?.jobId || data?.id;
+      let statusUrl = data?.status_url || null;
+      try {
+        if (statusUrl) {
+          const u = new URL(statusUrl);
+          if (u.protocol === 'http:') u.protocol = 'https:';
+          statusUrl = u.toString();
+        }
+      } catch (_) { /* keep raw */ }
+      const status = data?.status || 'queued';
+      if (jobId) {
+        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { /* noop */ }
+        try { if (statusUrl) localStorage.setItem('current_video_job_status_url', statusUrl); } catch (_) { /* noop */ }
+        try { localStorage.setItem('current_video_job_type', 'merge'); } catch (_) { /* noop */ }
+        try { dispatch(setJob({ jobId, status, statusUrl })); } catch (_) { /* noop */ }
+      }
+
+      // Show 5s popup then redirect to media (this page reload)
+      setShowShortPopup(true);
+      setTimeout(() => {
+        setShowShortPopup(false);
+        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
+      }, 5000);
+    } catch (e) {
+      alert(e?.message || 'Failed to start video merge');
+    }
+  };
 
   const data = useMemo(() => ({
     today: library.today || [],
@@ -154,6 +233,7 @@ const MyMedia = () => {
               <div className="flex items-center gap-2 text-gray-700"><SlidersHorizontal className="w-4 h-4" /></div>
               <button onClick={() => setSortMode('type')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode==='type' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by File Type</button>
               <button onClick={() => setSortMode('timeline')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode==='timeline' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by Timeline</button>
+              {/* Generate button moved to Home Videos section */}
             </div>
 
             {/* In-progress video card at top if a job exists */}
@@ -191,6 +271,16 @@ const MyMedia = () => {
           </div>
         </div>
       </div>
+
+      {showShortPopup && (
+        <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/50'>
+          <div className='bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center'>
+            <div className='mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin' />
+            <h4 className='text-lg font-semibold text-gray-900'>Generating your video…</h4>
+            <p className='mt-1 text-sm text-gray-600'>We’ll redirect you to Media shortly.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

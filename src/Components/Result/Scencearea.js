@@ -41,7 +41,8 @@ const Scencearea = ({scenes}) => {
   const closeMenu = () => setMenuFor(null)
   const [transitionMenuFor, setTransitionMenuFor] = useState(null) // between index
   console.log('scenes', scenes);
-  const scenevideos = scenes?.map((scene) => scene?.blobLink?.videoLink);
+  // Use blob storage video_link for each scene video
+  const scenevideos = scenes?.map((scene) => scene?.blobLink?.video_link || scene?.blobLink?.videoLink || scene?.video_link || '');
   console.log('scenevideos', scenevideos);
   const [aspectRatios, setAspectRatios] = useState({});
   const [hoverIndex, setHoverIndex] = useState(null);

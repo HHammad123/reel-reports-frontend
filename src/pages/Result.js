@@ -39,7 +39,9 @@ const Result = () => {
           let data; try { data = JSON.parse(text); } catch (_) { data = text; }
           if (!resp.ok) throw new Error(`users/videos/get failed: ${resp.status} ${text}`);
           const v = data?.video || {};
-          setResultVideo(v?.final_video_url || v?.result_url || '');
+          console.log(data?.final_link)
+          // Use final_link for the main top video per new requirement
+          setResultVideo(data?.final_link || data?.v?.finalVideoUrl || data?.v?.final_video_url || data?.v?.result_url || '');
           setScenes(Array.isArray(v?.scenes) ? v.scenes : []);
           return;
         }

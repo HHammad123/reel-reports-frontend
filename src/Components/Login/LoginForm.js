@@ -18,7 +18,7 @@ import {
 } from '../../redux/slices/userSlice';
 
 const AUTH_BASE = 'https://jsauth-dfbpgpdmgughg6aj.centralindia-01.azurewebsites.net';
-const OAUTH_BASE = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+const OAUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
 
 const LoginForm = ({activeTab,setActiveTab}) => {
     const navigate = useNavigate();

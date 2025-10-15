@@ -40,9 +40,18 @@ const OAuthCallback = () => {
                     
                     toast.success(`Successfully logged in with ${provider}!`);
                     
+                    // Decide post-auth redirect
+                    let target = '/';
+                    try {
+                      const preferred = localStorage.getItem('post_oauth_redirect');
+                      if (preferred) {
+                        target = preferred;
+                        localStorage.removeItem('post_oauth_redirect');
+                      }
+                    } catch (_) {}
                     // Clean URL and redirect
-                    window.history.replaceState({}, document.title, '/');
-                    navigate('/');
+                    window.history.replaceState({}, document.title, target);
+                    navigate(target);
                 } else {
                     toast.error('OAuth login failed - missing credentials');
                     navigate('/login');

@@ -1,7 +1,7 @@
 import React from 'react'
 import { useCallback, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { FaImage, FaPlay, FaThLarge } from "react-icons/fa";
+import { FaImage, FaPlay, FaThLarge, FaDollarSign } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
@@ -37,7 +37,7 @@ const Sidebar = () => {
           return;
         }
         const body = { user_id: token };
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/sessions', {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/v1/users/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -99,7 +99,7 @@ const Sidebar = () => {
           }
         }
       } catch (_) { /* noop */ }
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: token })
@@ -125,7 +125,7 @@ const Sidebar = () => {
         navigate('/login');
         return;
       }
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: token })
@@ -205,10 +205,17 @@ const Sidebar = () => {
       </button>
       <button
         onClick={() => navigate('/media')}
-        className="w-full bg-opacity-70 rounded-lg p-4 flex items-center gap-3 text-left hover:bg-opacity-90 transition-colors"
+        className={( splitLocation[1] === "media") ? activeClass : inactiveClass}
       >
         <FaImage className="w-5 h-5" />
         <span className="font-medium">My Media</span>
+      </button>
+      <button
+        onClick={() => navigate('/price-guidelines')}
+        className={( splitLocation[1] === "price-guidelines") ? activeClass : inactiveClass}
+      >
+        <FaDollarSign className="w-5 h-5" />
+        <span className="font-medium">Price Guidelines</span>
       </button>
     </div>
   </div>

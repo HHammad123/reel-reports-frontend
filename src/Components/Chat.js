@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom';
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
 
-const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false }) => {
+const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [thinkingMessageId, setThinkingMessageId] = useState(null);
@@ -19,7 +19,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [isGeneratingQuestionnaire, setIsGeneratingQuestionnaire] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
-  const [showShortGenPopup, setShowShortGenPopup] = useState(false);
+  const [showShortGenPopup, setShowShortGenPopup] = useState(false); // no longer used for images
+  // Scenes Images overlay state
+  const [showImagesOverlay, setShowImagesOverlay] = useState(false);
+  const [imagesJobId, setImagesJobId] = useState('');
   const dispatch = useDispatch();
   const [videoCountdown, setVideoCountdown] = useState(0);
   const fileInputRef = useRef(null);
@@ -84,11 +87,17 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenQuery, setRegenQuery] = useState('');
   const [regenModel, setRegenModel] = useState('VEO3'); // 'VEO3' | 'SORA'
+  const [isRegenerating, setIsRegenerating] = useState(false);
   // Only show 5 scene tabs at a time without scroll
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
   const [refImageUrlInput, setRefImageUrlInput] = useState('');
   // Multiple selection of ref images by URL
   const [selectedRefImages, setSelectedRefImages] = useState([]);
+  // Templates modal + state
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const [brandTemplates, setBrandTemplates] = useState([]);
+  const [useDefaultTemplate, setUseDefaultTemplate] = useState(true);
+  const templateFileInputRef = useRef(null);
   // Lightbox for zooming a reference image fullscreen
   const [isImageLightboxOpen, setIsImageLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState('');
@@ -179,7 +188,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       throw new Error('Missing folder_url or user_id for image upload');
     }
     for (const f of files) form.append('files', f);
-    const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/images/upload';
+    const endpoint = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/images/upload';
     const resp = await fetch(endpoint, { method: 'POST', body: form });
     const text = await resp.text();
     let data; try { data = JSON.parse(text); } catch (_) { data = text; }
@@ -288,7 +297,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const sessionPayload = { session_id: sessionId };
       console.log('sessions/get request payload:', sessionPayload);
 
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/get', {
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/get', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sessionPayload)
@@ -426,7 +435,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       })();
       console.log('videos/generate request payload:', videoGenRequest);
 
-      const videoResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/generate', {
+      const videoResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(videoGenRequest)
@@ -443,7 +452,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Hit jobs endpoint with the job_id and poll until success
       const jobId = videoData?.job_id;
       if (jobId) {
-        const jobsBase = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1';
+        const jobsBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1';
         const jobsRequest = { job_id: jobId };
         console.log('jobs request payload:', jobsRequest);
 
@@ -502,107 +511,137 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
   // Note: triggerVideoGenerationFromSession is invoked on button click only
 
-  // New: Job-based video generation starter with 5s popup then redirect
-  const generateVideoJobAndRedirect = React.useCallback(async () => {
+  // New: Generate Scenes Images job flow
+  const triggerGenerateScenes = React.useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
       const sessionId = localStorage.getItem('session_id');
       if (!token || !sessionId) throw new Error('Missing user token or session_id');
 
-      // Build SAME request as earlier legacy flow
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/get', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
+      // 1) Fetch session data snapshot to pass to images/generate
+      const sessionReqBody = { user_id: token, session_id: sessionId };
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
       });
-      if (!sessionResp.ok) {
-        const text = await sessionResp.text();
-        throw new Error(`sessions/get failed: ${sessionResp.status} ${text}`);
-      }
-      const sessionData = await sessionResp.json();
-      const videoGenRequest = (() => {
-        try {
-          const req = JSON.parse(JSON.stringify(sessionData));
-          const rows = Array.isArray(scriptRows) ? scriptRows : [];
-          const refMap = new Map();
-          for (const r of rows) {
-            const sn = r?.scene_number; if (sn == null) continue;
-            const imgs = Array.isArray(r?.ref_image) ? r.ref_image.filter(Boolean) : [];
-            refMap.set(sn, imgs.slice(0, 3));
-          }
-          try {
-            const persisted = readSceneRefMap();
-            Object.keys(persisted || {}).forEach(k => {
-              const sn = Number(k);
-              if (!Number.isNaN(sn)) {
-                const imgs = filterImageUrls(persisted[k]).slice(0, 3);
-                if (imgs.length > 0) refMap.set(sn, imgs);
-              }
-            });
-          } catch (_) { /* noop */ }
-          const setRefsOnScene = (scene, indexHint) => {
-            try {
-              const sn = scene?.scene_number ?? (typeof indexHint === 'number' ? indexHint + 1 : undefined);
-              if (sn == null || !refMap.has(sn)) return scene;
-              const out = { ...(scene || {}) };
-              out.ref_image = refMap.get(sn) || [];
-              if ('ref_images' in out) delete out.ref_images;
-              if ('reference_image' in out) delete out.reference_image;
-              if ('reference_images' in out) delete out.reference_images;
-              return out;
-            } catch (_) { return scene; }
-          };
-          const looksLikeScene = (obj) => obj && typeof obj === 'object' && !Array.isArray(obj) && (
-            'scene_number' in obj || 'scene_title' in obj || 'narration' in obj || 'desc' in obj || 'description' in obj
-          );
-          const applyToScenesArray = (arr) => {
-            if (!Array.isArray(arr)) return false;
-            for (let i = 0; i < arr.length; i++) { const sc = arr[i]; if (looksLikeScene(sc)) arr[i] = setRefsOnScene(sc, i); }
-            return true;
-          };
-          const visit = (node) => {
-            if (!node) return; if (Array.isArray(node)) { applyToScenesArray(node); node.forEach(visit); return; }
-            if (typeof node === 'object') { Object.values(node).forEach(v => { if (Array.isArray(v)) applyToScenesArray(v); visit(v); }); }
-          };
-          const candidates = [req?.session_data?.scripts, req?.session?.scripts, req?.scripts].filter(Boolean);
-          let applied = false;
-          for (const scriptsArr of candidates) {
-            if (Array.isArray(scriptsArr) && scriptsArr.length > 0) {
-              const first = scriptsArr[0];
-              if (Array.isArray(first?.airesponse)) { applyToScenesArray(first.airesponse); applied = true; }
-              else if (Array.isArray(first)) { applyToScenesArray(first); applied = true; }
-            }
-          }
-          if (!applied) {
-            if (Array.isArray(req?.airesponse)) applyToScenesArray(req.airesponse);
-            if (Array.isArray(req?.assistant_message?.airesponse)) applyToScenesArray(req.assistant_message.airesponse);
-          }
-          return req;
-        } catch (_) { return sessionData; }
-      })();
+      const sessText = await sessResp.text();
+      let sessionData; try { sessionData = JSON.parse(sessText); } catch (_) { sessionData = sessText; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
 
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(videoGenRequest)
+      // 2) Build request body per images/generate schema using session_data
+      const sd = sessionData?.session_data || {};
+      const sessionForBody = {
+        id: sd.session_id || sessionId,
+        user_id: token,
+        created_at: sd.created_at || new Date().toISOString(),
+        updated_at: sd.updated_at || new Date().toISOString(),
+        content: sd.content || [],
+        summarydocument: sd.document_summary || [],
+        videoduration: String(sd.video_duration ?? 60),
+        totalsummary: sd.total_summary || [],
+        messages: Array.isArray(sd.messages) ? sd.messages : [],
+        scripts: [
+          {
+            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
+            airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
+            version: sd?.scripts?.[0]?.version || 'v1'
+          }
+        ],
+        videos: sd.videos || [],
+        additionalProp1: {}
+      };
+      const imgBody = { session: sessionForBody };
+      // 3) Kick off images generation job
+      const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/images/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(imgBody)
       });
-      const text = await resp.text();
-      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-      if (!resp.ok) throw new Error(`videos/generate failed: ${resp.status} ${text}`);
-      const jobId = data?.job_id || data?.jobId || data?.id;
-      const statusUrl = data?.status_url || null;
-      const status = data?.status || 'queued';
+      const imgText = await imgResp.text();
+      let imgData; try { imgData = JSON.parse(imgText); } catch (_) { imgData = imgText; }
+      if (!imgResp.ok) throw new Error(`images/generate failed: ${imgResp.status} ${imgText}`);
+
+      // 4) Persist job id and redirect after a short popup
+      const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
       if (jobId) {
-        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { /* noop */ }
-        try { dispatch(setJob({ jobId, status, statusUrl })); } catch (_) { /* noop */ }
+        try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
+        setImagesJobId(jobId);
       }
-      // Show 5s popup then redirect to media page
-      setShowShortGenPopup(true);
-      setTimeout(() => {
-        setShowShortGenPopup(false);
-        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
-      }, 5000);
+      // Prefer parent-controlled images view if provided; otherwise fallback to inline
+      if (typeof onOpenImagesList === 'function') {
+        onOpenImagesList(jobId);
+      } else {
+        setShowImagesOverlay(true);
+      }
     } catch (e) {
-      console.error('Failed to start video generation job:', e);
-      alert('Failed to start video generation. Please try again.');
+      console.error('Failed to start scenes images generation:', e);
+      alert(e?.message || 'Failed to start image generation');
     }
-  }, []);
+  }, [scriptRows]);
+
+  // Inline component to render images for a job
+  const ImageList = ({ jobId, inline = false }) => {
+    const [rows, setRows] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState('');
+    useEffect(() => {
+      const fetchOnce = async () => {
+        try {
+          setIsLoading(true); setError('');
+          const id = jobId || localStorage.getItem('current_images_job_id');
+          if (!id) { setError('Missing job id'); setIsLoading(false); return; }
+          const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/jobs/images/${encodeURIComponent(id)}`);
+          const text = await resp.text();
+          let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+          if (!resp.ok) throw new Error(`jobs/images failed: ${resp.status} ${text}`);
+          const container = Array.isArray(data) ? data[0] : data;
+          const scenes = Array.isArray(container?.scenes) ? container.scenes : [];
+          const mapped = scenes.map((s) => ({
+            scene_number: s?.scene_number,
+            scene_title: s?.scene_title,
+            refs: [s?.image_1_url, s?.image_2_url].filter(Boolean)
+          }));
+          setRows(mapped);
+        } catch (e) { setError(e?.message || 'Failed to load images'); }
+        finally { setIsLoading(false); }
+      };
+      fetchOnce();
+    }, [jobId]);
+    return (
+      <div className={inline ? 'bg-white rounded-lg shadow-sm flex-1 flex flex-col' : 'fixed inset-0 z-[60] flex items-center justify-center bg-black/50'}>
+        <div className={inline ? 'flex-1 flex flex-col' : 'bg-white w-[95%] max-w-6xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col'}>
+          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-[#13008B]">Scenes • Images</h3>
+            {!inline && (<button onClick={() => setShowImagesOverlay(false)} className="px-3 py-1.5 rounded-lg border text-sm">Close</button>)}
+          </div>
+          <div className={inline ? 'p-4 overflow-y-auto flex-1' : 'p-4 overflow-y-auto'}>
+            {isLoading && (<div className="text-sm text-gray-600">Loading images…</div>)}
+            {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)}
+            <div className="grid grid-cols-1 gap-4">
+              {rows.length === 0 && !isLoading && !error && (
+                <div className="text-sm text-gray-600">No images available yet.</div>
+              )}
+              {rows.map((r, i) => (
+                <div key={i} className="border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <div className="text-sm text-gray-500">Scene {r.scene_number}</div>
+                      <div className="text-lg font-semibold">{r.scene_title || 'Untitled'}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {r.refs.length === 0 && (<div className="col-span-2 text-sm text-gray-500">No images for this scene.</div>)}
+                    {r.refs.map((u, k) => (
+                      <div key={k} className="w-full aspect-video rounded-lg border overflow-hidden bg-black">
+                        <img src={u} alt={`scene-${r.scene_number}-${k}`} className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Listen for script-generated events (from DynamicQuestion)
   React.useEffect(() => {
@@ -939,6 +978,14 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     setShowReorderTable(false);
   };
 
+  // If rendering Scenes inline (Home page section), open when initialScenes provided
+  useEffect(() => {
+    if (scenesMode && initialScenes) {
+      try { openScriptModal(initialScenes); } catch (_) { /* noop */ }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenesMode, initialScenes]);
+
   // Apply script response container from undo/redo
   const applyScriptContainer = (container, meta = {}) => {
     try {
@@ -959,7 +1006,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     try {
       const sessionId = localStorage.getItem('session_id');
       if (!sessionId) return;
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/undo', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/undo', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
       });
       const text = await resp.text();
@@ -977,7 +1024,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     try {
       const sessionId = localStorage.getItem('session_id');
       if (!sessionId) return;
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
       });
       const text = await resp.text();
@@ -994,14 +1041,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Regenerate current scene based on user query and model
   const handleRegenerateScene = async () => {
     try {
+      setIsRegenerating(true);
       if (!Array.isArray(scriptRows) || scriptRows.length === 0) return;
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
       if (!sessionId || !token) throw new Error('Missing session_id or token');
 
-      // Load session snapshot for request body
+      // 1) Load session snapshot for request body
       const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
       });
       if (!sessionResp.ok) {
@@ -1009,35 +1057,50 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
       }
       const sessionDataResponse = await sessionResp.json();
-      const sd = sessionDataResponse?.session_data || {};
+      const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
+      // 2) Resolve video type to select endpoint
+      let qVideoType = 'hybrid';
+      try {
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      const regenPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/regenerate-scene'
+        : 'scripts/hybrid/regenerate-scene';
+
+      // 3) Build session + user objects exactly per session snapshot shape
       const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        content: sd.content,
-        document_summary: sd.document_summary,
-        videoduration: sd.video_duration?.toString?.(),
-        created_at: sd.created_at,
-        totalsummary: sd.total_summary,
-        messages: sd.messages,
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
-        videos: sd.videos,
+        ...(sd || {}),
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
       };
+      let userForBody;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userForBody = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userForBody = sd.user_data;
+      } else if (sd && typeof sd.user === 'object') {
+        userForBody = sd.user;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
 
       const cur = scriptRows[currentSceneIndex];
       const sceneNumber = cur?.scene_number ?? (currentSceneIndex + 1);
       const body = {
+        user: userForBody,
         session: sessionForBody,
         scene_number: sceneNumber,
         user_query: regenQuery || '',
         model: regenModel,
       };
 
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/regenerate-scene', {
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${regenPath}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-      if (!resp.ok) throw new Error(`scripts/regenerate-scene failed: ${resp.status} ${text}`);
+      if (!resp.ok) throw new Error(`${regenPath} failed: ${resp.status} ${text}`);
 
       const container = data?.script ? { script: data.script } : data;
       try {
@@ -1057,7 +1120,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     } catch (e) {
       console.error('Regenerate scene failed:', e);
       alert('Failed to regenerate scene. Please try again.');
-    }
+    } finally { setIsRegenerating(false); }
   };
 
   // Delete current scene
@@ -1070,9 +1133,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const token = localStorage.getItem('token');
       if (!sessionId || !token) throw new Error('Missing session_id or token');
 
-      // Load session snapshot for request body parity
+      // 1) Load session snapshot (source of truth for delete payload)
       const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
       });
       if (!sessionResp.ok) {
@@ -1081,29 +1144,51 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }
       const sessionDataResponse = await sessionResp.json();
       const sd = sessionDataResponse?.session_data || {};
-      const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        content: sd.content,
-        document_summary: sd.document_summary,
-        videoduration: sd.video_duration?.toString?.(),
-        created_at: sd.created_at,
-        totalsummary: sd.total_summary,
-        messages: sd.messages,
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
-      };
 
       // Current scene number
       const cur = scriptRows[currentSceneIndex];
       const sceneNumber = cur?.scene_number ?? (currentSceneIndex + 1);
 
-      const body = { session: sessionForBody, scene_number: sceneNumber };
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/delete-scene', {
+      // 2) Resolve video type from session or local cache to choose endpoint
+      let qVideoType = 'hybrid';
+      try {
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      // If infographic → use infographic endpoint; otherwise default to hybrid
+      const deleteEndpointPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/delete-scene'
+        : 'scripts/hybrid/delete-scene';
+
+      // 3) Build user payload EXACTLY from user-session-data.user_data
+      //    Do not reshape; use as-is. If absent, stop with a clear error.
+      let userPayload = undefined;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userPayload = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userPayload = sd.user_data;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
+
+      // 4) Build delete payload with { user, session, scene_number }
+      //    - Map session_data -> session
+      //    - Do NOT include user_data/session_data at the top-level
+      //    - Include scene_number as a top-level field per requirement
+      const sessionForBody = {
+        ...(sd || {}),
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
+      };
+      const body = { user: userPayload, session: sessionForBody, scene_number: sceneNumber };
+      try { console.log('[delete-scene] endpoint:', deleteEndpointPath, 'body:', body); } catch (_) { /* noop */ }
+      // 5) Call specific delete endpoint based on video type
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${deleteEndpointPath}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-      if (!resp.ok) throw new Error(`scripts/delete-scene failed: ${resp.status} ${text}`);
+      if (!resp.ok) throw new Error(`${deleteEndpointPath} failed: ${resp.status} ${text}`);
 
       const container = data?.script ? { script: data.script } : data;
       try {
@@ -1150,7 +1235,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       setIsAddingScene(true);
       // 1) Fetch session snapshot
       const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
       });
       if (!sessResp.ok) {
@@ -1158,20 +1243,24 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         throw new Error(`user-session/data failed: ${sessResp.status} ${t}`);
       }
       const sessionDataResponse = await sessResp.json();
-      const sd = sessionDataResponse?.session_data || {};
+      const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
+      // Build session object directly from snapshot (ensure ids present)
       const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        title: sd.title ?? null,
-        video_duration: sd.video_duration,
-        created_at: sd.created_at,
-        updated_at: sd.updated_at,
-        document_summary: sd.document_summary,
-        content: sd.content,
-        total_summary: sd.total_summary,
-        messages: sd.messages,
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
+        ...(sd || {}),
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
       };
+      // Build exact user object from user-session-data
+      let userForBody;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userForBody = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userForBody = sd.user_data;
+      } else if (sd && typeof sd.user === 'object') {
+        userForBody = sd.user;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
 
       // 2) Build add-scene request per newsceneadditionip.json
       const desiredModel = newSceneVideoType === 'Avatar Based' ? 'VEO3' : 'SORA';
@@ -1180,20 +1269,30 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Backend expects a 0-based position (after this index). Between scene 2 and 3 -> 2.
       const insertPosition = idx;
       const requestBody = {
+        user: userForBody,
         session: sessionForBody,
         insert_position: insertPosition,
-        model_type: desiredModel,
         scene_content: newSceneDescription,
+        model_type: desiredModel,
       };
       console.log('scripts/add-scene request body:', requestBody);
 
-      // 3) Call add-scene API
-      const addResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/add-scene', {
+      // 3) Choose add-scene endpoint by video type
+      let qVideoType = 'hybrid';
+      try {
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      const addPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/add-scene'
+        : 'scripts/hybrid/add-scene';
+
+      const addResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${addPath}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
       const addText = await addResp.text();
       let addData; try { addData = JSON.parse(addText); } catch (_) { addData = addText; }
-      if (!addResp.ok) throw new Error(`scripts/add-scene failed: ${addResp.status} ${addText}`);
+      if (!addResp.ok) throw new Error(`${addPath} failed: ${addResp.status} ${addText}`);
       console.log('scripts/add-scene response:', addData);
 
       // 4) Update UI with response (reorderescriptop-style)
@@ -1269,7 +1368,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Fetch current session data (do not fabricate)
       let sessionPayload = {};
       try {
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: token, session_id: sessionId })
@@ -1299,7 +1398,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         user_query: lastUserMessage
       };
 
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/generate', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestPayload)
@@ -1421,7 +1520,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           extractFormData.append('session_id', sessionId);
 
           console.log('Calling extract API for file:', file.name);
-          const extractResponse = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/documents/extract', {
+          const extractResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/hybrid_infographis_extract', {
             method: 'POST',
             body: extractFormData
           });
@@ -1502,7 +1601,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         console.log('Calling summary API for file:', file.name);
         console.log('Summary API Request Body:', requestBody);
         
-        const summaryResponse = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/documents/summary', {
+        const summaryResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/hybrid_infographics_summary', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1524,7 +1623,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           if (sessionId && userId && typeof window !== 'undefined') {
             const key = `session_title_updated:${sessionId}`;
             if (localStorage.getItem(key) !== 'true') {
-              const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/title', {
+              const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/title', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sessionId, user_id: userId })
@@ -1645,7 +1744,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
         console.log('Calling summary API for ALL files. Request Body:', requestBody);
 
-        const summaryResponse = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/documents/summary', {
+        const summaryResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/hybrid_infographics_summary', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1667,7 +1766,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           if (sessionIdAll && userIdAll && typeof window !== 'undefined') {
             const key = `session_title_updated:${sessionIdAll}`;
             if (localStorage.getItem(key) !== 'true') {
-              const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/title', {
+              const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/title', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sessionIdAll, user_id: userIdAll })
@@ -2131,7 +2230,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const token = localStorage.getItem('token');
       if (!sessionId || !token) throw new Error('Missing session_id or token');
       const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
       });
       if (!sessionResp.ok) {
@@ -2163,7 +2262,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       console.log('scripts/switch-model request body:', requestBody);
 
       // 3) Call switch-model API
-      const switchResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/switch-model', {
+      const switchResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/switch-model', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
       const switchText = await switchResp.text();
@@ -2230,7 +2329,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // 1) Load current session data
       const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessionResp = await fetch(
-        'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data',
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data',
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody) }
       );
       if (!sessionResp.ok) {
@@ -2238,18 +2337,25 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
       }
       const sessionDataResponse = await sessionResp.json();
-      const sd = sessionDataResponse?.session_data || {};
+      const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
+      // Build session object exactly from session snapshot shape (mapped to `session`)
       const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        content: sd.content,
-        document_summary: sd.document_summary,
-        videoduration: sd.video_duration?.toString?.(),
-        created_at: sd.created_at,
-        totalsummary: sd.total_summary,
-        messages: sd.messages,
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
+        ...(sd || {}),
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
       };
+
+      // Use exact user object from user-session-data
+      let userForBody = undefined;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userForBody = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userForBody = sd.user_data;
+      } else if (sd && typeof sd.user === 'object') {
+        userForBody = sd.user;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
 
       const originalUserquery = Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [];
 
@@ -2276,6 +2382,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }));
 
       const requestBody = {
+        user: userForBody,
         session: sessionForBody,
         changed_script: {
           userquery: originalUserquery,
@@ -2284,9 +2391,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       };
       console.log('scripts/update-text request body:', requestBody);
 
-      // 3) Call update-text API
+      // 3) Choose endpoint based on video type
+      let qVideoType = 'hybrid';
+      try {
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      const updatePath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/update-text'
+        : 'scripts/hybrid/update-text';
+
       const updateResp = await fetch(
-        'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/update-text',
+        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${updatePath}`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }
       );
       const updateText = await updateResp.text();
@@ -2361,7 +2477,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       console.log('user-session/data request payload:', sessionReqBody);
 
       const sessionResp = await fetch(
-        'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data',
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2399,19 +2515,23 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }));
 
       // 3) Prepare reorder request body per required schema using session data
-      const sd = sessionDataResponse?.session_data || {};
+      const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
       const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        content: sd.content,
-        document_summary: sd.document_summary,
-        videoduration: sd.video_duration?.toString?.(),
-        created_at: sd.created_at,
-        totalsummary: sd.total_summary,
-        messages: sd.messages,
-        // pass through scripts if present from session_data for parity
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
+        ...(sd || {}),
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
       };
+      // Build exact user from session snapshot
+      let userForBody;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userForBody = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userForBody = sd.user_data;
+      } else if (sd && typeof sd.user === 'object') {
+        userForBody = sd.user;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
       const sessionScripts = Array.isArray(sd?.scripts) ? sd.scripts : undefined;
       // Try to carry forward user's original query/preferences from the session
       const originalUserquery = Array.isArray(sessionScripts?.[0]?.userquery)
@@ -2422,6 +2542,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       const reorderRequestBody = {
         session: sessionForBody,
+        user: userForBody,
         reordered_script: {
           userquery: originalUserquery,
           airesponse: orderedScriptArray,
@@ -2429,9 +2550,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       };
       console.log('scripts/reorder request body:', reorderRequestBody);
 
-      // 4) Call reorder API
+      // 4) Choose reorder endpoint by video type
+      let qVideoType = 'hybrid';
+      try {
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      const reorderPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/reorder'
+        : 'scripts/hybrid/reorder';
+
       const reorderResp = await fetch(
-        'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/reorder',
+        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${reorderPath}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2443,7 +2573,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       let reorderData;
       try { reorderData = JSON.parse(reorderText); } catch (_) { reorderData = reorderText; }
       if (!reorderResp.ok) {
-        throw new Error(`scripts/reorder failed: ${reorderResp.status} ${reorderText}`);
+        throw new Error(`${reorderPath} failed: ${reorderResp.status} ${reorderText}`);
       }
       console.log('scripts/reorder response:', reorderData);
 
@@ -2756,13 +2886,14 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       )}
       {/* Script Modal (React-driven) */}
       {showScriptModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[95%] max-w-6xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+        <div className={scenesMode ? 'bg-transparent' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/50'}>
+          <div className={scenesMode ? 'bg-white w-full max-h-[85vh] overflow-hidden rounded-lg shadow-sm flex flex-col' : 'bg-white w-[95%] max-w-6xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col'}>
                          {/* Header */}
-             <div className="flex items-center justify-between p-4 border-b border-gray-200">
-               <h3 className="text-lg font-semibold text-[#13008B]">The Generated Script is:</h3>
-               <div className="flex items-center gap-2">
-                 {/* Undo / Redo */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-[#13008B]">The Generated Script is:</h3>
+              <div className="flex items-center gap-2">
+                {scenesMode && null}
+                {/* Undo / Redo */}
                  <button
                    onClick={handleUndoScript}
                    disabled={!canUndo}
@@ -2793,22 +2924,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   )}
                   {isDeletingScene ? 'Deleting…' : 'Delete'}
                 </button>
-                 {/* Generate Video shortcut in header */}
-                 <button
-                   onClick={triggerVideoGenerationFromSession}
-                   disabled={isGeneratingVideo}
-                   className={`hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isGeneratingVideo ? 'bg-gray-100 border border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 hover:bg-gray-50 text-gray-900'}`}
-                   title="Generate video from this script"
-                 >
-                   {isGeneratingVideo ? (
-                     <div className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-                   ) : (
-                     <div className="w-4 h-4 rounded-full bg-blue-700 flex items-center justify-center">
-                       <div className="w-0 h-0 border-l-[5px] border-l-white border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent ml-0.5"></div>
-                     </div>
-                   )}
-                 <span>{isGeneratingVideo ? 'Generating…' : 'Generate Reel'}</span>
-                </button>
+                 {/* Generate Scenes shortcut in header (hidden in inline scenes mode) */}
+                 {!scenesMode && (
+                   <button
+                    onClick={triggerGenerateScenes}
+                    disabled={false}
+                    className={`hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isGeneratingVideo ? 'bg-gray-100 border border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 hover:bg-gray-50 text-gray-900'}`}
+                    title="Generate scenes and view images"
+                   >
+                    <div className="w-4 h-4 rounded-full bg-blue-700 flex items-center justify-center text-white text-[10px] font-bold">S</div>
+                  <span>Generate Scenes</span>
+                   </button>
+                 )}
                 {/* Regenerate current scene */}
                 <button
                   onClick={() => setShowRegenModal(true)}
@@ -2818,7 +2945,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   <RefreshCcw className="w-4 h-4" />
                   <span>Regenerate</span>
                 </button>
-                <button onClick={() => {
+                {!scenesMode && (<button onClick={() => {
                   // On close, if in reorder with unsaved changes, revert
                   if (showReorderTable && hasOrderChanged) {
                      try {
@@ -2832,9 +2959,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                      setHasOrderChanged(false);
                    }
                    setShowScriptModal(false);
-                 }} className="text-white w-8 h-8 hover:text-[#13008B] hover:bg-[#e4e0ff] transition-all duration-300 bg-[#13008B] rounded-full">✕</button>
-               </div>
-             </div>
+                 }} className="text-white w-8 h-8 hover:text-[#13008B] hover:bg-[#e4e0ff] transition-all duration-300 bg-[#13008B] rounded-full">✕</button>)}
+              </div>
+            </div>
 
                          {/* Scene Navigation Tabs - Only show in edit mode */}
             {!showReorderTable && (
@@ -3190,33 +3317,53 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                            {/* Video Type Selection */}
                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                         <h4 className="text-lg font-semibold text-gray-800 mb-4">Video Type</h4>
-                        
-                        <div className="flex flex-wrap gap-3">
-                          {['Avatar Based', 'Infographic'].map((type) => (
-                            <button
-                              key={type}
-                              onClick={() => openModelChangeConfirm(type)}
-                              disabled={isSwitchingModel}
-                              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                selectedVideoType === type
-                                  ? 'bg-[#13008B] text-white'
-                                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                              } ${isSwitchingModel ? 'opacity-60 cursor-not-allowed' : ''}`}
-                            >
-                              {isSwitchingModel && selectedVideoType !== type ? '...' : type}
-                            </button>
-                          ))}
-                          {['Commercial', 'Corporate'].map((type) => (
-                            <button
-                              key={type}
-                              disabled
-                              className="px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed"
-                              title="Coming soon"
-                            >
-                              {type}
-                            </button>
-                          ))}
-                        </div>
+                        {(() => {
+                          let vt = '';
+                          try {
+                            const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+                            vt = ((typeof window !== 'undefined' && localStorage.getItem(`video_type_value:${sid}`)) || selectedVideoType || '').toLowerCase();
+                          } catch (_) { /* noop */ }
+                          const isHybrid = vt === 'hybrid';
+                          return (
+                            <div className="flex flex-wrap gap-3">
+                              {/* Avatar */}
+                              <button
+                                type="button"
+                                onClick={() => isHybrid && openModelChangeConfirm('Avatar Based')}
+                                disabled={isSwitchingModel || (!isHybrid && selectedVideoType !== 'Avatar Based')}
+                                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                                  selectedVideoType === 'Avatar Based'
+                                    ? 'bg-[#13008B] text-white'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                } ${(isSwitchingModel || (!isHybrid && selectedVideoType !== 'Avatar Based')) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              >
+                                {isSwitchingModel && selectedVideoType !== 'Avatar Based' ? '...' : 'Avatar'}
+                              </button>
+                              {/* Infographic */}
+                              <button
+                                type="button"
+                                onClick={() => isHybrid && openModelChangeConfirm('Infographic')}
+                                disabled={isSwitchingModel || (!isHybrid && selectedVideoType !== 'Infographic')}
+                                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                                  selectedVideoType === 'Infographic'
+                                    ? 'bg-[#13008B] text-white'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                } ${(isSwitchingModel || (!isHybrid && selectedVideoType !== 'Infographic')) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              >
+                                {isSwitchingModel && selectedVideoType !== 'Infographic' ? '...' : 'Infographic'}
+                              </button>
+                              {/* Financial (not switchable yet) */}
+                              <button
+                                type="button"
+                                disabled
+                                className="px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed"
+                                title="Coming soon"
+                              >
+                                Financial
+                              </button>
+                            </div>
+                          );
+                        })()}
                         {isSwitchingModel && (
                           <p className="text-sm text-gray-500 mt-2">Switching model…</p>
                         )}
@@ -3462,58 +3609,104 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                }
                              }}
                           />
+                          {/* Upload button removed per requirements */}
                           <button
-                            onClick={() => imageFileInputRef.current && imageFileInputRef.current.click()}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-[#13008B] text-white hover:bg-blue-800 text-sm ${isUploadingSceneImages ? 'opacity-60 cursor-not-allowed' : ''}`}
-                            title="Upload image(s)"
-                            disabled={isUploadingSceneImages}
+                            onClick={async () => {
+                              try {
+                                const sessionId = localStorage.getItem('session_id');
+                                const token = localStorage.getItem('token');
+                                if (!sessionId || !token) { alert('Missing session'); return; }
+                                const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                                });
+                                const text = await resp.text();
+                                let data; try { data = JSON.parse(text); } catch(_) { data = text; }
+                                if (!resp.ok) throw new Error(`user-session/data failed: ${resp.status} ${text}`);
+                                const ud = data?.user_data || data?.session_data?.user_data || data?.session?.user || data?.session_data?.user || {};
+                                const bi = ud?.brand_identity || {};
+                                const tpl = Array.isArray(bi?.templates) ? bi.templates : (Array.isArray(ud?.templates) ? ud.templates : []);
+                                setBrandTemplates((tpl || []).filter(u => typeof u === 'string' && u));
+                                setUseDefaultTemplate(true);
+                                setShowTemplatesModal(true);
+                              } catch (e) {
+                                console.error('Failed to load templates:', e);
+                                alert('Unable to load templates for this user.');
+                              }
+                            }}
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                            title="Choose from templates"
                           >
-                            <Upload className="w-4 h-4" /> Upload
+                            <File className="w-4 h-4" /> Choose From Template
                           </button>
-                           <button
-                             onClick={async () => {
-                               try {
-                                 setFolderPickerError('');
-                                 if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                                 const current = scriptRows[currentSceneIndex];
-                                 const folder = current?.folderLink || current?.folder_link || '';
-                                 if (!folder || typeof folder !== 'string') {
-                                  // proceed with user_id fallback inside uploadImagesToFolder
-                                   return;
-                                 }
-                                 setIsFolderPickerOpen(true);
-                                 setIsLoadingFolderImages(true);
-
-                                 const payload = { folder_url: folder };
-                                 const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/folders/images', {
-                                   method: 'POST',
-                                   headers: { 'Content-Type': 'application/json' },
-                                   body: JSON.stringify(payload),
-                                 });
-                                 const text = await resp.text();
-                                 let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-                                 if (!resp.ok) {
-                                   throw new Error(`folders/images failed: ${resp.status} ${text}`);
-                                 }
-
-                                 const imageUrls = Array.isArray(data?.image_urls) ? data.image_urls : [];
-                                 const filtered = filterImageUrls(imageUrls);
-                                 const unique = Array.from(new Set(filtered));
-                                 setFolderImageCandidates(unique);
-                                 setSelectedFolderImages([]);
-                               } catch (e) {
-                                 console.error('Failed to load folder images:', e);
-                                 setFolderPickerError('Failed to load images for this folder. Please try again.');
-                                 setFolderImageCandidates([]);
-                               } finally {
-                                 setIsLoadingFolderImages(false);
-                               }
-                             }}
-                             className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200 text-sm border border-gray-300"
-                             title="Pick from folder images"
-                           >
-                             <RefreshCcw className="w-4 h-4" /> Replace
-                           </button>
+                          <input
+                            ref={templateFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              try {
+                                const files = Array.from(e.target.files || []);
+                                if (files.length === 0) return;
+                                const file = files[0];
+                                const token = localStorage.getItem('token');
+                                if (!token) { alert('Missing user'); return; }
+                                // 1) Upload template to brand assets
+                                const form = new FormData();
+                                form.append('user_id', token);
+                                form.append('file', file);
+                                const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', {
+                                  method: 'POST', body: form
+                                });
+                                const upText = await upResp.text();
+                                let upData; try { upData = JSON.parse(upText); } catch(_) { upData = upText; }
+                                if (!upResp.ok) throw new Error(`brand-assets/upload-file failed: ${upResp.status} ${upText}`);
+                                // 2) Get brand assets
+                                let assets = null;
+                                try {
+                                  const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets?user_id=${encodeURIComponent(token)}`);
+                                  const getText = await getResp.text();
+                                  try { assets = JSON.parse(getText); } catch(_) { assets = getText; }
+                                } catch(_) { /* noop */ }
+                                // 3) Update brand assets
+                                try {
+                                  const updateBody = typeof assets === 'object' ? { ...assets } : { user_id: token };
+                                  const tplUrl = upData?.url || upData?.file_url || upData?.link;
+                                  if (tplUrl) {
+                                    const bi = updateBody.brand_identity = updateBody.brand_identity || {};
+                                    const arr = Array.isArray(bi.templates) ? bi.templates : (Array.isArray(updateBody.templates) ? updateBody.templates : []);
+                                    const next = Array.from(new Set([...(arr || []), tplUrl]));
+                                    bi.templates = next;
+                                  }
+                                  await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/update', {
+                                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updateBody)
+                                  });
+                                } catch(_) { /* noop */ }
+                                // 4) Get brand assets again and refresh templates
+                                try {
+                                  const getResp2 = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets?user_id=${encodeURIComponent(token)}`);
+                                  const getText2 = await getResp2.text();
+                                  let assets2; try { assets2 = JSON.parse(getText2); } catch(_) { assets2 = getText2; }
+                                  const bi2 = assets2?.brand_identity || {};
+                                  const tpl2 = Array.isArray(bi2?.templates) ? bi2.templates : (Array.isArray(assets2?.templates) ? assets2.templates : []);
+                                  setBrandTemplates((tpl2 || []).filter(u => typeof u === 'string' && u));
+                                  alert('Template uploaded and brand assets updated.');
+                                } catch(_) { /* noop */ }
+                              } catch (err) {
+                                console.error('Template upload/update failed:', err);
+                                alert('Failed to upload/update template.');
+                              } finally {
+                                if (templateFileInputRef.current) templateFileInputRef.current.value = '';
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={() => templateFileInputRef.current && templateFileInputRef.current.click()}
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                            title="Upload a template to brand assets"
+                          >
+                            <Upload className="w-4 h-4" /> Upload Template
+                          </button>
+                           {/* Replace button removed per requirements */}
                          </div>
                        </div>
                      )}
@@ -3623,18 +3816,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                        </button>
                      )}
 
-                     {hasOrderChanged && (
-                       <button
-                         onClick={() => saveReorderedScript && saveReorderedScript(Array.isArray(scriptRows) ? [...scriptRows] : [])}
-                         disabled={isSavingReorder}
-                         className={`px-6 py-2 rounded-lg transition-colors text-white ${
-                           isSavingReorder ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
-                         }`}
-                         title="Save new scene order"
-                       >
-                         {isSavingReorder ? 'Saving…' : 'Save'}
-                       </button>
-                     )}
+                    {/* Removed duplicate Save button (order saving handled on left group) */}
                    </>
                  )}
                </div>
@@ -3642,35 +3824,104 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           </div>
         </div>
       )}
+
+      {/* Templates Modal */}
+      {showTemplatesModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[95%] max-w-3xl max-h-[80vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-[#13008B]">Choose a Template</h3>
+              <button onClick={() => setShowTemplatesModal(false)} className="px-3 py-1.5 rounded-lg border text-sm">Close</button>
+            </div>
+            <div className="p-4 border-b border-gray-100 flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={useDefaultTemplate} onChange={(e) => setUseDefaultTemplate(e.target.checked)} />
+                Use Default (no generation)
+              </label>
+              {!useDefaultTemplate && (
+                <span className="text-xs text-gray-600">Generation will incorporate this template as a reference.</span>
+              )}
+            </div>
+            <div className="p-4 overflow-y-auto">
+              {brandTemplates.length === 0 && (
+                <div className="text-sm text-gray-600">No templates found in your brand assets.</div>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                {brandTemplates.map((url, idx) => (
+                  <div key={idx} className="rounded-lg border overflow-hidden group relative">
+                    <img src={url} alt={`template-${idx}`} className="w-full h-28 object-cover" />
+                    <div className="p-2 flex items-center justify-between">
+                      <span className="text-xs text-gray-700 truncate max-w-[70%]" title={url}>Template {idx + 1}</span>
+                      <button
+                        className="px-2 py-1 text-xs rounded bg-[#13008B] text-white hover:bg-blue-800"
+                        onClick={() => {
+                          try {
+                            if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                            const rows = [...scriptRows];
+                            const scene = { ...rows[currentSceneIndex] };
+                            scene.ref_image = [url];
+                            // Store user choice of generation mode as scene flag (optional for backend)
+                            scene.use_default_template = !!useDefaultTemplate;
+                            rows[currentSceneIndex] = scene;
+                            setScriptRows(rows);
+                            setSelectedRefImages([url]);
+                            updateRefMapForScene(scene.scene_number, scene.ref_image);
+                            setShowTemplatesModal(false);
+                          } catch (_) { /* noop */ }
+                        }}
+                      >Use</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Regenerate Scene Modal */}
       {showRegenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[95%] max-w-lg rounded-lg shadow-xl p-5">
+          <div className="bg-white w-[95%] max-w-lg rounded-lg shadow-xl p-5 relative">
+            {isRegenerating && (
+              <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10">
+                <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-[#13008B]">Regenerate Scene {scriptRows?.[currentSceneIndex]?.scene_number ?? (currentSceneIndex+1)}</h3>
-              <button onClick={() => setShowRegenModal(false)} className="text-white w-8 h-8 hover:text-[#13008B] hover:bg-[#e4e0ff] transition-all duration-300 bg-[#13008B] rounded-full">✕</button>
+              <button onClick={() => !isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`text-white w-8 h-8 transition-all duration-300 rounded-full ${isRegenerating ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:text-[#13008B] hover:bg-[#e4e0ff]'}`}>✕</button>
             </div>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">User Query (optional)</label>
-                <textarea value={regenQuery} onChange={(e)=>setRegenQuery(e.target.value)} rows={3} className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="Describe how you want to change this scene..." />
+                <textarea value={regenQuery} onChange={(e)=>setRegenQuery(e.target.value)} rows={3} disabled={isRegenerating} className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100" placeholder="Describe how you want to change this scene..." />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Scene Type</label>
-                <div className="flex items-center gap-4">
-                  <label className="inline-flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="regen-model" checked={regenModel==='VEO3'} onChange={()=>setRegenModel('VEO3')} />
-                    <span>Avatar</span>
-                  </label>
-                  <label className="inline-flex items-center gap-2 cursor-pointer">
-                    <input type="radio" name="regen-model" checked={regenModel==='SORA'} onChange={()=>setRegenModel('SORA')} />
-                    <span>Infographic </span>
-                  </label>
-                </div>
-              </div>
+              {(() => {
+                try {
+                  const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+                  const vt = ((typeof window !== 'undefined' && localStorage.getItem(`video_type_value:${sid}`)) || selectedVideoType || '').toLowerCase();
+                  const isHybrid = vt === 'hybrid';
+                  if (!isHybrid) return null;
+                } catch (_) { /* noop */ }
+                return (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Scene Type</label>
+                    <div className="flex items-center gap-4">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="regen-model" checked={regenModel==='VEO3'} onChange={()=>setRegenModel('VEO3')} disabled={isRegenerating} />
+                        <span>Avatar</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="regen-model" checked={regenModel==='SORA'} onChange={()=>setRegenModel('SORA')} disabled={isRegenerating} />
+                        <span>Infographic </span>
+                      </label>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="flex items-center justify-end gap-2 pt-2">
-                <button onClick={()=>setShowRegenModal(false)} className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200">Cancel</button>
-                <button onClick={handleRegenerateScene} className="px-4 py-2 rounded-lg text-sm font-medium bg-[#13008B] text-white hover:bg-blue-800">Save</button>
+                <button onClick={()=>!isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Cancel</button>
+                <button onClick={handleRegenerateScene} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-blue-300 cursor-not-allowed text-white' : 'bg-[#13008B] text-white hover:bg-blue-800'}`}>{isRegenerating ? 'Regenerating…' : 'Save'}</button>
               </div>
             </div>
           </div>
@@ -3688,15 +3939,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         </div>
       )}
       {/* Short 5s popup for job-based generation */}
-      {showShortGenPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <h4 className="text-lg font-semibold text-gray-900">Generating Video…</h4>
-            <p className="mt-1 text-sm text-gray-600">You’ll be redirected to My Media shortly.</p>
-          </div>
-        </div>
-      )}
+      {/* Inline Images view replaces chat when active */}
       {/* Global lightweight loaders for other actions */}
       {isGeneratingQuestionnaire && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
@@ -3890,12 +4133,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                             return (
 
                               <button 
-                                onClick={generateVideoJobAndRedirect}
+                                onClick={() => {
+                                  if (imagesAvailable && typeof onGoToScenes === 'function') { onGoToScenes(); return; }
+                                  triggerGenerateScenes();
+                                }}
                                 className={`flex items-center justify-center gap-2 px-3 py-2 border rounded-lg transition-colors shadow-sm bg-white border-gray-200 hover:bg-gray-50 text-gray-900`}>
-                                <div className="w-5 h-5 rounded-full bg-blue-700 flex items-center justify-center">
-                                  <div className="w-0 h-0 border-l-[6px] border-l-white border-t-[4px] border-t-transparent border-b-[4px] border-b-transparent ml-0.5"></div>
-                                </div>
-                                <span className={`text-sm font-medium`}>Generate Reel</span>
+                                <div className="w-5 h-5 rounded-full bg-blue-700 flex items-center justify-center text-white text-[10px] font-bold">S</div>
+                                <span className={`text-sm font-medium`}>{imagesAvailable ? 'Go to Scenes' : 'Generate Scenes'}</span>
                               </button>
                             );
                           } else {
@@ -3926,7 +4170,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
                       {message.script && (
                         <button 
-                          onClick={() => openScriptModal(message.script)} 
+                          onClick={() => { if (typeof onGoToScenes === 'function') { try { onGoToScenes(message.script); } catch(_){} } else { openScriptModal(message.script); } }} 
                           className="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors shadow-sm">
                           <span className="text-sm font-medium text-gray-900">View Script</span>
                         </button>
@@ -3944,6 +4188,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       </div>
 
              {/* Chat Input or File Upload Display */}
+       {!scenesMode && (
        <div className="bg-white border-gray-200 p-4 lg:p-1">
          <div className="max-w-8xl mx-auto">
            {uploadedFiles.length === 0 ? (
@@ -4126,6 +4371,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
            )}
          </div>
        </div>
+       )}
     </div>
   )
 }

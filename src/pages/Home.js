@@ -4,7 +4,10 @@ import Sidebar from '../Components/Sidebar'
 import Typetabs from '../Components/Typetabs'
 import Topbar from '../Components/Topbar'
 import Chat from '../Components/Chat'
+import ImageList from '../Components/Scenes/ImageList'
+import VideosList from '../Components/Scenes/VideosList'
 import ErrorBoundary from '../Components/ErrorBoundary'
+import ScriptEditor from '../Components/ScriptEditor'
 import Guidlines from '../Components/VideoGuidlines/Guidlines'
 import DynamicQuestion from '../Components/DynamicQuestion'
 import { selectToken, selectIsAuthenticated } from '../redux/slices/userSlice'
@@ -15,13 +18,21 @@ const Home = () => {
   const [userChat, setuserChat] = useState("")
   const [isDocFollowup, setIsDocFollowup] = useState(false)
   const [chatHistory, setChatHistory] = useState([]) // Chat history to preserve across steps
-  const [currentStep, setCurrentStep] = useState(1) // 1: Chat, 2: Guidelines, 3: DynamicQuestion
+  const [currentStep, setCurrentStep] = useState(1) // 1: Chat, 2: Guidelines, 3: DynamicQuestion, 4: Scenes Images
+  const [imagesJobId, setImagesJobId] = useState('');
+  const [videosJobId, setVideosJobId] = useState('');
+  const [showVideoPopup, setShowVideoPopup] = useState(false);
+  const [showVideoTypeModal, setShowVideoTypeModal] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+  const [hasImagesAvailable, setHasImagesAvailable] = useState(false);
+  const [hasVideosAvailable, setHasVideosAvailable] = useState(false);
   const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false)
   const [questionnaireData, setQuestionnaireData] = useState(null)
   const [isChatLoading, setIsChatLoading] = useState(true)
   const [hasQuestionnaireAgent, setHasQuestionnaireAgent] = useState(false)
   const [latestQuestionnaireData, setLatestQuestionnaireData] = useState(null)
   const [showQuestionnaireOptions, setShowQuestionnaireOptions] = useState(false)
+  const [scenesInitialData, setScenesInitialData] = useState(null)
 
   // Redux selectors
   const token = useSelector(selectToken);
@@ -179,8 +190,21 @@ const Home = () => {
         }
       }
 
-      console.log('Sending chat request:', requestBody);
-      const response = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/chat/message', {
+      // Before sending, fetch user-session-data to determine videoType
+      let videoType = 'hybrid';
+      try {
+        const usd = await sendUserSessionData();
+        const sd = usd?.session_data || usd || {};
+        videoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
+      } catch (_) { /* noop */ }
+
+      const vt = String(videoType || '').toLowerCase();
+      const chatEndpoint = (vt === 'infographic' || vt === 'infographics' || vt === 'inforgraphic')
+        ? 'infographics_message'
+        : 'hybrid_message';
+
+      console.log('Sending chat request:', requestBody, 'videoType:', videoType, 'endpoint:', chatEndpoint);
+      const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chat/${chatEndpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -242,7 +266,7 @@ const Home = () => {
       console.log('Sending user session data request:', requestBody);
       
       // Call the user session data API
-      const response = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -256,7 +280,17 @@ const Home = () => {
       
       const sessionDataResponse = await response.json();
       console.log('User session data sent successfully:', sessionDataResponse);
-      
+
+      try {
+        const sd = sessionDataResponse?.session_data || {};
+        const imgs = Array.isArray(sd?.images) ? sd.images : [];
+        const vids = Array.isArray(sd?.videos) ? sd.videos : [];
+        setHasImagesAvailable(imgs.length > 0);
+        setHasVideosAvailable(vids.length > 0);
+        try { localStorage.setItem('has_images_available', imgs.length > 0 ? 'true' : 'false'); } catch(_){}
+        try { localStorage.setItem('has_videos_available', vids.length > 0 ? 'true' : 'false'); } catch(_){}
+      } catch(_) { /* noop */ }
+
       return sessionDataResponse;
       
     } catch (error) {
@@ -274,7 +308,7 @@ const Home = () => {
       const key = `session_title_updated:${sessionId}`;
       if (localStorage.getItem(key) === 'true') return;
 
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/title', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/title', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, user_id: userId })
@@ -288,6 +322,40 @@ const Home = () => {
       }
     } catch (e) {
       console.warn('Unable to update session title:', e);
+    }
+  };
+
+  // Show video type modal for new sessions (once per session)
+  useEffect(() => {
+    try {
+      const sid = sessionId || localStorage.getItem('session_id');
+      if (!sid) return;
+      const key = `video_type_set:${sid}`;
+      if (localStorage.getItem(key) !== 'true') {
+        setShowVideoTypeModal(true);
+      }
+    } catch (_) { /* noop */ }
+  }, [sessionId]);
+
+  const updateVideoType = async (videoType) => {
+    try {
+      const userId = token || localStorage.getItem('token');
+      const sid = sessionId || localStorage.getItem('session_id');
+      if (!userId || !sid) return;
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/video-type/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, session_id: sid, videoType })
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`video-type/update failed: ${resp.status} ${text}`);
+      try { localStorage.setItem(`video_type_set:${sid}`, 'true'); } catch (_) { /* noop */ }
+      setShowVideoTypeModal(false);
+      return data;
+    } catch (e) {
+      console.error('Failed updating video type', e);
+      alert('Failed to set video type. Please try again.');
     }
   };
 
@@ -365,13 +433,85 @@ const Home = () => {
         };
       }
 
-      // Call the questionnaire generate API with full session object
-      const response = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/questionnaire/generate', {
+      // Determine video type to pick correct questionnaire generate endpoint
+      let qVideoType = 'hybrid';
+      let latestSessionData = null;
+      try {
+        const usd = await sendUserSessionData();
+        const sd = usd?.session_data || usd || {};
+        latestSessionData = sd;
+        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
+      } catch (_) { /* noop */ }
+      const qvt = String(qVideoType || '').toLowerCase();
+      const qEndpoint = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
+        ? 'scripts/infographic/questionnaire/generate'
+        : 'scripts/hybrid/questionnaire/generate';
+
+      // Build payload per new schema: { user: {...}, session: {...} }
+      let userMeta = {};
+      try { userMeta = JSON.parse(localStorage.getItem('user') || '{}') || {}; } catch (_) { userMeta = {}; }
+      const userIdForAssets = token || localStorage.getItem('token') || '';
+      let brandAssets = {};
+      try { brandAssets = JSON.parse(localStorage.getItem(`brand_assets_analysis:${userIdForAssets}`) || '{}') || {}; } catch (_) { brandAssets = {}; }
+      const bi = brandAssets?.brand_identity || {};
+      const tv = brandAssets?.tone_and_voice || {};
+      const lf = brandAssets?.look_and_feel || {};
+      const templatesArr = brandAssets?.template || brandAssets?.templates || [];
+      const voiceoverArr = brandAssets?.voiceover || [];
+
+      const userPayload = {
+        id: userMeta?.id || userIdForAssets || '',
+        email: userMeta?.email || '',
+        display_name: userMeta?.display_name || userMeta?.name || '',
+        created_at: userMeta?.created_at || new Date().toISOString(),
+        avatar_url: userMeta?.avatar_url || '',
+        folder_url: brandAssets?.folder_url || '',
+        brand_identity: {
+          logo: bi?.logo || [],
+          fonts: bi?.fonts || [],
+          icons: bi?.icon || bi?.icons || [],
+          colors: bi?.colors || [],
+          spacing: bi?.spacing,
+          tagline: bi?.tagline
+        },
+        tone_and_voice: {
+          context: tv?.context || '',
+          brand_personality: tv?.brand_personality || [],
+          communication_style_pace: tv?.communication_style_pace || []
+        },
+        look_and_feel: {
+          iconography: lf?.iconography || [],
+          graphic_elements: lf?.graphic_elements || [],
+          aesthetic_consistency: lf?.aesthetic_consistency || []
+        },
+        templates: templatesArr,
+        voiceover: voiceoverArr
+      };
+
+      const sessionPayload = {
+        session_id: sessionId,
+        user_id: token,
+        title: latestSessionData?.title ?? null,
+        video_duration: (latestSessionData?.video_duration?.toString?.() || "60"),
+        created_at: latestSessionData?.created_at || new Date().toISOString(),
+        updated_at: latestSessionData?.updated_at || new Date().toISOString(),
+        document_summary: latestSessionData?.document_summary || [],
+        messages: latestSessionData?.messages || [],
+        videos: latestSessionData?.videos || [],
+        images: latestSessionData?.images || [],
+        final_link: latestSessionData?.final_link || null,
+        videoType: latestSessionData?.videoType || latestSessionData?.video_type || qVideoType
+      };
+
+      const fullPayload = { user: userPayload, session: sessionPayload };
+
+      // Call the questionnaire generate API with new payload
+      const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${qEndpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(fullPayload)
       });
       
       if (!response.ok) {
@@ -403,6 +543,74 @@ const Home = () => {
       try {
         window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: false } }));
       } catch (e) { /* noop */ }
+    }
+  };
+
+  // Generate final merged video from Home's Videos section
+  const handleGenerateVideoMerge = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const sessionId = localStorage.getItem('session_id');
+      if (!token || !sessionId) { alert('Missing login or session. Please sign in again.'); return; }
+
+      setIsMerging(true);
+      setShowVideoPopup(true);
+
+      // 1) Fetch session data
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessionText = await sessionResp.text();
+      let sessionData; try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessionText}`);
+      const sd = sessionData?.session_data || {};
+
+      // 2) Build merge payload
+      const sessionForBody = {
+        id: sd.session_id || sessionId,
+        user_id: token,
+        title: sd.title || sd.session_title || 'My Video',
+        videoduration: (sd.video_duration?.toString?.() || '60'),
+        created_at: sd.created_at || new Date().toISOString(),
+        updated_at: sd.updated_at || new Date().toISOString(),
+        document_summary: sd.document_summary || sd.summarydocument || [],
+        messages: sd.messages || [],
+        content: sd.content || [],
+        total_summary: sd.total_summary || [],
+        scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+        videos: sd.videos || [],
+        images: sd.images || [],
+      };
+
+      const body = { session: sessionForBody };
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/merge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`videos/merge failed: ${resp.status} ${text}`);
+
+      const jobId = data?.job_id || data?.jobId || data?.id;
+      const statusUrl = data?.status_url || null;
+      const status = data?.status || 'queued';
+      if (jobId) {
+        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { /* noop */ }
+        try { if (statusUrl) localStorage.setItem('current_video_job_status_url', statusUrl); } catch (_) { /* noop */ }
+        try { localStorage.setItem('current_video_job_type', 'merge'); } catch (_) { /* noop */ }
+        try { localStorage.setItem('job_status', status); } catch (_) { /* legacy */ }
+      }
+
+      // 5s popup then redirect to /media to follow merge job polling
+      setTimeout(() => {
+        setShowVideoPopup(false);
+        setScenesInitialData(null);
+        setIsMerging(false);
+        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
+      }, 5000);
+    } catch (e) {
+      setIsMerging(false);
+      setShowVideoPopup(false);
+      alert(e?.message || 'Failed to start video merge');
     }
   };
 
@@ -486,6 +694,11 @@ const Home = () => {
       if (!sessionId) { setIsChatLoading(false); return; }
       try {
         setIsChatLoading(true);
+        // Reset view to Chat by default on session change to avoid stale media views
+        setCurrentStep(1);
+        setImagesJobId('');
+        setVideosJobId('');
+        setShowVideoPopup(false);
         if (!token) {
           alert('You are not authenticated. Please login again.');
           navigate('/login');
@@ -524,7 +737,7 @@ const Home = () => {
 
         // Fetch session data
         const body = { user_id: token, session_id: sessionId };
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
@@ -535,6 +748,15 @@ const Home = () => {
         }
         const data = await resp.json();
         const s = data?.session_data || {};
+        // set availability flags
+        try {
+          const imgs = Array.isArray(s?.images) ? s.images : [];
+          const vids = Array.isArray(s?.videos) ? s.videos : [];
+          setHasImagesAvailable(imgs.length > 0);
+          setHasVideosAvailable(vids.length > 0);
+          localStorage.setItem('has_images_available', imgs.length > 0 ? 'true' : 'false');
+          localStorage.setItem('has_videos_available', vids.length > 0 ? 'true' : 'false');
+        } catch(_){}
         const msgs = Array.isArray(s?.messages) ? s.messages : [];
         // Detect presence of questionnaire agent and capture latest questionnaire content
         try {
@@ -618,6 +840,39 @@ const Home = () => {
           }
         } catch (_) { /* noop */ }
 
+        // Validation: if session has videos -> show VideosList; else if has images -> show ImageList; else show Chat
+        try {
+          if (Array.isArray(s?.videos) && s.videos.length > 0) {
+            const urls = [];
+            s.videos.forEach(vobj => {
+              const scenesArr = Array.isArray(vobj?.scenes) ? vobj.scenes : [];
+              scenesArr.forEach(sc => {
+                const v = sc?.blobLink?.video_link;
+                if (typeof v === 'string' && v) urls.push(v);
+              });
+            });
+            if (urls.length > 0) {
+              try { localStorage.setItem('prefetched_video_urls', JSON.stringify(Array.from(new Set(urls)))); } catch(_){}
+            }
+            setVideosJobId(localStorage.getItem('current_video_job_id') || '');
+            setCurrentStep(5);
+            setIsChatLoading(false);
+            return;
+          }
+        } catch(_) { /* noop */ }
+
+        try {
+          if (Array.isArray(s?.images) && s.images.length > 0) {
+            try { localStorage.setItem('prefetched_images_urls', JSON.stringify(s.images)); } catch(_){}
+            setImagesJobId(localStorage.getItem('current_images_job_id') || '');
+            setCurrentStep(4);
+            setIsChatLoading(false);
+            return;
+          }
+        } catch(_) { /* noop */ }
+
+        // No images/videos present → ensure Chat is shown
+        setCurrentStep(1);
         setChatHistory(history);
         // Consider a first message sent if there's any user turn present
         setHasSentFirstMessage(history.some(h => h.type === 'user'));
@@ -645,7 +900,36 @@ const Home = () => {
   // }, [currentStep]);
   
   return (
-    <div className='flex h-screen bg-[#E5E2FF]'>
+    <div className='flex h-screen bg-[#E5E2FF] relative'>
+      {showVideoTypeModal && (
+        <div className='absolute inset-0 z-50 flex items-center justify-center bg-black/50'>
+          <div className='bg-white rounded-2xl p-6 w-full max-w-md shadow-lg'>
+            <h3 className='text-lg font-semibold mb-4'>Select Video Type</h3>
+            <p className='text-sm text-gray-600 mb-4'>Choose a format for this reel.</p>
+            <div className='grid grid-cols-2 gap-3'>
+              <button onClick={() => updateVideoType('hybrid')} className='px-3 py-2 border rounded-lg hover:bg-gray-50 text-left'>
+                <div className='font-medium'>Hybrid</div>
+                <div className='text-xs text-gray-500'>Mix of live/graphics</div>
+              </button>
+              <button disabled className='px-3 py-2 border rounded-lg text-left bg-gray-100 text-gray-400 cursor-not-allowed'>
+                <div className='font-medium'>Avatar Based</div>
+                <div className='text-xs text-gray-400'>AI avatar presenter (disabled)</div>
+              </button>
+              <button onClick={() => updateVideoType('infographic')} className='px-3 py-2 border rounded-lg hover:bg-gray-50 text-left'>
+                <div className='font-medium'>Infographic</div>
+                <div className='text-xs text-gray-500'>Data-driven visuals</div>
+              </button>
+              <button disabled className='px-3 py-2 border rounded-lg text-left bg-gray-100 text-gray-400 cursor-not-allowed'>
+                <div className='font-medium'>Financial</div>
+                <div className='text-xs text-gray-400'>Markets and metrics (disabled)</div>
+              </button>
+            </div>
+            <div className='mt-4 flex justify-end'>
+              <button onClick={() => setShowVideoTypeModal(false)} className='text-sm text-gray-600 hover:underline'>Skip for now</button>
+            </div>
+          </div>
+        </div>
+      )}
       <Sidebar/>
       <div className="w-full mx-[2rem] mt-[1rem]">
         <Topbar/>
@@ -653,7 +937,7 @@ const Home = () => {
         <div className='overflow-y-auto h-[85vh] mt-2 scrollbar-hide'>
           {/* Debug info - remove this later */}
           {/* <div className="mb-2 text-sm text-gray-500">Current Step: {currentStep} | Chat Messages: {chatHistory.length}</div> */}
-         <Typetabs />
+         {/* <Typetabs /> */}
           {currentStep === 1 && (
             <>
             
@@ -676,10 +960,30 @@ const Home = () => {
                   onRegenerateScene={() => {
                     try { window.startVideoGeneration && window.startVideoGeneration(); } catch (_) { /* noop */ }
                   }}
+                  onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch(_){}; setCurrentStep(4); }}
+                  imagesAvailable={hasImagesAvailable}
+                  onGoToScenes={(scriptContainer) => { setScenesInitialData(scriptContainer || null); setCurrentStep(6); }}
                   key="chat-component"
                 />
               </ErrorBoundary>
             </>
+          )}
+          {currentStep === 6 && (
+            <ScriptEditor
+              title="The Generated Script is:"
+              initialScenes={scenesInitialData}
+              onBack={() => { setCurrentStep(1); setScenesInitialData(null); }}
+              onGenerateImages={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}
+              // passthrough
+              addUserChat={addUserChat}
+              userChat={userChat}
+              setuserChat={setuserChat}
+              sendUserSessionData={sendUserSessionData}
+              chatHistory={chatHistory}
+              setChatHistory={setChatHistory}
+              imagesAvailable={hasImagesAvailable}
+              onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch(_){}; setCurrentStep(4); }}
+            />
           )}
           {currentStep === 2 && (
             <div>
@@ -695,9 +999,141 @@ const Home = () => {
               />
             </div>
           )}
-          {/* Step 4 (BrandArea) removed */}
-        </div>
+          {currentStep === 4 && (
+            <div className='bg-white rounded-lg'>
+              <ImageList
+                jobId={imagesJobId}
+                hasVideos={hasVideosAvailable}
+                onGoToVideos={() => setCurrentStep(5)}
+                onClose={async () => {
+                  try {
+                    const sessionDataResponse = await sendUserSessionData();
+                    const s = sessionDataResponse?.session_data || {};
+                    const msgs = Array.isArray(s?.messages) ? s.messages : [];
+                    // Map messages to chat history
+                    let history = mapMessagesToChatHistory(msgs);
+                    // If no script message present in chat history yet, check session scripts
+                    try {
+                      const hasScriptMsg = history.some(m => !!m.script);
+                      if (!hasScriptMsg) {
+                        let scriptObj = null;
+                        if (Array.isArray(s?.scripts) && s.scripts.length > 0) {
+                          const first = s.scripts[0];
+                          if (Array.isArray(first?.airesponse)) {
+                            scriptObj = { script: first.airesponse };
+                          } else if (Array.isArray(first)) {
+                            scriptObj = { script: first };
+                          } else if (first && typeof first === 'object') {
+                            scriptObj = first;
+                          }
+                        }
+                        if (!scriptObj) {
+                          const sid = localStorage.getItem('session_id');
+                          let raw = sid ? localStorage.getItem(`updated_script_structure:${sid}`) : null;
+                          if (!raw && sid) raw = localStorage.getItem(`last_generated_script:${sid}`);
+                          if (raw) {
+                            try { scriptObj = JSON.parse(raw); } catch (_) { scriptObj = null; }
+                          }
+                        }
+                        if (scriptObj) {
+                          const now = new Date().toISOString();
+                          history = [
+                            ...history,
+                            { id: Date.now(), type: 'ai', content: 'Your script is ready. You can view it or generate the video.', script: scriptObj, timestamp: now },
+                          ];
+                          try {
+                            const sid = localStorage.getItem('session_id');
+                            if (sid) {
+                              localStorage.setItem(`last_generated_script:${sid}`, JSON.stringify(scriptObj));
+                              localStorage.setItem(`has_generated_script:${sid}`, 'true');
+                            }
+                          } catch (_) { /* noop */ }
+                        }
+                      }
+                    } catch (_) { /* noop */ }
+                    setChatHistory(history);
+                    setHasSentFirstMessage(history.some(h => h.type === 'user'));
+                  } catch(_) { /* noop */ }
+                  setCurrentStep(1);
+                }}
+                onGenerateVideos={async (images = []) => {
+                  try {
+                    const sessionId = localStorage.getItem('session_id');
+                    const token = localStorage.getItem('token');
+                    if (!sessionId || !token) { alert('Login expired'); return; }
+                    const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                    });
+                    const sessText = await sessResp.text();
+                    let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
+                    if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+                    const sd = sessData?.session_data || {};
+                    const sessionForBody = {
+                      id: sd.session_id || sessionId,
+                      user_id: token,
+                      title: sd.title || '',
+                      // API expects a string duration per latest sample; ensure it's not a literal placeholder
+                      video_duration: String(sd.video_duration ?? 60),
+                      created_at: sd.created_at || new Date().toISOString(),
+                      updated_at: sd.updated_at || new Date().toISOString(),
+                      document_summary: sd.document_summary || [],
+                      messages: Array.isArray(sd.messages) ? sd.messages : [],
+                      total_summary: sd.total_summary || [],
+                      scripts: [
+                        {
+                          userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
+                          airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
+                          version: sd?.scripts?.[0]?.version || 'v1'
+                        }
+                      ],
+                      videos: sd.videos || [],
+                      // Use images exactly as provided by user-session/data; do not coerce to URL strings
+                      images: Array.isArray(sd.images) ? sd.images : (sd.images || [])
+                    };
+                    const body = { session: sessionForBody };
+                    const genResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/generate-from-session', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+                    });
+                    const genText = await genResp.text();
+                    let genData; try { genData = JSON.parse(genText); } catch (_) { genData = genText; }
+                    if (!genResp.ok) throw new Error(`videos/generate-from-session failed: ${genResp.status} ${genText}`);
+                    const jobId = genData?.job_id || genData?.jobId || genData?.id;
+                    if (jobId) {
+                      try { localStorage.setItem('current_video_job_id', jobId); } catch (_) {}
+                      setVideosJobId(jobId);
+                    }
+                    setShowVideoPopup(true);
+                    setTimeout(() => { setShowVideoPopup(false); setCurrentStep(5); }, 5000);
+                  } catch (e) {
+                    alert(e?.message || 'Failed to start video generation');
+                  }
+                }}
+              />
+            </div>
+          )}
+          {currentStep === 5 && (
+            <div className='bg-white rounded-lg'>
+              <div className='flex items-center justify-between p-4 border-b border-gray-200'>
+                <h3 className='text-lg font-semibold text-[#13008B]'>Videos</h3>
+                <div className='flex items-center gap-2'>
+                  <button onClick={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }} className='px-3 py-1.5 rounded-lg border text-sm'>Back</button>
+                  <button onClick={handleGenerateVideoMerge} className='px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800'>Generate Video</button>
+                </div>
+              </div>
+              <VideosList jobId={videosJobId} onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }} />
+            </div>
+          )}
       </div>
+    </div>
+      {showVideoPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <h4 className="text-lg font-semibold text-gray-900">{isMerging ? 'Merging video…' : 'Generating Video…'}</h4>
+            <p className="mt-1 text-sm text-gray-600">{isMerging ? 'Redirecting to Media…' : 'Redirecting to Videos list…'}</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
