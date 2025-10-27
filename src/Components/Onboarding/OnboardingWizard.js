@@ -51,8 +51,9 @@ const ActionPill = ({ action }) => {
 const OnboardingWizard = () => {
   const [step, setStep] = useState(1);
   const [websiteUrl, setWebsiteUrl] = useState('');
+  const [profileName, setProfileName] = useState('');
   const [scrapeStatus, setScrapeStatus] = useState({}); // { key: 'idle'|'pending'|'done'|'error' }
-  const { loading, error, analysis, setAnalysis, analyzeWebsite, uploadBrandAssets, uploadBrandFiles, updateBrandAssets, getBrandAssetsByUserId } = useBrandAssets();
+  const { loading, error, analysis, setAnalysis, createBrandProfile, uploadBrandAssets, uploadBrandFiles, updateBrandAssets, updateBrandProfile, getBrandAssetsByUserId } = useBrandAssets();
   const reduxToken = useSelector(selectToken);
   const navigate = useNavigate();
   const [editable, setEditable] = useState(null);
@@ -127,6 +128,10 @@ const OnboardingWizard = () => {
       alert('Please enter a valid website URL');
       return;
     }
+    if (!profileName || !profileName.trim()) {
+      alert('Please enter a profile name');
+      return;
+    }
     setWebsiteUrl(nu);
     // Use localStorage token as user_id
     const userId = reduxToken || (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
@@ -135,8 +140,9 @@ const OnboardingWizard = () => {
       return;
     }
     try {
-      await analyzeWebsite({ userId, website: nu });
+      await createBrandProfile({ userId, website: nu, profileName: profileName.trim(), setAsActive: true });
       try { localStorage.setItem(`last_analyzed_website:${userId}`, nu); } catch (_) {}
+      try { localStorage.setItem(`last_profile_name:${userId}`, profileName.trim()); } catch (_) {}
       setStep(2);
     } catch (_) {
       // Error state is handled by hook; keep user on step 1
@@ -222,7 +228,13 @@ const OnboardingWizard = () => {
           template: editable?.template || editable?.templates || [],
           voiceover: editable?.voiceover || []
         };
-        await updateBrandAssets({ userId, payload });
+        // Determine profileId from current editable or latest GET
+        let profileId = (editable?.active_profile_id || editable?.profile_id || editable?.profileId || editable?.profile?.id || editable?.id);
+        if (!profileId) {
+          const latest = await getBrandAssetsByUserId(userId);
+          profileId = (latest?.active_profile_id || latest?.profile_id || latest?.profileId || latest?.profile?.id || latest?.id);
+        }
+        await updateBrandProfile({ userId, profileId, payload });
         // Fetch latest canonical data from GET /v1/users/brand-assets/{user_id}
         const latest = await getBrandAssetsByUserId(userId);
         const applied = latest || payload;
@@ -363,16 +375,22 @@ const OnboardingWizard = () => {
     if (!iconFiles.length) return;
     try {
       const urls = await uploadBrandFiles({ userId, fileType: 'icon', files: iconFiles });
+      console.log('[Onboarding] upload icons -> urls:', urls);
       // 1) GET full brand assets
       const latest = await getBrandAssetsByUserId(userId);
+      console.log('[Onboarding] GET after icon upload:', latest);
       const current = latest || editable || {};
       const bi = current?.brand_identity || {};
       const tv = current?.tone_and_voice || {};
       const lf = current?.look_and_feel || {};
       const nextIcons = Array.from(new Set([...(bi.icon || bi.icons || []), ...urls]));
       // 2) UPDATE with full payload merging new icons
-      await updateBrandAssets({
+      const profileId = (current?.active_profile_id || current?.profile_id || current?.profileId || current?.profile?.id || current?.id || current?.content?.profile?.id);
+      console.log('[Onboarding] Resolved profileId for icons:', profileId);
+      if (!profileId) throw new Error('Missing profile_id from brand assets GET');
+      await updateBrandProfile({
         userId,
+        profileId,
         payload: {
           brand_identity: { fonts: bi.fonts || [], icon: nextIcons, colors: bi.colors || [], spacing: bi.spacing, tagline: bi.tagline, logo: bi.logo || [] },
           tone_and_voice: tv,
@@ -383,12 +401,14 @@ const OnboardingWizard = () => {
       });
       // 3) GET again to reflect canonical
       const after = await getBrandAssetsByUserId(userId);
+      console.log('[Onboarding] GET after icon update:', after);
       try { setEditable(JSON.parse(JSON.stringify(after || current))); } catch (_) { setEditable(after || current); }
       alert('Icons uploaded');
       setIconFiles([]);
       if (iconInputRef.current) iconInputRef.current.value = '';
     } catch (e) {
-      alert('Failed to upload icons');
+      console.error('[Onboarding] Icons flow failed:', e);
+      alert(`Failed to upload/update icons: ${e?.message || e}`);
     }
   };
 
@@ -398,14 +418,20 @@ const OnboardingWizard = () => {
     if (!brandImageFiles.length) return;
     try {
       const urls = await uploadBrandFiles({ userId, fileType: 'logo', files: brandImageFiles });
+      console.log('[Onboarding] upload logos -> urls:', urls);
       const latest = await getBrandAssetsByUserId(userId);
+      console.log('[Onboarding] GET after logo upload:', latest);
       const current = latest || editable || {};
       const bi = current?.brand_identity || {};
       const tv = current?.tone_and_voice || {};
       const lf = current?.look_and_feel || {};
       const nextLogos = Array.from(new Set([...(bi.logo || []), ...urls]));
-      await updateBrandAssets({
+      const profileId2 = (current?.active_profile_id || current?.profile_id || current?.profileId || current?.profile?.id || current?.id || current?.content?.profile?.id);
+      console.log('[Onboarding] Resolved profileId for logos:', profileId2);
+      if (!profileId2) throw new Error('Missing profile_id from brand assets GET');
+      await updateBrandProfile({
         userId,
+        profileId: profileId2,
         payload: {
           brand_identity: { fonts: bi.fonts || [], icon: (bi.icon || bi.icons || []), colors: bi.colors || [], spacing: bi.spacing, tagline: bi.tagline, logo: nextLogos },
           tone_and_voice: tv,
@@ -415,12 +441,14 @@ const OnboardingWizard = () => {
         }
       });
       const after = await getBrandAssetsByUserId(userId);
+      console.log('[Onboarding] GET after logo update:', after);
       try { setEditable(JSON.parse(JSON.stringify(after || current))); } catch (_) { setEditable(after || current); }
       alert('Brand images uploaded');
       setBrandImageFiles([]);
       if (brandImageInputRef.current) brandImageInputRef.current.value = '';
     } catch (e) {
-      alert('Failed to upload brand images');
+      console.error('[Onboarding] Logos flow failed:', e);
+      alert(`Failed to upload/update brand images: ${e?.message || e}`);
     }
   };
 
@@ -430,14 +458,20 @@ const OnboardingWizard = () => {
     if (!templateFiles.length) return;
     try {
       const urls = await uploadBrandFiles({ userId, fileType: 'template', files: templateFiles });
+      console.log('[Onboarding] upload templates -> urls:', urls);
       const latest = await getBrandAssetsByUserId(userId);
+      console.log('[Onboarding] GET after template upload:', latest);
       const current = latest || editable || {};
       const bi = current?.brand_identity || {};
       const tv = current?.tone_and_voice || {};
       const lf = current?.look_and_feel || {};
       const nextTemplates = Array.from(new Set([...(current?.template || current?.templates || []), ...urls]));
-      await updateBrandAssets({
+      const profileId3 = (current?.active_profile_id || current?.profile_id || current?.profileId || current?.profile?.id || current?.id || current?.content?.profile?.id);
+      console.log('[Onboarding] Resolved profileId for templates:', profileId3);
+      if (!profileId3) throw new Error('Missing profile_id from brand assets GET');
+      await updateBrandProfile({
         userId,
+        profileId: profileId3,
         payload: {
           brand_identity: { fonts: bi.fonts || [], icon: (bi.icon || bi.icons || []), colors: bi.colors || [], spacing: bi.spacing, tagline: bi.tagline, logo: bi.logo || [] },
           tone_and_voice: tv,
@@ -447,12 +481,14 @@ const OnboardingWizard = () => {
         }
       });
       const after = await getBrandAssetsByUserId(userId);
+      console.log('[Onboarding] GET after template update:', after);
       try { setEditable(JSON.parse(JSON.stringify(after || current))); } catch (_) { setEditable(after || current); }
       alert('Templates uploaded');
       setTemplateFiles([]);
       if (templateInputRef.current) templateInputRef.current.value = '';
     } catch (e) {
-      alert('Failed to upload templates');
+      console.error('[Onboarding] Templates flow failed:', e);
+      alert(`Failed to upload/update templates: ${e?.message || e}`);
     }
   };
 
@@ -478,13 +514,20 @@ const OnboardingWizard = () => {
         </div>
         <h2 className='text-xl font-semibold mb-2'>Let’s start with your website</h2>
         <p className='text-gray-600 mb-6'>We’ll use this to discover your brand identity and content.</p>
-        <div className='flex gap-3'>
+        <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
           <input
             type='text'
             placeholder='e.g. https://example.com'
             value={websiteUrl}
             onChange={(e) => setWebsiteUrl(e.target.value)}
-            className='flex-1 px-4 py-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500'
+            className='w-full px-4 py-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500'
+          />
+          <input
+            type='text'
+            placeholder='Profile name (e.g., Apple Brand)'
+            value={profileName}
+            onChange={(e) => setProfileName(e.target.value)}
+            className='w-full px-4 py-3 border rounded-lg bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500'
           />
           <button
             onClick={handleContinue}

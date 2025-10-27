@@ -200,6 +200,32 @@
   height: 0px;
 }
 
+/* Cross-browser scrollbar hide utility used across the app */
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+}
+
+/* Global scrollbar hide (applies to all scrollable elements) */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+*::-webkit-scrollbar {
+  width: 0px; /* Chrome/Safari */
+  height: 0px;
+}
+
+/* Ensure a single scroll container in app pages */
+html, body, #root, .App {
+  height: 100vh;
+  overflow: hidden;
+}
+
 .script-row-drag-handle:hover {
   color: #6b7280;
 }

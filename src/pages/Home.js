@@ -33,6 +33,7 @@ const Home = () => {
   const [latestQuestionnaireData, setLatestQuestionnaireData] = useState(null)
   const [showQuestionnaireOptions, setShowQuestionnaireOptions] = useState(false)
   const [scenesInitialData, setScenesInitialData] = useState(null)
+  const [isCreatingSession, setIsCreatingSession] = useState(false)
 
   // Redux selectors
   const token = useSelector(selectToken);
@@ -47,10 +48,18 @@ const Home = () => {
   // - m.airesponse: object with .final_output (assistant message)
   const mapMessagesToChatHistory = (messages = []) => {
     try {
-      if (!Array.isArray(messages)) return [];
+      // Normalize messages structure: sometimes it's nested or wrapped
+      let msgs = messages;
+      if (!Array.isArray(msgs)) return [];
+      // If the first element is an array, unwrap it
+      if (Array.isArray(msgs[0])) msgs = msgs[0];
+      // If wrapped under an object key (e.g., { messages: [...] }), unwrap safely
+      if (msgs.length === 0 && messages && typeof messages === 'object' && Array.isArray(messages.messages)) {
+        msgs = messages.messages;
+      }
       const out = [];
       let baseId = Date.now();
-      for (const m of messages) {
+      for (const m of msgs) {
         const userQ = m?.userquery ?? m?.user_message ?? m?.query ?? '';
         // Skip questionnaire agent turns entirely
         if (typeof userQ === 'string' && userQ.trim().toLowerCase() === 'questionnaire agent') {
@@ -111,7 +120,7 @@ const Home = () => {
       
       let requestBody;
 
-      // First message (hasn't been sent yet and not a doc follow-up): do NOT call user-session/data
+      // First message (hasn't been sent yet and not a doc follow-up): do NOT call user-session-data
       if (!hasSentFirstMessage && !hasFirstMessageFlag && !isDocFollowupFromStorage) {
         requestBody = {
           session: {
@@ -129,7 +138,7 @@ const Home = () => {
           is_doc_followup: false
         };
       } else {
-        // Follow-up messages: call user-session/data first and use its session_data
+      // Follow-up messages: call user-session-data first and use its session_data
         try {
           console.log('Getting session data for follow-up message...');
           const sessionDataResponse = await sendUserSessionData();
@@ -199,9 +208,9 @@ const Home = () => {
       } catch (_) { /* noop */ }
 
       const vt = String(videoType || '').toLowerCase();
-      const chatEndpoint = (vt === 'infographic' || vt === 'infographics' || vt === 'inforgraphic')
-        ? 'infographics_message'
-        : 'hybrid_message';
+      let chatEndpoint = 'hybrid_message';
+      if (vt === 'infographic' || vt === 'infographics' || vt === 'inforgraphic') chatEndpoint = 'infographics_message';
+      if (vt === 'financial') chatEndpoint = 'financial_message';
 
       console.log('Sending chat request:', requestBody, 'videoType:', videoType, 'endpoint:', chatEndpoint);
       const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chat/${chatEndpoint}`, {
@@ -238,6 +247,11 @@ const Home = () => {
         const sid = localStorage.getItem('session_id') || sessionId || '';
         if (sid) localStorage.removeItem(`is_doc_followup:${sid}`); else localStorage.removeItem('is_doc_followup');
       }
+      // Persist chat history per session after sending
+      try {
+        const sid = localStorage.getItem('session_id') || sessionId || '';
+        if (sid) localStorage.setItem(`chat_history:${sid}`, JSON.stringify(chatHistory));
+      } catch (_) { /* noop */ }
       return chatResponse;
     } catch (error) {
       console.error('Error adding user chat:', error);
@@ -325,16 +339,22 @@ const Home = () => {
     }
   };
 
-  // Show video type modal for new sessions (once per session)
+  // Auto-set video type to 'hybrid' for new sessions (no popup)
   useEffect(() => {
-    try {
-      const sid = sessionId || localStorage.getItem('session_id');
-      if (!sid) return;
-      const key = `video_type_set:${sid}`;
-      if (localStorage.getItem(key) !== 'true') {
-        setShowVideoTypeModal(true);
-      }
-    } catch (_) { /* noop */ }
+    (async () => {
+      try {
+        const sid = sessionId || localStorage.getItem('session_id');
+        if (!sid) return;
+        const key = `video_type_set:${sid}`;
+        if (localStorage.getItem(key) === 'true') return;
+        await updateVideoType('hybrid');
+        try {
+          localStorage.setItem(key, 'true');
+          localStorage.setItem(`video_type_value:${sid}`, 'hybrid');
+        } catch (_) { /* noop */ }
+        setShowVideoTypeModal(false);
+      } catch (_) { /* noop */ }
+    })();
   }, [sessionId]);
 
   const updateVideoType = async (videoType) => {
@@ -443,9 +463,9 @@ const Home = () => {
         qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
       } catch (_) { /* noop */ }
       const qvt = String(qVideoType || '').toLowerCase();
-      const qEndpoint = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/questionnaire/generate'
-        : 'scripts/hybrid/questionnaire/generate';
+      let qEndpoint = 'scripts/hybrid/questionnaire/generate';
+      if (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic') qEndpoint = 'scripts/infographic/questionnaire/generate';
+      if (qvt === 'financial') qEndpoint = 'scripts/finanical/questionnaire/generate';
 
       // Build payload per new schema: { user: {...}, session: {...} }
       let userMeta = {};
@@ -554,7 +574,7 @@ const Home = () => {
       if (!token || !sessionId) { alert('Missing login or session. Please sign in again.'); return; }
 
       setIsMerging(true);
-      setShowVideoPopup(true);
+      setShowVideoPopup(false);
 
       // 1) Fetch session data
       const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -600,19 +620,70 @@ const Home = () => {
         try { localStorage.setItem('job_status', status); } catch (_) { /* legacy */ }
       }
 
-      // 5s popup then redirect to /media to follow merge job polling
-      setTimeout(() => {
-        setShowVideoPopup(false);
-        setScenesInitialData(null);
-        setIsMerging(false);
-        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
-      }, 5000);
+      // Immediately redirect to /media to follow merge job polling
+      setScenesInitialData(null);
+      setIsMerging(false);
+      try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
     } catch (e) {
       setIsMerging(false);
       setShowVideoPopup(false);
       alert(e?.message || 'Failed to start video merge');
     }
   };
+
+  // Handle video type tab change: create new session, then set selected type
+  const handleVideoTypeTabChange = async (label) => {
+    try {
+      setIsCreatingSession(true);
+      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
+      const userId = token || localStorage.getItem('token');
+      if (!userId) { navigate('/login'); return; }
+      // 1) Create a new session
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId })
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`sessions/new failed: ${resp.status} ${text}`);
+      const newId = data?.session?.session_id || data?.session_id || data?.id;
+      if (!newId) throw new Error('Session ID missing in response');
+      try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
+
+      // 2) Map label to API videoType
+      const map = {
+        'Hybrid Video': 'hybrid',
+        'Infographics Video': 'infographic',
+        'Financial Video': 'financial',
+        'Avatar Video': 'avatar'
+      };
+      const videoType = map[label] || 'hybrid';
+
+      // 3) Update video type for new session
+      try {
+        await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/video-type/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: newId, videoType })
+        });
+        try {
+          localStorage.setItem(`video_type_set:${newId}`, 'true');
+          localStorage.setItem(`video_type_value:${newId}`, videoType);
+        } catch (_) { /* noop */ }
+      } catch (_) { /* noop */ }
+
+      // 4) Navigate to new chat
+      navigate(`/chat/${newId}`);
+    } catch (e) {
+      console.error('Failed changing video type:', e);
+      alert('Unable to switch video type. Please try again.');
+    }
+  };
+
+  // Reflect creating flag from localStorage while loading or after navigation
+  useEffect(() => {
+    try {
+      const flag = localStorage.getItem('is_creating_session') === 'true';
+      setIsCreatingSession(flag);
+    } catch(_){}
+  }, [sessionId]);
 
   // Function to move from Guidelines to Questionnaire
   const goToNextStep = () => {
@@ -788,6 +859,17 @@ const Home = () => {
         } catch (_) { /* noop */ }
 
         let history = mapMessagesToChatHistory(msgs);
+        // Fallback: try session-scoped cached history if mapping produced nothing
+        try {
+          const sid = sessionId || localStorage.getItem('session_id');
+          if (history.length === 0 && sid) {
+            const cached = localStorage.getItem(`chat_history:${sid}`);
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (Array.isArray(parsed)) history = parsed;
+            }
+          }
+        } catch (_) { /* noop */ }
         try {
           // If no script message is present in chat history yet, check session scripts
           const hasScriptMsg = history.some(m => !!m.script);
@@ -874,6 +956,11 @@ const Home = () => {
         // No images/videos present → ensure Chat is shown
         setCurrentStep(1);
         setChatHistory(history);
+        // Persist session-scoped chat history for reloads
+        try {
+          const sid = sessionId || localStorage.getItem('session_id');
+          if (sid) localStorage.setItem(`chat_history:${sid}`, JSON.stringify(history));
+        } catch (_) { /* noop */ }
         // Consider a first message sent if there's any user turn present
         setHasSentFirstMessage(history.some(h => h.type === 'user'));
 
@@ -919,22 +1006,40 @@ const Home = () => {
                 <div className='font-medium'>Infographic</div>
                 <div className='text-xs text-gray-500'>Data-driven visuals</div>
               </button>
-              <button disabled className='px-3 py-2 border rounded-lg text-left bg-gray-100 text-gray-400 cursor-not-allowed'>
+              <button onClick={() => updateVideoType('financial')} className='px-3 py-2 border rounded-lg hover:bg-gray-50 text-left'>
                 <div className='font-medium'>Financial</div>
-                <div className='text-xs text-gray-400'>Markets and metrics (disabled)</div>
+                <div className='text-xs text-gray-500'>Markets and metrics</div>
               </button>
             </div>
             <div className='mt-4 flex justify-end'>
-              <button onClick={() => setShowVideoTypeModal(false)} className='text-sm text-gray-600 hover:underline'>Skip for now</button>
+              <button
+                onClick={async () => {
+                  try {
+                    await updateVideoType('hybrid');
+                  } catch (_) {
+                    // If API fails, still default locally to hybrid for the session
+                    try {
+                      const sid = sessionId || localStorage.getItem('session_id');
+                      if (sid) localStorage.setItem(`video_type_set:${sid}`, 'true');
+                      if (sid) localStorage.setItem(`video_type_value:${sid}`, 'hybrid');
+                    } catch (_) { /* noop */ }
+                    setShowVideoTypeModal(false);
+                  }
+                }}
+                className='text-sm text-gray-600 hover:underline'
+              >
+                Skip for now
+              </button>
             </div>
           </div>
         </div>
       )}
       <Sidebar/>
-      <div className="w-full mx-[2rem] mt-[1rem]">
+      <div className="w-full mx-[2rem] mt-[1rem] overflow-x-hidden">
         <Topbar/>
+        <Typetabs onChangeVideoType={handleVideoTypeTabChange} />
         {/* Step-based component rendering */}
-        <div className='overflow-y-auto h-[85vh] mt-2 scrollbar-hide'>
+        <div className='overflow-y-auto overflow-x-hidden h-[85vh] mt-2 scrollbar-hide'>
           {/* Debug info - remove this later */}
           {/* <div className="mb-2 text-sm text-gray-500">Current Step: {currentStep} | Chat Messages: {chatHistory.length}</div> */}
          {/* <Typetabs /> */}

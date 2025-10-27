@@ -18,7 +18,7 @@ const VideosList = ({ jobId, onClose }) => {
         const user_id = localStorage.getItem('token');
         if (!session_id || !user_id) { setError('Missing session or user'); setIsLoading(false); return; }
         // First read from session
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
         });
         const text = await resp.text();

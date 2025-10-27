@@ -79,7 +79,7 @@ const Result = () => {
       if (!token || !sessionId) throw new Error('Missing user token or session_id');
 
       // Get full session structure to send back
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
       const sessionText = await sessionResp.text();

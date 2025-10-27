@@ -39,43 +39,54 @@ const ScenesImages = () => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const load = async () => {
+    let pollTimer = null;
+    const loadSessionImages = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const sessionId = localStorage.getItem('session_id');
+        if (!token || !sessionId) return false;
+        const r = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+        const t = await r.text();
+        let j; try { j = JSON.parse(t); } catch(_) { j = {}; }
+        const sd = j?.session_data || j?.session || {};
+        const images = Array.isArray(sd?.images) ? sd.images : [];
+        if (images.length > 0) {
+          setRows(images.map((u, i) => ({ scene_number: i+1, scene_title: '', timeline: '', model: '', description: '', desc: '', text_to_be_included: [], ref_image: [u] })));
+          return true;
+        }
+        return false;
+      } catch(_) { return false; }
+    };
+    const start = async () => {
       try {
         setIsLoading(true); setError('');
         const jobId = localStorage.getItem('current_images_job_id');
-        if (jobId) {
-          const resp = await fetch(`https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/jobs/images/${encodeURIComponent(jobId)}`);
-          const text = await resp.text();
-          let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-          if (!resp.ok) throw new Error(`jobs/images failed: ${resp.status} ${text}`);
-          // Response shape may be array; normalize scenes
-          const container = Array.isArray(data) ? data[0] : data;
-          const scenes = Array.isArray(container?.scenes) ? container.scenes : [];
-          // Map to row format for display
-          const mapped = scenes.map((s) => ({
-            scene_number: s?.scene_number,
-            scene_title: s?.scene_title,
-            timeline: '',
-            model: '',
-            description: '',
-            desc: '',
-            text_to_be_included: Array.isArray(s?.approved_texts) ? s.approved_texts : [],
-            ref_image: [s?.image_1_url, s?.image_2_url].filter(Boolean),
-          }));
-          setRows(mapped);
-          return;
-        }
-        // Fallback to any previously stored scenes list
-        const raw = localStorage.getItem('scenes_images_source');
-        if (raw) {
-          const data = JSON.parse(raw);
-          const arr = Array.isArray(data?.script) ? data.script : (Array.isArray(data) ? data : []);
-          setRows(arr);
-        }
-      } catch (e) { setError(e?.message || 'Failed to load images'); }
-      finally { setIsLoading(false); }
+        if (!jobId) { setIsLoading(false); return; }
+        // initial attempt to show any existing images
+        const hasAny = await loadSessionImages();
+        const pendingFlag = localStorage.getItem('images_generate_pending') === 'true';
+        // poll status until succeeded only if generation was just initiated and no images yet
+        pollTimer = setInterval(async () => {
+          try {
+            const r = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(jobId)}`);
+            const tx = await r.text();
+            let d; try { d = JSON.parse(tx); } catch(_) { d = {}; }
+            const status = (d?.status || d?.job_status || '').toLowerCase();
+            if (status === 'succeeded' || status === 'success' || status === 'completed') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              await loadSessionImages();
+              setIsLoading(false);
+              try { localStorage.removeItem('images_generate_pending'); } catch(_){}
+            }
+          } catch(_) { /* continue polling */ }
+        }, 3000);
+      } catch (e) { setError(e?.message || 'Failed to load images'); setIsLoading(false); }
     };
-    load();
+    start();
+    return () => { if (pollTimer) clearInterval(pollTimer); };
   }, []);
 
   return (

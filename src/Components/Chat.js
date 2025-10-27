@@ -71,13 +71,27 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isSwitchingModel, setIsSwitchingModel] = useState(false);
   const [showModelConfirm, setShowModelConfirm] = useState(false);
   const [pendingModelType, setPendingModelType] = useState(null);
+  // Switch-model popup inputs
+  const [switchAvatarUrl, setSwitchAvatarUrl] = useState('');
+  const [switchChartType, setSwitchChartType] = useState('');
+  const [switchChartData, setSwitchChartData] = useState('');
   const [showAddSceneModal, setShowAddSceneModal] = useState(false);
   const [insertSceneIndex, setInsertSceneIndex] = useState(null);
+  const [sceneSuggestions, setSceneSuggestions] = useState([]);
+  const [isSuggestingScenes, setIsSuggestingScenes] = useState(false);
   const [newSceneDescription, setNewSceneDescription] = useState('');
   const [newSceneVideoType, setNewSceneVideoType] = useState('Avatar Based');
   const [isAddingScene, setIsAddingScene] = useState(false);
+  const [addSceneStep, setAddSceneStep] = useState(1); // 1: pick model, 2: suggestions
+  const [newSceneChartType, setNewSceneChartType] = useState('');
+  const [newSceneChartData, setNewSceneChartData] = useState('');
+  const [newSceneDocSummary, setNewSceneDocSummary] = useState('');
+  const [isUploadingNewSceneDoc, setIsUploadingNewSceneDoc] = useState(false);
+  const [newSceneContent, setNewSceneContent] = useState('');
+  const [newSceneSelectedIdx, setNewSceneSelectedIdx] = useState(-1);
   const [isSavingReorder, setIsSavingReorder] = useState(false);
   const [isDeletingScene, setIsDeletingScene] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   // Per-scene text include input buffer
   const [textIncludeInput, setTextIncludeInput] = useState('');
   // Script history controls (undo/redo)
@@ -86,8 +100,71 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Regenerate modal state
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenQuery, setRegenQuery] = useState('');
-  const [regenModel, setRegenModel] = useState('VEO3'); // 'VEO3' | 'SORA'
+  const [regenModel, setRegenModel] = useState('VEO3'); // 'VEO3' | 'SORA' | 'PLOTLY'
+  const [regenStep, setRegenStep] = useState(1); // 1: pick model, 2: suggestions
+  const [regenChartType, setRegenChartType] = useState('');
+  const [regenChartData, setRegenChartData] = useState('');
+  const [regenDocSummary, setRegenDocSummary] = useState('');
+  const [isUploadingRegenDoc, setIsUploadingRegenDoc] = useState(false);
+  const [regenSceneContent, setRegenSceneContent] = useState('');
+  const [regenSelectedIdx, setRegenSelectedIdx] = useState(-1);
+  const [regenManualText, setRegenManualText] = useState('');
+
+  // Helper: fetch suggestions for a given model_type and position
+  const fetchSceneSuggestions = async (modelType, positionIdx, target = 'add') => {
+    try {
+      if (target === 'regen') setIsSuggestingRegen(true); else setIsSuggestingScenes(true);
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) { setIsSuggestingScenes(false); return; }
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const text = await sessResp.text();
+      let json; try { json = JSON.parse(text); } catch(_) { json = {}; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${text}`);
+      const sd = json?.session_data || json?.session || {};
+      const user = json?.user_data || sd?.user_data || sd?.user || {};
+      const sessionForBody = {
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
+        content: Array.isArray(sd?.content) ? sd.content : [],
+        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
+        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+        created_at: sd?.created_at || new Date().toISOString(),
+        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+        messages: Array.isArray(sd?.messages) ? sd.messages : [],
+        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [],
+        videos: Array.isArray(sd?.videos) ? sd.videos : [],
+        images: Array.isArray(sd?.images) ? sd.images : [],
+        final_link: sd?.final_link || '',
+        videoType: sd?.videoType || sd?.video_type || '',
+        brand_style_interpretation: sd?.brand_style_interpretation
+      };
+      const suggestBody = {
+        session: sessionForBody,
+        user,
+        action: 'add',
+        position: Math.max(0, Number(positionIdx) || 0),
+        model_type: modelType,
+        document_content: (modelType === 'PLOTLY')
+          ? (addSceneStep ? (newSceneDocSummary || '') : (regenDocSummary || ''))
+          : ''
+      };
+      const sugResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/suggest-scenes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(suggestBody)
+      });
+      const sugText = await sugResp.text();
+      let sug; try { sug = JSON.parse(sugText); } catch(_) { sug = {}; }
+      const list = Array.isArray(sug?.suggestions) ? sug.suggestions : [];
+      if (target === 'regen') setRegenSuggestions(list); else setSceneSuggestions(list);
+    } catch(_) { if (target === 'regen') setRegenSuggestions([]); else setSceneSuggestions([]); }
+    finally { if (target === 'regen') setIsSuggestingRegen(false); else setIsSuggestingScenes(false); }
+  };
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regenSuggestions, setRegenSuggestions] = useState([]);
+  const [isSuggestingRegen, setIsSuggestingRegen] = useState(false);
+  const [isEnhancing, setIsEnhancing] = useState(false);
   // Only show 5 scene tabs at a time without scroll
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
   const [refImageUrlInput, setRefImageUrlInput] = useState('');
@@ -96,8 +173,75 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Templates modal + state
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
   const [brandTemplates, setBrandTemplates] = useState([]);
-  const [useDefaultTemplate, setUseDefaultTemplate] = useState(true);
+  const [useDefaultTemplate, setUseDefaultTemplate] = useState(true); // legacy (not used in new assets modal)
+  // Generate toggle for assets modal (default: No Generate)
+  const [isGenerate, setIsGenerate] = useState(false);
   const templateFileInputRef = useRef(null);
+  // Brand assets modal state (logos, icons, uploaded_images, templates, voiceover)
+  const [showAssetsModal, setShowAssetsModal] = useState(false);
+  const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+  const [assetsTab, setAssetsTab] = useState('templates');
+  const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  const assetsUploadInputRef = useRef(null);
+  const [pendingUploadType, setPendingUploadType] = useState('');
+  // Selected asset in Choose Asset modal
+  const [selectedAssetUrl, setSelectedAssetUrl] = useState('');
+  // Kebab menu inline component for header actions
+  const KebabMenu = ({ canUndo, canRedo, onUndo, onRedo, onDelete, onRegenerate, onEdit, onSwitchAvatar, onSwitchInfographic, onSwitchFinancial, isDeleting, hasScenes, isSwitching }) => {
+    const [open, setOpen] = React.useState(false);
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      const onDoc = (e) => { if (open && ref.current && !ref.current.contains(e.target)) setOpen(false); };
+      document.addEventListener('mousedown', onDoc);
+      return () => document.removeEventListener('mousedown', onDoc);
+    }, [open]);
+    return (
+      <div ref={ref} className="relative">
+        <button onClick={() => setOpen(v => !v)} className="inline-flex items-center justify-center w-9 h-9 rounded-lg border bg-white hover:bg-gray-50" title="More">
+          <MoreHorizontal className="w-5 h-5" />
+        </button>
+        {open && (
+          <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden">
+            <div className="py-1">
+              <button onClick={() => { setOpen(false); onRegenerate(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50">
+                <RefreshCcw className="w-4 h-4 text-[#13008B]" />
+                <span>Regenerate Scene</span>
+              </button>
+              <button onClick={() => { setOpen(false); onEdit && onEdit(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50">
+                <CiPen className="w-4 h-4 text-[#13008B]" />
+                <span>Edit Scenes</span>
+              </button>
+              <div className="my-1 h-px bg-gray-100" />
+              <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-gray-500">Switch Model</div>
+              <button onClick={() => { setOpen(false); onSwitchAvatar && onSwitchAvatar(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                <span>Avatar Based</span>
+              </button>
+              <button onClick={() => { setOpen(false); onSwitchInfographic && onSwitchInfographic(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                <span>Infographic</span>
+              </button>
+              <button onClick={() => { setOpen(false); onSwitchFinancial && onSwitchFinancial(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                <span>Financial</span>
+              </button>
+              <div className="my-1 h-px bg-gray-100" />
+              <button onClick={() => { setOpen(false); onUndo(); }} disabled={!canUndo} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canUndo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}>
+                <RefreshCcw className="w-4 h-4 rotate-180" />
+                <span>Undo</span>
+              </button>
+              <button onClick={() => { setOpen(false); onRedo(); }} disabled={!canRedo} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canRedo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}>
+                <RefreshCcw className="w-4 h-4" />
+                <span>Redo</span>
+              </button>
+              <div className="my-1 h-px bg-gray-100" />
+              <button onClick={() => { setOpen(false); onDelete(); }} disabled={isDeleting || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isDeleting) ? 'text-gray-400 cursor-not-allowed' : 'text-red-700 hover:bg-red-50'}`}>
+                <Trash2 className="w-4 h-4" />
+                <span>Delete Scene</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
   // Lightbox for zooming a reference image fullscreen
   const [isImageLightboxOpen, setIsImageLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState('');
@@ -518,7 +662,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const sessionId = localStorage.getItem('session_id');
       if (!token || !sessionId) throw new Error('Missing user token or session_id');
 
-      // 1) Fetch session data snapshot to pass to images/generate
+      // 1) Fetch session data snapshot
       const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
@@ -527,49 +671,53 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       let sessionData; try { sessionData = JSON.parse(sessText); } catch (_) { sessionData = sessText; }
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
 
-      // 2) Build request body per images/generate schema using session_data
-      const sd = sessionData?.session_data || {};
+      // 2) Build request body per new generate-images schema
+      const sd = sessionData?.session_data || sessionData?.session || {};
+      const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
       const sessionForBody = {
         id: sd.session_id || sessionId,
-        user_id: token,
+        user_id: sd.user_id || token,
         created_at: sd.created_at || new Date().toISOString(),
         updated_at: sd.updated_at || new Date().toISOString(),
-        content: sd.content || [],
-        summarydocument: sd.document_summary || [],
-        videoduration: String(sd.video_duration ?? 60),
-        totalsummary: sd.total_summary || [],
+        content: Array.isArray(sd.content) ? sd.content : [],
+        summarydocument: Array.isArray(sd.document_summary) ? sd.document_summary : [],
+        videoduration: String(sd.video_duration ?? sd.videoduration ?? 60),
+        totalsummary: Array.isArray(sd.total_summary) ? sd.total_summary : (Array.isArray(sd.totalsummary) ? sd.totalsummary : []),
         messages: Array.isArray(sd.messages) ? sd.messages : [],
-        scripts: [
-          {
-            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
-            airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
-            version: sd?.scripts?.[0]?.version || 'v1'
-          }
-        ],
-        videos: sd.videos || [],
+        scripts: Array.isArray(sd.scripts) && sd.scripts.length > 0 ? [sd.scripts[0]] : [{ userquery: [], airesponse: [], version: 'v1', additionalProp1: {} }],
+        videos: Array.isArray(sd.videos) ? sd.videos : [],
         additionalProp1: {}
       };
-      const imgBody = { session: sessionForBody };
-      // 3) Kick off images generation job
-      const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/images/generate', {
+      // 3) Kick off images generation job (queue endpoint)
+      const imgBody = {
+        user_id: (user?.id || user?.user_id || localStorage.getItem('token') || ''),
+        session_id: (localStorage.getItem('session_id') || sessionForBody?.session_id || '')
+      };
+      const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(imgBody)
       });
       const imgText = await imgResp.text();
       let imgData; try { imgData = JSON.parse(imgText); } catch (_) { imgData = imgText; }
-      if (!imgResp.ok) throw new Error(`images/generate failed: ${imgResp.status} ${imgText}`);
+      if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
+      try { localStorage.setItem('images_generate_response', JSON.stringify(imgData)); } catch(_) {}
 
-      // 4) Persist job id and redirect after a short popup
+      // 4) Persist job id and show 5s popup before redirect
       const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
       if (jobId) {
         try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
+        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
         setImagesJobId(jobId);
       }
-      // Prefer parent-controlled images view if provided; otherwise fallback to inline
-      if (typeof onOpenImagesList === 'function') {
-        onOpenImagesList(jobId);
-      } else {
-        setShowImagesOverlay(true);
-      }
+      // Show short popup then navigate to images list
+      setShowShortGenPopup(true);
+      setTimeout(() => {
+        setShowShortGenPopup(false);
+        if (typeof onOpenImagesList === 'function') {
+          onOpenImagesList(jobId || '');
+        } else {
+          setShowImagesOverlay(true);
+        }
+      }, 5000);
     } catch (e) {
       console.error('Failed to start scenes images generation:', e);
       alert(e?.message || 'Failed to start image generation');
@@ -582,27 +730,55 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
     useEffect(() => {
-      const fetchOnce = async () => {
+      let pollTimer = null;
+      const loadSessionImages = async () => {
+        try {
+          const token = localStorage.getItem('token');
+          const sessionId = localStorage.getItem('session_id');
+          if (!token || !sessionId) return;
+          const r = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+          });
+          const t = await r.text();
+          let j; try { j = JSON.parse(t); } catch(_) { j = {}; }
+          const sd = j?.session_data || j?.session || {};
+          const images = Array.isArray(sd?.images) ? sd.images : [];
+          if (images.length > 0) {
+            setRows(images.map((u, i) => ({ scene_number: i+1, scene_title: '', refs: [u] })));
+          }
+        } catch(_) {}
+      };
+      const start = async () => {
         try {
           setIsLoading(true); setError('');
           const id = jobId || localStorage.getItem('current_images_job_id');
           if (!id) { setError('Missing job id'); setIsLoading(false); return; }
-          const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/jobs/images/${encodeURIComponent(id)}`);
-          const text = await resp.text();
-          let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-          if (!resp.ok) throw new Error(`jobs/images failed: ${resp.status} ${text}`);
-          const container = Array.isArray(data) ? data[0] : data;
-          const scenes = Array.isArray(container?.scenes) ? container.scenes : [];
-          const mapped = scenes.map((s) => ({
-            scene_number: s?.scene_number,
-            scene_title: s?.scene_title,
-            refs: [s?.image_1_url, s?.image_2_url].filter(Boolean)
-          }));
-          setRows(mapped);
+          // initial load of any session images
+          await loadSessionImages();
+          // poll job status until succeeded
+          const pendingFlag = localStorage.getItem('images_generate_pending') === 'true';
+          if (!pendingFlag) { setIsLoading(false); return; }
+          pollTimer = setInterval(async () => {
+            try {
+              const r = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(id)}`);
+              const tx = await r.text();
+              let d; try { d = JSON.parse(tx); } catch(_) { d = {}; }
+              const status = (d?.status || d?.job_status || '').toLowerCase();
+              if (status === 'succeeded' || status === 'success' || status === 'completed') {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                // refresh session images
+                await loadSessionImages();
+                setIsLoading(false);
+                try { localStorage.removeItem('images_generate_pending'); } catch(_){}
+              }
+            } catch(_) { /* keep polling */ }
+          }, 3000);
         } catch (e) { setError(e?.message || 'Failed to load images'); }
-        finally { setIsLoading(false); }
+        finally { /* keep loader until succeeded */ }
       };
-      fetchOnce();
+      start();
+      return () => { if (pollTimer) clearInterval(pollTimer); };
     }, [jobId]);
     return (
       <div className={inline ? 'bg-white rounded-lg shadow-sm flex-1 flex flex-col' : 'fixed inset-0 z-[60] flex items-center justify-center bg-black/50'}>
@@ -670,37 +846,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
          localStorage.removeItem(scopedKey('updated_script_structure'));
        } catch (_) { /* noop */ }
       
-      // Open modal
-      try { openScriptModal(data); } catch (_) { /* noop */ }
+      // Do not auto-open script modal; Script now has its own step
+      // try { openScriptModal(data); } catch (_) { /* noop */ }
     };
     window.addEventListener('script-generated', onScriptGenerated);
     return () => window.removeEventListener('script-generated', onScriptGenerated);
   }, [setChatHistory]);
 
-  // Auto-open the last generated script after reload so users don't have to regenerate
-  useEffect(() => {
-    try {
-      if (isChatLoading) return;
-      // Prefer updated structure if present
-      let raw = localStorage.getItem(scopedKey('updated_script_structure'));
-      if (!raw) raw = localStorage.getItem(scopedKey('last_generated_script'));
-      if (!raw) return;
-      let script;
-      try { script = JSON.parse(raw); } catch (_) { script = null; }
-      if (!script) return;
-      const hash = JSON.stringify(script);
-      const sid = localStorage.getItem('session_id') || 'default';
-      const key = `last_opened_script_hash:${sid}`;
-      const prev = localStorage.getItem(key);
-      if (prev !== hash) {
-        try {
-          openScriptModal(script);
-        } finally {
-          try { localStorage.setItem(key, hash); } catch (_) { /* noop */ }
-        }
-      }
-    } catch (_) { /* noop */ }
-  }, [isChatLoading, chatHistory]);
+  // Disabled auto-open of script modal on reload; Script has a dedicated step
+  // useEffect(() => { ... }, [isChatLoading, chatHistory]);
 
   const normalizeScriptToRows = (script) => {
     try {
@@ -769,7 +923,19 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           scene_title: coalesce(row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
           narration: coalesce(row?.narration, row?.voice_over_script, row?.voice_over, row?.voiceover, row?.voice),
           description: coalesce(row?.description, row?.desc, row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
+          gen_image: (typeof row?.gen_image === 'boolean') ? row.gen_image : undefined,
           additional: coalesce(row?.additional, row?.additional_info, row?.notes, row?.extra, row?.additionalInformation),
+          // Chart-specific fields for Financial (PLOTLY) scenes
+          chart_type: row?.chart_type ?? row?.chartType ?? '',
+          chartType: row?.chartType ?? row?.chart_type ?? '',
+          chart_data: row?.chart_data ?? row?.chartData ?? null,
+          chartData: row?.chartData ?? row?.chart_data ?? null,
+          // Styling and colors
+          colors: Array.isArray(row?.colors) ? row.colors : [],
+          font_size: (row?.font_size != null ? row.font_size : row?.fontSize),
+          fontSize: (row?.fontSize != null ? row.fontSize : row?.font_size),
+          font_style: row?.font_style ?? row?.fontStyle ?? '',
+          fontStyle: row?.fontStyle ?? row?.font_style ?? '',
           text_to_be_included: Array.isArray(row?.text_to_be_included)
             ? row.text_to_be_included.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
             : (typeof row?.text_to_include === 'string' && row.text_to_include.trim() ? [row.text_to_include.trim()] : [])
@@ -1005,9 +1171,26 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const handleUndoScript = async () => {
     try {
       const sessionId = localStorage.getItem('session_id');
-      if (!sessionId) return;
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) return;
+      // 1) Fetch user-session-data to build user payload
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch (_) { sessJson = {}; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+      const sd = (sessJson?.session_data || sessJson?.session || {});
+      const userPayload = (sessJson?.user_data) || (sd?.user_data) || {};
+      const sessionForBody = {
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
+        brand_style_interpretation: sd?.brand_style_interpretation,
+      };
+      const reqBody = { user: userPayload, session: sessionForBody };
+      // 2) Call undo with user + session_id
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/undo', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
       });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
@@ -1023,9 +1206,26 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const handleRedoScript = async () => {
     try {
       const sessionId = localStorage.getItem('session_id');
-      if (!sessionId) return;
-      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId })
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) return;
+      // 1) Fetch user-session-data to build user payload
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch (_) { sessJson = {}; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+      const sd2 = (sessJson?.session_data || sessJson?.session || {});
+      const userPayload = (sessJson?.user_data) || (sd2?.user_data) || {};
+      const sessionForBody2 = {
+        session_id: sd2?.session_id || sessionId,
+        user_id: sd2?.user_id || token,
+        brand_style_interpretation: sd2?.brand_style_interpretation,
+      };
+      const reqBody = { user: userPayload, session: sessionForBody2 };
+      // 2) Call redo with user + session_id
+      const resp = await fetch('https://coreappservicerr-aseahgexgk​e8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
       });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
@@ -1040,6 +1240,31 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
   // Regenerate current scene based on user query and model
   const handleRegenerateScene = async () => {
+    const content = (regenDocSummary && regenDocSummary.trim()) || (regenSceneContent && regenSceneContent.trim()) || regenQuery || '';
+    if (!content) { alert('Please select a suggested scene or upload a document to provide scene content.'); return; }
+    await regenerateSceneViaAPI(content);
+  };
+
+  // Open Regenerate modal first; suggestions load based on selected model
+  const openRegenerateWithSuggestions = async () => {
+    try {
+      // Fresh start every time Regenerate flow opens
+      setRegenStep(1);
+      setRegenSuggestions([]);
+      setRegenSelectedIdx(-1);
+      setRegenSceneContent('');
+      setRegenDocSummary('');
+      setRegenChartType('');
+      setRegenChartData('');
+      setIsUploadingRegenDoc(false);
+      setRegenManualText('');
+      const sceneModel = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
+      setRegenModel(sceneModel || 'SORA');
+      setShowRegenModal(true);
+    } catch(_) { setShowRegenModal(true); }
+  };
+
+  const regenerateSceneViaAPI = async (userQuery) => {
     try {
       setIsRegenerating(true);
       if (!Array.isArray(scriptRows) || scriptRows.length === 0) return;
@@ -1047,10 +1272,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const token = localStorage.getItem('token');
       if (!sessionId || !token) throw new Error('Missing session_id or token');
 
-      // 1) Load session snapshot for request body
-      const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
       if (!sessionResp.ok) {
         const text = await sessionResp.text();
@@ -1058,21 +1281,24 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }
       const sessionDataResponse = await sessionResp.json();
       const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
-      // 2) Resolve video type to select endpoint
-      let qVideoType = 'hybrid';
-      try {
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
-      } catch (_) { /* noop */ }
-      const qvt = String(qVideoType || '').toLowerCase();
-      const regenPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/regenerate-scene'
-        : 'scripts/hybrid/regenerate-scene';
+      const regenPath = 'scripts/regenerate-scene';
 
-      // 3) Build session + user objects exactly per session snapshot shape
       const sessionForBody = {
-        ...(sd || {}),
         session_id: sd?.session_id || sessionId,
         user_id: sd?.user_id || token,
+        content: Array.isArray(sd?.content) ? sd.content : [],
+        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+        created_at: sd?.created_at || new Date().toISOString(),
+        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+        messages: Array.isArray(sd?.messages) ? sd.messages : [],
+        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
+        videos: Array.isArray(sd?.videos) ? sd.videos : [],
+        images: Array.isArray(sd?.images) ? sd.images : [],
+        final_link: sd?.final_link || '',
+        videoType: sd?.videoType || sd?.video_type || '',
+        brand_style_interpretation: sd?.brand_style_interpretation,
+        additionalProp1: sd?.additionalProp1 || {}
       };
       let userForBody;
       if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
@@ -1087,13 +1313,31 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       const cur = scriptRows[currentSceneIndex];
       const sceneNumber = cur?.scene_number ?? (currentSceneIndex + 1);
-      const body = {
+      // Use selected regen model if provided, else current scene's model
+      const selectedRegen = (regenModel || '').toUpperCase();
+      const currentSceneModel = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
+      const modelUpper = selectedRegen || currentSceneModel || 'SORA';
+      let body = {
         user: userForBody,
         session: sessionForBody,
         scene_number: sceneNumber,
-        user_query: regenQuery || '',
-        model: regenModel,
+        user_query: (regenModel === 'PLOTLY' && regenDocSummary) ? regenDocSummary : (userQuery || ''),
+        model: modelUpper,
       };
+      if (modelUpper === 'VEO3') {
+        body.presenter_options = {
+          presetd_id: '1',
+          presenter_actions: 'presetner walks in from the left'
+        };
+        // Some backends expect presentor_options; include both for compatibility
+        body.presentor_options = body.presenter_options;
+      }
+      if (modelUpper === 'PLOTLY') {
+        body.chart_type = (regenChartType || scriptRows?.[currentSceneIndex]?.chart_type || scriptRows?.[currentSceneIndex]?.chartType || '').toLowerCase();
+        if (regenChartData && typeof regenChartData === 'string') {
+          try { body.chart_data = JSON.parse(regenChartData); } catch(_) {}
+        }
+      }
 
       const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${regenPath}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -1149,16 +1393,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const cur = scriptRows[currentSceneIndex];
       const sceneNumber = cur?.scene_number ?? (currentSceneIndex + 1);
 
-      // 2) Resolve video type from session or local cache to choose endpoint
-      let qVideoType = 'hybrid';
-      try {
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
-      } catch (_) { /* noop */ }
-      const qvt = String(qVideoType || '').toLowerCase();
-      // If infographic → use infographic endpoint; otherwise default to hybrid
-      const deleteEndpointPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/delete-scene'
-        : 'scripts/hybrid/delete-scene';
+      // Use a unified delete endpoint regardless of video type
+      const deleteEndpointPath = 'scripts/delete-scene';
 
       // 3) Build user payload EXACTLY from user-session-data.user_data
       //    Do not reshape; use as-is. If absent, stop with a clear error.
@@ -1179,10 +1415,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         ...(sd || {}),
         session_id: sd?.session_id || sessionId,
         user_id: sd?.user_id || token,
+        brand_style_interpretation: sd?.brand_style_interpretation,
       };
       const body = { user: userPayload, session: sessionForBody, scene_number: sceneNumber };
       try { console.log('[delete-scene] endpoint:', deleteEndpointPath, 'body:', body); } catch (_) { /* noop */ }
-      // 5) Call specific delete endpoint based on video type
+      // 5) Call unified delete endpoint
       const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${deleteEndpointPath}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
@@ -1214,88 +1451,97 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Add Scene helpers
   const openAddSceneModal = (index) => {
     try {
-      setInsertSceneIndex(typeof index === 'number' ? index : (Array.isArray(scriptRows) ? scriptRows.length : 0));
+      // Fresh start every time Add Scene is opened. Always insert at end.
+      setInsertSceneIndex(Array.isArray(scriptRows) ? scriptRows.length : 0);
       setNewSceneDescription('');
-      setNewSceneVideoType(selectedVideoType || 'Avatar Based');
+      setNewSceneVideoType('Avatar Based');
+      setAddSceneStep(1);
+      setSceneSuggestions([]);
+      setNewSceneChartType('');
+      setNewSceneChartData('');
+      setNewSceneDocSummary('');
+      setNewSceneContent('');
+      setNewSceneSelectedIdx(-1);
+      setIsUploadingNewSceneDoc(false);
       setShowAddSceneModal(true);
     } catch (_) { /* noop */ }
   };
 
-  const addSceneToRows = async () => {
+  // Helper to build session + user payload from user-session-data
+  const buildSessionAndUserForScene = async () => {
+    const sessionId = localStorage.getItem('session_id');
+    const token = localStorage.getItem('token');
+    if (!sessionId || !token) throw new Error('Missing session_id or token');
+    const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+    });
+    const text = await resp.text();
+    let json; try { json = JSON.parse(text); } catch(_) { json = {}; }
+    if (!resp.ok) throw new Error(`user-session/data failed: ${resp.status} ${text}`);
+    const sd = json?.session_data || json?.session || {};
+    const user = json?.user_data || sd?.user_data || sd?.user || {};
+    const session = {
+      session_id: sd?.session_id || sessionId,
+      user_id: sd?.user_id || token,
+      content: Array.isArray(sd?.content) ? sd.content : [],
+      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+      created_at: sd?.created_at || new Date().toISOString(),
+      totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+      messages: Array.isArray(sd?.messages) ? sd.messages : [],
+      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
+      videos: Array.isArray(sd?.videos) ? sd.videos : [],
+      images: Array.isArray(sd?.images) ? sd.images : [],
+      final_link: sd?.final_link || '',
+      videoType: sd?.videoType || sd?.video_type || '',
+      brand_style_interpretation: sd?.brand_style_interpretation,
+      additionalProp1: sd?.additionalProp1 || {}
+    };
+    return { session, user };
+  };
+
+  // Add-scene via API with given content (used by suggestions and manual)
+  const addSceneViaAPI = async (sceneContent) => {
     try {
       if (isAddingScene) return;
-      if (!newSceneDescription || !newSceneDescription.trim()) {
-        alert('Please enter a description for the new scene.');
-        return;
-      }
-      const sessionId = localStorage.getItem('session_id');
-      const token = localStorage.getItem('token');
-      if (!sessionId || !token) throw new Error('Missing session_id or token');
-
+      const { session, user } = await buildSessionAndUserForScene();
       setIsAddingScene(true);
-      // 1) Fetch session snapshot
-      const sessionReqBody = { user_id: token, session_id: sessionId };
-      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
-      });
-      if (!sessResp.ok) {
-        const t = await sessResp.text();
-        throw new Error(`user-session/data failed: ${sessResp.status} ${t}`);
-      }
-      const sessionDataResponse = await sessResp.json();
-      const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
-      // Build session object directly from snapshot (ensure ids present)
-      const sessionForBody = {
-        ...(sd || {}),
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-      };
-      // Build exact user object from user-session-data
-      let userForBody;
-      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
-        userForBody = sessionDataResponse.user_data;
-      } else if (sd && typeof sd.user_data === 'object') {
-        userForBody = sd.user_data;
-      } else if (sd && typeof sd.user === 'object') {
-        userForBody = sd.user;
-      } else {
-        throw new Error('user_data missing in user-session-data response');
-      }
-
-      // 2) Build add-scene request per newsceneadditionip.json
-      const desiredModel = newSceneVideoType === 'Avatar Based' ? 'VEO3' : 'SORA';
       const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
-      const idx = (typeof insertSceneIndex === 'number' && insertSceneIndex >= 0 && insertSceneIndex <= total) ? insertSceneIndex : total;
-      // Backend expects a 0-based position (after this index). Between scene 2 and 3 -> 2.
-      const insertPosition = idx;
-      const requestBody = {
-        user: userForBody,
-        session: sessionForBody,
-        insert_position: insertPosition,
-        scene_content: newSceneDescription,
-        model_type: desiredModel,
+      // Always add at the last position
+      const idx = total;
+      const desiredModel =
+        newSceneVideoType === 'Avatar Based' ? 'VEO3'
+        : newSceneVideoType === 'Infographic' ? 'SORA'
+        : newSceneVideoType === 'Financial' ? 'PLOTLY'
+        : String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || 'SORA');
+      let body = {
+        user,
+        session,
+        insert_position: idx,
+        scene_content: (newSceneVideoType === 'Financial' && newSceneDocSummary) ? newSceneDocSummary : (sceneContent || ''),
+        model_type: desiredModel
       };
-      console.log('scripts/add-scene request body:', requestBody);
+      if (desiredModel === 'VEO3') {
+        body.presenter_options = {
+          presetd_id: '1',
+          presenter_actions: 'presetner walks in from the left'
+        };
+        body.presentor_options = body.presenter_options; // dual key for API compatibility
+      }
+      if (desiredModel === 'PLOTLY') {
+        body.chart_type = (newSceneChartType || scriptRows?.[currentSceneIndex]?.chart_type || scriptRows?.[currentSceneIndex]?.chartType || '').toLowerCase();
+        if (newSceneChartData && typeof newSceneChartData === 'string') {
+          try { body.chart_data = JSON.parse(newSceneChartData); } catch(_) { /* ignore parse error */ }
+        }
+      }
 
-      // 3) Choose add-scene endpoint by video type
-      let qVideoType = 'hybrid';
-      try {
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
-      } catch (_) { /* noop */ }
-      const qvt = String(qVideoType || '').toLowerCase();
-      const addPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/add-scene'
-        : 'scripts/hybrid/add-scene';
-
-      const addResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${addPath}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+      const addResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/add-scene', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const addText = await addResp.text();
-      let addData; try { addData = JSON.parse(addText); } catch (_) { addData = addText; }
-      if (!addResp.ok) throw new Error(`${addPath} failed: ${addResp.status} ${addText}`);
-      console.log('scripts/add-scene response:', addData);
-
-      // 4) Update UI with response (reorderescriptop-style)
+      let addData; try { addData = JSON.parse(addText); } catch(_) { addData = addText; }
+      if (!addResp.ok) throw new Error(`scripts/add-scene failed: ${addResp.status} ${addText}`);
+      // Update UI
       const container = addData?.reordered_script ?? addData;
       try {
         localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
@@ -1303,29 +1549,26 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         const normalized = normalizeScriptToRows(container);
         const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
         setScriptRows(newRows);
-        // Select inserted position (best-effort)
         const selIndex = Math.min(Math.max(0, idx), Math.max(0, newRows.length - 1));
         setCurrentSceneIndex(selIndex);
         setHasOrderChanged(false);
-        // Enable undo after a successful structural change
         setCanUndo(true); setCanRedo(false);
-        // Update last script in chat history and localStorage reference for next opens
-        try {
-          setChatHistory(prev => {
-            const copy = [...prev];
-            for (let i = copy.length - 1; i >= 0; i--) {
-              if (copy[i]?.script) { copy[i] = { ...copy[i], script: container }; break; }
-            }
-            try {
-              localStorage.setItem(scopedKey('last_generated_script'), JSON.stringify(container));
-              localStorage.removeItem('last_generated_script');
-            } catch (_) { /* noop */ }
-            return copy;
-          });
-        } catch (_) { /* noop */ }
-      } catch (_) { /* noop */ }
-
+      } catch(_) {}
       setShowAddSceneModal(false);
+    } catch (e) {
+      console.error('Add scene failed:', e);
+      alert('Failed to add scene. Please try again.');
+    } finally {
+      setIsAddingScene(false);
+    }
+  };
+
+  const addSceneToRows = async () => {
+    try {
+      if (isAddingScene) return;
+      const content = (newSceneDocSummary && newSceneDocSummary.trim()) || (newSceneContent && newSceneContent.trim()) || '';
+      if (!content) { alert('Please select a suggested scene or upload a document to provide scene content.'); return; }
+      await addSceneViaAPI(content);
     } catch (e) {
       console.error('Add scene failed:', e);
       alert('Failed to add scene. Please try again.');
@@ -1450,16 +1693,20 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
       'application/vnd.ms-powerpoint', // ppt
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
-      'application/msword' // doc
+      'application/msword', // doc
+      'text/csv', // csv
+      'application/vnd.ms-excel', // xls
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' // xlsx
     ];
 
     const validFiles = files.filter(file => {
-      if (allowedTypes.includes(file.type)) {
-        return true;
-      } else {
-        alert(`File ${file.name} is not a supported format. Please upload only PDF, PPT, PPTX, DOC, or DOCX files.`);
-        return false;
-      }
+      const type = (file?.type || '').toLowerCase();
+      const name = (file?.name || '').toLowerCase();
+      const byMime = allowedTypes.includes(type);
+      const byExt = ['.pdf','.ppt','.pptx','.doc','.docx','.csv','.xls','.xlsx'].some(ext => name.endsWith(ext));
+      if (byMime || byExt) return true;
+      alert(`File ${file.name} is not a supported format. Please upload PDF, PPT, PPTX, DOC, DOCX, CSV, XLS, or XLSX.`);
+      return false;
     });
 
     if (validFiles.length > 0) {
@@ -1477,12 +1724,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
   // Get file icon based on type
   const getFileIcon = (file) => {
-    if (file.type.includes('pdf')) {
+    const type = (file?.type || '').toLowerCase();
+    const name = (file?.name || '').toLowerCase();
+    if (type.includes('pdf') || name.endsWith('.pdf')) {
       return <FileText className="w-5 h-5 text-red-500" />;
-    } else if (file.type.includes('powerpoint') || file.type.includes('presentation')) {
+    } else if (type.includes('powerpoint') || type.includes('presentation') || name.endsWith('.ppt') || name.endsWith('.pptx')) {
       return <FileText className="w-5 h-5 text-orange-500" />;
-    } else if (file.type.includes('word') || file.type.includes('document')) {
+    } else if (type.includes('word') || type.includes('document') || name.endsWith('.doc') || name.endsWith('.docx')) {
       return <FileText className="w-5 h-5 text-blue-500" />;
+    } else if (type.includes('csv') || name.endsWith('.csv')) {
+      return <FileText className="w-5 h-5 text-green-600" />;
+    } else if (type.includes('excel') || type.includes('spreadsheet') || name.endsWith('.xls') || name.endsWith('.xlsx') || type.includes('vnd.ms-excel') || type.includes('vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+      return <FileText className="w-5 h-5 text-green-600" />;
     }
     return <File className="w-5 h-5 text-gray-500" />;
   };
@@ -1493,6 +1746,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     if (lower.endsWith('.pdf')) return <FileText className="w-5 h-5 text-red-500" />;
     if (lower.endsWith('.ppt') || lower.endsWith('.pptx')) return <FileText className="w-5 h-5 text-orange-500" />;
     if (lower.endsWith('.doc') || lower.endsWith('.docx')) return <FileText className="w-5 h-5 text-blue-500" />;
+    if (lower.endsWith('.csv') || lower.endsWith('.xls') || lower.endsWith('.xlsx')) return <FileText className="w-5 h-5 text-green-600" />;
     return <File className="w-5 h-5 text-gray-500" />;
   };
 
@@ -1510,6 +1764,19 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         throw new Error('Missing session_id or token');
       }
 
+      // Determine authoritative video type from user-session-data
+      let isFinancialVT = false;
+      try {
+        const vtResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+        const vtText = await vtResp.text();
+        let vtData; try { vtData = JSON.parse(vtText); } catch(_) { vtData = vtText; }
+        const sd = vtData?.session_data || vtData?.session || {};
+        const vtLower = ((sd?.videoType || sd?.video_type || '') + '').toLowerCase();
+        isFinancialVT = vtLower === 'financial' || vtLower.includes('financial');
+      } catch (_) { /* noop */ }
+
       // Process each file sequentially
       for (const file of files) {
         try {
@@ -1517,40 +1784,40 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           const extractFormData = new FormData();
           extractFormData.append('files', file);
           extractFormData.append('user_id', token);
-          extractFormData.append('session_id', sessionId);
 
           console.log('Calling extract API for file:', file.name);
-          const extractResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/hybrid_infographis_extract', {
-            method: 'POST',
-            body: extractFormData
-          });
-
-          if (!extractResponse.ok) {
-            throw new Error(`Document extraction failed for ${file.name}: ${extractResponse.status}`);
-          }
-
-          const extractData = await extractResponse.json();
-          console.log('Extract API Response for', file.name, ':', extractData);
-          
-          // Store extract data for later use in summary API
-          file.extractData = extractData;
-          
-          // Log the documents array structure
-          if (extractData.documents && Array.isArray(extractData.documents)) {
-            console.log('Documents array from API:', extractData.documents);
-            console.log('Number of documents:', extractData.documents.length);
-            
-            // Log each document object
-            extractData.documents.forEach((doc, index) => {
-              console.log(`Document ${index + 1}:`, doc);
-              if (doc.additionalProp1) {
-                console.log(`Document ${index + 1} additionalProp1:`, doc.additionalProp1);
-              }
+          try {
+            // Unified extract endpoint for all video types
+            const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
+            const extractResponse = await fetch(extractUrl, {
+              method: 'POST',
+              body: extractFormData
             });
-          } else {
-            console.log('No documents array found in response or invalid structure');
-          }
 
+            if (!extractResponse.ok) {
+              throw new Error(`Document extraction failed for ${file.name}: ${extractResponse.status}`);
+            }
+
+            const extractData = await extractResponse.json();
+            console.log('Extract API Response for', file.name, ':', extractData);
+            // Store extract data for later use in summary API
+            file.extractData = extractData;
+            // Log the documents array structure
+            if (extractData.documents && Array.isArray(extractData.documents)) {
+              console.log('Documents array from API:', extractData.documents);
+              console.log('Number of documents:', extractData.documents.length);
+              extractData.documents.forEach((doc, index) => {
+                console.log(`Document ${index + 1}:`, doc);
+                if (doc.additionalProp1) {
+                  console.log(`Document ${index + 1} additionalProp1:`, doc.additionalProp1);
+                }
+              });
+            } else {
+              console.log('No documents array found in response or invalid structure');
+            }
+          } catch (extractErr) {
+            console.error(`Error extracting file ${file.name}:`, extractErr);
+          }
         } catch (fileError) {
           console.error(`Error extracting file ${file.name}:`, fileError);
         }
@@ -1580,28 +1847,94 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   
         // Prepare request body according to API specification
         // Use the extract API response directly for the documents array when available
-        const documentsFromExtract = Array.isArray(file.extractData?.documents)
-          ? file.extractData.documents
-          : [];
+        // Build documents array for summary from extract response (robust to shapes)
+        let documentsFromExtract = [];
+        if (Array.isArray(file.extractData?.documents)) {
+          documentsFromExtract = file.extractData.documents;
+        } else if (Array.isArray(file.extractData)) {
+          documentsFromExtract = file.extractData;
+        } else if (file.extractData && (file.extractData.documentName || file.extractData.slides)) {
+          documentsFromExtract = [file.extractData];
+        } else {
+          documentsFromExtract = [];
+        }
 
-        const requestBody = {
-          session: {
+        // Build session object from user-session-data API as source of truth
+        let sessionObj = {};
+        try {
+          const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: token, session_id: sessionId })
+          });
+          const text = await sessResp.text();
+          let json; try { json = JSON.parse(text); } catch (_) { json = {}; }
+          const sd = json?.session_data || json?.session || {};
+          // Normalize to required schema
+          sessionObj = {
+            session_id: sd.session_id || sessionId,
+            user_id: sd.user_id || token,
+            content: Array.isArray(sd.content) ? sd.content : [],
+            document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+            video_duration: String(sd.video_duration || sd.videoduration || '60'),
+            created_at: sd.created_at || new Date().toISOString(),
+            totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
+            messages: Array.isArray(sd.messages) ? sd.messages : [],
+            scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+            videos: Array.isArray(sd.videos) ? sd.videos : [],
+            images: Array.isArray(sd.images) ? sd.images : [],
+            final_link: sd.final_link || '',
+            videoType: sd.videoType || sd.video_type || '',
+            additionalProp1: sd.additionalProp1 || {}
+          };
+        } catch (_) {
+          sessionObj = {
             session_id: sessionId,
             user_id: token,
             content: [],
-            document_summary: [],
-            videoduration: "60",
+            document_summary: [{ additionalProp1: {} }],
+            video_duration: '60',
             created_at: new Date().toISOString(),
             totalsummary: [],
-            messages: []
-          },
+            messages: [],
+            scripts: [],
+            videos: [],
+            images: [],
+            final_link: '',
+            videoType: '',
+            additionalProp1: {}
+          };
+        }
+
+        const requestBody = {
+          session: sessionObj,
           documents: documentsFromExtract
         };
   
         console.log('Calling summary API for file:', file.name);
         console.log('Summary API Request Body:', requestBody);
         
-        const summaryResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/hybrid_infographics_summary', {
+        // Determine video type to choose correct summary endpoint (scoped per call)
+        let svtLower = 'hybrid';
+        try {
+          const vtResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: token, session_id: sessionId })
+          });
+          if (vtResp.ok) {
+            const vtJson = await vtResp.json();
+            const sd = vtJson?.session_data;
+            svtLower = String((sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid') || '').toLowerCase();
+          } else {
+            svtLower = String(localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid').toLowerCase();
+          }
+        } catch (_) {
+          svtLower = String(localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid').toLowerCase();
+        }
+
+        // Unified summarize endpoint for all video types
+        const summaryResponse = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -1718,33 +2051,97 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           throw new Error('Missing session_id or token');
         }
 
-        // Collect documents arrays from all files that have extractData
+        // Collect documents from all files that have extractData (robust to response shapes)
         const combinedDocuments = uploadedFiles
-          .filter(f => f.extractData && Array.isArray(f.extractData.documents))
-          .flatMap(f => f.extractData.documents);
+          .filter(f => f.extractData)
+          .flatMap(f => {
+            const ed = f.extractData;
+            if (Array.isArray(ed?.documents)) return ed.documents;
+            if (Array.isArray(ed)) return ed;
+            if (ed && (ed.documentName || ed.slides)) return [ed];
+            return [];
+          });
 
         if (combinedDocuments.length === 0) {
-          console.warn('No extracted documents available to send.');
-          return;
+          console.warn('No extracted documents available to send. Proceeding with empty documents array.');
         }
 
-        const requestBody = {
-          session: {
+        // Build session object from user-session-data API as source of truth
+        let sessionObjAll = {};
+        try {
+          const sessRespAll = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: token, session_id: sessionId })
+          });
+          const textAll = await sessRespAll.text();
+          let jsonAll; try { jsonAll = JSON.parse(textAll); } catch (_) { jsonAll = {}; }
+          const sdAll = jsonAll?.session_data || jsonAll?.session || {};
+          sessionObjAll = {
+            session_id: sdAll.session_id || sessionId,
+            user_id: sdAll.user_id || token,
+            content: Array.isArray(sdAll.content) ? sdAll.content : [],
+            document_summary: Array.isArray(sdAll.document_summary) ? sdAll.document_summary : [{ additionalProp1: {} }],
+            video_duration: String(sdAll.video_duration || sdAll.videoduration || '60'),
+            created_at: sdAll.created_at || new Date().toISOString(),
+            totalsummary: Array.isArray(sdAll.totalsummary) ? sdAll.totalsummary : [],
+            messages: Array.isArray(sdAll.messages) ? sdAll.messages : [],
+            scripts: Array.isArray(sdAll.scripts) ? sdAll.scripts : [],
+            videos: Array.isArray(sdAll.videos) ? sdAll.videos : [],
+            images: Array.isArray(sdAll.images) ? sdAll.images : [],
+            final_link: sdAll.final_link || '',
+            videoType: sdAll.videoType || sdAll.video_type || '',
+            additionalProp1: sdAll.additionalProp1 || {}
+          };
+        } catch (_) {
+          sessionObjAll = {
             session_id: sessionId,
             user_id: token,
             content: [],
-            document_summary: [],
-            videoduration: "60",
+            document_summary: [{ additionalProp1: {} }],
+            video_duration: '60',
             created_at: new Date().toISOString(),
             totalsummary: [],
-            messages: []
-          },
+            messages: [],
+            scripts: [],
+            videos: [],
+            images: [],
+            final_link: '',
+            videoType: '',
+            additionalProp1: {}
+          };
+        }
+
+        const requestBody = {
+          session: sessionObjAll,
           documents: combinedDocuments
         };
 
         console.log('Calling summary API for ALL files. Request Body:', requestBody);
 
-        const summaryResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/hybrid_infographics_summary', {
+        // Determine video type to choose correct summary endpoint
+        let vtLower = 'hybrid';
+        try {
+          const vtResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: token, session_id: sessionId })
+          });
+          if (vtResp.ok) {
+            const vtJson = await vtResp.json();
+            const sd = vtJson?.session_data;
+            vtLower = String((sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid') || '').toLowerCase();
+          } else {
+            // Fallback to any locally stored value
+            vtLower = String(localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid').toLowerCase();
+          }
+        } catch (e) {
+          // Silently fall back to hybrid if fetch fails
+          vtLower = String(localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid').toLowerCase();
+        }
+
+        // Unified summarize endpoint for all video types
+        const summaryResponse = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -2200,10 +2597,17 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     try {
       if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
       const scene = scriptRows[currentSceneIndex];
-      const desiredModel = videoType === 'Avatar Based' ? 'VEO3' : 'SORA';
+      const desiredModel = (videoType === 'Avatar Based') ? 'VEO3' : (videoType === 'Financial' ? 'PLOTLY' : 'SORA');
       const currentModel = (scene?.mode || scene?.model || '').toUpperCase();
       if (currentModel === desiredModel.toUpperCase()) return; // no-op if same
       setPendingModelType(videoType);
+      // seed popup fields from current scene
+      try {
+        setSwitchAvatarUrl('');
+        setSwitchChartType(scene?.chart_type || scene?.chartType || '');
+        const cd = scene?.chart_data || scene?.chartData;
+        setSwitchChartData(cd ? (typeof cd === 'string' ? cd : JSON.stringify(cd, null, 2)) : '');
+      } catch(_) {}
       setShowModelConfirm(true);
     } catch (_) { /* noop */ }
   };
@@ -2217,7 +2621,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         return;
       }
       const scene = scriptRows[currentSceneIndex];
-      const desiredModel = videoType === 'Avatar Based' ? 'VEO3' : 'SORA';
+      const desiredModel = (videoType === 'Avatar Based') ? 'VEO3' : (videoType === 'Financial' ? 'PLOTLY' : 'SORA');
       const currentModel = scene?.mode || scene?.model || '';
       if ((currentModel || '').toUpperCase() === desiredModel.toUpperCase()) {
         setSelectedVideoType(videoType);
@@ -2239,6 +2643,32 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }
       const sessionDataResponse = await sessionResp.json();
       const sd = sessionDataResponse?.session_data || {};
+      // Build user object: prefer user_data from session response; fallback to localStorage
+      let userForBody = undefined;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userForBody = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userForBody = sd.user_data;
+      } else {
+        try {
+          const raw = localStorage.getItem('user');
+          const token = localStorage.getItem('token') || '';
+          const u = raw ? JSON.parse(raw) : {};
+          userForBody = {
+            id: u?.id || token || '',
+            email: u?.email || '',
+            display_name: u?.display_name || u?.name || '',
+            created_at: u?.created_at || '',
+            avatar_url: u?.avatar_url || '',
+            folder_url: u?.folder_url || '',
+            brand_identity: u?.brand_identity || {},
+            tone_and_voice: u?.tone_and_voice || {},
+            look_and_feel: u?.look_and_feel || {},
+            templates: Array.isArray(u?.templates) ? u.templates : [],
+            voiceover: Array.isArray(u?.voiceover) ? u.voiceover : [],
+          };
+        } catch (_) { userForBody = {}; }
+      }
       const sessionForBody = {
         session_id: sessionId,
         user_id: token,
@@ -2249,16 +2679,38 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         document_summary: sd.document_summary,
         content: sd.content,
         total_summary: sd.total_summary,
+        brand_style_interpretation: sd.brand_style_interpretation,
         messages: sd.messages,
         scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
       };
 
       // 2) Build switch-model request body
       const requestBody = {
+        user: userForBody,
+        session: sessionForBody,
         scene_number: scene.scene_number,
         target_model: desiredModel,
-        session: sessionForBody,
       };
+      // Optional fields per target model
+      if (desiredModel === 'VEO3') {
+        const avatarUrl = switchAvatarUrl || selectedAvatar || '';
+        requestBody.presenter_options = {
+          presetd_id: '1',
+          presenter_actions: 'presetner walks in from the left'
+        };
+        if (avatarUrl) requestBody.presenter_options.avatar_url = avatarUrl;
+        // Mirror to presentor_options for API variants expecting this key
+        requestBody.presentor_options = requestBody.presenter_options;
+      }
+      if (desiredModel === 'PLOTLY') {
+        const chart_type = (switchChartType || scene?.chart_type || scene?.chartType || '').toLowerCase();
+        let chart_data = scene?.chart_data || scene?.chartData || {};
+        if (switchChartData && typeof switchChartData === 'string') {
+          try { chart_data = JSON.parse(switchChartData); } catch(_) {/* keep scene data */}
+        }
+        requestBody.chart_type = chart_type;
+        requestBody.chart_data = chart_data;
+      }
       console.log('scripts/switch-model request body:', requestBody);
 
       // 3) Call switch-model API
@@ -2338,11 +2790,23 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }
       const sessionDataResponse = await sessionResp.json();
       const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
-      // Build session object exactly from session snapshot shape (mapped to `session`)
+      // Build session object to match required schema
       const sessionForBody = {
-        ...(sd || {}),
         session_id: sd?.session_id || sessionId,
         user_id: sd?.user_id || token,
+        content: Array.isArray(sd?.content) ? sd.content : [],
+        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+        created_at: sd?.created_at || new Date().toISOString(),
+        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+        messages: Array.isArray(sd?.messages) ? sd.messages : [],
+        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
+        videos: Array.isArray(sd?.videos) ? sd.videos : [],
+        images: Array.isArray(sd?.images) ? sd.images : [],
+        final_link: sd?.final_link || '',
+        videoType: sd?.videoType || sd?.video_type || '',
+        brand_style_interpretation: sd?.brand_style_interpretation,
+        additionalProp1: sd?.additionalProp1 || {}
       };
 
       // Use exact user object from user-session-data
@@ -2358,6 +2822,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }
 
       const originalUserquery = Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [];
+      // Derive script version from session data when available
+      const scriptVersion = (
+        (Array.isArray(sd?.scripts) && sd.scripts[0]?.version)
+        || (sd?.scripts && sd.scripts.version)
+        || sd?.version
+        || 'v1'
+      );
 
       // 2) Build changed_script.airesponse from current UI rows (preserve scene_number)
       const rows = Array.isArray(scriptRows) ? scriptRows : [];
@@ -2368,6 +2839,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         timeline: r?.timeline ?? '',
         narration: r?.narration ?? '',
         desc: r?.description ?? '',
+        gen_image: (typeof r?.gen_image === 'boolean') ? r.gen_image : undefined,
+        font_style: r?.font_style ?? r?.fontStyle ?? '',
+        font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
         text_to_be_included: Array.isArray(r?.text_to_be_included)
           ? r.text_to_be_included
           : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
@@ -2387,22 +2861,14 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         changed_script: {
           userquery: originalUserquery,
           airesponse,
+          version: String(scriptVersion || 'v1')
         },
       };
       console.log('scripts/update-text request body:', requestBody);
 
-      // 3) Choose endpoint based on video type
-      let qVideoType = 'hybrid';
-      try {
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
-      } catch (_) { /* noop */ }
-      const qvt = String(qVideoType || '').toLowerCase();
-      const updatePath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/update-text'
-        : 'scripts/hybrid/update-text';
-
+      // 3) Use unified update-text endpoint (no video-type branching)
       const updateResp = await fetch(
-        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${updatePath}`,
+        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }
       );
       const updateText = await updateResp.text();
@@ -2462,6 +2928,82 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     }
   };
 
+  // Helper: Update a single scene's gen_image flag (and optional description) via update-text API
+  const updateSceneGenImageFlag = async (sceneIdx, { genImage, descriptionOverride, refImagesOverride } = {}) => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+      // Load session snapshot
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessionResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
+      const sd = sessJson?.session_data || sessJson?.session || {};
+      const user = sessJson?.user_data || sd?.user_data || sd?.user || {};
+      const sessionForBody = {
+        session_id: sd?.session_id || sessionId,
+        user_id: sd?.user_id || token,
+        content: Array.isArray(sd?.content) ? sd.content : [],
+        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+        created_at: sd?.created_at || new Date().toISOString(),
+        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+        messages: Array.isArray(sd?.messages) ? sd.messages : [],
+        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
+        videos: Array.isArray(sd?.videos) ? sd.videos : [],
+        images: Array.isArray(sd?.images) ? sd.images : [],
+        final_link: sd?.final_link || '',
+        videoType: sd?.videoType || sd?.video_type || '',
+        additionalProp1: sd?.additionalProp1 || {}
+      };
+      const originalUserquery = Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [];
+      const scriptVersion = (Array.isArray(sd?.scripts) && sd.scripts[0]?.version) || sd?.version || 'v1';
+      const rows = Array.isArray(scriptRows) ? scriptRows : [];
+      const airesponse = rows.map((r, idx) => {
+        const isTarget = idx === sceneIdx;
+        return {
+          scene_number: r?.scene_number,
+          scene_title: r?.scene_title ?? '',
+          model: r?.mode ?? r?.model ?? '',
+          timeline: r?.timeline ?? '',
+          narration: r?.narration ?? '',
+          desc: isTarget && typeof descriptionOverride === 'string' ? descriptionOverride : (r?.description ?? ''),
+          gen_image: (isTarget && typeof genImage === 'boolean') ? genImage : ((typeof r?.gen_image === 'boolean') ? r.gen_image : undefined),
+          font_style: r?.font_style ?? r?.fontStyle ?? '',
+          font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
+          text_to_be_included: Array.isArray(r?.text_to_be_included)
+            ? r.text_to_be_included
+            : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
+          ref_image: filterImageUrls(
+            isTarget && Array.isArray(refImagesOverride) && refImagesOverride.length > 0
+              ? refImagesOverride
+              : (Array.isArray(r?.ref_image) ? r.ref_image : (typeof r?.ref_image === 'string' && r.ref_image.trim() ? [r.ref_image] : []))
+          ),
+          folderLink: r?.folderLink ?? r?.folder_link ?? '',
+        };
+      });
+      const requestBody = { user, session: sessionForBody, changed_script: { userquery: originalUserquery, airesponse, version: String(scriptVersion || 'v1') } };
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+      });
+      const txt = await resp.text(); let data; try { data = JSON.parse(txt); } catch(_) { data = txt; }
+      if (!resp.ok) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+      const container = data?.script ? { script: data.script } : data;
+      const normalized = normalizeScriptToRows(container);
+      const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+      setScriptRows(newRows);
+      try {
+        localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+        localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+      } catch(_) {}
+    } catch(e) {
+      console.error('updateSceneGenImageFlag failed:', e);
+    }
+  };
+
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
 
   // Function to save the current reordered state
@@ -2494,25 +3036,33 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       // 2) Build the reordered script array from current UI rows
       const rows = Array.isArray(rowsOverride) ? rowsOverride : (Array.isArray(scriptRows) ? scriptRows : []);
-      const orderedScriptArray = rows.map((r, idx) => ({
-        scene_number: r?.scene_number ?? idx + 1,
-        scene_title: r?.scene_title ?? '',
-        model: r?.mode ?? r?.model ?? '',
-        timeline: r?.timeline ?? '',
-        narration: r?.narration ?? '',
-        desc: r?.description ?? '',
-        text_to_be_included: Array.isArray(r?.text_to_be_included)
-          ? r.text_to_be_included
-          : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
-        ref_image: filterImageUrls(
-          Array.isArray(r?.ref_image)
-            ? r.ref_image
-            : (typeof r?.ref_image === 'string' && r.ref_image.trim())
-            ? [r.ref_image]
-            : []
-        ),
-        folderLink: r?.folderLink ?? r?.folder_link ?? '',
-      }));
+      const orderedScriptArray = rows.map((r, idx) => {
+        const fontSizeRaw = r?.font_size ?? r?.fontsize ?? r?.fontSize;
+        const fontSizeNum = typeof fontSizeRaw === 'number'
+          ? fontSizeRaw
+          : Number.parseInt(String(fontSizeRaw || '').replace(/[^0-9]/g, ''), 10);
+        return {
+          scene_number: r?.scene_number ?? idx + 1,
+          scene_title: r?.scene_title ?? '',
+          model: r?.mode ?? r?.model ?? '',
+          timeline: r?.timeline ?? '',
+          narration: r?.narration ?? '',
+          desc: r?.description ?? '',
+          font_style: r?.font_style ?? r?.fontStyle ?? '',
+          font_size: Number.isFinite(fontSizeNum) ? fontSizeNum : 0,
+          text_to_be_included: Array.isArray(r?.text_to_be_included)
+            ? r.text_to_be_included
+            : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
+          ref_image: filterImageUrls(
+            Array.isArray(r?.ref_image)
+              ? r.ref_image
+              : (typeof r?.ref_image === 'string' && r.ref_image.trim())
+              ? [r.ref_image]
+              : []
+          ),
+          folderLink: r?.folderLink ?? r?.folder_link ?? '',
+        };
+      });
 
       // 3) Prepare reorder request body per required schema using session data
       const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
@@ -2520,6 +3070,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         ...(sd || {}),
         session_id: sd?.session_id || sessionId,
         user_id: sd?.user_id || token,
+        brand_style_interpretation: sd?.brand_style_interpretation,
       };
       // Build exact user from session snapshot
       let userForBody;
@@ -2550,18 +3101,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       };
       console.log('scripts/reorder request body:', reorderRequestBody);
 
-      // 4) Choose reorder endpoint by video type
-      let qVideoType = 'hybrid';
-      try {
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || (selectedVideoType || '').toLowerCase();
-      } catch (_) { /* noop */ }
-      const qvt = String(qVideoType || '').toLowerCase();
-      const reorderPath = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/reorder'
-        : 'scripts/hybrid/reorder';
-
+      // 4) Call unified reorder endpoint
       const reorderResp = await fetch(
-        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${reorderPath}`,
+        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/reorder`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2573,7 +3115,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       let reorderData;
       try { reorderData = JSON.parse(reorderText); } catch (_) { reorderData = reorderText; }
       if (!reorderResp.ok) {
-        throw new Error(`${reorderPath} failed: ${reorderResp.status} ${reorderText}`);
+        throw new Error(`scripts/reorder failed: ${reorderResp.status} ${reorderText}`);
       }
       console.log('scripts/reorder response:', reorderData);
 
@@ -2640,36 +3182,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           <div className="bg-white w-[95%] max-w-2xl rounded-lg shadow-xl p-6">
             <h3 className="text-lg font-semibold text-[#13008B]">Add New Scene</h3>
             <div className="mt-4 space-y-4">
-              <div className="text-sm text-gray-600">
-                {(() => {
-                  try {
-                    const idx = typeof insertSceneIndex === 'number' ? insertSceneIndex : 0;
-                    const prevNo = idx > 0 ? (scriptRows?.[idx-1]?.scene_number ?? idx) : 0;
-                    const nextNo = scriptRows?.[idx]?.scene_number ?? (idx+1);
-                    return (
-                      <span>
-                        Insert after Scene <span className="font-medium">{prevNo}</span> (before Scene <span className="font-medium">{nextNo}</span>)
-                      </span>
-                    );
-                  } catch (_) {
-                    return null;
-                  }
-                })()}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea
-                  value={newSceneDescription}
-                  onChange={(e) => setNewSceneDescription(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                  rows={4}
-                  placeholder="Enter scene description"
-                />
-              </div>
+              {/* Step 1: Model selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Video Type</label>
-                <div className="flex gap-3">
-                  {['Avatar Based', 'Infographic'].map((type) => (
+                <div className="flex gap-3 flex-wrap">
+                  {['Avatar Based', 'Infographic', 'Financial'].map((type) => (
                     <button
                       key={type}
                       onClick={() => setNewSceneVideoType(type)}
@@ -2684,6 +3201,151 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   ))}
                 </div>
               </div>
+              {newSceneVideoType === 'Financial' && addSceneStep === 2 && (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                    <select value={newSceneChartType} onChange={(e)=>setNewSceneChartType(e.target.value)} className="w-full p-2 border rounded">
+                      <option value="">Select</option>
+                      <option value="pie">Pie</option>
+                      <option value="bar">Bar</option>
+                      <option value="line">Line</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
+                    <textarea value={newSceneChartData} onChange={(e)=>setNewSceneChartData(e.target.value)} rows={4} className="w-full p-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Upload Document (to summarize)</label>
+                    <input type="file" accept=".pdf,.doc,.docx,.txt" disabled={isUploadingNewSceneDoc} onChange={async (e)=>{
+                      const file = e.target.files?.[0]; if (!file) return; setIsUploadingNewSceneDoc(true);
+                      try {
+                        const userId = localStorage.getItem('token');
+                        const sessionId = localStorage.getItem('session_id');
+                        if (!userId || !sessionId) throw new Error('Missing session');
+                        // Extract
+                        const form = new FormData(); form.append('files', file); form.append('user_id', userId); form.append('session_id', sessionId);
+                        const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
+                        const ex = await fetch(extractUrl, { method: 'POST', body: form }); const tx = await ex.text();
+                        if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
+                        // Summarize: requires { session, documents } using rich session object
+                        let exJson; try { exJson = JSON.parse(tx); } catch(_) { exJson = {}; }
+                        let documents = [];
+                        if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                        else if (Array.isArray(exJson)) documents = exJson;
+                        else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
+                        else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
+                        // Build session from user-session-data (align with other summarize flow)
+                        let sessionObj = { session_id: sessionId, user_id: userId };
+                        try {
+                          const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: sessionId })
+                          });
+                          const st = await sResp.text();
+                          let sj; try { sj = JSON.parse(st); } catch(_) { sj = {}; }
+                          const sd = sj?.session_data || sj?.session || {};
+                          sessionObj = {
+                            session_id: sd.session_id || sessionId,
+                            user_id: sd.user_id || userId,
+                            content: Array.isArray(sd.content) ? sd.content : [],
+                            document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                            video_duration: String(sd.video_duration || sd.videoduration || '60'),
+                            created_at: sd.created_at || new Date().toISOString(),
+                            totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
+                            messages: Array.isArray(sd.messages) ? sd.messages : [],
+                            scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+                            videos: Array.isArray(sd.videos) ? sd.videos : [],
+                            images: Array.isArray(sd.images) ? sd.images : [],
+                            final_link: sd.final_link || '',
+                            videoType: sd.videoType || sd.video_type || '',
+                            additionalProp1: sd.additionalProp1 || {}
+                          };
+                        } catch(_) { /* keep minimal sessionObj */ }
+                        const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
+                        const sum = await fetch(summaryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: sessionObj, documents }) });
+                        const ts = await sum.text(); let js; try { js = JSON.parse(ts); } catch(_) { js = {}; }
+                        if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
+                        // Prefer the first summary object/string from response
+                        let firstSummary = '';
+                        try {
+                          const arr = Array.isArray(js?.summaries)
+                            ? js.summaries
+                            : (Array.isArray(js?.summary)
+                              ? js.summary
+                              : (Array.isArray(js?.total_summary) ? js.total_summary : []));
+                          if (Array.isArray(arr) && arr.length > 0) {
+                            const item = arr[0];
+                            firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item));
+                          } else if (typeof js?.summary === 'string') {
+                            firstSummary = js.summary;
+                          } else if (typeof js?.total_summary === 'string') {
+                            firstSummary = js.total_summary;
+                          }
+                        } catch(_) { /* noop */ }
+                        if (firstSummary) setNewSceneDocSummary(String(firstSummary));
+                      } catch(err) { alert(err?.message || 'Upload failed'); }
+                      finally { setIsUploadingNewSceneDoc(false); e.target.value = ''; }
+                    }} />
+                    {isUploadingNewSceneDoc && (<div className="text-xs text-gray-500 mt-1">Processing document…</div>)}
+                    {(!isUploadingNewSceneDoc && newSceneDocSummary) && (
+                      <div className="mt-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Document Summary</label>
+                        <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{newSceneDocSummary}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {addSceneStep === 2 && (
+              <div>
+                {/* Suggestions */}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Suggestions</label>
+                {isSuggestingScenes ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                    Fetching suggestions…
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-44 overflow-y-auto border rounded-md p-2">
+                    {Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0 ? (
+                      sceneSuggestions.map((sug, i) => (
+                        <div key={i}>
+                          <button
+                            type="button"
+                            onClick={() => { setNewSceneSelectedIdx(i); setNewSceneContent((((sug?.title ? (sug.title+': ') : '') + (sug?.content || '')).trim())); }}
+                            className={`relative w-full text-left p-2 rounded border hover:bg-gray-50 ${newSceneSelectedIdx===i?'border-[#13008B] ring-2 ring-[#cfcaf7]':''}`}
+                            title="Click to select this suggestion"
+                          >
+                            {newSceneSelectedIdx===i && (
+                              <span className="absolute top-1 right-1 text-[10px] px-2 py-0.5 rounded-full bg-[#13008B] text-white">Selected</span>
+                            )}
+                            <div className="text-xs font-medium text-gray-800">{sug?.title || 'Suggestion'}</div>
+                            <div className="text-xs text-gray-600 whitespace-pre-wrap">{sug?.content || ''}</div>
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-xs text-gray-500">No suggestions available.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              )}
+              {addSceneStep === 2 && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <textarea
+                      value={newSceneDescription}
+                      onChange={(e) => setNewSceneDescription(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                      rows={4}
+                      placeholder="Enter scene description"
+                    />
+                  </div>
+                </>
+              )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -2692,13 +3354,29 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               >
                 Cancel
               </button>
-              <button
-                onClick={addSceneToRows}
-                disabled={isAddingScene}
-                className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${isAddingScene ? 'bg-[#9aa0d0] cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
-              >
-                {isAddingScene ? 'Adding…' : 'Add Scene'}
-              </button>
+              {addSceneStep === 1 && (
+                <button
+                  onClick={async () => {
+                    const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+                    const idx = (typeof insertSceneIndex === 'number' && insertSceneIndex >= 0 && insertSceneIndex <= total) ? insertSceneIndex : total;
+                    const modelType = newSceneVideoType === 'Avatar Based' ? 'VEO3' : (newSceneVideoType === 'Financial' ? 'PLOTLY' : 'SORA');
+                    await fetchSceneSuggestions(modelType, idx, 'add');
+                    setAddSceneStep(2);
+                  }}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-blue-800"
+                >
+                  Continue
+                </button>
+              )}
+              {addSceneStep === 2 && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
+                <button
+                  onClick={addSceneToRows}
+                  disabled={isAddingScene}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${isAddingScene ? 'bg-[#9aa0d0] cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+                >
+                  {isAddingScene ? 'Adding…' : 'Add Scene'}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2846,6 +3524,38 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           </div>
         </div>
       )}
+      {/* Confirm Delete Scene Popup */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
+            <h3 className="text-lg font-semibold text-[#13008B]">Delete This Scene?</h3>
+            <p className="mt-2 text-sm text-gray-700">
+              Are you sure you want to delete Scene {Math.min(currentSceneIndex + 1, Array.isArray(scriptRows) ? scriptRows.length : (currentSceneIndex + 1))}? This action cannot be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { if (!isDeletingScene) setShowDeleteConfirm(false); }}
+                disabled={isDeletingScene}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${isDeletingScene ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (isDeletingScene) return;
+                  await handleDeleteScene();
+                  setShowDeleteConfirm(false);
+                }}
+                disabled={isDeletingScene}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white ${isDeletingScene ? 'bg-red-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+              >
+                {isDeletingScene && (<span className="w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />)}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Confirm Model Change Popup */}
       {showModelConfirm && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
@@ -2855,12 +3565,60 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               {(() => {
                 const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
                 const currentModel = (scene?.mode || scene?.model || '').toUpperCase();
-                const target = pendingModelType === 'Avatar Based' ? 'VEO3' : 'SORA';
+                const modelLabel = (m) => {
+                  const u = String(m || '').toUpperCase();
+                  if (u === 'VEO3') return 'AVATAR';
+                  if (u === 'SORA') return 'INFOGRAPHICS';
+                  if (u === 'PLOTLY') return 'FINANCIAL';
+                  return u || 'UNKNOWN';
+                };
+                const targetModel = (pendingModelType === 'Avatar Based') ? 'VEO3' : (pendingModelType === 'Financial' ? 'PLOTLY' : 'SORA');
                 return (
                   <div>
+      {/* Top loading bar for scene deletion */}
+      {isDeletingScene && (
+        <div className="fixed top-0 left-0 right-0 z-[1000]">
+          <div className="h-1 w-full bg-[#13008B] animate-pulse" />
+          <div className="absolute right-3 top-2 flex items-center gap-2 px-3 py-1 rounded-full bg-white/90 shadow">
+            <div className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-medium text-gray-700">Deleting scene…</span>
+          </div>
+        </div>
+      )}
+      {/* Center-screen loader while deleting scene (after confirm) */}
+      {isDeletingScene && !showDeleteConfirm && (
+        <div className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/20">
+          <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
+            <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <div className="text-sm font-medium text-gray-800">Deleting scene…</div>
+          </div>
+        </div>
+      )}
                     <p className="mb-1">Scene {scene?.scene_number || currentSceneIndex + 1}: {scene?.scene_title || '-'}</p>
-                    <p className="mb-1">Current model: <span className="font-medium">{currentModel || 'Unknown'}</span></p>
-                    <p>Switch to: <span className="font-medium">{target}</span></p>
+                    <p className="mb-3">Current model: <span className="font-medium">{modelLabel(currentModel)}</span> → <span className="font-medium">{modelLabel(targetModel)}</span></p>
+                    {/* Per-target controls */}
+                    {pendingModelType === 'Avatar Based' && (
+                      <div className="mb-2">
+                        <div className="text-xs text-gray-600 mb-1">Presenter Options</div>
+                        <input value={switchAvatarUrl} onChange={(e)=>setSwitchAvatarUrl(e.target.value)} placeholder="Avatar URL (optional)" className="w-full px-3 py-2 border rounded" />
+                      </div>
+                    )}
+                    {pendingModelType === 'Infographic' && (
+                      <div className="mb-2 text-xs text-gray-600">After switching, pick a reference image in the editor or assets modal.</div>
+                    )}
+                    {pendingModelType === 'Financial' && (
+                      <div className="mb-2">
+                        <div className="text-xs text-gray-600 mb-1">Chart Type</div>
+                        <select value={switchChartType} onChange={(e)=>setSwitchChartType(e.target.value)} className="w-full px-3 py-2 border rounded mb-2">
+                          <option value="">Select</option>
+                          <option value="pie">Pie</option>
+                          <option value="bar">Bar</option>
+                          <option value="line">Line</option>
+                        </select>
+                        <div className="text-xs text-gray-600 mb-1">Chart Data (JSON)</div>
+                        <textarea value={switchChartData} onChange={(e)=>setSwitchChartData(e.target.value)} className="w-full h-24 px-3 py-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2887,64 +3645,62 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       {/* Script Modal (React-driven) */}
       {showScriptModal && (
         <div className={scenesMode ? 'bg-transparent' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/50'}>
-          <div className={scenesMode ? 'bg-white w-full max-h-[85vh] overflow-hidden rounded-lg shadow-sm flex flex-col' : 'bg-white w-[95%] max-w-6xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col'}>
+          <div className={scenesMode ? 'bg-white w-full rounded-lg shadow-sm flex flex-col' : 'bg-white w-[95%] max-w-6xl max-h-[100vh] overflow-hidden rounded-lg shadow-xl flex flex-col'}>
                          {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-[#13008B]">The Generated Script is:</h3>
-              <div className="flex items-center gap-2">
-                {scenesMode && null}
-                {/* Undo / Redo */}
-                 <button
-                   onClick={handleUndoScript}
-                   disabled={!canUndo}
-                   className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-sm font-medium border ${!canUndo ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-900'}`}
-                   title="Undo last change"
-                 >
-                   <RefreshCcw className="w-3 h-3 rotate-180" /> Undo
-                 </button>
-                 <button
-                   onClick={handleRedoScript}
-                   disabled={!canRedo}
-                   className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-sm font-medium border ${!canRedo ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200 hover:bg-gray-50 text-gray-900'}`}
-                   title="Redo"
-                 >
-                   <RefreshCcw className="w-3 h-3" /> Redo
-                 </button>
-                 {/* Delete Scene */}
-                <button
-                  onClick={handleDeleteScene}
-                  disabled={isDeletingScene || !Array.isArray(scriptRows) || scriptRows.length === 0}
-                  className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${(!Array.isArray(scriptRows) || scriptRows.length === 0 || isDeletingScene) ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200 hover:bg-red-50 text-red-700'}`}
-                  title="Delete current scene"
-                >
-                  {isDeletingScene ? (
-                    <span className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3 h-3" />
-                  )}
-                  {isDeletingScene ? 'Deleting…' : 'Delete'}
-                </button>
-                 {/* Generate Scenes shortcut in header (hidden in inline scenes mode) */}
-                 {!scenesMode && (
-                   <button
+            <div className="flex items-center justify-between p-2 border-b border-gray-200">
+              {/* Left: Back + title */}
+              <div className="flex items-center gap-3">
+                {scenesMode && (
+                  <button
+                    onClick={() => { try { onBackToChat && onBackToChat(); } catch(_){} }}
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-full border bg-white hover:bg-gray-50"
+                    title="Back"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                )}
+                <h3 className="text-lg font-semibold text-[#13008B]">Generate Script</h3>
+              </div>
+              {/* Right: Generate Images + kebab menu */}
+              <div className="relative flex items-center gap-2">
+                {hasOrderChanged && (
+                  <button
+                    onClick={() => setShowSaveConfirm(true)}
+                    disabled={isSavingReorder}
+                    className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium ${
+                      isSavingReorder ? 'bg-green-400 text-white cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'
+                    }`}
+                    title="Save new scene order"
+                  >
+                    {isSavingReorder ? 'Saving…' : 'Save Order'}
+                  </button>
+                )}
+                {(() => (
+                  <button
                     onClick={triggerGenerateScenes}
-                    disabled={false}
-                    className={`hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isGeneratingVideo ? 'bg-gray-100 border border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-200 hover:bg-gray-50 text-gray-900'}`}
-                    title="Generate scenes and view images"
-                   >
-                    <div className="w-4 h-4 rounded-full bg-blue-700 flex items-center justify-center text-white text-[10px] font-bold">S</div>
-                  <span>Generate Scenes</span>
-                   </button>
-                 )}
-                {/* Regenerate current scene */}
-                <button
-                  onClick={() => setShowRegenModal(true)}
-                  className={`hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-white border border-gray-200 hover:bg-gray-50 text-gray-900`}
-                  title="Regenerate current scene"
-                >
-                  <RefreshCcw className="w-4 h-4" />
-                  <span>Regenerate</span>
-                </button>
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-blue-800"
+                    title="Generate Images"
+                  >
+                    Generate Images
+                  </button>
+                ))()}
+                <div className="relative">
+                  <KebabMenu
+                    canUndo={canUndo}
+                    canRedo={canRedo}
+                    onUndo={handleUndoScript}
+                    onRedo={handleRedoScript}
+                    onDelete={() => setShowDeleteConfirm(true)}
+                    onRegenerate={openRegenerateWithSuggestions}
+                    onEdit={() => setIsEditingScene(true)}
+                    onSwitchAvatar={() => openModelChangeConfirm('Avatar Based')}
+                    onSwitchInfographic={() => openModelChangeConfirm('Infographic')}
+                    onSwitchFinancial={() => openModelChangeConfirm('Financial')}
+                    isDeleting={isDeletingScene}
+                    hasScenes={Array.isArray(scriptRows) && scriptRows.length > 0}
+                    isSwitching={isSwitchingModel}
+                  />
+                </div>
                 {!scenesMode && (<button onClick={() => {
                   // On close, if in reorder with unsaved changes, revert
                   if (showReorderTable && hasOrderChanged) {
@@ -2980,7 +3736,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       setVisibleStartIndex(prev => Math.max(0, prev - 1));
                     }}
                     disabled={typeof visibleStartIndex === 'undefined' || visibleStartIndex <= 0}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${visibleStartIndex <= 0 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
+                  className={`w-6 h-6 rounded-full flex items-center justify-center border ${visibleStartIndex <= 0 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
                     title="Previous scenes"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -3030,7 +3786,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           onClick={() => moveSceneLeft(index)}
                           disabled={index === 0}
                           title={index === 0 ? 'Cannot move further left' : `Move Scene ${index + 1} left`}
-                          className={`w-6 h-6 rounded-full flex items-center justify-center border ${index === 0 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
+                          className={`w-5 h-5 rounded-full flex items-center justify-center border ${index === 0 ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
                         >
                           <ChevronLeft className="w-4 h-4" />
                         </button>
@@ -3043,7 +3799,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               return `Add scene after Scene ${prev} (before Scene ${next})`;
                             } catch(_) { return 'Add scene here'; }
                           })()}
-                          className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center"
+                          className="w-5 h-5 rounded-full bg-black text-white flex items-center justify-center"
                         >
                           +
                         </button>
@@ -3051,14 +3807,14 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           onClick={() => moveSceneRight(index)}
                           disabled={!Array.isArray(scriptRows) || index >= scriptRows.length - 1}
                           title={index >= (Array.isArray(scriptRows) ? scriptRows.length - 1 : 0) ? 'Cannot move further right' : `Move Scene ${index + 1} right`}
-                          className={`w-6 h-6 rounded-full flex items-center justify-center border ${index >= (Array.isArray(scriptRows) ? scriptRows.length - 1 : 0) ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
+                          className={`w-5 h-5 rounded-full flex items-center justify-center border ${index >= (Array.isArray(scriptRows) ? scriptRows.length - 1 : 0) ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
                         >
                           <ChevronRight className="w-4 h-4" />
                         </button>
                       </div>
                        <button
                          onClick={() => setCurrentSceneIndex(index)}
-                         className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                         className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                            currentSceneIndex === index
                              ? 'bg-[#13008B] text-white'
                              : `bg-gray-100 text-gray-700 hover:bg-gray-200 ${draggedTabIndex === index ? 'opacity-50' : ''}`
@@ -3074,7 +3830,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   <button
                     onClick={() => setVisibleStartIndex(prev => Math.min((Array.isArray(scriptRows) ? Math.max(0, scriptRows.length - 5) : 0), (prev ?? 0) + 1))}
                     disabled={(visibleStartIndex ?? 0) >= (Array.isArray(scriptRows) ? Math.max(0, scriptRows.length - 5) : 0)}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center border ${ (visibleStartIndex ?? 0) >= (Array.isArray(scriptRows) ? Math.max(0, scriptRows.length - 5) : 0) ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
+                  className={`w-6 h-6 rounded-full flex items-center justify-center border ${ (visibleStartIndex ?? 0) >= (Array.isArray(scriptRows) ? Math.max(0, scriptRows.length - 5) : 0) ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'}`}
                     title="Next scenes"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -3181,8 +3937,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
              )}
 
                          {/* Scene Content - Only show in edit mode */}
-             {!showReorderTable && (
-               <div className="p-6 max-h-[60vh] overflow-y-auto">
+            {!showReorderTable && (
+              <div className={scenesMode ? 'px-0 py-3 h-full overflow-y-auto' : 'px-0 py-3 max-h-[60vh] overflow-y-auto'}>
                  {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] && (
                    <div className="space-y-6">
                      {/* Scene Details Section */}
@@ -3245,23 +4001,117 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                        </div>
                      </div>
 
-                     {/* Description Section */}
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                        <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
-                        {isEditingScene ? (
-                          <textarea
-                            value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].description || '' : ''}
-                            onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                            rows={4}
-                            placeholder="Enter scene description"
-                          />
-                        ) : (
-                          <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
-                            {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].description || '-') : '-'}
+                      {(() => {
+                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        const isPlotly = sceneModelUpper === 'PLOTLY';
+                        if (isPlotly) {
+                          console.log(scene)
+                          const chartType = scene?.chart_type || scene?.chartType || '-';
+                          const chartData = (() => {
+                            const d = scene?.chart_data || scene?.chartData;
+                            if (d == null) return '-';
+                            if (typeof d === 'string') return d;
+                            try { return JSON.stringify(d, null, 2); } catch (_) { return String(d); }
+                          })();
+                          return (
+                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                              <h4 className="text-lg font-semibold text-gray-800 mb-4">Chart</h4>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <div className="text-sm font-medium text-gray-700 mb-1">Chart Type</div>
+                                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">{chartType || '-'}</div>
+                                </div>
+                                <div className="md:col-span-2">
+                                  <div className="text-sm font-medium text-gray-700 mb-1">Chart Data</div>
+                                  {(() => {
+                                    let raw = scene?.chart_data || scene?.chartData;
+                                    // If raw is a JSON string, try to parse
+                                    if (typeof raw === 'string') {
+                                      try { raw = JSON.parse(raw); } catch (_) { /* keep as string */ }
+                                    }
+                                    const renderTable = (headers, rows) => (
+                                      <div className="w-full overflow-x-auto overflow-y-auto max-h-60 border border-gray-200 rounded-lg bg-white">
+                                        <table className="min-w-full text-sm">
+                                          <thead className="bg-gray-50 sticky top-0">
+                                            <tr>
+                                              {headers.map((h, i) => (
+                                                <th key={i} className="px-3 py-2 text-left font-semibold text-gray-700 border-b border-gray-200 whitespace-nowrap">{h}</th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {rows.map((r, ri) => (
+                                              <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                                {headers.map((h, hi) => (
+                                                  <td key={hi} className="px-3 py-2 border-b border-gray-100 text-gray-800 whitespace-nowrap">{r[h] ?? ''}</td>
+                                                ))}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    );
+                                    try {
+                                      if (!raw) return <div className="w-full px-3 py-2 text-gray-600 border border-gray-200 rounded-lg bg-white">-</div>;
+                                      // Case 1: Array of objects
+                                      if (Array.isArray(raw) && raw.every(it => it && typeof it === 'object' && !Array.isArray(it))) {
+                                        const headerSet = new Set();
+                                        raw.forEach(obj => Object.keys(obj).forEach(k => headerSet.add(k)));
+                                        const headers = Array.from(headerSet);
+                                        const rows = raw.map(obj => headers.reduce((acc, k) => { acc[k] = obj?.[k]; return acc; }, {}));
+                                        return renderTable(headers, rows);
+                                      }
+                                      // Case 2: Object with parallel arrays (e.g., x, y, ...)
+                                      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                                        const keys = Object.keys(raw);
+                                        const arrays = keys.every(k => Array.isArray(raw[k]));
+                                        if (arrays) {
+                                          const maxLen = Math.max(0, ...keys.map(k => (Array.isArray(raw[k]) ? raw[k].length : 0)));
+                                          const headers = keys;
+                                          const rows = Array.from({ length: maxLen }, (_, i) => {
+                                            const row = {};
+                                            keys.forEach(k => { row[k] = Array.isArray(raw[k]) ? raw[k][i] : ''; });
+                                            return row;
+                                          });
+                                          return renderTable(headers, rows);
+                                        }
+                                        // Case 3: Generic object -> key/value table
+                                        const headers = ['Key', 'Value'];
+                                        const rows = Object.entries(raw).map(([k, v]) => ({ Key: k, Value: (typeof v === 'object' ? JSON.stringify(v) : v) }));
+                                        return renderTable(headers, rows);
+                                      }
+                                      // Fallback: single-value
+                                      return renderTable(['Value'], [{ Value: String(raw) }]);
+                                    } catch (_) {
+                                      return renderTable(['Value'], [{ Value: chartData }]);
+                                    }
+                                  })()}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+                        // Default: Description for non-Financial (non-PLOTLY) scenes
+                        return (
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
+                            {isEditingScene ? (
+                              <textarea
+                                value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].description || '' : ''}
+                                onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                rows={4}
+                                placeholder="Enter scene description"
+                              />
+                            ) : (
+                              <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
+                                {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].description || '-') : '-'}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+                        );
+                      })()}
 
                       {/* Text To Be Included */}
                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
@@ -3323,41 +4173,41 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                             const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
                             vt = ((typeof window !== 'undefined' && localStorage.getItem(`video_type_value:${sid}`)) || selectedVideoType || '').toLowerCase();
                           } catch (_) { /* noop */ }
-                          const isHybrid = vt === 'hybrid';
+                          const sceneModelUpper = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
                           return (
                             <div className="flex flex-wrap gap-3">
                               {/* Avatar */}
                               <button
                                 type="button"
-                                onClick={() => isHybrid && openModelChangeConfirm('Avatar Based')}
-                                disabled={isSwitchingModel || (!isHybrid && selectedVideoType !== 'Avatar Based')}
+                                disabled={sceneModelUpper !== 'VEO3'}
                                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  selectedVideoType === 'Avatar Based'
+                                  (sceneModelUpper === 'VEO3')
                                     ? 'bg-[#13008B] text-white'
-                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                                } ${(isSwitchingModel || (!isHybrid && selectedVideoType !== 'Avatar Based')) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                    : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                }`}
                               >
-                                {isSwitchingModel && selectedVideoType !== 'Avatar Based' ? '...' : 'Avatar'}
+                                Avatar
                               </button>
                               {/* Infographic */}
                               <button
                                 type="button"
-                                onClick={() => isHybrid && openModelChangeConfirm('Infographic')}
-                                disabled={isSwitchingModel || (!isHybrid && selectedVideoType !== 'Infographic')}
+                                disabled={sceneModelUpper !== 'SORA'}
                                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  selectedVideoType === 'Infographic'
+                                  (sceneModelUpper === 'SORA')
                                     ? 'bg-[#13008B] text-white'
-                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                                } ${(isSwitchingModel || (!isHybrid && selectedVideoType !== 'Infographic')) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                    : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                }`}
                               >
-                                {isSwitchingModel && selectedVideoType !== 'Infographic' ? '...' : 'Infographic'}
+                                Infographic
                               </button>
-                              {/* Financial (not switchable yet) */}
+                              {/* Financial (selected when scene model is PLOTLY) */}
                               <button
                                 type="button"
-                                disabled
-                                className="px-4 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed"
-                                title="Coming soon"
+                                disabled={sceneModelUpper !== 'PLOTLY'}
+                                className={`px-4 py-2 rounded-full text-sm font-medium ${
+                                  sceneModelUpper === 'PLOTLY' ? 'bg-[#13008B] text-white' : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                }`}
+                                title={sceneModelUpper === 'PLOTLY' ? 'Current model' : 'Switch model from menu to enable'}
                               >
                                 Financial
                               </button>
@@ -3611,26 +4461,32 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           />
                           {/* Upload button removed per requirements */}
                           <button
-                            onClick={async () => {
+                            onClick={() => {
+                              const token = localStorage.getItem('token');
+                              if (!token) { alert('Missing user'); return; }
+                              setAssetsTab('templates');
+                              setIsGenerate(false);
+                              setShowAssetsModal(true);
+                              // Load from cache only; ScriptEditor preloads and refreshes cache on mount
                               try {
-                                const sessionId = localStorage.getItem('session_id');
-                                const token = localStorage.getItem('token');
-                                if (!sessionId || !token) { alert('Missing session'); return; }
-                                const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-                                });
-                                const text = await resp.text();
-                                let data; try { data = JSON.parse(text); } catch(_) { data = text; }
-                                if (!resp.ok) throw new Error(`user-session/data failed: ${resp.status} ${text}`);
-                                const ud = data?.user_data || data?.session_data?.user_data || data?.session?.user || data?.session_data?.user || {};
-                                const bi = ud?.brand_identity || {};
-                                const tpl = Array.isArray(bi?.templates) ? bi.templates : (Array.isArray(ud?.templates) ? ud.templates : []);
-                                setBrandTemplates((tpl || []).filter(u => typeof u === 'string' && u));
-                                setUseDefaultTemplate(true);
-                                setShowTemplatesModal(true);
-                              } catch (e) {
-                                console.error('Failed to load templates:', e);
-                                alert('Unable to load templates for this user.');
+                                const cacheKey = `brand_assets_images:${token}`;
+                                const cached = localStorage.getItem(cacheKey);
+                                if (cached) {
+                                  const data = JSON.parse(cached);
+                                  const logos = Array.isArray(data?.logos) ? data.logos : [];
+                                  const icons = Array.isArray(data?.icons) ? data.icons : [];
+                                  const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
+                                  const templates = Array.isArray(data?.templates) ? data.templates : [];
+                                  const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
+                                  setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
+                                } else {
+                                  // Empty state; prompt user to wait for preload
+                                  setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+                                }
+                              } catch(_) {
+                                setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+                              } finally {
+                                setIsAssetsLoading(false);
                               }
                             }}
                             className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
@@ -3647,13 +4503,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               try {
                                 const files = Array.from(e.target.files || []);
                                 if (files.length === 0) return;
-                                const file = files[0];
                                 const token = localStorage.getItem('token');
                                 if (!token) { alert('Missing user'); return; }
                                 // 1) Upload template to brand assets
                                 const form = new FormData();
                                 form.append('user_id', token);
-                                form.append('file', file);
+                                form.append('file_type', 'template');
+                                files.forEach(f => form.append('files', f));
                                 const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', {
                                   method: 'POST', body: form
                                 });
@@ -3756,12 +4612,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                        </button>
                      )}
                    </>
-                 ) : (
-                   <>
-                     {/* Export Button */}
-                    
-                   </>
-                 )}
+                 ) : null}
                </div>
 
                <div className="flex gap-3 items-center">
@@ -3787,37 +4638,24 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                      Back
                    </button>
                  ) : (
-                   <>
-                     {/* Edit controls moved here from header */}
-                     {isEditingScene ? (
-                       <div className="flex items-center gap-2">
-                         <button
-                           onClick={saveEditedScriptText}
-                           disabled={isUpdatingText}
-                           className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${isUpdatingText ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
-                         >
-                           {isUpdatingText ? 'Saving…' : '💾 Save Changes'}
-                         </button>
-                         <button
-                           onClick={() => setIsEditingScene(false)}
-                           disabled={isUpdatingText}
-                           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isUpdatingText ? 'bg-gray-200 cursor-not-allowed text-gray-500' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                         >
-                           ✖ Cancel
-                         </button>
-                       </div>
-                     ) : (
+                   isEditingScene ? (
+                     <div className="flex items-center gap-2">
                        <button
-                         onClick={() => setIsEditingScene(true)}
-                         className="px-4 py-2 rounded-lg text-sm font-medium bg-[#13008B] text-white hover:opacity-90 transition-colors"
-                         title="Edit current scene"
+                         onClick={saveEditedScriptText}
+                         disabled={isUpdatingText}
+                         className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${isUpdatingText ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
                        >
-                         ✏️ Edit
+                         {isUpdatingText ? 'Saving…' : '💾 Save Changes'}
                        </button>
-                     )}
-
-                    {/* Removed duplicate Save button (order saving handled on left group) */}
-                   </>
+                       <button
+                         onClick={() => setIsEditingScene(false)}
+                         disabled={isUpdatingText}
+                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isUpdatingText ? 'bg-gray-200 cursor-not-allowed text-gray-500' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                       >
+                         ✖ Cancel
+                       </button>
+                     </div>
+                   ) : null
                  )}
                </div>
              </div>
@@ -3825,56 +4663,257 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         </div>
       )}
 
-      {/* Templates Modal */}
-      {showTemplatesModal && (
+      {/* Brand Assets Modal (logos, icons, uploaded_images, templates, voiceover) */}
+      {showAssetsModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[95%] max-w-3xl max-h-[80vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+          <div className="bg-white w-[96%] max-w-5xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-[#13008B]">Choose a Template</h3>
-              <button onClick={() => setShowTemplatesModal(false)} className="px-3 py-1.5 rounded-lg border text-sm">Close</button>
+              <h3 className="text-lg font-semibold text-[#13008B]">Choose an Asset</h3>
+              <button onClick={() => setShowAssetsModal(false)} className="px-3 py-1.5 rounded-lg border text-sm">Close</button>
             </div>
-            <div className="p-4 border-b border-gray-100 flex items-center gap-4">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={useDefaultTemplate} onChange={(e) => setUseDefaultTemplate(e.target.checked)} />
-                Use Default (no generation)
-              </label>
-              {!useDefaultTemplate && (
-                <span className="text-xs text-gray-600">Generation will incorporate this template as a reference.</span>
-              )}
-            </div>
-            <div className="p-4 overflow-y-auto">
-              {brandTemplates.length === 0 && (
-                <div className="text-sm text-gray-600">No templates found in your brand assets.</div>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {brandTemplates.map((url, idx) => (
-                  <div key={idx} className="rounded-lg border overflow-hidden group relative">
-                    <img src={url} alt={`template-${idx}`} className="w-full h-28 object-cover" />
-                    <div className="p-2 flex items-center justify-between">
-                      <span className="text-xs text-gray-700 truncate max-w-[70%]" title={url}>Template {idx + 1}</span>
-                      <button
-                        className="px-2 py-1 text-xs rounded bg-[#13008B] text-white hover:bg-blue-800"
-                        onClick={() => {
-                          try {
-                            if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                            const rows = [...scriptRows];
-                            const scene = { ...rows[currentSceneIndex] };
-                            scene.ref_image = [url];
-                            // Store user choice of generation mode as scene flag (optional for backend)
-                            scene.use_default_template = !!useDefaultTemplate;
-                            rows[currentSceneIndex] = scene;
-                            setScriptRows(rows);
-                            setSelectedRefImages([url]);
-                            updateRefMapForScene(scene.scene_number, scene.ref_image);
-                            setShowTemplatesModal(false);
-                          } catch (_) { /* noop */ }
-                        }}
-                      >Use</button>
-                    </div>
-                  </div>
+            <div className="px-4 pt-3 border-b border-gray-100">
+              <div className="flex items-center gap-3 flex-wrap">
+                {['templates','logos','icons','uploaded_images','documents_images'].map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setAssetsTab(tab)}
+                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab===tab ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  >{tab.replace('_',' ')}</button>
                 ))}
+                {/* Selection actions shown below after choosing an image */}
               </div>
             </div>
+            <input
+              ref={assetsUploadInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              multiple
+              onChange={async (e) => {
+                try {
+                  const files = Array.from(e.target.files || []);
+                  if (files.length === 0) return;
+                  const token = localStorage.getItem('token');
+                  if (!token) { alert('Missing user'); return; }
+                  if (!pendingUploadType) { alert('Unknown upload type'); return; }
+                  const form = new FormData();
+                  form.append('user_id', token);
+                  form.append('file_type', pendingUploadType);
+                  files.forEach(f => form.append('files', f));
+                  const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', { method: 'POST', body: form });
+                  const upText = await upResp.text();
+                  if (!upResp.ok) throw new Error(`upload-file failed: ${upResp.status} ${upText}`);
+                  // Refresh assets
+                  setIsAssetsLoading(true);
+                  try {
+                    // 1) GET images snapshot
+                    const getResp1 = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+                    const getText1 = await getResp1.text();
+                    let data1; try { data1 = JSON.parse(getText1); } catch(_) { data1 = getText1; }
+                    const logos1 = Array.isArray(data1?.logos) ? data1.logos : [];
+                    const icons1 = Array.isArray(data1?.icons) ? data1.icons : [];
+                    const uploaded_images1 = Array.isArray(data1?.uploaded_images) ? data1.uploaded_images : [];
+                    const templates1 = Array.isArray(data1?.templates) ? data1.templates : [];
+                    const documents_images1 = Array.isArray(data1?.documents_images) ? data1.documents_images : [];
+
+                    // 2) UPDATE assets (best-effort; echo back current snapshot)
+                    const updateBody = {
+                      user_id: token,
+                      brand_identity: { logos: logos1, icons: icons1, templates: templates1 },
+                      uploaded_images: uploaded_images1,
+                      documents_images: documents_images1
+                    };
+                    try {
+                      await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/update', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updateBody)
+                      });
+                    } catch (_) { /* noop */ }
+
+                    // 3) GET images again to ensure UI reflects server canonical state
+                    const getResp2 = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+                    const getText2 = await getResp2.text();
+                    let data2; try { data2 = JSON.parse(getText2); } catch(_) { data2 = getText2; }
+                    const logos = Array.isArray(data2?.logos) ? data2.logos : [];
+                    const icons = Array.isArray(data2?.icons) ? data2.icons : [];
+                    const uploaded_images = Array.isArray(data2?.uploaded_images) ? data2.uploaded_images : [];
+                    const templates = Array.isArray(data2?.templates) ? data2.templates : [];
+                    const documents_images = Array.isArray(data2?.documents_images) ? data2.documents_images : [];
+                    setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
+                  } finally {
+                    setIsAssetsLoading(false);
+                  }
+                } catch (err) {
+                  console.error('Upload failed:', err);
+                  alert('Failed to upload file.');
+                } finally {
+                  if (assetsUploadInputRef.current) assetsUploadInputRef.current.value = '';
+                }
+              }}
+            />
+            <div className="p-4 overflow-y-auto">
+              {isAssetsLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : (() => {
+                const list = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
+                const uploadTypeMap = {
+                  templates: 'template',
+                  logos: 'logo',
+                  icons: 'icon',
+                  uploaded_images: 'uploaded_images',
+                  documents_images: '' // no upload for documents images per current API scope
+                };
+                const currentUploadType = uploadTypeMap[assetsTab] || '';
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    {currentUploadType && (
+                      <button
+                        type="button"
+                        onClick={() => { setPendingUploadType(currentUploadType); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
+                        className="rounded-lg border-2 border-dashed border-gray-300 h-28 flex items-center justify-center text-gray-500 hover:border-[#13008B] hover:text-[#13008B]"
+                        title={`Upload ${currentUploadType.replace('_',' ')}`}
+                      >
+                        <span className="text-2xl">+</span>
+                      </button>
+                    )}
+                    {list.length === 0 && (<div className="col-span-full text-sm text-gray-600">No assets found.</div>)}
+                    {list.map((url, idx) => (
+                      <div
+                        key={idx}
+                        className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${selectedAssetUrl===url ? 'ring-2 ring-[#13008B]' : ''}`}
+                        onClick={() => setSelectedAssetUrl(url)}
+                        title={url}
+                      >
+                        <img src={url} alt={`${assetsTab}-${idx}`} className="w-full h-28 object-cover" />
+                        <div className="p-2">
+                          <span className="text-xs text-gray-700 truncate block" title={url}>{assetsTab.replace('_',' ')} {idx+1}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3">
+                <button
+                  disabled={!selectedAssetUrl}
+                  onClick={async () => {
+                    try {
+                      if (!selectedAssetUrl || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                      const rows = [...scriptRows];
+                      const scene = { ...rows[currentSceneIndex] };
+                      scene.ref_image = [selectedAssetUrl];
+                      rows[currentSceneIndex] = scene;
+                      setScriptRows(rows);
+                      setSelectedRefImages([selectedAssetUrl]);
+                      updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      // Keep Default: clear description
+                      try {
+                        const r2 = [...rows];
+                        if (r2[currentSceneIndex]) {
+                          r2[currentSceneIndex] = { ...r2[currentSceneIndex], description: '' };
+                          setScriptRows(r2);
+                        }
+                      } catch(_) {}
+                      // Call update-text with gen_image=false for this scene
+                      await updateSceneGenImageFlag(currentSceneIndex, { genImage: false, descriptionOverride: '', refImagesOverride: [selectedAssetUrl] });
+                      setShowAssetsModal(false);
+                      setSelectedAssetUrl('');
+                    } catch(_) { /* noop */ }
+                  }}
+                  className={`px-3 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                >Keep Default</button>
+                <button
+                  disabled={!selectedAssetUrl}
+                  onClick={async () => {
+                    try {
+                      if (!selectedAssetUrl || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                      const rows = [...scriptRows];
+                      const scene = { ...rows[currentSceneIndex] };
+                      scene.ref_image = [selectedAssetUrl];
+                      rows[currentSceneIndex] = scene;
+                      setScriptRows(rows);
+                      setSelectedRefImages([selectedAssetUrl]);
+                      updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      setShowAssetsModal(false);
+                      setIsEnhancing(true);
+                      const sessionId = localStorage.getItem('session_id');
+                      const token = localStorage.getItem('token');
+                      if (!sessionId || !token) throw new Error('Missing session or user');
+                      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                      });
+                      const sessionText = await sessionResp.text();
+                      let sessionData; try { sessionData = JSON.parse(sessionText); } catch(_) { sessionData = sessionText; }
+                      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessionText}`);
+                      const sd = (sessionData?.session_data || sessionData?.session || {});
+                      const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
+                      const sessionForBody = {
+                        session_id: sd?.session_id || sessionId,
+                        user_id: sd?.user_id || token,
+                        content: Array.isArray(sd?.content) ? sd.content : [],
+                        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+                        created_at: sd?.created_at || new Date().toISOString(),
+                        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+                        messages: Array.isArray(sd?.messages) ? sd.messages : [],
+                        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
+                        videos: Array.isArray(sd?.videos) ? sd.videos : [],
+                        images: Array.isArray(sd?.images) ? sd.images : [],
+                        final_link: sd?.final_link || '',
+                        videoType: sd?.videoType || sd?.video_type || '',
+                        brand_style_interpretation: sd?.brand_style_interpretation,
+                        additionalProp1: sd?.additionalProp1 || {}
+                      };
+                      const sceneNumber = scene?.scene_number ?? (currentSceneIndex + 1);
+                      const model = String(scene?.mode || scene?.model || '').toUpperCase();
+                      let reqBody = { user, session: sessionForBody, scene_number: sceneNumber };
+                      if (model === 'SORA') {
+                        reqBody = { ...reqBody, image_links: [selectedAssetUrl] };
+                      } else if (model === 'VEO3') {
+                        reqBody = { ...reqBody, presenter_options: {} };
+                      } else if (model === 'PLOTLY') {
+                        reqBody = { ...reqBody, chart_type: scene?.chart_type || scene?.chartType || '' };
+                      } else {
+                        // Default to SORA-style image link if unknown
+                        reqBody = { ...reqBody, image_links: [selectedAssetUrl] };
+                      }
+                      await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
+                      });
+                      // After visual update, call update-text with gen_image=true, current description, and selected ref image
+                      await updateSceneGenImageFlag(currentSceneIndex, { genImage: true, descriptionOverride: scene?.description ?? '', refImagesOverride: [selectedAssetUrl] });
+                      // refresh
+                      try {
+                        const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                        });
+                        const refreshText = await refreshResp.text();
+                        let refresh; try { refresh = JSON.parse(refreshText); } catch(_) { refresh = refreshText; }
+                        if (refresh && typeof refresh === 'object') {
+                          const sd2 = refresh?.session_data || refresh?.session || {};
+                          const scripts = Array.isArray(sd2?.scripts) ? sd2.scripts : [];
+                          const container = scripts[0]?.airesponse ? { script: scripts[0].airesponse } : { script: scripts };
+                          const normalized = normalizeScriptToRows(container);
+                          const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+                          setScriptRows(newRows);
+                        }
+                      } finally { setIsEnhancing(false); setSelectedAssetUrl(''); }
+                    } catch(_) { setIsEnhancing(false); /* noop */ }
+                  }}
+                  className={`px-3 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-[#13008B] text-white hover:bg-blue-800'}`}
+                >Generate</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {isEnhancing && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <h4 className="text-lg font-semibold text-gray-900">Enhancing description…</h4>
+            <p className="mt-1 text-sm text-gray-600">Applying selected image to scene.</p>
           </div>
         </div>
       )}
@@ -3892,10 +4931,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               <button onClick={() => !isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`text-white w-8 h-8 transition-all duration-300 rounded-full ${isRegenerating ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:text-[#13008B] hover:bg-[#e4e0ff]'}`}>✕</button>
             </div>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">User Query (optional)</label>
-                <textarea value={regenQuery} onChange={(e)=>setRegenQuery(e.target.value)} rows={3} disabled={isRegenerating} className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100" placeholder="Describe how you want to change this scene..." />
-              </div>
               {(() => {
                 try {
                   const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
@@ -3913,16 +4948,145 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       </label>
                       <label className="inline-flex items-center gap-2 cursor-pointer">
                         <input type="radio" name="regen-model" checked={regenModel==='SORA'} onChange={()=>setRegenModel('SORA')} disabled={isRegenerating} />
-                        <span>Infographic </span>
+                        <span>Infographic</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="regen-model" checked={regenModel==='PLOTLY'} onChange={()=>setRegenModel('PLOTLY')} disabled={isRegenerating} />
+                        <span>Financial</span>
                       </label>
                     </div>
                   </div>
                 );
               })()}
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button onClick={()=>!isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Cancel</button>
-                <button onClick={handleRegenerateScene} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-blue-300 cursor-not-allowed text-white' : 'bg-[#13008B] text-white hover:bg-blue-800'}`}>{isRegenerating ? 'Regenerating…' : 'Save'}</button>
+              {(regenStep === 2 && regenModel==='PLOTLY') && (
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                    <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
+                      <option value="">Select</option>
+                      <option value="pie">Pie</option>
+                      <option value="bar">Bar</option>
+                      <option value="line">Line</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
+                    <textarea value={regenChartData} onChange={(e)=>setRegenChartData(e.target.value)} rows={4} className="w-full p-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Upload Document (to summarize)</label>
+                    <input type="file" accept=".pdf,.doc,.docx,.txt" disabled={isUploadingRegenDoc} onChange={async (e)=>{
+                      const file = e.target.files?.[0]; if (!file) return; setIsUploadingRegenDoc(true);
+                      try {
+                        const userId = localStorage.getItem('token');
+                        const sessionId = localStorage.getItem('session_id');
+                        if (!userId || !sessionId) throw new Error('Missing session');
+                        const form = new FormData(); form.append('files', file); form.append('user_id', userId); form.append('session_id', sessionId);
+                        const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
+                        const ex = await fetch(extractUrl, { method: 'POST', body: form }); const tx = await ex.text(); if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
+                        let exJson; try { exJson = JSON.parse(tx); } catch(_) { exJson = {}; }
+                        let documents = [];
+                        if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                        else if (Array.isArray(exJson)) documents = exJson;
+                        else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
+                        else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
+                        let sessionObj = { session_id: sessionId, user_id: userId };
+                        try {
+                          const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id: userId, session_id: sessionId }) });
+                          const st = await sResp.text(); let sj; try { sj = JSON.parse(st); } catch(_) { sj = {}; }
+                          const sd = sj?.session_data || sj?.session || {};
+                          sessionObj = {
+                            session_id: sd.session_id || sessionId,
+                            user_id: sd.user_id || userId,
+                            content: Array.isArray(sd.content) ? sd.content : [],
+                            document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                            video_duration: String(sd.video_duration || sd.videoduration || '60'),
+                            created_at: sd.created_at || new Date().toISOString(),
+                            totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
+                            messages: Array.isArray(sd.messages) ? sd.messages : [],
+                            scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+                            videos: Array.isArray(sd.videos) ? sd.videos : [],
+                            images: Array.isArray(sd.images) ? sd.images : [],
+                            final_link: sd.final_link || '',
+                            videoType: sd.videoType || sd.video_type || '',
+                            additionalProp1: sd.additionalProp1 || {}
+                          };
+                        } catch(_) {}
+                        const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
+                        const sum = await fetch(summaryUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ session: sessionObj, documents }) });
+                        const ts = await sum.text(); let js; try { js = JSON.parse(ts); } catch(_) { js = {}; }
+                        if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
+                        let firstSummary = '';
+                        try {
+                          const arr = Array.isArray(js?.summaries) ? js.summaries : (Array.isArray(js?.summary) ? js.summary : (Array.isArray(js?.total_summary) ? js.total_summary : []));
+                          if (Array.isArray(arr) && arr.length > 0) { const item = arr[0]; firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item)); }
+                          else if (typeof js?.summary === 'string') firstSummary = js.summary; else if (typeof js?.total_summary === 'string') firstSummary = js.total_summary;
+                        } catch(_) {}
+                        if (firstSummary) setRegenDocSummary(String(firstSummary));
+                      } catch(err) { alert(err?.message || 'Upload failed'); }
+                      finally { setIsUploadingRegenDoc(false); e.target.value=''; }
+                    }} />
+                    {isUploadingRegenDoc && (<div className="text-xs text-gray-500 mt-1">Processing document…</div>)}
+                  </div>
+                </div>
+              )}
+              {regenStep === 1 && (
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={async ()=>{ const total = Array.isArray(scriptRows) ? scriptRows.length : 0; const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total)); await fetchSceneSuggestions(regenModel || 'SORA', idx, 'regen'); setRegenStep(2); }}
+                    className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-blue-800"
+                  >
+                    Continue
+                  </button>
+                </div>
+              )}
+              {regenStep === 2 && (
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Suggestions</label>
+                {isSuggestingRegen ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                    Fetching suggestions…
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-44 overflow-y-auto border rounded-md p-2">
+                    {Array.isArray(regenSuggestions) && regenSuggestions.length > 0 ? (
+                      regenSuggestions.map((sug, i) => (
+                        <div key={i}>
+                          <button
+                            type="button"
+                            onClick={() => { setRegenSelectedIdx(i); setRegenSceneContent((((sug?.title ? (sug.title+': ') : '') + (sug?.content || '')).trim())); }}
+                            className={`relative w-full text-left p-2 rounded border hover:bg-gray-50 ${regenSelectedIdx===i?'border-[#13008B] ring-2 ring-[#cfcaf7]':''}`}
+                            title="Click to select this suggestion"
+                          >
+                            {regenSelectedIdx===i && (
+                              <span className="absolute top-1 right-1 text-[10px] px-2 py-0.5 rounded-full bg-[#13008B] text-white">Selected</span>
+                            )}
+                            <div className="text-xs font-medium text-gray-800">{sug?.title || 'Suggestion'}</div>
+                            <div className="text-xs text-gray-600 whitespace-pre-wrap">{sug?.content || ''}</div>
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-xs text-gray-500">No suggestions available.</div>
+                    )}
+                  </div>
+                )}
               </div>
+              )}
+              {(regenDocSummary || regenSceneContent) && (
+                <div className="mt-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Selected Scene Content</label>
+                  <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{regenDocSummary || regenSceneContent}</div>
+                </div>
+              )}
+              
+              {regenStep === 2 && (
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button onClick={()=>!isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Cancel</button>
+                  <button onClick={handleRegenerateScene} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-blue-300 cursor-not-allowed text-white' : 'bg-[#13008B] text-white hover:bg-blue-800'}`}>{isRegenerating ? 'Regenerating…' : 'Regenerate Scene'}</button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3935,6 +5099,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
             <h4 className="text-lg font-semibold text-[#13008B]">Generating Video...</h4>
             <p className="mt-1 text-sm text-gray-600">This may take up to 5 minutes.</p>
             <p className="mt-2 text-sm font-medium text-gray-800">Time remaining: {formatSeconds(videoCountdown)}</p>
+          </div>
+        </div>
+      )}
+      {showShortGenPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <h4 className="text-lg font-semibold text-[#13008B]">Starting image generation…</h4>
+            <p className="mt-1 text-sm text-gray-600">Redirecting to Images in a moment.</p>
           </div>
         </div>
       )}
@@ -3966,7 +5139,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       <style>{thinkingDotsStyles}</style>
       
       {/* Main Content Area */}
-     <div className="flex-1 flex flex-col overflow-hidden">
+     <div className="flex-1 flex flex-col overflow-hidden overflow-x-hidden">
         {!isChatLoading && chatHistory.length === 0 && uploadedFiles.length === 0 ? (
           // Welcome message when no chat history and no files
           <div className="flex-1 flex flex-col items-center justify-center px-4 lg:px-8 py-8 lg:py-16">
@@ -3985,7 +5158,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           </div>
         ) : (
           // Chat messages display
-          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-0 py-4 scrollbar-hide">
+          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden px-0 py-4 scrollbar-hide">
             <div className="w-full space-y-4">
             {/* Display chat messages or loading skeletons */}
             {isChatLoading ? (
@@ -4101,6 +5274,68 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     <p className="text-xs opacity-60 mt-1">
                       {new Date(message.timestamp).toLocaleTimeString()}
                     </p>
+                    {/* Inline Chart Data preview for financial (PLOTLY) scenes */}
+                    {message.type === 'ai' && message.script && (() => {
+                      try {
+                        const scenes = Array.isArray(message.script) ? message.script : (Array.isArray(message.script?.airesponse) ? message.script.airesponse : []);
+                        const plotScene = (Array.isArray(scenes) ? scenes : []).find(s => String(s?.model || s?.mode || '').toUpperCase() === 'PLOTLY' && (s?.chart_data || s?.chartData));
+                        if (!plotScene) return null;
+                        let raw = plotScene.chart_data || plotScene.chartData;
+                        if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch(_) { /* keep string */ } }
+                        const renderTable = (headers, rows) => (
+                          <div className="mt-3 w-full overflow-x-auto overflow-y-auto max-h-60 border border-gray-200 rounded-lg bg-white">
+                            <table className="min-w-full text-sm">
+                              <thead className="bg-gray-50 sticky top-0">
+                                <tr>
+                                  {headers.map((h, i) => (
+                                    <th key={i} className="px-3 py-2 text-left font-semibold text-gray-700 border-b border-gray-200 whitespace-nowrap">{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.map((r, ri) => (
+                                  <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                    {headers.map((h, hi) => (
+                                      <td key={hi} className="px-3 py-2 border-b border-gray-100 text-gray-800 whitespace-nowrap">{r[h] ?? ''}</td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                        if (!raw) return null;
+                        // Case 1: Array of objects
+                        if (Array.isArray(raw) && raw.every(it => it && typeof it === 'object' && !Array.isArray(it))) {
+                          const headerSet = new Set();
+                          raw.forEach(obj => Object.keys(obj).forEach(k => headerSet.add(k)));
+                          const headers = Array.from(headerSet);
+                          const rows = raw.map(obj => headers.reduce((acc, k) => { acc[k] = obj?.[k]; return acc; }, {}));
+                          return renderTable(headers, rows);
+                        }
+                        // Case 2: Object with parallel arrays
+                        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                          const keys = Object.keys(raw);
+                          const arrays = keys.every(k => Array.isArray(raw[k]));
+                          if (arrays) {
+                            const maxLen = Math.max(0, ...keys.map(k => (Array.isArray(raw[k]) ? raw[k].length : 0)));
+                            const headers = keys;
+                            const rows = Array.from({ length: maxLen }, (_, i) => {
+                              const row = {};
+                              keys.forEach(k => { row[k] = Array.isArray(raw[k]) ? raw[k][i] : ''; });
+                              return row;
+                            });
+                            return renderTable(headers, rows);
+                          }
+                          // Case 3: Generic object -> key/value table
+                          const headers = ['Key', 'Value'];
+                          const rows = Object.entries(raw).map(([k, v]) => ({ Key: k, Value: (typeof v === 'object' ? JSON.stringify(v) : v) }));
+                          return renderTable(headers, rows);
+                        }
+                        // Fallback: single value
+                        return renderTable(['Value'], [{ Value: String(raw) }]);
+                      } catch (_) { return null; }
+                    })()}
                   </div>
                   
                   {/* Actions row for AI messages: icons + buttons on one line */}
@@ -4235,7 +5470,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                    <button 
                      onClick={() => fileInputRef.current?.click()}
                      className="p-1.5 lg:p-2 text-gray-400 hover:text-gray-600 transition-colors"
-                     title="Upload Documents (PDF, PPT, PPTX, DOC, DOCX)"
+                  title="Upload Documents (PDF, PPT, PPTX, DOC, DOCX, CSV, XLS, XLSX)"
                    >
                      <Paperclip className="w-4 h-4 lg:w-5 lg:h-5" />
                    </button>
@@ -4244,8 +5479,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                    <input
                      ref={fileInputRef}
                      type="file"
-                     multiple
-                     accept=".pdf,.ppt,.pptx,.doc,.docx"
+                    multiple
+                    accept=".pdf,.ppt,.pptx,.doc,.docx,.csv,.xls,.xlsx"
                      onChange={handleFileSelect}
                      className="hidden"
                    />

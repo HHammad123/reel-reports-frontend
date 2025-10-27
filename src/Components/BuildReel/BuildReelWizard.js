@@ -26,12 +26,14 @@ const useScriptScenes = (initial = []) => {
     const m = String(model || '').toUpperCase();
     if (m === 'VEO3' || m.includes('VEO')) return 'Avatar Based';
     if (m === 'SORA') return 'Infographic';
+    if (m === 'PLOTLY') return 'Financial';
     return 'Infographic';
   };
   const typeToModel = (type) => {
     const t = String(type || '').toLowerCase();
     if (t === 'avatar based') return 'VEO3';
     if (t === 'infographic') return 'SORA';
+    if (t === 'financial') return 'PLOTLY';
     return 'SORA';
   };
   const perSceneDurationByModel = (model) => (String(model || '').toUpperCase().includes('VEO') ? 8 : 10);
@@ -173,7 +175,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const [voicePreviewUrl, setVoicePreviewUrl] = useState('');
   const voiceInputRef = useRef(null);
   // Brand voices + recording
-  const { getBrandAssets, uploadBrandAssets } = useBrandAssets();
+  const { getBrandAssetsByUserId, uploadBrandAssets } = useBrandAssets();
   const [brandVoices, setBrandVoices] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
@@ -207,7 +209,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     if (!token) return;
     (async () => {
       try {
-        const assets = await getBrandAssets(token);
+        const assets = await getBrandAssetsByUserId(token);
         const voices = Array.isArray(assets?.voiceovers)
           ? assets.voiceovers
           : (Array.isArray(assets?.voiceover) ? assets.voiceover : (assets?.voices || []));
@@ -220,7 +222,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
         setBrandLogos(logoUrls);
       } catch (_) { /* noop */ }
     })();
-  }, [getBrandAssets]);
+  }, [getBrandAssetsByUserId]);
+
+  // (Removed StepOne-level assets modal; handled in StepTwo)
 
   const startRecording = async () => {
     try {
@@ -591,7 +595,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                           try {
                             setIsLogoUploading(true);
                             await uploadBrandAssets({ userId: token, files: { logos: [file] } });
-                            const refreshed = await getBrandAssets(token);
+                            const refreshed = await getBrandAssetsByUserId(token);
                             const list = Array.isArray(refreshed?.logos) ? refreshed.logos : (Array.isArray(refreshed?.logo) ? refreshed.logo : []);
                             const logoUrls = (list || []).map(l => (typeof l === 'string' ? l : (l?.url || l?.link || ''))).filter(Boolean);
                             setBrandLogos(logoUrls);
@@ -815,7 +819,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                     setVoiceFilesForUpload([]);
                     try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) {}
                     setPendingVoiceUrls([]); setPendingVoiceBlobs([]);
-                    const refreshed = await getBrandAssets(token);
+                    const refreshed = await getBrandAssetsByUserId(token);
                     const list = Array.isArray(refreshed?.voiceovers) ? refreshed.voiceovers : (Array.isArray(refreshed?.voiceover) ? refreshed.voiceover : (refreshed?.voices || []));
                     const urls = (list || []).map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean);
                     setBrandVoices(urls);
@@ -847,6 +851,109 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
   const imageFileInputRef = useRef(null);
   const [isUploadingSceneImage, setIsUploadingSceneImage] = useState(false);
   const [textIncludeInput, setTextIncludeInput] = useState('');
+
+  // Brand Assets modal state and helpers (scoped to StepTwo)
+  const [showAssetsModal, setShowAssetsModal] = useState(false);
+  // Back-compat alias in case some leftover code references singular naming
+  const showAssetModal = showAssetsModal;
+  const setShowAssetModal = setShowAssetsModal;
+  const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+  const [assetsTab, setAssetsTab] = useState('uploaded_images');
+  const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  const assetsUploadInputRef = useRef(null);
+  const [pendingUploadType, setPendingUploadType] = useState('uploaded_image');
+  const [selectedAssetUrl, setSelectedAssetUrl] = useState('');
+
+  // Helpers: session snapshot + update-text for a single scene
+  const getSessionSnapshot = async () => {
+    const sessionId = localStorage.getItem('session_id');
+    const token = localStorage.getItem('token');
+    if (!sessionId || !token) throw new Error('Missing session_id or token');
+    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+    });
+    const text = await sessionResp.text();
+    let data; try { data = JSON.parse(text); } catch (_) { data = {}; }
+    if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
+    const sd = data?.session_data || data?.session || {};
+    const user = data?.user_data || sd?.user_data || sd?.user || {};
+    const sessionForBody = {
+      session_id: sd?.session_id || sessionId,
+      user_id: sd?.user_id || token,
+      content: Array.isArray(sd?.content) ? sd.content : [],
+      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
+      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+      created_at: sd?.created_at || new Date().toISOString(),
+      totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+      messages: Array.isArray(sd?.messages) ? sd.messages : [],
+      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [],
+      videos: Array.isArray(sd?.videos) ? sd.videos : [],
+      images: Array.isArray(sd?.images) ? sd.images : [],
+      final_link: sd?.final_link || '',
+      videoType: sd?.videoType || sd?.video_type || ''
+    };
+    return { user, sessionForBody, sd };
+  };
+
+  const buildAiresponseWithOverrides = (targetIdx, { genImage, descriptionOverride, refImagesOverride } = {}) => {
+    const rows = Array.isArray(script) ? script : [];
+    return rows.map((r, idx) => {
+      const isTarget = idx === targetIdx;
+      return {
+        scene_number: r?.scene_number,
+        scene_title: r?.scene_title ?? '',
+        model: r?.model ?? '',
+        timeline: r?.timeline ?? '',
+        narration: r?.narration ?? '',
+        desc: isTarget && typeof descriptionOverride === 'string' ? descriptionOverride : (r?.desc ?? r?.description ?? ''),
+        gen_image: (isTarget && typeof genImage === 'boolean') ? genImage : ((typeof r?.gen_image === 'boolean') ? r.gen_image : undefined),
+        font_style: r?.font_style ?? r?.fontStyle ?? '',
+        font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
+        text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [],
+        ref_image: Array.isArray(refImagesOverride) && isTarget && refImagesOverride.length > 0
+          ? refImagesOverride
+          : (Array.isArray(r?.ref_image) ? r.ref_image : []) ,
+        folderLink: r?.folderLink ?? r?.folder_link ?? ''
+      };
+    });
+  };
+
+  const updateTextForSelected = async (targetIdx, { genImage, descriptionOverride, refImagesOverride } = {}) => {
+    const { user, sessionForBody, sd } = await getSessionSnapshot();
+    const originalUserquery = Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [];
+    const airesponse = buildAiresponseWithOverrides(targetIdx, { genImage, descriptionOverride, refImagesOverride });
+    const body = {
+      user,
+      session: sessionForBody,
+      changed_script: { userquery: originalUserquery, airesponse, version: String(sd?.scripts?.[0]?.version || 'v1') }
+    };
+    const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const txt = await resp.text();
+    if (!resp.ok) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+    try { toast.success('Scene updated'); } catch(_) {}
+  };
+
+  const openAssetsModal = async () => {
+    try {
+      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
+      if (!token) { setShowAssetsModal(true); return; }
+      setIsAssetsLoading(true);
+      setShowAssetsModal(true);
+      const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+      const resp = await fetch(url);
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch(_) { data = {}; }
+      const logos = Array.isArray(data?.logos) ? data.logos : [];
+      const icons = Array.isArray(data?.icons) ? data.icons : [];
+      const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
+      const templates = Array.isArray(data?.templates) ? data.templates : [];
+      const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
+      setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
+    } catch(_) { /* noop */ }
+    finally { setIsAssetsLoading(false); }
+  };
 
   // Helpers to persist current scenes before enhance
   const scenes = useMemo(() => (Array.isArray(script) ? script.map((r) => ({
@@ -1011,7 +1118,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
     }
   };
 
-  const types = ['Avatar Based', 'Infographic', 'Commercial', 'Corporate'];
+  const types = ['Avatar Based', 'Infographic', 'Financial'];
 
   // Keep duration in sync with current scene type
   React.useEffect(() => {
@@ -1217,12 +1324,33 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                 </div>
               </div>
               <div className='col-span-12 md:col-span-6'>
-                <div className='text-sm text-gray-600 mb-2'>
-                  { (scenes[activeIndex]?.type || '') === 'Avatar Based' ? 'Select an Avatar' : 'Select a Reference Image' }
-                </div>
+                {((scenes[activeIndex]?.type || '') !== 'Financial') && (
+                  <div className='text-sm text-gray-600 mb-2'>
+                    { (scenes[activeIndex]?.type || '') === 'Avatar Based' ? 'Select an Avatar' : 'Select a Reference Image' }
+                  </div>
+                )}
                 <div className='flex items-center gap-3'>
+                  {/* When Financial, show Chart Type selector */}
+                  {((scenes[activeIndex]?.type || '') === 'Financial') && (
+                    <div className='flex items-center gap-2'>
+                      <label className='text-sm text-gray-600'>Chart Type</label>
+                      <select
+                        value={script?.[activeIndex]?.chart_type || script?.[activeIndex]?.chartType || ''}
+                        onChange={(e)=> updateScriptScene(activeIndex, { chart_type: e.target.value })}
+                        className='px-3 py-2 border rounded-lg text-sm'
+                      >
+                        <option value=''>Select</option>
+                        <option value='pie'>Pie</option>
+                        <option value='bar'>Bar</option>
+                        <option value='line'>Line</option>
+                      </select>
+                    </div>
+                  )}
+                  {/* Existing selected refs preview (hide for Financial) */}
                   {(() => {
-                  const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image : [];
+                    const curType = (scenes[activeIndex]?.type || '');
+                    if (curType === 'Financial') return null;
+                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image : [];
                     if (imgs.length > 0) {
                       return imgs.slice(0,3).map((url, idx) => (
                         <div key={idx} className='w-16 h-16 rounded-lg border overflow-hidden'>
@@ -1232,6 +1360,17 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                     }
                     return null;
                   })()}
+                  {/* Choose from Brand Assets (Scenes Editor-like flow) for non-Avatar types */}
+                  {((scenes[activeIndex]?.type || '') !== 'Avatar Based' && (scenes[activeIndex]?.type || '') !== 'Financial') && (
+                    <button
+                      type='button'
+                      onClick={openAssetsModal}
+                      className='px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm'
+                      title='Choose from Brand Assets'
+                    >
+                      Choose from Assets
+                    </button>
+                  )}
                   <input
                     ref={imageFileInputRef}
                     type='file'
@@ -1253,15 +1392,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                       }
                     }}
                   />
-                  <button
-                    type='button'
-                    onClick={() => imageFileInputRef.current && imageFileInputRef.current.click()}
-                    className={`w-16 h-16 flex items-center justify-center bg-gray-100 border rounded-lg ${isUploadingSceneImage ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'}`}
-                    disabled={isUploadingSceneImage}
-                    title='Upload image'
-                  >
-                    {isUploadingSceneImage ? '...' : '+'}
-                  </button>
+                  {/* Removed inline upload + box per requirement */}
                 </div>
               </div>
             </div>
@@ -1287,6 +1418,138 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
         <button onClick={onBack} className='px-5 py-2 rounded-lg border'>Back</button>
         <button onClick={async () => { await onGenerate(script); }} className='px-5 py-2 rounded-lg bg-black text-white'>Generate</button>
       </div>
+      {/* Brand Assets Modal (scoped to StepTwo) */}
+      {showAssetsModal && (
+        <div className='fixed inset-0 z-[70] flex items-center justify-center bg-black/50'>
+          <div className='bg-white w-[96%] max-w-5xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col'>
+            <div className='flex items-center justify-between p-4 border-b border-gray-200'>
+              <h3 className='text-lg font-semibold text-[#13008B]'>Choose Reference Image</h3>
+              <button onClick={() => setShowAssetsModal(false)} className='px-3 py-1.5 rounded-lg border text-sm'>Close</button>
+            </div>
+            <div className='px-4 pt-3 border-b border-gray-100'>
+              <div className='flex items-center gap-3 flex-wrap'>
+                {['uploaded_images','documents_images','logos','icons','templates'].map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setAssetsTab(tab)}
+                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab===tab ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  >{tab.replace('_',' ')}</button>
+                ))}
+                <div className='ml-auto'>
+                  <button
+                    onClick={() => { setPendingUploadType(assetsTab === 'templates' ? 'template' : (assetsTab.endsWith('s') ? assetsTab.slice(0,-1) : assetsTab)); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
+                    className='px-3 py-1.5 rounded-lg border text-sm bg-white hover:bg-gray-50'
+                  >
+                    Upload
+                  </button>
+                  <input ref={assetsUploadInputRef} type='file' accept='image/*' className='hidden' multiple onChange={async (e)=>{
+                    try {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length === 0) return;
+                      const token = localStorage.getItem('token');
+                      if (!token) { alert('Missing user'); return; }
+                      if (!pendingUploadType) { alert('Unknown upload type'); return; }
+                      const form = new FormData();
+                      form.append('user_id', token);
+                      form.append('file_type', pendingUploadType);
+                      files.forEach(f => form.append('files', f));
+                      const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', { method: 'POST', body: form });
+                      const upText = await upResp.text();
+                      if (!upResp.ok) throw new Error(`upload-file failed: ${upResp.status} ${upText}`);
+                      // Refresh images snapshot
+                      setIsAssetsLoading(true);
+                      const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+                      const getText = await getResp.text();
+                      let data; try { data = JSON.parse(getText); } catch(_) { data = {}; }
+                      const logos = Array.isArray(data?.logos) ? data.logos : [];
+                      const icons = Array.isArray(data?.icons) ? data.icons : [];
+                      const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
+                      const templates = Array.isArray(data?.templates) ? data.templates : [];
+                      const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
+                      setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
+                    } catch (err) { console.error('Upload failed:', err); alert('Failed to upload file.'); }
+                    finally { setIsAssetsLoading(false); if (assetsUploadInputRef.current) assetsUploadInputRef.current.value=''; }
+                  }} />
+                </div>
+              </div>
+            </div>
+            <div className='p-4 overflow-y-auto'>
+              {isAssetsLoading ? (
+                <div className='flex items-center justify-center py-16'>
+                  <div className='w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
+                </div>
+              ) : (
+                (()=>{
+                  const list = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
+                  const urls = list.map(item => (typeof item === 'string' ? item : (item?.url || item?.link || ''))).filter(Boolean);
+                  return (
+                    <div className='grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3'>
+                      {urls.map((url, idx) => {
+                        const selected = selectedAssetUrl === url;
+                        return (
+                          <button key={idx} onClick={()=> setSelectedAssetUrl(url)} className={`relative block w-full pt-[100%] rounded-lg overflow-hidden border ${selected ? 'border-blue-600 ring-2 ring-blue-300' : 'border-gray-200 hover:border-gray-300'}`} title={url}>
+                            <img src={url} alt={`asset-${idx}`} className='absolute inset-0 w-full h-full object-cover' />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+            <div className='p-4 border-t border-gray-200 flex items-center justify-end gap-2'>
+              <button onClick={()=> setShowAssetsModal(false)} className='px-4 py-2 rounded-lg text-sm bg-gray-100 text-gray-800 hover:bg-gray-200'>Cancel</button>
+              <button
+                onClick={async () => {
+                  try {
+                    if (!selectedAssetUrl) return;
+                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0,2) : [];
+                    const next = [selectedAssetUrl, ...imgs].slice(0,3);
+                    updateScriptScene(activeIndex, { ref_image: next });
+                    await updateTextForSelected(activeIndex, { genImage: false, descriptionOverride: '', refImagesOverride: [selectedAssetUrl] });
+                    setSelectedAssetUrl('');
+                    setShowAssetsModal(false);
+                  } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to keep default'); } catch(_) { alert('Failed to keep default'); } }
+                }}
+                disabled={!selectedAssetUrl}
+                className={`px-4 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+              >
+                Keep Default
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    if (!selectedAssetUrl) return;
+                    setIsEnhancing(true);
+                    const { user, sessionForBody } = await getSessionSnapshot();
+                    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                    const sceneNumber = scene?.scene_number ?? (activeIndex + 1);
+                    const model = String(scene?.model || '').toUpperCase();
+                    let reqBody = { user, session: sessionForBody, scene_number: sceneNumber };
+                    if (model === 'SORA') reqBody = { ...reqBody, image_links: [selectedAssetUrl] };
+                    if (model === 'PLOTLY') reqBody = { ...reqBody, chart_type: scene?.chart_type || scene?.chartType || '' };
+                    if (model === 'VEO3') reqBody = { ...reqBody, presenter_options: {} };
+                    await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
+                    });
+                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0,2) : [];
+                    const next = [selectedAssetUrl, ...imgs].slice(0,3);
+                    updateScriptScene(activeIndex, { ref_image: next });
+                    await updateTextForSelected(activeIndex, { genImage: true, descriptionOverride: scene?.desc || scene?.description || '', refImagesOverride: [selectedAssetUrl] });
+                    setSelectedAssetUrl('');
+                    setShowAssetsModal(false);
+                  } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to generate'); } catch(_) { alert('Failed to generate'); } }
+                  finally { setIsEnhancing(false); }
+                }}
+                disabled={!selectedAssetUrl}
+                className={`px-4 py-2 rounded-lg text-sm text-white ${!selectedAssetUrl ? 'bg-[#9aa0d0] cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+              >
+                Generate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1354,47 +1617,31 @@ const BuildReelWizard = () => {
       // 2) Load current session snapshot (as per Home flow) and kick off images generation
       const token = localStorage.getItem('token');
       if (!token) throw new Error('Missing login token');
-      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
       const sessText = await sessResp.text();
       let sessionData; try { sessionData = JSON.parse(sessText); } catch (_) { sessionData = sessText; }
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
 
-      // Build request body per /v1/images/generate schema
+      // Call queue endpoint with minimal payload
       const sd = sessionData?.session_data || {};
-      const sessionForBody = {
-        id: sd.session_id || sessionId,
+      const queueBody = {
         user_id: token,
-        created_at: sd.created_at || new Date().toISOString(),
-        updated_at: sd.updated_at || new Date().toISOString(),
-        content: sd.content || [],
-        summarydocument: sd.document_summary || [],
-        videoduration: String(sd.video_duration ?? 60),
-        totalsummary: sd.total_summary || [],
-        messages: Array.isArray(sd.messages) ? sd.messages : [],
-        scripts: [
-          {
-            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
-            airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
-            version: sd?.scripts?.[0]?.version || 'v1'
-          }
-        ],
-        videos: sd.videos || [],
-        additionalProp1: {}
+        session_id: sessionId
       };
-      const imgBody = { session: sessionForBody };
-      const imgResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/images/generate', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(imgBody)
+      const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queueBody)
       });
       const imgText = await imgResp.text();
       let imgData; try { imgData = JSON.parse(imgText); } catch (_) { imgData = imgText; }
-      if (!imgResp.ok) throw new Error(`images/generate failed: ${imgResp.status} ${imgText}`);
+      if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
 
       // Persist job response (job_id, status, status_url, scenes_to_process)
       const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
       if (jobId) {
         try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
+        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
         setImagesJobId(jobId);
       }
 
@@ -1417,7 +1664,7 @@ const BuildReelWizard = () => {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
       if (!sessionId || !token) return null;
-      const response = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
       const text = await response.text();
@@ -1436,7 +1683,7 @@ const BuildReelWizard = () => {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
       if (!sessionId || !token) { alert('Login expired'); return; }
-      const sessResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
       const sessText = await sessResp.text();
@@ -1490,7 +1737,7 @@ const BuildReelWizard = () => {
       if (!token || !sessionId) { alert('Missing login or session. Please sign in again.'); return; }
       setIsMerging(true);
       setShowVideoPopup(true);
-      const sessionResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
       const sessionText = await sessionResp.text();
@@ -1546,7 +1793,7 @@ const BuildReelWizard = () => {
       setIsCreatingScenes(true);
       // Build request per new format
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-      // Userquery payload from form/localStorage (already shaped as [{ additonalprop1: {...} }])
+      // Userquery payload from form/localStorage
       let uq = [];
       try {
         if (form && form.userquery && Array.isArray(form.userquery.userquery)) {
@@ -1559,15 +1806,32 @@ const BuildReelWizard = () => {
           }
         }
       } catch (_) { /* noop */ }
-      // As a final guard, ensure shape is an array
       if (!Array.isArray(uq)) uq = [];
+
+      // Build user object from localStorage (fallbacks to blanks)
+      let storedUser = {};
+      try { const rawUser = localStorage.getItem('user'); if (rawUser) storedUser = JSON.parse(rawUser) || {}; } catch (_) { /* noop */ }
+      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
+      const userPayload = {
+        id: storedUser.id || token || '',
+        email: storedUser.email || '',
+        display_name: storedUser.display_name || storedUser.name || '',
+        created_at: storedUser.created_at || '',
+        avatar_url: storedUser.avatar_url || '',
+        folder_url: storedUser.folder_url || '',
+        brand_identity: storedUser.brand_identity || {},
+        tone_and_voice: storedUser.tone_and_voice || {},
+        look_and_feel: storedUser.look_and_feel || {},
+        templates: Array.isArray(storedUser.templates) ? storedUser.templates : [],
+        voiceover: Array.isArray(storedUser.voiceover) ? storedUser.voiceover : [],
+      };
+
       const body = {
+        user: userPayload,
         session_id: sessionId || '',
-        current_script: {
-          userquery: Array.isArray(uq) ? uq : [],
-          airesponse: []
-        },
-        action: 'add'
+        current_script: { userquery: uq },
+        action: 'add',
+        model_type: 'SORA'
       };
       const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
       const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

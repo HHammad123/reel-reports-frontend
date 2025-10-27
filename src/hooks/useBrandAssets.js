@@ -41,6 +41,57 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
+  // GET /v1/users/brand-assets/profiles/{user_id}
+  const getBrandProfiles = useCallback(async (userId) => {
+    if (!userId) return [];
+    setLoading(true); setError('');
+    try {
+      const resp = await fetch(`${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}`);
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`GET profiles failed: ${resp.status} ${text}`);
+      const profiles = Array.isArray(data?.profiles) ? data.profiles : (Array.isArray(data) ? data : []);
+      return profiles;
+    } catch (e) {
+      setError(e?.message || 'Failed to load profiles');
+      return [];
+    } finally { setLoading(false); }
+  }, []);
+
+  // GET /v1/users/brand-assets/profiles/{user_id}/{profile_id}
+  const getBrandProfileById = useCallback(async ({ userId, profileId }) => {
+    if (!userId || !profileId) return null;
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}`;
+      const resp = await fetch(url);
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`GET profile detail failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to load profile');
+      return null;
+    } finally { setLoading(false); }
+  }, []);
+
+  // POST /v1/users/brand-assets/profiles/{user_id}/{profile_id}/activate
+  const activateBrandProfile = useCallback(async ({ userId, profileId }) => {
+    if (!userId || !profileId) throw new Error('userId and profileId are required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/activate`;
+      const resp = await fetch(url, { method: 'POST' });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`activate failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to activate profile');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
   const uploadBrandAssets = useCallback(async (params) => {
     // params: { userId, fonts, colors, caption_location, files: { logos, icons, voiceovers, templates } }
     const { userId, fonts = [], colors = [], caption_location, files = {} } = params || {};
@@ -94,6 +145,29 @@ export default function useBrandAssets() {
       throw e;
     } finally { setLoading(false); }
   }, []);
+  // PUT /v1/users/brand-assets/profiles/{user_id}/{profile_id}
+  const updateBrandProfile = useCallback(async ({ userId, profileId, payload }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}`;
+      const body = JSON.stringify({ user_id: userId, profile_id: profileId, ...(payload || {}) });
+      const resp = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
+      if (!resp.ok) {
+        console.error('[updateBrandProfile] PUT failed', { status: resp.status, url, body, response: text });
+        throw new Error(`profiles update failed: ${resp.status} ${text}`);
+      }
+      setAnalysis(data);
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to update brand profile');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
   const analyzeWebsite = useCallback(async ({ userId, website }) => {
     if (!userId || !website) throw new Error('userId and website are required');
     // Ensure website starts with http(s)
@@ -114,6 +188,31 @@ export default function useBrandAssets() {
       return data;
     } catch (e) {
       setError(e?.message || 'Failed to analyze website');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  // POST /v1/users/brand-assets/profiles/create with FormData
+  const createBrandProfile = useCallback(async ({ userId, website, profileName, setAsActive = true }) => {
+    if (!userId || !website || !profileName) throw new Error('userId, website, and profileName are required');
+    const url = /^https?:\/\//i.test(website) ? website : `https://${website}`;
+    const form = new FormData();
+    form.append('user_id', userId);
+    form.append('website_url', url);
+    form.append('profile_name', profileName);
+    form.append('set_as_active', String(!!setAsActive));
+    setLoading(true); setError('');
+    try {
+      const resp = await fetch(`${API_BASE}/users/brand-assets/profiles/create`, { method: 'POST', body: form });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(`profiles/create failed: ${resp.status}`);
+      setAnalysis(data);
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
+      try { localStorage.setItem(`last_analyzed_website:${userId}`, url); } catch (_) {}
+      try { localStorage.setItem(`last_profile_name:${userId}`, profileName); } catch (_) {}
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to create brand profile');
       throw e;
     } finally { setLoading(false); }
   }, []);
@@ -146,5 +245,5 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
-  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, getBrandAssets, getBrandAssetsByUserId, analyzeWebsite, updateBrandAssets, reset };
+  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, analyzeWebsite, createBrandProfile, updateBrandAssets, updateBrandProfile, reset };
 }

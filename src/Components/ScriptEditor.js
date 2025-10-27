@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import ErrorBoundary from './ErrorBoundary';
 import Chat from './Chat';
 
@@ -20,16 +20,26 @@ const ScriptEditor = ({
   imagesAvailable = false,
   onOpenImagesList,
 }) => {
+  // Preload brand-assets images on mount and cache in localStorage for reuse
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (!token) return;
+        const cacheKey = `brand_assets_images:${token}`;
+        // Always refresh on mount to keep it up to date
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+        const text = await resp.text();
+        let data; try { data = JSON.parse(text); } catch(_) { data = text; }
+        if (resp.ok && data && typeof data === 'object') {
+          try { localStorage.setItem(cacheKey, JSON.stringify(data)); } catch(_) {}
+        }
+      } catch (_) { /* noop */ }
+    })();
+  }, []);
   return (
-    <div className='bg-white rounded-lg shadow-sm flex-1 flex flex-col'>
-      <div className='flex items-center justify-between p-4 border-b border-gray-200'>
-        <h3 className='text-lg font-semibold text-[#13008B]'>{title}</h3>
-        <div className='flex items-center gap-2'>
-          <button onClick={onBack} className='px-3 py-1.5 rounded-lg border text-sm'>Back</button>
-          <button onClick={onGenerateImages} className='px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800'>Generate Images</button>
-        </div>
-      </div>
-      <div className='flex-1 overflow-hidden'>
+    <div className='bg-white rounded-lg shadow-sm flex-1 flex flex-col min-h-0 overflow-x-hidden'>
+      <div className='flex-1 overflow-visible min-h-0'>
         <ErrorBoundary>
           <Chat
             addUserChat={addUserChat}
@@ -53,4 +63,3 @@ const ScriptEditor = ({
 };
 
 export default ScriptEditor;
-

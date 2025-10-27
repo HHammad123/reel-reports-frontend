@@ -24,6 +24,8 @@ import PriceGuidelines from './pages/PriceGuidelines';
 import OAuthCallback2 from './Components/OAuthCallback2';
 import ProtectedRoute from './Components/ProtectedRoute';
 import OAuthCallback from './Components/Login/OAuthCallback';
+import ImageEdit from './pages/ImageEdit';
+
 
 function App() {
   const isAuthenticated = useSelector(selectIsAuthenticated);
@@ -60,7 +62,11 @@ function App() {
              <Main />
            </ProtectedRoute>
          } />
-        
+         <Route path="/image-edit" element={
+           <ProtectedRoute>
+          <ImageEdit />
+           </ProtectedRoute>
+         } />
          <Route path="/profile" element={
            <ProtectedRoute>
              <Profile />

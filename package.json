@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "homepage": "/",
-  
   "dependencies": {
     "@reduxjs/toolkit": "^2.8.2",
     "@testing-library/dom": "^10.4.1",
@@ -11,17 +10,22 @@
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
     "axios": "^1.11.0",
+    "konva": "^10.0.8",
     "lucide-react": "^0.536.0",
+    "polotno": "^2.29.3",
+    "prop-types": "^15.8.1",
     "react": "^19.1.1",
     "react-colorful": "^5.6.1",
     "react-dom": "^19.1.1",
     "react-hot-toast": "^2.6.0",
     "react-icons": "^5.5.0",
+    "react-konva": "^19.2.0",
     "react-redux": "^9.2.0",
     "react-router-dom": "^7.7.1",
     "react-scripts": "5.0.1",
     "redux-persist": "^6.0.0",
     "swiper": "^11.2.10",
+    "use-image": "^1.1.4",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
@@ -48,6 +52,12 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "overrides": {
+    "source-map": "^0.7.4"
+  },
+  "resolutions": {
+    "source-map": "^0.7.4"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",

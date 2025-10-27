@@ -74,6 +74,7 @@ const Sidebar = () => {
 
   const createSessionAndNavigate = async () => {
     try {
+      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
       const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
       if (!token) {
         alert('Please login to start a chat.');
@@ -99,6 +100,8 @@ const Sidebar = () => {
           }
         }
       } catch (_) { /* noop */ }
+      // Hint Typetabs to show Hybrid by default on entry
+      try { localStorage.setItem('force_typetab_hybrid', 'true'); } catch(_){}
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -119,6 +122,7 @@ const Sidebar = () => {
 
   const createSessionAndGoBuildReel = async () => {
     try {
+      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
       const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
       if (!token) {
         alert('Please login to continue.');

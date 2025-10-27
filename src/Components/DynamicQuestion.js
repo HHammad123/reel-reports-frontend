@@ -154,9 +154,9 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
         qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
       } catch (_) { /* noop */ }
       const qvt = String(qVideoType || '').toLowerCase();
-      const scriptEndpoint = (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic')
-        ? 'scripts/infographic/generate'
-        : 'scripts/hybrid/generate';
+      let scriptEndpoint = 'scripts/hybrid/generate';
+      if (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic') scriptEndpoint = 'scripts/infographics/generate';
+      if (qvt === 'financial') scriptEndpoint = 'scripts/financial/generate';
 
       // Build full payload with user + session + questionnaire context
       let userMeta = {};

@@ -33,7 +33,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 const meta = {
                   description: sc?.desc || sc?.description || sc?.scene_description || '',
                   narration: sc?.narration || sc?.voiceover || '',
-                  textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || ''
+                  textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || '',
+                  model: sc?.model || sc?.mode || ''
                 };
                 pushRow(sc?.scene_number ?? (j + 1), sc?.scene_title || sc?.title, refs, meta);
               });
@@ -48,7 +49,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const meta = {
                 description: it?.desc || it?.description || it?.scene_description || '',
                 narration: it?.narration || it?.voiceover || '',
-                textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || ''
+                textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
+                model: it?.model || it?.mode || ''
               };
               pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, refs, meta);
             }
@@ -65,7 +67,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           const meta = {
             description: sc?.desc || sc?.description || sc?.scene_description || '',
             narration: sc?.narration || sc?.voiceover || '',
-            textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || ''
+            textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || '',
+            model: sc?.model || sc?.mode || ''
           };
           pushRow(sc?.scene_number ?? (j + 1), sc?.scene_title || sc?.title, refs, meta);
         });
@@ -96,7 +99,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const user_id = localStorage.getItem('token');
         if (!session_id || !user_id) { setError('Missing session or user'); setIsLoading(false); return; }
         // First try session data
-        const sresp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/user-session/data', {
+        const sresp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
         });
         const stext = await sresp.text();
@@ -110,7 +113,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           setSelected({ index: 0, imageUrl: first, images: refs0.slice(0,2), title: sessionImages[0]?.scene_title || 'Untitled', sceneNumber: sessionImages[0]?.scene_number ?? '', description: sessionImages[0]?.description || '', narration: sessionImages[0]?.narration || '', textToBeIncluded: sessionImages[0]?.textToBeIncluded || '' });
         }
         // If we have a jobId and either no session images yet or we expect generation, poll job API until done
-        const shouldPollJob = !!(jobId || localStorage.getItem('current_images_job_id')) && sessionImages.length === 0;
+        const pendingFlag = localStorage.getItem('images_generate_pending') === 'true';
+        const shouldPollJob = !!(jobId || localStorage.getItem('current_images_job_id')) && sessionImages.length === 0 && pendingFlag;
         if (!shouldPollJob) { setIsLoading(false); return; }
 
         const id = jobId || localStorage.getItem('current_images_job_id');
@@ -118,38 +122,35 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
         const poll = async () => {
           try {
-            const resp = await fetch(`https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/jobs/images/${encodeURIComponent(id)}`);
+            const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(id)}`);
             const text = await resp.text();
             let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-            if (!resp.ok) throw new Error(`jobs/images failed: ${resp.status} ${text}`);
-            const container = Array.isArray(data) ? data[0] : data;
-            const arr = Array.isArray(container?.image_results) ? container.image_results
-                      : (Array.isArray(container?.scenes) ? container.scenes : []);
-            let mapped = [];
-            if (arr.length > 0) {
-              mapped = arr.map((s) => ({
-                scene_number: s?.scene_number,
-                scene_title: s?.scene_title,
-                refs: [s?.image_url, s?.image_1_url, s?.image_2_url].filter(Boolean)
-              }));
-            } else if (Array.isArray(container?.image_urls)) {
-              const refs = container.image_urls.filter(Boolean);
-              if (refs.length > 0) {
-                mapped = [{ scene_number: '-', scene_title: 'Images', refs }];
-              }
-            }
-            if (!cancelled) {
-              setRows(mapped);
-              if (mapped.length > 0) {
-                const refs0 = Array.isArray(mapped[0]?.refs) ? mapped[0].refs : [];
-                const first = refs0[0] || '';
-                setSelected({ index: 0, imageUrl: first, images: refs0.slice(0,2), title: mapped[0]?.scene_title || 'Untitled', sceneNumber: mapped[0]?.scene_number ?? '', description: '', narration: '', textToBeIncluded: '' });
-              }
-            }
-            if (!cancelled && !isJobDone(container)) {
+            if (!resp.ok) throw new Error(`job-status failed: ${resp.status} ${text}`);
+            const status = String(data?.status || data?.job_status || '').toLowerCase();
+            if (status === 'succeeded' || status === 'success' || status === 'completed') {
+              try { localStorage.removeItem('images_generate_pending'); } catch(_){}
+              // Reload session images now that job is done
+              try {
+                const sr = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
+                });
+                const st = await sr.text();
+                let sd; try { sd = JSON.parse(st); } catch(_) { sd = {}; }
+                const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images);
+                if (!cancelled) {
+                  setRows(sessionImages);
+                  if (sessionImages.length > 0) {
+                    const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
+                    const first = refs0[0] || '';
+                    const model0 = String(sessionImages[0]?.model || '').toUpperCase();
+                    const imgs = model0 === 'PLOTLY' ? [first] : refs0.slice(0,2);
+                    setSelected({ index: 0, imageUrl: first, images: imgs, title: sessionImages[0]?.scene_title || 'Untitled', sceneNumber: sessionImages[0]?.scene_number ?? '', description: sessionImages[0]?.description || '', narration: sessionImages[0]?.narration || '', textToBeIncluded: sessionImages[0]?.textToBeIncluded || '', model: model0 });
+                  }
+                }
+              } catch(_) { /* ignore */ }
+              if (!cancelled) setIsLoading(false);
+            } else if (!cancelled) {
               timeoutId = setTimeout(poll, 3000);
-            } else {
-              setIsLoading(false);
             }
           } catch (e) {
             if (!cancelled) setError(e?.message || 'Failed to load images');
@@ -210,17 +211,24 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
               <div className="lg:col-span-2 min-w-0">
                 <div className="w-full rounded-xl overflow-hidden">
-                  <div className={`grid ${Array.isArray(selected.images) && selected.images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
-                    {(selected.images && selected.images.length > 0 ? selected.images.slice(0,2) : [selected.imageUrl]).map((img, idx) => (
-                      <div key={idx} className="w-full aspect-video bg-black rounded-lg overflow-hidden">
-                        {img ? (
-                          <img src={img} alt={`selected-${idx}`} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
-                        )}
+                  {(() => {
+                    const isPlotly = String(selected?.model || '').toUpperCase() === 'PLOTLY';
+                    const imgs = Array.isArray(selected.images) && selected.images.length > 0 ? (isPlotly ? selected.images.slice(0,1) : selected.images.slice(0,2)) : [selected.imageUrl];
+                    const cols = isPlotly ? 'grid-cols-1' : (imgs.length > 1 ? 'grid-cols-2' : 'grid-cols-1');
+                    return (
+                      <div className={`grid ${cols} gap-2`}>
+                        {imgs.map((img, idx) => (
+                          <div key={idx} className="w-full aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
+                            {img ? (
+                              <img src={img} alt={`selected-${idx}`} className="w-full h-full object-contain" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })()}
                 </div>
                 <div className="mt-3">
                   <label className="text-sm text-gray-600">Narration</label>
@@ -251,31 +259,45 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               <div className="text-sm text-gray-600">No images available yet.</div>
             )}
             {rows.map((r, i) => {
+              const modelUpper = String(r?.model || '').toUpperCase();
               const first = (r.refs || [])[0];
               const second = (r.refs || [])[1];
               return (
                 <div
                   key={i}
                   className={`min-w-[300px] w-[300px] max-w-full cursor-pointer`}
-                  onClick={() => setSelected({ index: i, imageUrl: first || '', images: (r.refs || []).slice(0,2), title: r.scene_title || 'Untitled', sceneNumber: r.scene_number, description: r?.description || '', narration: r?.narration || '', textToBeIncluded: r?.textToBeIncluded || '' })}
+                  onClick={() => {
+                    const imgs = modelUpper === 'PLOTLY' ? [first] : (r.refs || []).slice(0,2);
+                    setSelected({ index: i, imageUrl: first || '', images: imgs, title: r.scene_title || 'Untitled', sceneNumber: r.scene_number, description: r?.description || '', narration: r?.narration || '', textToBeIncluded: r?.textToBeIncluded || '', model: modelUpper });
+                  }}
                 >
                   <div className={`rounded-xl border overflow-hidden ${selected.index === i ? 'ring-2 ring-[#13008B]' : ''}`}>
-                    <div className="grid grid-cols-2 gap-0 w-full h-40 bg-black">
-                      <div className="w-full h-full bg-black">
+                    {modelUpper === 'PLOTLY' ? (
+                      <div className="w-full h-40 bg-black flex items-center justify-center">
                         {first ? (
-                          <img src={first} alt={`scene-${r.scene_number}-1`} className="w-full h-full object-cover" />
+                          <img src={first} alt={`scene-${r.scene_number}-1`} className="max-h-full max-w-full object-contain" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
                         )}
                       </div>
-                      <div className="w-full h-full bg-black">
-                        {second ? (
-                          <img src={second} alt={`scene-${r.scene_number}-2`} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
-                        )}
+                    ) : (
+                      <div className="grid grid-cols-2 gap-0 w-full h-40 bg-black">
+                        <div className="w-full h-full bg-black flex items-center justify-center">
+                          {first ? (
+                            <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
+                          )}
+                        </div>
+                        <div className="w-full h-full bg-black flex items-center justify-center">
+                          {second ? (
+                            <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                   <div className="mt-2 text-sm font-semibold">Scene {r.scene_number} • {r.scene_title || 'Untitled'}</div>
                   {r?.description ? (

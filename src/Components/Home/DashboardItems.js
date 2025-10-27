@@ -18,6 +18,7 @@ const DashboardItems = () => {
 
   const handleStartGenerating = useCallback(async () => {
     try {
+      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
       const userToken = token || localStorage.getItem('token') || '';
       if (!userToken) { navigate('/login'); return; }
       const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
