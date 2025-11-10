@@ -8,7 +8,17 @@ const ProfileContent = ({userProfile}) => {
   const isAuthenticated = useSelector(selectIsAuthenticated);
 
   // Use user data from Redux if available, otherwise fall back to userProfile prop
-  const displayUser = user || userProfile || {};
+  let parsedProfile = userProfile
+  if (!user && userProfile && typeof userProfile === 'string') {
+    try {
+      parsedProfile = JSON.parse(userProfile)
+    } catch (_) {
+      parsedProfile = {}
+    }
+  }
+
+  const displayUser = user || parsedProfile || {};
+  const roleLabel = (displayUser.role || displayUser.user_role || displayUser.type || displayUser.account_type || 'User').toString();
 
   if (!isAuthenticated || !user) {
     return (
@@ -79,6 +89,14 @@ const ProfileContent = ({userProfile}) => {
                 <span className="text-lg font-medium text-gray-700">User ID</span>
                 <span className="text-lg font-semibold text-gray-900">
                   {displayUser.id || displayUser.user_id || 'Not provided'}
+                </span>
+              </div>
+
+              {/* Role */}
+              <div className="flex justify-between items-center py-4 border-b border-gray-200">
+                <span className="text-lg font-medium text-gray-700">Role</span>
+                <span className="text-lg font-semibold text-gray-900 capitalize">
+                  {roleLabel || 'User'}
                 </span>
               </div>
 

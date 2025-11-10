@@ -25,6 +25,8 @@ import OAuthCallback2 from './Components/OAuthCallback2';
 import ProtectedRoute from './Components/ProtectedRoute';
 import OAuthCallback from './Components/Login/OAuthCallback';
 import ImageEdit from './pages/ImageEdit';
+import AdminUsers from './pages/AdminUsers';
+import AdminCreateUser from './pages/AdminCreateUser';
 
 
 function App() {
@@ -59,6 +61,7 @@ function App() {
          } />
          <Route path="/main" element={
            <ProtectedRoute>
+            {/* sdgsd */}
              <Main />
            </ProtectedRoute>
          } />
@@ -125,6 +128,16 @@ function App() {
          <Route path="/scenes-images" element={
            <ProtectedRoute>
              <ScenesImages />
+           </ProtectedRoute>
+         } />
+         <Route path="/admin/users" element={
+           <ProtectedRoute>
+             <AdminUsers />
+           </ProtectedRoute>
+         } />
+         <Route path="/admin/users/create" element={
+           <ProtectedRoute>
+             <AdminCreateUser />
            </ProtectedRoute>
          } />
        </Routes>

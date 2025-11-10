@@ -245,5 +245,221 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
-  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, analyzeWebsite, createBrandProfile, updateBrandAssets, updateBrandProfile, reset };
+  const uploadTemplatesPptx = useCallback(async ({ userId, profileId, file, convertColors = false }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!file) throw new Error('pptx file is required');
+    const form = new FormData();
+    form.append('pptx_file', file);
+    form.append('convert_colors', convertColors ? 'true' : 'false');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/upload-pptx`;
+      const resp = await fetch(url, { method: 'POST', body: form });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`upload pptx failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to upload PowerPoint');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  const uploadProfileTemplateImages = useCallback(async ({ userId, profileId, aspectRatio, files = [], convertColors = false }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!files || files.length === 0) throw new Error('At least one image is required');
+    const form = new FormData();
+    // aspect_ratio is optional - only add if provided
+    if (aspectRatio) {
+      form.append('aspect_ratio', aspectRatio);
+    }
+    form.append('convert_colors', convertColors ? 'true' : 'false');
+    files.filter(Boolean).forEach(file => form.append('images', file));
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/upload-images`;
+      const resp = await fetch(url, { method: 'POST', body: form });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`upload-images failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to upload template images');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  const uploadVoiceover = useCallback(async ({ userId, profileId, name, type, file }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!name) throw new Error('name is required');
+    if (!type) throw new Error('type is required');
+    if (!file) throw new Error('file is required');
+    setLoading(true); setError('');
+    try {
+      const form = new FormData();
+      form.append('user_id', userId);
+      form.append('profile_id', profileId);
+      form.append('name', name);
+      form.append('type', type);
+      form.append('file', file);
+      
+      const resp = await fetch(`${API_BASE}/users/brand-assets/upload-voiceover`, {
+        method: 'POST',
+        body: form
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`upload-voiceover failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to upload voiceover');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  const updateTemplateElements = useCallback(async ({ userId, profileId, templates }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!templates || templates.length === 0) throw new Error('At least one template is required');
+    setLoading(true); setError('');
+    try {
+      const resp = await fetch(`${API_BASE}/users/brand-assets/profiles/update-template-elements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          profile_id: profileId,
+          templates: templates || []
+        })
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`update-template-elements failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to update template elements');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  const getTemplateById = useCallback(async ({ userId, profileId, templateId }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!templateId) throw new Error('templateId is required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/templates/${encodeURIComponent(templateId)}`;
+      const resp = await fetch(url, { method: 'GET' });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`get-template failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to fetch template');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  const replaceTemplateImage = useCallback(async ({ userId, profileId, templateId, file, fileName }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!templateId) throw new Error('templateId is required');
+    if (!file) throw new Error('file is required');
+    const form = new FormData();
+    const uploadName = fileName || file?.name || 'edited-image.png';
+    try {
+      form.append('file', file, uploadName);
+    } catch (_) {
+      form.append('file', file);
+    }
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/templates/${encodeURIComponent(templateId)}/replace-image`;
+      const resp = await fetch(url, { method: 'POST', body: form });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`replace-image failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to replace template image');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  // POST /v1/users/brand-assets/profiles/{user_id}/{profile_id}/regenerate-templates
+  const regenerateTemplates = useCallback(async ({ userId, profileId }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/regenerate-templates`;
+      const resp = await fetch(url, { method: 'POST' });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`regenerate-templates failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to regenerate templates');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  // POST /v1/users/brand-assets/profiles/delete-template-elements
+  const deleteTemplateElements = useCallback(async ({ userId, profileId, templateIds, aspectRatio }) => {
+    if (!userId) throw new Error('userId is required');
+    if (!profileId) throw new Error('profileId is required');
+    if (!templateIds || !Array.isArray(templateIds) || templateIds.length === 0) {
+      throw new Error('At least one template ID is required');
+    }
+    if (!aspectRatio) throw new Error('aspect_ratio is required');
+    setLoading(true); setError('');
+    try {
+      // Try the exact endpoint as specified by user
+      // API expects templates array with template_id and aspect_ratio
+      const url = `${API_BASE}/users/brand-assets/profiles/delete-template-elements`;
+      
+      // Build templates array with template_id and aspect_ratio
+      const templates = templateIds.map(templateId => ({
+        template_id: templateId,
+        aspect_ratio: aspectRatio
+      }));
+      
+      let resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          profile_id: profileId,
+          templates: templates,
+          aspect_ratio: aspectRatio
+        })
+      });
+      
+      // If DELETE fails with 405, try POST
+      if (!resp.ok && resp.status === 405) {
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: userId,
+            profile_id: profileId,
+            templates: templates,
+            aspect_ratio: aspectRatio
+          })
+        });
+      }
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`delete-template-elements failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to delete template elements');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, analyzeWebsite, createBrandProfile, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, reset };
 }

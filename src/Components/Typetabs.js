@@ -2,12 +2,12 @@ import React from 'react'
 import { useState } from 'react';
 
 const Typetabs = ({ onChangeVideoType }) => {
-  const [activeTab, setActiveTab] = useState('Hybrid Video');
+  const [activeTab, setActiveTab] = useState('Hybrid Reel');
      const videoTypes = [
-       'Hybrid Video',
-    'Avatar Video',
-    'Infographics Video', 
-    'Financial Video',
+       'Hybrid Reel',
+    'Avatar Reel',
+    'Infographics Reel', 
+    'Financial Reel',
    
   ];
 
@@ -16,8 +16,8 @@ const Typetabs = ({ onChangeVideoType }) => {
     try {
       const flag = localStorage.getItem('force_typetab_hybrid') === 'true';
       if (flag) {
-        setActiveTab('Hybrid Video');
-        if (typeof onChangeVideoType === 'function') onChangeVideoType('Hybrid Video');
+        setActiveTab('Hybrid Reel');
+        if (typeof onChangeVideoType === 'function') onChangeVideoType('Hybrid Reel');
         localStorage.removeItem('force_typetab_hybrid');
       }
     } catch (_) { /* noop */ }
@@ -26,7 +26,7 @@ const Typetabs = ({ onChangeVideoType }) => {
   return (
     <div className=''>
       {/* Video Type Tabs */}
-        <div className=" border-b border-gray-200 px-4 lg:px-6 py-2">
+        <div className=" border-b border-gray-200 px-4 lg:px-6 py-1">
           <div className="flex gap-2 justify-between  overflow-x-auto scrollbar-hide">
             {videoTypes.map((type) => (
               <button

@@ -12,6 +12,81 @@ import Guidlines from '../Components/VideoGuidlines/Guidlines'
 import DynamicQuestion from '../Components/DynamicQuestion'
 import { selectToken, selectIsAuthenticated } from '../redux/slices/userSlice'
 import { useNavigate, useParams } from 'react-router-dom'
+
+const wrapAdditional = (value) => {
+  if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+    return { additionalProp1: value }
+  }
+  return { additionalProp1: {} }
+}
+
+const toAdditionalArray = (items) => {
+  if (!Array.isArray(items) || items.length === 0) return [wrapAdditional({})]
+  return items.map(item => {
+    if (item && typeof item === 'object') return wrapAdditional(item)
+    if (item != null) return wrapAdditional({ value: item })
+    return wrapAdditional({})
+  })
+}
+
+const mapToStringArray = (arr) => {
+  if (!Array.isArray(arr)) return []
+  return arr
+    .map(item => {
+      if (typeof item === 'string') return item
+      if (item && typeof item === 'object') {
+        return (
+          item.name ||
+          item.title ||
+          item.url ||
+          item.id ||
+          item.link ||
+          JSON.stringify(item)
+        )
+      }
+      return item != null ? String(item) : ''
+    })
+    .filter(Boolean)
+}
+
+const mapVoiceoversToObjects = (arr = []) => {
+  if (!Array.isArray(arr)) return []
+  return arr
+    .map(item => {
+      if (!item || typeof item !== 'object') return null
+      const url = item.url || item.audio_url || item.file || item.link || ''
+      const name = item.name || item.voiceover_name || item.title || ''
+      if (!url) return null
+      return {
+        url,
+        name,
+        type: item.type || item.voiceover_type || '',
+        created_at: item.created_at || item.uploaded_at || item.timestamp || new Date().toISOString()
+      }
+    })
+    .filter(Boolean)
+}
+
+const normalizeBrandIdentity = (bi = {}) => ({
+  logo: Array.isArray(bi.logo) ? bi.logo : Array.isArray(bi.logos) ? bi.logos : [],
+  fonts: Array.isArray(bi.fonts) ? bi.fonts : [],
+  icons: Array.isArray(bi.icon) ? bi.icon : Array.isArray(bi.icons) ? bi.icons : [],
+  colors: Array.isArray(bi.colors) ? bi.colors : [],
+  spacing: bi.spacing || bi.spacing_scale || '',
+  tagline: bi.tagline || ''
+})
+
+const deriveLastUserQuery = (messages = []) => {
+  if (!Array.isArray(messages)) return ''
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const entry = messages[i]
+    const candidate = entry?.userquery || entry?.user_query || entry?.query || ''
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate
+    }
+  }
+  return ''
+}
 // Brand step removed; DynamicQuestion is the final step
 
 const Home = () => {
@@ -204,13 +279,14 @@ const Home = () => {
       try {
         const usd = await sendUserSessionData();
         const sd = usd?.session_data || usd || {};
-        videoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
+        videoType = sd?.videoType || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
       } catch (_) { /* noop */ }
 
       const vt = String(videoType || '').toLowerCase();
       let chatEndpoint = 'hybrid_message';
       if (vt === 'infographic' || vt === 'infographics' || vt === 'inforgraphic') chatEndpoint = 'infographics_message';
       if (vt === 'financial') chatEndpoint = 'financial_message';
+      if (vt === 'avatar based' || vt === 'avatar' || vt === 'avatars') chatEndpoint = 'Avatars_message';
 
       console.log('Sending chat request:', requestBody, 'videoType:', videoType, 'endpoint:', chatEndpoint);
       const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chat/${chatEndpoint}`, {
@@ -460,12 +536,21 @@ const Home = () => {
         const usd = await sendUserSessionData();
         const sd = usd?.session_data || usd || {};
         latestSessionData = sd;
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
+        qVideoType = sd?.videoType || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
       } catch (_) { /* noop */ }
       const qvt = String(qVideoType || '').toLowerCase();
+      // Validation: ensure a videoType is selected before generating
+      if (!qVideoType) {
+        alert('Please select a video type before generating the questionnaire.');
+        try { window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: false } })); } catch (_) {}
+        return;
+      }
+      // Always use questionnaire endpoints per video type
       let qEndpoint = 'scripts/hybrid/questionnaire/generate';
       if (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic') qEndpoint = 'scripts/infographic/questionnaire/generate';
       if (qvt === 'financial') qEndpoint = 'scripts/finanical/questionnaire/generate';
+      if (qvt === 'avatar' || qvt === 'avatars' || qvt === 'avatar based') qEndpoint = 'scripts/avatar/questionnaire/generate';
+      if (qvt === 'hybrid') qEndpoint = 'scripts/hybrid/questionnaire/generate';
 
       // Build payload per new schema: { user: {...}, session: {...} }
       let userMeta = {};
@@ -479,6 +564,20 @@ const Home = () => {
       const templatesArr = brandAssets?.template || brandAssets?.templates || [];
       const voiceoverArr = brandAssets?.voiceover || [];
 
+      const normalizedBI = normalizeBrandIdentity(bi || {});
+      const normalizedTone = {
+        context: tv?.context || '',
+        brand_personality: Array.isArray(tv?.brand_personality) ? tv.brand_personality : [],
+        communication_style_pace: Array.isArray(tv?.communication_style_pace) ? tv.communication_style_pace : []
+      };
+      const normalizedLook = {
+        iconography: Array.isArray(lf?.iconography) ? lf.iconography : [],
+        graphic_elements: Array.isArray(lf?.graphic_elements) ? lf.graphic_elements : [],
+        aesthetic_consistency: Array.isArray(lf?.aesthetic_consistency) ? lf.aesthetic_consistency : []
+      };
+      const templatesList = mapToStringArray(templatesArr);
+      const voiceoverList = mapVoiceoversToObjects(voiceoverArr);
+
       const userPayload = {
         id: userMeta?.id || userIdForAssets || '',
         email: userMeta?.email || '',
@@ -486,44 +585,51 @@ const Home = () => {
         created_at: userMeta?.created_at || new Date().toISOString(),
         avatar_url: userMeta?.avatar_url || '',
         folder_url: brandAssets?.folder_url || '',
-        brand_identity: {
-          logo: bi?.logo || [],
-          fonts: bi?.fonts || [],
-          icons: bi?.icon || bi?.icons || [],
-          colors: bi?.colors || [],
-          spacing: bi?.spacing,
-          tagline: bi?.tagline
-        },
-        tone_and_voice: {
-          context: tv?.context || '',
-          brand_personality: tv?.brand_personality || [],
-          communication_style_pace: tv?.communication_style_pace || []
-        },
-        look_and_feel: {
-          iconography: lf?.iconography || [],
-          graphic_elements: lf?.graphic_elements || [],
-          aesthetic_consistency: lf?.aesthetic_consistency || []
-        },
-        templates: templatesArr,
-        voiceover: voiceoverArr
+        brand_identity: wrapAdditional(normalizedBI),
+        tone_and_voice: wrapAdditional(normalizedTone),
+        look_and_feel: wrapAdditional(normalizedLook),
+        templates: templatesList,
+        voiceover: voiceoverList
       };
 
+      const resolvedVideoDuration = latestSessionData?.video_duration != null
+        ? String(latestSessionData.video_duration)
+        : '60';
+      const resolvedVideoTone = latestSessionData?.video_tone || latestSessionData?.videoTone || 'professional';
       const sessionPayload = {
         session_id: sessionId,
         user_id: token,
-        title: latestSessionData?.title ?? null,
-        video_duration: (latestSessionData?.video_duration?.toString?.() || "60"),
+        title: latestSessionData?.title ?? '',
+        video_duration: resolvedVideoDuration,
         created_at: latestSessionData?.created_at || new Date().toISOString(),
         updated_at: latestSessionData?.updated_at || new Date().toISOString(),
-        document_summary: latestSessionData?.document_summary || [],
-        messages: latestSessionData?.messages || [],
-        videos: latestSessionData?.videos || [],
-        images: latestSessionData?.images || [],
-        final_link: latestSessionData?.final_link || null,
-        videoType: latestSessionData?.videoType || latestSessionData?.video_type || qVideoType
+        document_summary: toAdditionalArray(latestSessionData?.document_summary),
+        messages: toAdditionalArray(latestSessionData?.messages),
+        total_summary: mapToStringArray(latestSessionData?.total_summary || latestSessionData?.totalsummary),
+        scripts: mapToStringArray(latestSessionData?.scripts),
+        videos: toAdditionalArray(latestSessionData?.videos),
+        images: mapToStringArray(latestSessionData?.images),
+        final_link: latestSessionData?.final_link || '',
+        videoType: latestSessionData?.videoType || qVideoType || '',
+        brand_style_interpretation: wrapAdditional(latestSessionData?.brand_style_interpretation || {}),
+        additionalProp1: wrapAdditional({})
       };
 
-      const fullPayload = { user: userPayload, session: sessionPayload };
+      // Add presenter option from Guidelines if available and include in additional instructions
+      let presenterOpt = null;
+      try {
+        const raw = (sessionId && localStorage.getItem(`presenter_option:${sessionId}`)) || localStorage.getItem('presenter_option');
+        if (raw) presenterOpt = JSON.parse(raw);
+      } catch (_) { /* noop */ }
+      const additionalInstructionsPayload = {};
+      const questionnairePayload = {
+        user: userPayload,
+        session: sessionPayload,
+        video_length: Number(resolvedVideoDuration) || 60,
+        video_tone: resolvedVideoTone,
+        user_query: '',
+        additional_instructions: ''
+      };
 
       // Call the questionnaire generate API with new payload
       const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${qEndpoint}`, {
@@ -531,7 +637,7 @@ const Home = () => {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(fullPayload)
+        body: JSON.stringify(questionnairePayload)
       });
       
       if (!response.ok) {

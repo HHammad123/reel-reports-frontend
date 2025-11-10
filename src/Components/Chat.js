@@ -1,13 +1,114 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useDispatch } from 'react-redux';
 import { setJob } from '../redux/slices/videoJobSlice';
-import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check, Maximize2, RefreshCcw, ChevronLeft, ChevronRight, Copy as CopyIcon, ThumbsUp, ThumbsDown, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check, Maximize2, RefreshCcw, ChevronLeft, ChevronRight, ChevronDown, Copy as CopyIcon, ThumbsUp, ThumbsDown, MoreHorizontal, Trash2 } from 'lucide-react';
 import { FaChartBar, FaUser } from 'react-icons/fa';
 import { Link } from 'react-router-dom';
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
 
-const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat }) => {
+const resolveTemplateAssetUrl = (entry) => {
+  if (!entry) return '';
+  if (typeof entry === 'string') return entry.trim();
+  if (typeof entry !== 'object') return '';
+  const baseImage = entry.base_image || entry.baseImage;
+  if (baseImage) {
+    if (typeof baseImage === 'string') return baseImage.trim();
+    if (typeof baseImage === 'object') {
+      const baseUrl = baseImage.image_url || baseImage.imageUrl || baseImage.url || baseImage.src || baseImage.href;
+      if (baseUrl) return baseUrl.trim();
+    }
+  }
+  const direct =
+    entry.image_url ||
+    entry.imageUrl ||
+    entry.url ||
+    entry.src ||
+    entry.href ||
+    entry.link ||
+    (entry.asset && (entry.asset.image_url || entry.asset.url)) ||
+    (entry.media && (entry.media.image_url || entry.media.url));
+  return typeof direct === 'string' ? direct.trim() : '';
+};
+
+const normalizeTemplateAspectLabel = (aspect) => {
+  if (!aspect || typeof aspect !== 'string') return 'Unspecified';
+  const trimmed = aspect.trim();
+  if (!trimmed) return 'Unspecified';
+  const normalized = trimmed.replace(/[xX]/g, ':').replace(/\s+/g, '');
+  if (/^\d+:\d+$/.test(normalized)) return normalized;
+  const lower = normalized.toLowerCase();
+  if (lower.includes('portrait')) return '9:16';
+  if (lower.includes('landscape')) return '16:9';
+  return trimmed;
+};
+
+const flattenTemplateAssets = (templates = []) => {
+  const normalized = [];
+
+  const pushEntry = (entry, aspectHint, labelHint, keyHint) => {
+    if (!entry) return;
+    const templateObj =
+      (entry.template && typeof entry.template === 'object' ? entry.template : entry);
+    const imageUrl = resolveTemplateAssetUrl(templateObj);
+    if (!imageUrl) return;
+    const aspectSource =
+      templateObj?.aspect_ratio ||
+      templateObj?.ratio ||
+      templateObj?.orientation ||
+      entry?.aspect_ratio ||
+      entry?.ratio ||
+      entry?.orientation ||
+      aspectHint;
+    const aspectLabel = normalizeTemplateAspectLabel(aspectSource);
+    const label =
+      templateObj?.label ||
+      entry?.label ||
+      labelHint ||
+      `Template ${normalized.length + 1}`;
+    const templateId =
+      templateObj?.template_id ||
+      templateObj?.templateId ||
+      templateObj?.id ||
+      entry?.template_id ||
+      entry?.templateId ||
+      entry?.id ||
+      `${keyHint || 'template'}-${normalized.length}`;
+    normalized.push({
+      id: String(templateId),
+      imageUrl,
+      aspect: aspectLabel,
+      label,
+      raw: templateObj
+    });
+  };
+
+  templates.forEach((item, idx) => {
+    if (!item) return;
+    if (typeof item === 'string') {
+      pushEntry(item, '', `Template ${idx + 1}`, `template-${idx}`);
+      return;
+    }
+    const aspectHint = normalizeTemplateAspectLabel(
+      item.aspect_ratio || item.ratio || item.orientation || ''
+    );
+    const nestedTemplates = [
+      ...(Array.isArray(item.preset_templates) ? item.preset_templates : []),
+      ...(Array.isArray(item.uploaded_templates) ? item.uploaded_templates : [])
+    ];
+    if (nestedTemplates.length > 0) {
+      nestedTemplates.forEach((entry, entryIdx) => {
+        pushEntry(entry, aspectHint, `${aspectHint} Template ${entryIdx + 1}`, `${idx}-${entryIdx}`);
+      });
+    } else {
+      pushEntry(item, aspectHint, `Template ${idx + 1}`, `template-${idx}`);
+    }
+  });
+
+  return normalized;
+};
+
+const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [thinkingMessageId, setThinkingMessageId] = useState(null);
@@ -37,6 +138,51 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [draggedTabIndex, setDraggedTabIndex] = useState(null);
   const [dragOverTabIndex, setDragOverTabIndex] = useState(null);
   const [hasOrderChanged, setHasOrderChanged] = useState(false);
+  // Presenter confirmation (ANCHOR model)
+  const [showPresenterConfirm, setShowPresenterConfirm] = useState(false);
+  const [pendingPresenterOption, setPendingPresenterOption] = useState('');
+  const [isApplyingPresenter, setIsApplyingPresenter] = useState(false);
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+
+  // Apply selected presenter option: update scene visual, then update text
+  const applyPresenterOptionSelection = async (selOption) => {
+    setIsApplyingPresenter(true);
+    const token = localStorage.getItem('token');
+    const sessionId = localStorage.getItem('session_id');
+    if (!token || !sessionId) return;
+    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+    });
+    const sessionText = await sessionResp.text();
+    let sessionData; try { sessionData = JSON.parse(sessionText); } catch(_) { sessionData = sessionText; }
+    const sd = (sessionData?.session_data || sessionData?.session || {});
+    const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
+    const sessionForBody = {
+      session_id: sd?.session_id || sessionId,
+      user_id: sd?.user_id || token,
+      title: sd?.title || '',
+      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+      created_at: sd?.created_at || new Date().toISOString(),
+      updated_at: sd?.updated_at || new Date().toISOString(),
+      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+      messages: Array.isArray(sd?.messages) ? sd.messages : [{ additionalProp1: {} }],
+      total_summary: Array.isArray(sd?.total_summary) ? sd.total_summary : (Array.isArray(sd?.totalsummary) ? sd.totalsummary : []),
+      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [''],
+      videos: Array.isArray(sd?.videos) ? sd.videos : [{ additionalProp1: {} }],
+      images: Array.isArray(sd?.images) ? sd.images : [''],
+      final_link: sd?.final_link || '',
+      videoType: sd?.videoType || sd?.video_type || '',
+      brand_style_interpretation: sd?.brand_style_interpretation || { additionalProp1: {} },
+      additionalProp1: sd?.additionalProp1 || {}
+    };
+    const cur = scriptRows[currentSceneIndex];
+    const sceneNumber = cur?.scene_number ?? (currentSceneIndex + 1);
+    const reqBody = { user, session: sessionForBody, scene_number: sceneNumber, presenter_options: { option: selOption } };
+    await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
+    });
+    setIsApplyingPresenter(false);
+  };
 
   // Move scene left/right utilities for tab controls
   const moveSceneLeft = (index) => {
@@ -109,6 +255,40 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [regenSceneContent, setRegenSceneContent] = useState('');
   const [regenSelectedIdx, setRegenSelectedIdx] = useState(-1);
   const [regenManualText, setRegenManualText] = useState('');
+  // Snapshot current scene when entering edit to allow cancel revert
+  const [editSnapshot, setEditSnapshot] = useState(null);
+  useEffect(() => {
+    try {
+      if (isEditingScene && Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+        const snap = JSON.parse(JSON.stringify(scriptRows[currentSceneIndex]));
+        setEditSnapshot(snap);
+      }
+    } catch (_) { /* noop */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditingScene, currentSceneIndex]);
+  useEffect(() => {
+    setAdvancedOptionsOpen(false);
+  }, [currentSceneIndex]);
+  // Chart type confirm (PLOTLY) state
+  const [showChartTypeConfirm, setShowChartTypeConfirm] = useState(false);
+  const [pendingChartType, setPendingChartType] = useState('');
+  const [isUpdatingChartType, setIsUpdatingChartType] = useState(false);
+  const [isApplyingChartType, setIsApplyingChartType] = useState(false);
+  // Brand fonts from user brand identity (for font_style dropdown)
+  const [brandFonts, setBrandFonts] = useState([]);
+
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem('token') || '';
+      const raw = (token && localStorage.getItem(`brand_assets_analysis:${token}`)) || localStorage.getItem('brand_assets_analysis');
+      if (raw) {
+        const assets = JSON.parse(raw);
+        const bi = assets?.brand_identity || {};
+        const fonts = Array.isArray(bi?.fonts) ? bi.fonts.filter(Boolean).map(String) : [];
+        setBrandFonts(fonts);
+      }
+    } catch (_) { /* noop */ }
+  }, []);
 
   // Helper: fetch suggestions for a given model_type and position
   const fetchSceneSuggestions = async (modelType, positionIdx, target = 'add') => {
@@ -176,16 +356,53 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [useDefaultTemplate, setUseDefaultTemplate] = useState(true); // legacy (not used in new assets modal)
   // Generate toggle for assets modal (default: No Generate)
   const [isGenerate, setIsGenerate] = useState(false);
-  const templateFileInputRef = useRef(null);
+  // Removed template upload in assets picker per requirements
   // Brand assets modal state (logos, icons, uploaded_images, templates, voiceover)
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
   const [assetsTab, setAssetsTab] = useState('templates');
   const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  // Multi-select support for Templates in assets modal
+  const [selectedTemplateUrls, setSelectedTemplateUrls] = useState([]);
+  const [templateAspectFilter, setTemplateAspectFilter] = useState('All');
   const assetsUploadInputRef = useRef(null);
   const [pendingUploadType, setPendingUploadType] = useState('');
   // Selected asset in Choose Asset modal
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('');
+  const normalizedTemplateAssets = useMemo(
+    () => flattenTemplateAssets(Array.isArray(assetsData.templates) ? assetsData.templates : []),
+    [assetsData.templates]
+  );
+  const templateAspectOptions = useMemo(() => {
+    const seen = new Set();
+    normalizedTemplateAssets.forEach(item => {
+      seen.add(item.aspect || 'Unspecified');
+    });
+    return Array.from(seen);
+  }, [normalizedTemplateAssets]);
+  const currentSceneModelUpper = useMemo(() => {
+    if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return '';
+    const scene = scriptRows[currentSceneIndex];
+    return String(scene?.model || scene?.mode || '').toUpperCase();
+  }, [scriptRows, currentSceneIndex]);
+  const shouldFilterTemplatesByAspect = currentSceneModelUpper === 'SORA' || currentSceneModelUpper === 'PLOTLY';
+
+  useEffect(() => {
+    if (assetsTab !== 'templates') return;
+    if (!shouldFilterTemplatesByAspect) {
+      setTemplateAspectFilter('All');
+      return;
+    }
+    if (templateAspectOptions.length === 0) {
+      setTemplateAspectFilter('All');
+      return;
+    }
+    setTemplateAspectFilter(prev => {
+      if (prev === 'All' && templateAspectOptions.length > 1) return prev;
+      if (templateAspectOptions.includes(prev)) return prev;
+      return templateAspectOptions.length > 1 ? 'All' : templateAspectOptions[0];
+    });
+  }, [assetsTab, shouldFilterTemplatesByAspect, templateAspectOptions]);
   // Kebab menu inline component for header actions
   const KebabMenu = ({ canUndo, canRedo, onUndo, onRedo, onDelete, onRegenerate, onEdit, onSwitchAvatar, onSwitchInfographic, onSwitchFinancial, isDeleting, hasScenes, isSwitching }) => {
     const [open, setOpen] = React.useState(false);
@@ -245,6 +462,12 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Lightbox for zooming a reference image fullscreen
   const [isImageLightboxOpen, setIsImageLightboxOpen] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState('');
+  const openLightbox = (url) => {
+    try {
+      setLightboxUrl(url || '');
+      setIsImageLightboxOpen(!!url);
+    } catch (_) { /* noop */ }
+  };
   // Image upload & folder picker
   const imageFileInputRef = useRef(null);
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
@@ -302,7 +525,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const applied = [];
       const outRows = (Array.isArray(rows) ? rows : []).map((r) => {
         const sn = r?.scene_number;
-        if (sn != null && Array.isArray(map[sn])) {
+        // Only apply persisted refs if the API row doesn't have ref_image already
+        // This ensures API responses (e.g., from update-text) take precedence over localStorage
+        const hasApiRefs = Array.isArray(r?.ref_image) && r.ref_image.length > 0;
+        if (!hasApiRefs && sn != null && Array.isArray(map[sn])) {
           const imgs = filterImageUrls(map[sn]).slice(0, 3);
           applied.push({ scene_number: sn, ref_image: imgs });
           return { ...r, ref_image: imgs };
@@ -799,7 +1025,16 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <div className="text-sm text-gray-500">Scene {r.scene_number}</div>
-                      <div className="text-lg font-semibold">{r.scene_title || 'Untitled'}</div>
+                      <div className="text-lg font-semibold flex items-center gap-3">
+                        <span>{r.scene_title || 'Untitled'}</span>
+                        {(() => {
+                          const mu = String(r?.model || r?.mode || '').toUpperCase();
+                          const vt = (mu === 'VEO3' || mu === 'ANCHOR') ? 'Avatar' : (mu === 'SORA' ? 'Infographic' : (mu === 'PLOTLY' ? 'Financial' : ''));
+                          return vt ? (
+                            <span className="text-sm font-normal text-gray-600">Video Type: <span className="px-2 py-0.5 text-xs rounded-full border bg-gray-50 text-gray-700 align-middle">{vt}</span></span>
+                          ) : null;
+                        })()}
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -858,14 +1093,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
   const normalizeScriptToRows = (script) => {
     try {
-      // Gate whether to keep ref images coming from the script itself.
-      // Only allow auto ref images if the current session has a document summary.
-      let allowScriptRefImages = false;
-      try {
-        const sid = localStorage.getItem('session_id');
-        if (sid) allowScriptRefImages = (localStorage.getItem(`has_doc_summary:${sid}`) === 'true');
-      } catch (_) { /* noop */ }
-
       const coalesce = (...vals) => vals.find(v => typeof v === 'string' && v.trim().length > 0) || '';
 
       // Normalize various ref_image shapes into an array of image URLs
@@ -916,8 +1143,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         return {
           scene_number: row?.scene_number ?? row?.sceneNo ?? row?.scene_no ?? row?.no ?? (idx + 1),
           mode: row?.model ?? row?.mode_type ?? row?.video_mode ?? row?.mode ?? '',
-          // Keep script-provided ref images only if allowed; user-added refs are managed in state later
-          ref_image: allowScriptRefImages ? refs : [],
+          // Always preserve ref_image from API responses (e.g., from update-text API)
+          ref_image: refs,
           folderLink: row?.folder_link ?? row?.folderLink ?? row?.folder ?? '',
           timeline: coalesce(row?.timeline, row?.time, row?.duration, row?.additional, row?.additional_info, row?.timestamp),
           scene_title: coalesce(row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
@@ -1182,12 +1409,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
       const sd = (sessJson?.session_data || sessJson?.session || {});
       const userPayload = (sessJson?.user_data) || (sd?.user_data) || {};
-      const sessionForBody = {
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-        brand_style_interpretation: sd?.brand_style_interpretation,
-      };
-      const reqBody = { user: userPayload, session: sessionForBody };
+      // New undo schema: send user and session_id only
+      const reqBody = { user: userPayload, session_id: sd?.session_id || sessionId };
       // 2) Call undo with user + session_id
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/undo', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
@@ -1217,12 +1440,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
       const sd2 = (sessJson?.session_data || sessJson?.session || {});
       const userPayload = (sessJson?.user_data) || (sd2?.user_data) || {};
-      const sessionForBody2 = {
-        session_id: sd2?.session_id || sessionId,
-        user_id: sd2?.user_id || token,
-        brand_style_interpretation: sd2?.brand_style_interpretation,
-      };
-      const reqBody = { user: userPayload, session: sessionForBody2 };
+      // New redo schema: send user and session_id only
+      const reqBody = { user: userPayload, session_id: sd2?.session_id || sessionId };
       // 2) Call redo with user + session_id
       const resp = await fetch('https://coreappservicerr-aseahgexgk​e8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
@@ -1323,14 +1542,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         scene_number: sceneNumber,
         user_query: (regenModel === 'PLOTLY' && regenDocSummary) ? regenDocSummary : (userQuery || ''),
         model: modelUpper,
+        action: 'regenerate'
       };
       if (modelUpper === 'VEO3') {
-        body.presenter_options = {
-          presetd_id: '1',
-          presenter_actions: 'presetner walks in from the left'
-        };
-        // Some backends expect presentor_options; include both for compatibility
-        body.presentor_options = body.presenter_options;
+        // For guidelines/regenerate flows, send empty presenter options
+        body.presenter_options = {};
       }
       if (modelUpper === 'PLOTLY') {
         body.chart_type = (regenChartType || scriptRows?.[currentSceneIndex]?.chart_type || scriptRows?.[currentSceneIndex]?.chartType || '').toLowerCase();
@@ -1522,11 +1738,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         model_type: desiredModel
       };
       if (desiredModel === 'VEO3') {
-        body.presenter_options = {
-          presetd_id: '1',
-          presenter_actions: 'presetner walks in from the left'
-        };
-        body.presentor_options = body.presenter_options; // dual key for API compatibility
+        // For add-scene, keep presenter options empty in guidelines flow
+        body.presenter_options = {};
       }
       if (desiredModel === 'PLOTLY') {
         body.chart_type = (newSceneChartType || scriptRows?.[currentSceneIndex]?.chart_type || scriptRows?.[currentSceneIndex]?.chartType || '').toLowerCase();
@@ -1587,19 +1800,43 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const dynamicAnswersRaw = localStorage.getItem('dynamic_answers');
       const guidelines = guidelinesRaw ? JSON.parse(guidelinesRaw) : null;
       const aiQues = dynamicAnswersRaw ? JSON.parse(dynamicAnswersRaw) : [];
-
-      // Build additonalprop1
-      const additonalprop1 = {
-        ai_ques: Array.isArray(aiQues) ? aiQues : [],
-        ...(guidelines ? {
-          purpose_and_audience: guidelines.purpose_and_audience,
-          content_focus_and_emphasis: guidelines.content_focus_and_emphasis,
-          style_and_visual_pref: guidelines.style_and_visual_pref,
-          technical_and_formal_constraints: guidelines.technical_and_formal_constraints,
-          audio_and_effects: guidelines.audio_and_effects
-        } : {})
+      const wrapAdditional = (value) => {
+        if (value && typeof value === 'object' && Object.keys(value).length) return { additionalProp1: value };
+        return { additionalProp1: {} };
       };
-      const questionnaire_context = [{ additonalprop1 }];
+      const toAdditionalArray = (items) => {
+        if (!Array.isArray(items) || items.length === 0) return [wrapAdditional({})];
+        return items.map(item => wrapAdditional(item && typeof item === 'object' ? item : { value: item }));
+      };
+      const mapToStringArray = (arr) => {
+        if (!Array.isArray(arr) || arr.length === 0) return [];
+        return arr
+          .map(item => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object') {
+              return item.name || item.title || item.url || item.id || JSON.stringify(item);
+            }
+            return item != null ? String(item) : '';
+          })
+          .filter(Boolean);
+      };
+
+      const mapVoiceoverObjects = (arr = []) => {
+        if (!Array.isArray(arr)) return [];
+        return arr
+          .map(item => {
+            if (!item || typeof item !== 'object') return null;
+            const url = item.url || item.audio_url || item.file || item.link || '';
+            if (!url) return null;
+            return {
+              url,
+              name: item.name || item.voiceover_name || item.title || '',
+              type: item.type || item.voiceover_type || '',
+              created_at: item.created_at || item.uploaded_at || item.timestamp || new Date().toISOString()
+            };
+          })
+          .filter(Boolean);
+      };
 
       // Pull latest user message from current chat history
       let lastUserMessage = '';
@@ -1610,6 +1847,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       // Fetch current session data (do not fabricate)
       let sessionPayload = {};
+      let userPayload = undefined;
+      let resolvedVideoDuration = '60';
+      let resolvedVideoTone = 'professional';
       try {
         const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
@@ -1619,26 +1859,99 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         if (resp.ok) {
           const sessionDataResponse = await resp.json();
           const sd = sessionDataResponse?.session_data || {};
+          // Use complete user_data (includes brand_identity) when available
+          userPayload = (sessionDataResponse?.user_data || sd?.user_data || sd?.user || undefined);
+          resolvedVideoDuration = sd?.video_duration != null ? String(sd.video_duration) : '60';
+          resolvedVideoTone = sd?.video_tone || sd?.videoTone || 'professional';
+          const resolvedVideoType = sd?.videoType || sd?.video_type || '';
           sessionPayload = {
-            session_id: sessionId || '',
-            user_id: token || '',
-            content: sd.content,
-            document_summary: sd.document_summary,
-            videoduration: sd.video_duration?.toString?.(),
-            created_at: sd.created_at,
-            totalsummary: sd.total_summary,
-            messages: sd.messages
+            session_id: sd?.session_id || sessionId || '',
+            user_id: sd?.user_id || token || '',
+            title: sd?.title || '',
+            video_duration: resolvedVideoDuration,
+            created_at: sd?.created_at || new Date().toISOString(),
+            updated_at: sd?.updated_at || new Date().toISOString(),
+            document_summary: toAdditionalArray(sd?.document_summary),
+            messages: toAdditionalArray(sd?.messages),
+            total_summary: mapToStringArray(sd?.total_summary),
+            scripts: mapToStringArray(sd?.scripts),
+            videos: toAdditionalArray(sd?.videos),
+            images: mapToStringArray(sd?.images),
+            final_link: sd?.final_link || '',
+            videoType: resolvedVideoType,
+            brand_style_interpretation: wrapAdditional(sd?.brand_style_interpretation || {}),
+            additionalProp1: wrapAdditional({})
           };
         }
       } catch (_) { /* noop */ }
 
+      // Normalize user brand_identity to ensure fields are populated (icons vs icon, etc.)
+      let normalizedUser = undefined;
+      if (userPayload && typeof userPayload === 'object') {
+        const bi = userPayload.brand_identity || {};
+        const normalizedBI = {
+          logo: Array.isArray(bi.logo) ? bi.logo : (Array.isArray(bi.logos) ? bi.logos : []),
+          icon: Array.isArray(bi.icon) ? bi.icon : (Array.isArray(bi.icons) ? bi.icons : []),
+          colors: Array.isArray(bi.colors) ? bi.colors : [],
+          fonts: Array.isArray(bi.fonts) ? bi.fonts : [],
+          spacing: (bi.spacing != null ? bi.spacing : (bi.spacing_scale != null ? bi.spacing_scale : '')),
+          tagline: bi.tagline || ''
+        };
+        normalizedUser = {
+          id: userPayload.id || userPayload.user_id || token || '',
+          email: userPayload.email || '',
+          display_name: userPayload.display_name || userPayload.name || '',
+          created_at: userPayload.created_at || new Date().toISOString(),
+          avatar_url: userPayload.avatar_url || userPayload.avatar || '',
+          folder_url: userPayload.folder_url || '',
+          brand_identity: wrapAdditional(normalizedBI),
+          tone_and_voice: wrapAdditional(userPayload.tone_and_voice || {}),
+          look_and_feel: wrapAdditional(userPayload.look_and_feel || {}),
+          templates: mapToStringArray(userPayload.templates),
+          voiceover: mapVoiceoverObjects(userPayload.voiceover)
+        };
+      }
+      const additionalInstructions = {
+        ai_questions: Array.isArray(aiQues) ? aiQues : [],
+        guidelines: guidelines || null
+      };
+
       const requestPayload = {
-        session: sessionPayload,
-        video_length: 60,
-        video_tone: 'professional',
-        questionnaire_context,
-        is_followup: false,
-        user_query: lastUserMessage
+        user: normalizedUser || {
+          id: token || '',
+          email: '',
+          display_name: '',
+          created_at: new Date().toISOString(),
+          avatar_url: '',
+          folder_url: '',
+          brand_identity: wrapAdditional({}),
+          tone_and_voice: wrapAdditional({}),
+          look_and_feel: wrapAdditional({}),
+          templates: [],
+          voiceover: []
+        },
+        session: Object.keys(sessionPayload).length ? sessionPayload : {
+          session_id: sessionId || '',
+          user_id: token || '',
+          title: '',
+          video_duration: '60',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          document_summary: [wrapAdditional({})],
+          messages: [wrapAdditional({})],
+          total_summary: [],
+          scripts: [],
+          videos: [wrapAdditional({})],
+          images: [],
+          final_link: '',
+          videoType: '',
+          brand_style_interpretation: wrapAdditional({}),
+          additionalProp1: wrapAdditional({})
+        },
+        video_length: Number(resolvedVideoDuration) || 60,
+        video_tone: resolvedVideoTone || 'professional',
+        user_query: lastUserMessage || '',
+        additional_instructions: JSON.stringify(Object.keys(additionalInstructions).length ? additionalInstructions : {})
       };
 
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/generate', {
@@ -2694,13 +3007,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Optional fields per target model
       if (desiredModel === 'VEO3') {
         const avatarUrl = switchAvatarUrl || selectedAvatar || '';
-        requestBody.presenter_options = {
-          presetd_id: '1',
-          presenter_actions: 'presetner walks in from the left'
-        };
+        // Keep presenter options empty; include avatar_url only if provided
+        requestBody.presenter_options = {};
         if (avatarUrl) requestBody.presenter_options.avatar_url = avatarUrl;
-        // Mirror to presentor_options for API variants expecting this key
-        requestBody.presentor_options = requestBody.presenter_options;
       }
       if (desiredModel === 'PLOTLY') {
         const chart_type = (switchChartType || scene?.chart_type || scene?.chartType || '').toLowerCase();
@@ -2840,6 +3149,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         narration: r?.narration ?? '',
         desc: r?.description ?? '',
         gen_image: (typeof r?.gen_image === 'boolean') ? r.gen_image : undefined,
+        // Preserve visual/styling fields so they are not dropped server-side
+        chart_type: r?.chart_type ?? r?.chartType ?? '',
+        chart_data: r?.chart_data ?? r?.chartData ?? undefined,
+        colors: Array.isArray(r?.colors) ? r.colors : [],
         font_style: r?.font_style ?? r?.fontStyle ?? '',
         font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
         text_to_be_included: Array.isArray(r?.text_to_be_included)
@@ -2852,6 +3165,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
             ? [r.ref_image]
             : []
         ),
+        // Include avatar/background to avoid clearing when saving
+        avatar: r?.avatar ?? '',
+        background: r?.background ?? r?.background_image ?? '',
+        background_image: r?.background_image ?? r?.background ?? '',
+        // Include model-specific option blobs
+        presenter_options: r?.presenter_options ?? undefined,
+        anchor_options: r?.anchor_options ?? undefined,
         folderLink: r?.folderLink ?? r?.folder_link ?? '',
       }));
 
@@ -2929,7 +3249,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   };
 
   // Helper: Update a single scene's gen_image flag (and optional description) via update-text API
-  const updateSceneGenImageFlag = async (sceneIdx, { genImage, descriptionOverride, refImagesOverride } = {}) => {
+  const updateSceneGenImageFlag = async (sceneIdx, { genImage, descriptionOverride, refImagesOverride, backgroundOverride, backgroundImageOverride, avatarOverride } = {}) => {
     try {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
@@ -2972,6 +3292,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           narration: r?.narration ?? '',
           desc: isTarget && typeof descriptionOverride === 'string' ? descriptionOverride : (r?.description ?? ''),
           gen_image: (isTarget && typeof genImage === 'boolean') ? genImage : ((typeof r?.gen_image === 'boolean') ? r.gen_image : undefined),
+          // Preserve visual/styling fields so they are not dropped
+          chart_type: r?.chart_type ?? r?.chartType ?? '',
+          chart_data: r?.chart_data ?? r?.chartData ?? undefined,
+          colors: Array.isArray(r?.colors) ? r.colors : [],
           font_style: r?.font_style ?? r?.fontStyle ?? '',
           font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
           text_to_be_included: Array.isArray(r?.text_to_be_included)
@@ -2982,6 +3306,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               ? refImagesOverride
               : (Array.isArray(r?.ref_image) ? r.ref_image : (typeof r?.ref_image === 'string' && r.ref_image.trim() ? [r.ref_image] : []))
           ),
+          // Include avatar/background (ANCHOR) if present/overridden
+          avatar: isTarget ? (avatarOverride ?? r?.avatar ?? '') : (r?.avatar ?? ''),
+          background: isTarget ? ((backgroundOverride ?? backgroundImageOverride) ?? r?.background ?? r?.background_image ?? '') : (r?.background ?? r?.background_image ?? ''),
+          background_image: isTarget ? ((backgroundImageOverride ?? backgroundOverride) ?? r?.background_image ?? r?.background ?? '') : (r?.background_image ?? r?.background ?? ''),
+          // Include model-specific option blobs
+          presenter_options: r?.presenter_options ?? undefined,
+          anchor_options: r?.anchor_options ?? undefined,
           folderLink: r?.folderLink ?? r?.folder_link ?? '',
         };
       });
@@ -3207,9 +3538,24 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                     <select value={newSceneChartType} onChange={(e)=>setNewSceneChartType(e.target.value)} className="w-full p-2 border rounded">
                       <option value="">Select</option>
-                      <option value="pie">Pie</option>
-                      <option value="bar">Bar</option>
-                      <option value="line">Line</option>
+                      <option value="bar">bar</option>
+                      <option value="grouped_bar">grouped_bar</option>
+                      <option value="stacked_bar">stacked_bar</option>
+                      <option value="waterfall">waterfall</option>
+                      <option value="line">line</option>
+                      <option value="multi_line">multi_line</option>
+                      <option value="area">area</option>
+                      <option value="pie">pie</option>
+                      <option value="donut">donut</option>
+                      <option value="treemap">treemap</option>
+                      <option value="scatter">scatter</option>
+                      <option value="bubble">bubble</option>
+                      <option value="heatmap">heatmap</option>
+                      <option value="combo_bar_line">combo_bar_line</option>
+                      <option value="funnel">funnel</option>
+                      <option value="histogram">histogram</option>
+                      <option value="box">box</option>
+                      <option value="candlestick">candlestick</option>
                     </select>
                   </div>
                   <div>
@@ -3305,8 +3651,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   <div className="flex items-center gap-2 text-sm text-gray-600">
                     <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
                     Fetching suggestions…
-                  </div>
-                ) : (
+                       </div>
+
+                     ) : (
                   <div className="space-y-2 max-h-44 overflow-y-auto border rounded-md p-2">
                     {Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0 ? (
                       sceneSuggestions.map((sug, i) => (
@@ -3381,6 +3728,62 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           </div>
         </div>
       )}
+      {/* Confirm Presenter Option (ANCHOR) Popup */}
+      {showPresenterConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
+            <h3 className="text-lg font-semibold text-[#13008B]">Apply Presenter Option?</h3>
+            <div className="mt-3 text-sm text-gray-700">
+              <p>Selected: {pendingPresenterOption || '-'}</p>
+              <p>This will update the scene visuals. Continue?</p>
+            </div>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowPresenterConfirm(false); setPendingPresenterOption(''); }}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const sel = pendingPresenterOption;
+                  setShowPresenterConfirm(false);
+                  setPendingPresenterOption('');
+                  try {
+                    await applyPresenterOptionSelection(sel);
+                    // reflect local state and persist selection
+                    try {
+                      const rows = [...(scriptRows||[])];
+                      const sc = { ...rows[currentSceneIndex] };
+                      sc.presenter_options = { option: sel };
+                      rows[currentSceneIndex] = sc;
+                      setScriptRows(rows);
+                    } catch(_) {}
+                    try {
+                      const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+                      const payload = { option: sel };
+                      if (sid) localStorage.setItem(`presenter_option:${sid}`, JSON.stringify(payload));
+                      else localStorage.setItem('presenter_option', JSON.stringify(payload));
+                    } catch(_) {}
+                  } catch(e) { /* noop */ }
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-[#0f0066]"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Presenter apply loader overlay */}
+      {isApplyingPresenter && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
+            <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <div className="text-sm font-medium text-gray-800">Applying presenter option…</div>
+          </div>
+        </div>
+      )}
       {/* Image Lightbox */}
       {isImageLightboxOpen && (
         <div
@@ -3420,8 +3823,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               <div className="flex items-center justify-center py-10">
                 <div className="w-6 h-6 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
                 <span className="ml-2 text-sm text-gray-700">Loading images…</span>
-              </div>
-            ) : (
+                       </div>
+
+                       
+
+                     ) : (
               <>
                 {folderPickerError ? (
                   <div className="mb-3 p-3 rounded bg-red-50 border border-red-200 text-sm text-red-700">
@@ -3597,7 +4003,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     <p className="mb-1">Scene {scene?.scene_number || currentSceneIndex + 1}: {scene?.scene_title || '-'}</p>
                     <p className="mb-3">Current model: <span className="font-medium">{modelLabel(currentModel)}</span> → <span className="font-medium">{modelLabel(targetModel)}</span></p>
                     {/* Per-target controls */}
-                    {pendingModelType === 'Avatar Based' && (
+                    {enablePresenterOptions && pendingModelType === 'Avatar Based' && (
                       <div className="mb-2">
                         <div className="text-xs text-gray-600 mb-1">Presenter Options</div>
                         <input value={switchAvatarUrl} onChange={(e)=>setSwitchAvatarUrl(e.target.value)} placeholder="Avatar URL (optional)" className="w-full px-3 py-2 border rounded" />
@@ -3663,7 +4069,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               </div>
               {/* Right: Generate Images + kebab menu */}
               <div className="relative flex items-center gap-2">
-                {hasOrderChanged && (
+                {!isEditingScene && hasOrderChanged && (
                   <button
                     onClick={() => setShowSaveConfirm(true)}
                     disabled={isSavingReorder}
@@ -3675,15 +4081,63 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     {isSavingReorder ? 'Saving…' : 'Save Order'}
                   </button>
                 )}
+                {!isEditingScene && hasOrderChanged && (
+                  <button
+                    onClick={() => {
+                      try {
+                        const originalScriptHash = localStorage.getItem(scopedKey('original_script_hash')) || localStorage.getItem('original_script_hash');
+                        if (originalScriptHash) {
+                          const originalScript = JSON.parse(originalScriptHash);
+                          const normalized = normalizeScriptToRows(originalScript);
+                          setScriptRows(normalized.rows || []);
+                        }
+                      } catch (_) { /* noop */ }
+                      setHasOrderChanged(false);
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    title="Cancel order changes"
+                  >
+                    Cancel
+                  </button>
+                )}
                 {(() => (
                   <button
                     onClick={triggerGenerateScenes}
                     className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-blue-800"
-                    title="Generate Images"
+                    title="Generate Storyboard"
                   >
-                    Generate Images
+                    Generate Storyboard
                   </button>
                 ))()}
+                {isEditingScene && (
+                  <button
+                    onClick={saveEditedScriptText}
+                    disabled={isUpdatingText}
+                    className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium ${isUpdatingText ? 'bg-green-400 text-white cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                    title="Save Changes"
+                  >
+                    {isUpdatingText ? 'Saving…' : 'Save Changes'}
+                  </button>
+                )}
+                {isEditingScene && (
+                  <button
+                    onClick={() => {
+                      try {
+                        if (editSnapshot && Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                          const rows = [...scriptRows];
+                          rows[currentSceneIndex] = JSON.parse(JSON.stringify(editSnapshot));
+                          setScriptRows(rows);
+                        }
+                      } catch (_) { /* noop */ }
+                      setIsEditingScene(false);
+                    }}
+                    disabled={isUpdatingText}
+                    className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium ${isUpdatingText ? 'bg-gray-200 cursor-not-allowed text-gray-500' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    title="Cancel editing"
+                  >
+                    Cancel
+                  </button>
+                )}
                 <div className="relative">
                   <KebabMenu
                     canUndo={canUndo}
@@ -3948,16 +4402,34 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                          <div>
                            <label className="block text-sm font-medium text-gray-700 mb-2">Scene Title</label>
                            {isEditingScene ? (
-                             <input
-                               type="text"
-                               value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].scene_title || '' : ''}
-                               disabled
-                               className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-100 text-gray-600"
-                             />
-                           ) : (
-                             <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800">
-                               {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].scene_title || '-') : '-'}
+                             <div className="flex items-center justify-between gap-3">
+                               <input
+                                 type="text"
+                                 value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].scene_title || '' : ''}
+                                 disabled
+                                 className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-100 text-gray-600 flex-1"
+                               />
+                               {(() => {
+                                 const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                                 const mu = String(r?.model || r?.mode || '').toUpperCase();
+                                 const vt = (mu === 'VEO3' || mu === 'ANCHOR') ? 'Avatar' : (mu === 'SORA' ? 'Infographic' : (mu === 'PLOTLY' ? 'Financial' : ''));
+                                 return vt ? (
+                                   <span className="whitespace-nowrap text-sm font-medium text-gray-700">Video Type: <span className="ml-1 px-2 py-0.5 text-xs rounded-full border bg-gray-50 text-gray-700 align-middle">{vt}</span></span>
+                                 ) : null;
+                               })()}
                              </div>
+                           ) : (
+                             <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 flex items-center gap-3 justify-between">
+                               <span>{Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].scene_title || '-') : '-'}</span>
+                               {(() => {
+                                 const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                                 const mu = String(r?.model || r?.mode || '').toUpperCase();
+                                 const vt = (mu === 'VEO3' || mu === 'ANCHOR') ? 'Avatar' : (mu === 'SORA' ? 'Infographic' : (mu === 'PLOTLY' ? 'Financial' : ''));
+                                 return vt ? (
+                                   <span className="text-sm font-medium text-gray-700">Video Type: <span className="ml-1 px-2 py-0.5 text-xs rounded-full border bg-gray-50 text-gray-700 align-middle">{vt}</span></span>
+                                 ) : null;
+                               })()}
+                              </div>
                            )}
                          </div>
                          <div>
@@ -4020,7 +4492,42 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                   <div className="text-sm font-medium text-gray-700 mb-1">Chart Type</div>
-                                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">{chartType || '-'}</div>
+                                  {isEditingScene ? (
+                                    <select
+                                      value={chartType || ''}
+                                      onChange={(e)=>{
+                                        const sel = e.target.value;
+                                        const prev = chartType || '';
+                                        if (sel === prev) return;
+                                        try { e.target.value = prev; } catch(_) {}
+                                        setPendingChartType(sel);
+                                        setShowChartTypeConfirm(true);
+                                      }}
+                                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                    >
+                                      <option value="">Select</option>
+                                      <option value="bar">bar</option>
+                                      <option value="grouped_bar">grouped_bar</option>
+                                      <option value="stacked_bar">stacked_bar</option>
+                                      <option value="waterfall">waterfall</option>
+                                      <option value="line">line</option>
+                                      <option value="multi_line">multi_line</option>
+                                      <option value="area">area</option>
+                                      <option value="pie">pie</option>
+                                      <option value="donut">donut</option>
+                                      <option value="treemap">treemap</option>
+                                      <option value="scatter">scatter</option>
+                                      <option value="bubble">bubble</option>
+                                      <option value="heatmap">heatmap</option>
+                                      <option value="combo_bar_line">combo_bar_line</option>
+                                      <option value="funnel">funnel</option>
+                                      <option value="histogram">histogram</option>
+                                      <option value="box">box</option>
+                                      <option value="candlestick">candlestick</option>
+                                    </select>
+                                  ) : (
+                                    <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">{chartType || '-'}</div>
+                                  )}
                                 </div>
                                 <div className="md:col-span-2">
                                   <div className="text-sm font-medium text-gray-700 mb-1">Chart Data</div>
@@ -4054,35 +4561,78 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                     );
                                     try {
                                       if (!raw) return <div className="w-full px-3 py-2 text-gray-600 border border-gray-200 rounded-lg bg-white">-</div>;
-                                      // Case 1: Array of objects
-                                      if (Array.isArray(raw) && raw.every(it => it && typeof it === 'object' && !Array.isArray(it))) {
-                                        const headerSet = new Set();
-                                        raw.forEach(obj => Object.keys(obj).forEach(k => headerSet.add(k)));
-                                        const headers = Array.from(headerSet);
-                                        const rows = raw.map(obj => headers.reduce((acc, k) => { acc[k] = obj?.[k]; return acc; }, {}));
-                                        return renderTable(headers, rows);
-                                      }
-                                      // Case 2: Object with parallel arrays (e.g., x, y, ...)
-                                      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-                                        const keys = Object.keys(raw);
-                                        const arrays = keys.every(k => Array.isArray(raw[k]));
-                                        if (arrays) {
-                                          const maxLen = Math.max(0, ...keys.map(k => (Array.isArray(raw[k]) ? raw[k].length : 0)));
-                                          const headers = keys;
+                                      // Prefer series[x,y,z] table view
+                                      const trySeriesTable = (obj) => {
+                                        try {
+                                          let series = obj?.series || (Array.isArray(obj) && obj[0]?.series) || null;
+                                          if (!series) return null;
+                                          // Normalize series to array of objects with optional name
+                                          let seriesArr = [];
+                                          if (Array.isArray(series)) {
+                                            seriesArr = series;
+                                          } else if (typeof series === 'object') {
+                                            // Case: single series object with x/y/z/data arrays
+                                            if (Array.isArray(series.x) || Array.isArray(series.y) || Array.isArray(series.z) || Array.isArray(series.data)) {
+                                              seriesArr = [{ name: series.name || 'Series', ...series }];
+                                            } else {
+                                              // Map of name -> {y:[...], x?:[], data?:[]}
+                                              seriesArr = Object.entries(series).map(([name, val]) => ({ name, ...(val||{}) }));
+                                            }
+                                          }
+                                          if (!Array.isArray(seriesArr) || seriesArr.length === 0) return null;
+
+                                          // Determine X axis
+                                          let xArr = Array.isArray(obj?.x) ? obj.x : null;
+                                          if (!xArr) {
+                                            if (Array.isArray(seriesArr[0]?.x)) xArr = seriesArr[0].x;
+                                            else if (Array.isArray(seriesArr[0]?.data)) {
+                                              const pts = seriesArr[0].data;
+                                              if (pts.length && typeof pts[0] === 'object' && 'x' in pts[0]) {
+                                                xArr = pts.map(p => p?.x);
+                                              }
+                                            }
+                                          }
+
+                                          // Build headers: x + one column per series (y) and optional z per series
+                                          const yHeaders = seriesArr.map(s => (s?.name || 'Series') + ' (y)');
+                                          const zPresence = seriesArr.some(s => Array.isArray(s?.z) || (Array.isArray(s?.data) && s.data.length && typeof s.data[0]==='object' && 'z' in s.data[0]));
+                                          const zHeaders = zPresence ? seriesArr.map(s => (s?.name || 'Series') + ' (z)') : [];
+                                          const headers = ['x', ...yHeaders, ...zHeaders];
+
+                                          const maxLen = Math.max(
+                                            xArr ? xArr.length : 0,
+                                            ...seriesArr.map(s => Array.isArray(s?.y) ? s.y.length : (Array.isArray(s?.data) ? s.data.length : 0))
+                                          );
+                                          if (maxLen === 0) return null;
+
                                           const rows = Array.from({ length: maxLen }, (_, i) => {
                                             const row = {};
-                                            keys.forEach(k => { row[k] = Array.isArray(raw[k]) ? raw[k][i] : ''; });
+                                            row['x'] = xArr ? xArr[i] : (Array.isArray(seriesArr[0]?.data) ? seriesArr[0].data[i]?.x : (Array.isArray(seriesArr[0]?.x) ? seriesArr[0].x[i] : ''));
+                                            // y values per series
+                                            seriesArr.forEach((s, si) => {
+                                              let yv = '';
+                                              if (Array.isArray(s?.y)) yv = s.y[i];
+                                              else if (Array.isArray(s?.data)) yv = s.data[i]?.y;
+                                              row[yHeaders[si]] = (yv ?? '');
+                                            });
+                                            if (zHeaders.length) {
+                                              seriesArr.forEach((s, si) => {
+                                                let zv = '';
+                                                if (Array.isArray(s?.z)) zv = s.z[i];
+                                                else if (Array.isArray(s?.data)) zv = s.data[i]?.z;
+                                                row[zHeaders[si]] = (zv ?? '');
+                                              });
+                                            }
                                             return row;
                                           });
+
                                           return renderTable(headers, rows);
-                                        }
-                                        // Case 3: Generic object -> key/value table
-                                        const headers = ['Key', 'Value'];
-                                        const rows = Object.entries(raw).map(([k, v]) => ({ Key: k, Value: (typeof v === 'object' ? JSON.stringify(v) : v) }));
-                                        return renderTable(headers, rows);
-                                      }
-                                      // Fallback: single-value
-                                      return renderTable(['Value'], [{ Value: String(raw) }]);
+                                        } catch(_) { return null; }
+                                      };
+                                      const seriesView = trySeriesTable(raw);
+                                      if (seriesView) return seriesView;
+                                      // If no series object present, show placeholder
+                                      return <div className="w-full px-3 py-2 text-gray-600 border border-gray-200 rounded-lg bg-white">No series data</div>;
                                     } catch (_) {
                                       return renderTable(['Value'], [{ Value: chartData }]);
                                     }
@@ -4109,13 +4659,218 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                 {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].description || '-') : '-'}
                               </div>
                             )}
+                      </div>
+                    );
+                  })()}
+                      {(() => {
+                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        if (!scene) return null;
+                        const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        const isSora = sceneModelUpper === 'SORA';
+                        const isAnchor = sceneModelUpper === 'ANCHOR';
+                        const isPlotly = sceneModelUpper === 'PLOTLY';
+                        const isVeo = sceneModelUpper === 'VEO3';
+                        if (!(isSora || isAnchor || isPlotly || isVeo)) return null;
+                        const colors = Array.isArray(scene?.colors)
+                          ? scene.colors
+                          : (typeof scene?.colors === 'string' && scene.colors.trim()
+                            ? scene.colors.split(',').map((s) => s.trim()).filter(Boolean)
+                            : []);
+                        const fontSizeVal = Number(scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16) || 16;
+                        const fontStyleVal = scene?.font_style ?? scene?.fontStyle ?? '';
+                        const showFontControls = isSora || isAnchor || isPlotly;
+                        const fontOptions = (() => {
+                          const opts = Array.isArray(brandFonts) ? [...brandFonts] : [];
+                          if (fontStyleVal && !opts.includes(fontStyleVal)) opts.unshift(fontStyleVal);
+                          return opts;
+                        })();
+                        const gridClass = showFontControls ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4';
+                        return (
+                          <div className="mt-4">
+                            <button
+                              type="button"
+                              onClick={() => setAdvancedOptionsOpen((prev) => !prev)}
+                              className="flex w-full items-center justify-between rounded-lg border border-[#D8D3FF] bg-white px-4 py-3 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#F6F4FF]"
+                            >
+                              <span>Advanced Style Options</span>
+                              <ChevronDown className={`h-4 w-4 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {advancedOptionsOpen && (
+                              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-4">
+                                <div className={gridClass}>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Colors</label>
+                                    <div className="flex flex-wrap gap-2">
+                                      {(colors || []).map((c, i) => (
+                                        <button
+                                          key={`${c}-${i}`}
+                                          type="button"
+                                          onClick={() => {
+                                            if (isEditingScene) {
+                                              const next = colors.filter((_, idx) => idx !== i);
+                                              handleSceneUpdate(currentSceneIndex, 'colors', next);
+                                            }
+                                          }}
+                                          className="w-7 h-7 rounded border border-gray-300"
+                                          style={{ background: c }}
+                                          title={isEditingScene ? `Remove ${c}` : c}
+                                        />
+                                      ))}
+                                      {(!colors || colors.length === 0) && (
+                                        <span className="text-sm text-gray-500">-</span>
+                                      )}
+                                    </div>
+                                    {isEditingScene && (
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <input
+                                          type="text"
+                                          placeholder="#000000"
+                                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              const val = (e.currentTarget.value || '').trim();
+                                              if (val) {
+                                                const next = Array.from(new Set([...(colors || []), val]));
+                                                handleSceneUpdate(currentSceneIndex, 'colors', next);
+                                                e.currentTarget.value = '';
+                                              }
+                                            }
+                                          }}
+                                        />
+                                        <span className="text-xs text-gray-500">Press Enter to add</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {showFontControls && (
+                                    <>
+                                      <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Font Size</label>
+                                        <div className="flex items-center gap-3">
+                                          <input
+                                            type="range"
+                                            min={8}
+                                            max={72}
+                                            step={1}
+                                            value={fontSizeVal}
+                                            onChange={(e) =>
+                                              handleSceneUpdate(currentSceneIndex, 'font_size', Number(e.target.value))
+                                            }
+                                            className="flex-1"
+                                            disabled={!isEditingScene}
+                                          />
+                                          <span className="inline-block w-12 text-right text-sm text-gray-700">{fontSizeVal}px</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Font Style</label>
+                                        <select
+                                          value={fontStyleVal}
+                                          onChange={(e) => handleSceneUpdate(currentSceneIndex, 'font_style', e.target.value)}
+                                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${
+                                            isEditingScene ? 'border-gray-300' : 'border-gray-200 bg-white text-gray-800'
+                                          }`}
+                                          disabled={!isEditingScene}
+                                        >
+                                          <option value="">Select font</option>
+                                          {fontOptions.length > 0 ? (
+                                            fontOptions.map((f) => (
+                                              <option key={f} value={f} style={{ fontFamily: f }}>
+                                                {f}
+                                              </option>
+                                            ))
+                                          ) : (
+                                            <option value="" disabled>
+                                              No fonts found in Brand Identity
+                                            </option>
+                                          )}
+                                        </select>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {(() => {
+                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        if (!scene) return null;
+                        const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        if (!(sceneModelUpper === 'SORA' || sceneModelUpper === 'ANCHOR' || sceneModelUpper === 'PLOTLY')) return null;
+                        const items = Array.isArray(scene?.text_to_be_included) ? scene.text_to_be_included : [];
+                        return (
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Text To Be Included</label>
+                            {isEditingScene ? (
+                              <div>
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                  {items.map((t, i) => (
+                                    <span
+                                      key={i}
+                                      className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm"
+                                    >
+                                      {t}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const copy = items.slice();
+                                          copy.splice(i, 1);
+                                          handleSceneUpdate(currentSceneIndex, 'text_to_be_included', copy);
+                                        }}
+                                        className="text-gray-500 hover:text-red-600"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={textIncludeInput}
+                                    onChange={(e) => setTextIncludeInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        const val = (textIncludeInput || '').trim();
+                                        if (!val) return;
+                                        const next = [...items, val];
+                                        handleSceneUpdate(currentSceneIndex, 'text_to_be_included', next);
+                                        setTextIncludeInput('');
+                                      }
+                                    }}
+                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                    placeholder="Type text and press Enter to add"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const val = (textIncludeInput || '').trim();
+                                      if (!val) return;
+                                      const next = [...items, val];
+                                      handleSceneUpdate(currentSceneIndex, 'text_to_be_included', next);
+                                      setTextIncludeInput('');
+                                    }}
+                                    className="px-3 py-2 rounded-md bg-[#13008B] text-white text-sm"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
+                                {items.length ? items.join(', ') : '-'}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
 
                       {/* Text To Be Included */}
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                        <h4 className="text-lg font-semibold text-gray-800 mb-2">Text To Be Included</h4>
+                      {(() => { const r = scriptRows?.[currentSceneIndex]; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
+                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                          <h4 className="text-lg font-semibold text-gray-800 mb-2">Text To Be Included</h4>
                         {(() => {
                           const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                           const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
@@ -4163,10 +4918,12 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           );
                         })()}
                       </div>
+                      );})()}
 
                                            {/* Video Type Selection */}
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                        <h4 className="text-lg font-semibold text-gray-800 mb-4">Video Type</h4>
+                      {(() => { const r = scriptRows?.[currentSceneIndex]; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
+                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                         <h4 className="text-lg font-semibold text-gray-800 mb-4">Video Type</h4>
                         {(() => {
                           let vt = '';
                           try {
@@ -4179,9 +4936,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               {/* Avatar */}
                               <button
                                 type="button"
-                                disabled={sceneModelUpper !== 'VEO3'}
+                                disabled={!(sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR')}
                                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  (sceneModelUpper === 'VEO3')
+                                  (sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR')
                                     ? 'bg-[#13008B] text-white'
                                     : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
                                 }`}
@@ -4218,8 +4975,151 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           <p className="text-sm text-gray-500 mt-2">Switching model…</p>
                         )}
                       </div>
+                      );})()}
 
-                     {selectedVideoType === 'Avatar Based' ? (
+                      {(() => {
+                        // Presenter Options for VEO3
+                        // Only show in contexts that explicitly enable it (Script Editor)
+                        if (!enablePresenterOptions) return null;
+                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        // Show presenter options in Script Editor for VEO3 and ANCHOR models
+                        if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return null;
+                        const presenterOptions = [
+                          'Confident Entrance (Walk-in)',
+                          'Direct Address (Step Forward)',
+                          'Data Visualization (Gesture)',
+                          'Walk and Talk (Tracking Shot)',
+                          'Dynamic Interaction (Virtual Elements)',
+                          'Seated at Desk (Explainer)',
+                          'Podium Presentation (Keynote)',
+                          'Whiteboard Explanation (Strategy)',
+                          'Emphatic Close-up (Key Message)',
+                          'anchor mode'
+                        ];
+                        // Resolve current selection (prefer scene, fallback to saved guideline choice)
+                        let current = (scene?.presenter_options && scene.presenter_options.option) || '';
+                        try {
+                          if (!current) {
+                            const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+                            const raw = (sid && localStorage.getItem(`presenter_option:${sid}`)) || localStorage.getItem('presenter_option');
+                            if (raw) {
+                              const obj = JSON.parse(raw);
+                              if (obj && obj.option) current = obj.option;
+                            }
+                          }
+                        } catch (_) { /* noop */ }
+                        // Replace dropdown with Guidelines-like selector
+                        const optionsList = [
+                          { option: 'Confident Entrance (Walk-in)', sample_video: 'https://example.com/sample_confident_entry.mp4' },
+                          { option: 'Direct Address (Step Forward)', sample_video: 'https://example.com/sample_step_forward.mp4' },
+                          { option: 'Data Visualization (Gesture)', sample_video: 'https://example.com/sample_gesture_graphics.mp4' },
+                          { option: 'Walk and Talk (Tracking Shot)', sample_video: 'https://example.com/sample_walk_across.mp4' },
+                          { option: 'Dynamic Interaction (Virtual Elements)' },
+                          { option: 'Seated at Desk (Explainer)' },
+                          { option: 'Podium Presentation (Keynote)' },
+                          { option: 'Whiteboard Explanation (Strategy)' },
+                          { option: 'Emphatic Close-up (Key Message)' },
+                          { option: 'anchor mode' }
+                        ];
+                        return (
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <h4 className="text-lg font-semibold text-gray-800 mb-3">Presenter Options</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div className="md:col-span-1 border border-gray-200 rounded-lg divide-y">
+                                {optionsList.map((po, idx) => {
+                                  const opt = po.option || String(po);
+                                  const active = current === opt;
+                                  return (
+                                    <button key={idx} type="button" onClick={async () => {
+                                      const sel = opt;
+                                  try {
+                                    const token = localStorage.getItem('token');
+                                    const sessionId = localStorage.getItem('session_id');
+                                    if (!token || !sessionId) return;
+                                    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                                    });
+                                    const sessionText = await sessionResp.text();
+                                    let sessionData; try { sessionData = JSON.parse(sessionText); } catch(_) { sessionData = sessionText; }
+                                    const sd = (sessionData?.session_data || sessionData?.session || {});
+                                    const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
+                                    const sessionForBody = {
+                                      session_id: sd?.session_id || sessionId,
+                                      user_id: sd?.user_id || token,
+                                      content: Array.isArray(sd?.content) ? sd.content : [],
+                                      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
+                                      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+                                      created_at: sd?.created_at || new Date().toISOString(),
+                                      totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+                                      messages: Array.isArray(sd?.messages) ? sd.messages : []
+                                    };
+                                    const sceneNumber = scene?.scene_number ?? (currentSceneIndex + 1);
+                                    // Always show confirmation modal before applying presenter option
+                                    setPendingPresenterOption(sel);
+                                    setShowPresenterConfirm(true);
+                                    return;
+                                  } catch(err) { console.warn('Presenter update failed:', err); }
+                                    }} className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}>
+                                      <div className="font-medium text-gray-900 text-sm">{opt}</div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="md:col-span-2">
+                                {!current && (
+                                  <div className="text-sm text-gray-500">Select a presenter option to preview its sample.</div>
+                                )}
+                                {current && (() => {
+                                  const cur = optionsList.find(po => (po.option||String(po))===current) || {};
+                                  return (
+                                    <div className="space-y-3">
+                                      <div className="text-lg font-semibold text-gray-900">{current}</div>
+                                      {cur.sample_video ? (
+                                        <div className="aspect-video w-full bg-black/5 rounded-lg overflow-hidden border">
+                                          <video controls className="w-full h-full"><source src={cur.sample_video} type="video/mp4" /></video>
+                                        </div>
+                                      ) : (
+                                        <div className="text-sm text-gray-600">No sample available.</div>
+                                      )}
+                                      {current === 'anchor mode' && (
+                                        <div className="mt-2 border-t pt-3">
+                                          <div className="text-sm font-medium text-gray-800 mb-2">Anchor Settings</div>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-xs text-gray-600">Size</label>
+                                              <input value={scene?.anchor_options?.size||''} onChange={(e)=>{
+                                                const rows=[...(scriptRows||[])]; const sc={...rows[currentSceneIndex]}; sc.anchor_options={...(sc.anchor_options||{}), size:e.target.value}; rows[currentSceneIndex]=sc; setScriptRows(rows);
+                                              }} placeholder="e.g., small, medium, large or px" className="px-3 py-2 border rounded-lg" />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-xs text-gray-600">Position</label>
+                                              <select value={scene?.anchor_options?.position||''} onChange={(e)=>{
+                                                const rows=[...(scriptRows||[])]; const sc={...rows[currentSceneIndex]}; sc.anchor_options={...(sc.anchor_options||{}), position:e.target.value}; rows[currentSceneIndex]=sc; setScriptRows(rows);
+                                              }} className="px-3 py-2 border rounded-lg">
+                                                <option value="">Select position</option>
+                                                <option value="topleft">Top Left</option>
+                                                <option value="topcenter">Top Center</option>
+                                                <option value="topright">Top Right</option>
+                                                <option value="bottomleft">Bottom Left</option>
+                                                <option value="bottomcenter">Bottom Center</option>
+                                                <option value="bottomright">Bottom Right</option>
+                                              </select>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                     {(() => { const scene = scriptRows?.[currentSceneIndex]; const m = String(scene?.model||scene?.mode||'').toUpperCase(); const isAvatarish = (m==='VEO3' || m==='ANCHOR'); return isAvatarish; })() ? (
+                       <>
                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                          <h4 className="text-lg font-semibold text-gray-800 mb-4">Select an Avatar</h4>
                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4">
@@ -4227,17 +5127,24 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                              <button
                                type="button"
                                key={index}
-                               onClick={() => {
+                               onClick={async () => {
                               try {
                                  setSelectedAvatar(avatarUrl);
-                                 // Set this avatar as the sole ref_image for current scene (veo3/avatar based)
+                                 // Save avatar differently for ANCHOR vs VEO3
                                  if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
                                    const rows = [...scriptRows];
                                    const scene = { ...rows[currentSceneIndex] };
-                                   scene.ref_image = [avatarUrl];
+                                   const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                                   if (modelUpper === 'ANCHOR') {
+                                     scene.avatar = avatarUrl; // store avatar string in scene
+                                     try { await updateSceneGenImageFlag(currentSceneIndex, { avatarOverride: avatarUrl }); } catch(_) {}
+                                   } else {
+                                     // legacy: store as ref_image for non-ANCHOR
+                                     scene.ref_image = [avatarUrl];
+                                     updateRefMapForScene(scene.scene_number, scene.ref_image);
+                                   }
                                    rows[currentSceneIndex] = scene;
                                    setScriptRows(rows);
-                                   updateRefMapForScene(scene.scene_number, scene.ref_image);
                                  }
                                } catch (_) { /* noop */ }
                              }}
@@ -4268,13 +5175,19 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                  const url = urls[0];
                                  setAvatarOptions(prev => Array.from(new Set([...(prev || []), url])));
                                  setSelectedAvatar(url);
-                                 // Apply uploaded avatar as scene ref_image
+                                 // Apply uploaded avatar
                                  const rows = [...scriptRows];
                                  const scene = { ...rows[currentSceneIndex] };
-                                 scene.ref_image = [url];
+                                 const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                                 if (modelUpper === 'ANCHOR') {
+                                   scene.avatar = url;
+                                   try { await updateSceneGenImageFlag(currentSceneIndex, { avatarOverride: url }); } catch(_) {}
+                                 } else {
+                                   scene.ref_image = [url];
+                                   updateRefMapForScene(scene.scene_number, scene.ref_image);
+                                 }
                                  rows[currentSceneIndex] = scene;
                                  setScriptRows(rows);
-                                 updateRefMapForScene(scene.scene_number, scene.ref_image);
                                } catch (err) {
                                  console.error('Avatar upload failed:', err);
                                  alert('Failed to upload avatar. Please try again.');
@@ -4296,10 +5209,151 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                             </svg>
                           </button>
                          </div>
-                       </div>
-                     ) : (
-                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                         <h4 className="text-lg font-semibold text-gray-800 mb-4">Select a Reference Image</h4>
+                      </div>
+
+                      {(() => {
+                        const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+                        const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        if (modelUpper !== 'ANCHOR') return null;
+                        const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
+                        // In Script Editor, keep toggle fully visible even if not actively editing
+                        const disabled = !isEditingScene;
+                        const base = `inline-flex items-center gap-3 px-2 py-1 rounded-full transition-colors ${genVal ? 'bg-green-100' : 'bg-gray-100'}`;
+                        const cls = disabled ? base : base;
+                        const onToggle = async () => {
+                          if (disabled) return;
+                          const next = !genVal;
+                          try { handleSceneUpdate(currentSceneIndex, 'gen_image', next); await updateSceneGenImageFlag(currentSceneIndex, { genImage: next }); } catch(_) {}
+                        };
+                        const refs = (() => {
+                          const r = scene?.ref_image;
+                          if (Array.isArray(r)) return r;
+                          if (typeof r === 'string' && r.trim()) return [r.trim()];
+                          return [];
+                        })();
+                        return (
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="text-lg font-semibold text-gray-800">Select a Background Image</h4>
+                              <button type="button" onClick={onToggle} className={cls} title="Toggle Generate Image" disabled={disabled}>
+                                <span className="text-sm text-gray-800">{genVal ? 'True' : 'False'}</span>
+                                <span className={`relative inline-flex w-10 h-5 rounded-full ${genVal ? 'bg-green-500' : 'bg-gray-400'}`}>
+                                  <span className={`absolute top-0.5 ${genVal ? 'right-0.5' : 'left-0.5'} w-4 h-4 bg-white rounded-full transition-all`} />
+                                </span>
+                              </button>
+                            </div>
+                            {(() => { const bg = scene?.background || scene?.background_image || ''; if (!bg) return null; return (
+                              <div className="mb-3">
+                                <div className="text-sm font-medium text-gray-700 mb-1">Selected Background</div>
+                                <div className="w-28 h-28 border rounded-lg overflow-hidden">
+                                  <img src={bg} alt="Selected background" className="w-full h-full object-cover" />
+                                </div>
+                              </div>
+                            ); })()}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
+                              {refs.length === 0 ? (
+                                <p className="text-sm text-gray-500 col-span-4">No background images yet. Add one below.</p>
+                              ) : (
+                                refs.map((url, idx) => (
+                                  <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${ (selectedRefImages || []).includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300' } overflow-visible transition-colors`} title={url} onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      // For ANCHOR, background is a single string
+                                      setSelectedRefImages([url]);
+                                      if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                        const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
+                                        s.background = url; s.background_image = url;
+                                        rows[currentSceneIndex] = s; setScriptRows(rows);
+                                        try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: url, backgroundImageOverride: url }); } catch(_) {}
+                                      }
+                                    } catch(_) {}
+                                  }}>
+                                    <img src={url} alt={`BG ${idx+1}`} className="w-full h-full object-cover" />
+                                    <button className="pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" title="View full size" onClick={(e)=>{ e.stopPropagation(); try { openLightbox(url);} catch(_){} }}>
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17" /></svg>
+                                    </button>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  const token = localStorage.getItem('token');
+                                  if (!token) { alert('Missing user'); return; }
+                                  try {
+                                    setAssetsTab('templates'); setIsGenerate(false); setShowAssetsModal(true);
+                                    const cacheKey = `brand_assets_images:${token}`; const cached = localStorage.getItem(cacheKey);
+                                    if (cached) {
+                                      const data = JSON.parse(cached);
+                                      const logos = Array.isArray(data?.logos) ? data.logos : [];
+                                      const icons = Array.isArray(data?.icons) ? data.icons : [];
+                                      const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
+                                      const templates = Array.isArray(data?.templates) ? data.templates : [];
+                                      const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
+                                      setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
+                                    } else {
+                                      setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+                                    }
+                                  } catch(_) { setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] }); }
+                                  finally { setIsAssetsLoading(false); }
+                                }}
+                                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                                title="Choose from templates"
+                              >
+                                <File className="w-4 h-4" /> Choose From Template
+                              </button>
+                              <input ref={imageFileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e)=>{
+                                try {
+                                  const files = Array.from(e.target.files || []); if (!files.length) return;
+                                  if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                                  const current = scriptRows[currentSceneIndex]; const folder = current?.folderLink || current?.folder_link || '';
+                                  setIsUploadingSceneImages(true);
+                                  const urls = await uploadImagesToFolder(files, folder);
+                                  if (!urls || urls.length===0) { alert('Upload failed. No image URLs returned.'); return; }
+                                  const rows = [...scriptRows]; const s3 = { ...rows[currentSceneIndex] };
+                                  const filtered = filterImageUrls(urls).slice(0,1); s3.background = filtered[0] || ''; s3.background_image = s3.background; rows[currentSceneIndex] = s3; setScriptRows(rows); setSelectedRefImages(filtered);
+                                  try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: s3.background, backgroundImageOverride: s3.background }); } catch(_) {}
+                                } catch(err) { console.error('Background images upload failed:', err); alert('Failed to upload background images. Please try again.'); }
+                                finally { setIsUploadingSceneImages(false); if (imageFileInputRef.current) imageFileInputRef.current.value=''; }
+                              }} />
+                              <button onClick={()=>{ if (imageFileInputRef.current) imageFileInputRef.current.click(); }} disabled={isUploadingSceneImages} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${isUploadingSceneImages ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-white border border-gray-200 hover:bg-gray-50 text-gray-900'}`}>
+                                {isUploadingSceneImages ? (<span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />) : (<><Upload className="w-4 h-4" /><span>Upload</span></>)}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                       </>
+                    ) : (
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                         {(() => {
+                           const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+                           const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
+                           // In Script Editor, keep toggle fully visible even if not actively editing
+                           const disabled = !isEditingScene;
+                           const base = `inline-flex items-center gap-3 px-2 py-1 rounded-full transition-colors ${genVal ? 'bg-green-100' : 'bg-gray-100'}`;
+                           const cls = disabled ? base : base;
+                           const onToggle = async () => {
+                             if (disabled) return;
+                             const next = !genVal;
+                             try {
+                               handleSceneUpdate(currentSceneIndex, 'gen_image', next);
+                               await updateSceneGenImageFlag(currentSceneIndex, { genImage: next });
+                             } catch(_) { /* noop */ }
+                           };
+                          return (
+                            <div className="flex items-center justify-between mb-4">
+                              <h4 className="text-lg font-semibold text-gray-800">{String((scene?.model||scene?.mode||'')).toUpperCase()==='ANCHOR' ? 'Select a Background Image' : 'Select a Reference Image'}</h4>
+                              <button type="button" onClick={onToggle} className={cls} title="Toggle Generate Image" disabled={disabled}>
+                                <span className="text-sm text-gray-800">{genVal ? 'True' : 'False'}</span>
+                                <span className={`relative inline-flex w-10 h-5 rounded-full ${genVal ? 'bg-green-500' : 'bg-gray-400'}`}>
+                                  <span className={`absolute top-0.5 ${genVal ? 'right-0.5' : 'left-0.5'} w-4 h-4 bg-white rounded-full transition-all`} />
+                                </span>
+                              </button>
+                            </div>
+                          );
+                        })()}
                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
                            {(() => {
                              const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
@@ -4494,78 +5548,60 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           >
                             <File className="w-4 h-4" /> Choose From Template
                           </button>
-                          <input
-                            ref={templateFileInputRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={async (e) => {
-                              try {
-                                const files = Array.from(e.target.files || []);
-                                if (files.length === 0) return;
-                                const token = localStorage.getItem('token');
-                                if (!token) { alert('Missing user'); return; }
-                                // 1) Upload template to brand assets
-                                const form = new FormData();
-                                form.append('user_id', token);
-                                form.append('file_type', 'template');
-                                files.forEach(f => form.append('files', f));
-                                const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', {
-                                  method: 'POST', body: form
-                                });
-                                const upText = await upResp.text();
-                                let upData; try { upData = JSON.parse(upText); } catch(_) { upData = upText; }
-                                if (!upResp.ok) throw new Error(`brand-assets/upload-file failed: ${upResp.status} ${upText}`);
-                                // 2) Get brand assets
-                                let assets = null;
-                                try {
-                                  const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets?user_id=${encodeURIComponent(token)}`);
-                                  const getText = await getResp.text();
-                                  try { assets = JSON.parse(getText); } catch(_) { assets = getText; }
-                                } catch(_) { /* noop */ }
-                                // 3) Update brand assets
-                                try {
-                                  const updateBody = typeof assets === 'object' ? { ...assets } : { user_id: token };
-                                  const tplUrl = upData?.url || upData?.file_url || upData?.link;
-                                  if (tplUrl) {
-                                    const bi = updateBody.brand_identity = updateBody.brand_identity || {};
-                                    const arr = Array.isArray(bi.templates) ? bi.templates : (Array.isArray(updateBody.templates) ? updateBody.templates : []);
-                                    const next = Array.from(new Set([...(arr || []), tplUrl]));
-                                    bi.templates = next;
-                                  }
-                                  await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/update', {
-                                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updateBody)
-                                  });
-                                } catch(_) { /* noop */ }
-                                // 4) Get brand assets again and refresh templates
-                                try {
-                                  const getResp2 = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets?user_id=${encodeURIComponent(token)}`);
-                                  const getText2 = await getResp2.text();
-                                  let assets2; try { assets2 = JSON.parse(getText2); } catch(_) { assets2 = getText2; }
-                                  const bi2 = assets2?.brand_identity || {};
-                                  const tpl2 = Array.isArray(bi2?.templates) ? bi2.templates : (Array.isArray(assets2?.templates) ? assets2.templates : []);
-                                  setBrandTemplates((tpl2 || []).filter(u => typeof u === 'string' && u));
-                                  alert('Template uploaded and brand assets updated.');
-                                } catch(_) { /* noop */ }
-                              } catch (err) {
-                                console.error('Template upload/update failed:', err);
-                                alert('Failed to upload/update template.');
-                              } finally {
-                                if (templateFileInputRef.current) templateFileInputRef.current.value = '';
-                              }
-                            }}
-                          />
-                          <button
-                            onClick={() => templateFileInputRef.current && templateFileInputRef.current.click()}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
-                            title="Upload a template to brand assets"
-                          >
-                            <Upload className="w-4 h-4" /> Upload Template
-                          </button>
-                           {/* Replace button removed per requirements */}
+                          {/* Upload Template button removed per requirements */}
                          </div>
                        </div>
+                       
                      )}
+
+                     {(() => {
+                       // Anchor-specific options: size and position
+                       const scene = scriptRows?.[currentSceneIndex];
+                       const modelUpper = String(scene?.model||scene?.mode||'').toUpperCase();
+                       if (modelUpper !== 'ANCHOR') return null;
+                       const opts = (scene?.anchor_options && typeof scene.anchor_options==='object') ? scene.anchor_options : {};
+                       const size = opts.size || '';
+                       const position = opts.position || '';
+                       const update = (patch) => {
+                         const next = { ...(scene?.anchor_options||{}), ...patch };
+                         handleSceneUpdate(currentSceneIndex, 'anchor_options', next);
+                       };
+                       return (
+                         <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                           <h4 className="text-lg font-semibold text-gray-800 mb-4">Anchor Options</h4>
+                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                             <div>
+                               <label className="block text-sm font-medium text-gray-700 mb-2">Size</label>
+                               <input
+                                 type="text"
+                                 value={size}
+                                 onChange={(e) => update({ size: e.target.value })}
+                                 disabled={!isEditingScene}
+                                 placeholder="e.g., small, medium, large or px"
+                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
+                               />
+                             </div>
+                             <div>
+                               <label className="block text-sm font-medium text-gray-700 mb-2">Position</label>
+                               <select
+                                 value={position}
+                                 onChange={(e) => update({ position: e.target.value })}
+                                 disabled={!isEditingScene}
+                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
+                               >
+                                 <option value="">Select position</option>
+                                 <option value="topleft">Top Left</option>
+                                 <option value="topcenter">Top Center</option>
+                                 <option value="topright">Top Right</option>
+                                 <option value="bottomleft">Bottom Left</option>
+                                 <option value="bottomcenter">Bottom Center</option>
+                                 <option value="bottomright">Bottom Right</option>
+                               </select>
+                             </div>
+                           </div>
+                         </div>
+                       );
+                     })()}
                    </div>
                  )}
                </div>
@@ -4598,7 +5634,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                        🔄 Reset Order
                      </button>
                      
-                     {hasOrderChanged && (
+                     {!isEditingScene && hasOrderChanged && (
                        <button
                          onClick={() => setShowSaveConfirm(true)}
                          disabled={isSavingReorder}
@@ -4637,28 +5673,86 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                    >
                      Back
                    </button>
-                 ) : (
-                   isEditingScene ? (
-                     <div className="flex items-center gap-2">
-                       <button
-                         onClick={saveEditedScriptText}
-                         disabled={isUpdatingText}
-                         className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors ${isUpdatingText ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}
-                       >
-                         {isUpdatingText ? 'Saving…' : '💾 Save Changes'}
-                       </button>
-                       <button
-                         onClick={() => setIsEditingScene(false)}
-                         disabled={isUpdatingText}
-                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isUpdatingText ? 'bg-gray-200 cursor-not-allowed text-gray-500' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                       >
-                         ✖ Cancel
-                       </button>
-                     </div>
-                   ) : null
-                 )}
+                 ) : (null)}
                </div>
              </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Chart Type Change Modal */}
+      {showChartTypeConfirm && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[92%] max-w-sm rounded-lg shadow-xl p-5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-semibold text-gray-900">Change Chart Type?</h3>
+              <button onClick={()=>!isUpdatingChartType && setShowChartTypeConfirm(false)} disabled={isUpdatingChartType} className={`w-8 h-8 rounded-full ${isUpdatingChartType ? 'bg-gray-200 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200'}`}>✕</button>
+            </div>
+            <p className="text-sm text-gray-700 mb-4">This will update visuals to chart type “{pendingChartType}”. Continue?</p>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={()=>setShowChartTypeConfirm(false)} disabled={isUpdatingChartType} className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Cancel</button>
+              <button
+                onClick={async ()=>{
+                  try {
+                    setIsUpdatingChartType(true);
+                    setIsApplyingChartType(true);
+                    const sel = pendingChartType; if (!sel) { setShowChartTypeConfirm(false); return; }
+                    const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                    const token = localStorage.getItem('token');
+                    const sessionId = localStorage.getItem('session_id');
+                    if (!token || !sessionId || !r) { setShowChartTypeConfirm(false); return; }
+                    // Update local immediately
+                    handleSceneUpdate(currentSceneIndex,'chart_type', sel);
+                    // Load user/session
+                    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id: token, session_id: sessionId }) });
+                    const st = await sessionResp.text(); let sjson; try { sjson = JSON.parse(st); } catch(_) { sjson = st; }
+                    const sd = (sjson?.session_data || sjson?.session || {});
+                    const user = sjson?.user_data || sd?.user_data || sd?.user || {};
+                    const sessionForBody = {
+                      session_id: sd?.session_id || sessionId,
+                      user_id: sd?.user_id || token,
+                      title: sd?.title || '',
+                      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+                      created_at: sd?.created_at || new Date().toISOString(),
+                      updated_at: sd?.updated_at || new Date().toISOString(),
+                      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                      messages: Array.isArray(sd?.messages) ? sd.messages : [{ additionalProp1: {} }],
+                      total_summary: Array.isArray(sd?.total_summary) ? sd.total_summary : (Array.isArray(sd?.totalsummary) ? sd.totalsummary : []),
+                      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [''],
+                      videos: Array.isArray(sd?.videos) ? sd.videos : [{ additionalProp1: {} }],
+                      images: Array.isArray(sd?.images) ? sd.images : [''],
+                      final_link: sd?.final_link || '',
+                      videoType: sd?.videoType || sd?.video_type || '',
+                      brand_style_interpretation: sd?.brand_style_interpretation || { additionalProp1: {} },
+                      additionalProp1: sd?.additionalProp1 || {}
+                    };
+                    const sceneNumber = r?.scene_number ?? (currentSceneIndex + 1);
+                    const visualBody = { user, session: sessionForBody, scene_number: sceneNumber, chart_type: sel };
+                    // 1) Update scene visual for Plotly chart type change
+                    await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(visualBody) });
+                  } catch(err) {
+                    console.warn('Chart type update failed:', err);
+                  } finally {
+                    setIsUpdatingChartType(false);
+                    setIsApplyingChartType(false);
+                    setShowChartTypeConfirm(false);
+                    setPendingChartType('');
+                  }
+                }}
+                disabled={isUpdatingChartType}
+                className={`px-4 py-2 rounded-lg text-white ${isUpdatingChartType ? 'bg-[#9aa0d0] cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+              >
+                {isUpdatingChartType ? 'Regenerating…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isApplyingChartType && (
+        <div className="fixed inset-0 z-[74] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
+            <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <div className="text-sm font-medium text-gray-800">Applying chart type…</div>
           </div>
         </div>
       )}
@@ -4756,7 +5850,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
                 </div>
               ) : (() => {
-                const list = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
                 const uploadTypeMap = {
                   templates: 'template',
                   logos: 'logo',
@@ -4765,48 +5858,145 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   documents_images: '' // no upload for documents images per current API scope
                 };
                 const currentUploadType = uploadTypeMap[assetsTab] || '';
+                const isTemplateTab = assetsTab === 'templates';
+                const rawList = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
+                const templateFilterOptions = templateAspectOptions.length > 1 ? ['All', ...templateAspectOptions] : templateAspectOptions;
+                const showAspectFilterControls = isTemplateTab && shouldFilterTemplatesByAspect && templateFilterOptions.length > 0;
+                const effectiveTemplateFilter = showAspectFilterControls
+                  ? (templateAspectFilter && (templateAspectFilter === 'All' || templateAspectOptions.includes(templateAspectFilter))
+                      ? templateAspectFilter
+                      : (templateFilterOptions[0] || 'All'))
+                  : '';
+                const templateList = isTemplateTab
+                  ? normalizedTemplateAssets.filter(item => {
+                      if (!showAspectFilterControls || !effectiveTemplateFilter || effectiveTemplateFilter === 'All') return true;
+                      const aspectLabel = item.aspect || 'Unspecified';
+                      return aspectLabel === effectiveTemplateFilter;
+                    })
+                  : [];
+                const list = isTemplateTab ? templateList : rawList;
+                const emptyMessage = isTemplateTab
+                  ? (normalizedTemplateAssets.length === 0 ? 'No templates found.' : 'No templates available for this aspect ratio.')
+                  : 'No assets found.';
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                    {currentUploadType && (
-                      <button
-                        type="button"
-                        onClick={() => { setPendingUploadType(currentUploadType); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
-                        className="rounded-lg border-2 border-dashed border-gray-300 h-28 flex items-center justify-center text-gray-500 hover:border-[#13008B] hover:text-[#13008B]"
-                        title={`Upload ${currentUploadType.replace('_',' ')}`}
-                      >
-                        <span className="text-2xl">+</span>
-                      </button>
-                    )}
-                    {list.length === 0 && (<div className="col-span-full text-sm text-gray-600">No assets found.</div>)}
-                    {list.map((url, idx) => (
-                      <div
-                        key={idx}
-                        className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${selectedAssetUrl===url ? 'ring-2 ring-[#13008B]' : ''}`}
-                        onClick={() => setSelectedAssetUrl(url)}
-                        title={url}
-                      >
-                        <img src={url} alt={`${assetsTab}-${idx}`} className="w-full h-28 object-cover" />
-                        <div className="p-2">
-                          <span className="text-xs text-gray-700 truncate block" title={url}>{assetsTab.replace('_',' ')} {idx+1}</span>
-                        </div>
+                  <>
+                    {showAspectFilterControls && (
+                      <div className="flex flex-wrap items-center gap-2 mb-4">
+                        {templateFilterOptions.map(option => {
+                          const isActive = option === effectiveTemplateFilter || (!effectiveTemplateFilter && option === templateFilterOptions[0]);
+                          return (
+                            <button
+                              type="button"
+                              key={option}
+                              onClick={() => setTemplateAspectFilter(option)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                                isActive ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-200 hover:border-[#13008B]'
+                              }`}
+                            >
+                              {option === 'All' ? 'All' : option}
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))}
-                  </div>
+                    )}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      {currentUploadType && (
+                        <button
+                          type="button"
+                          onClick={() => { setPendingUploadType(currentUploadType); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
+                          className="rounded-lg border-2 border-dashed border-gray-300 h-28 flex items-center justify-center text-gray-500 hover:border-[#13008B] hover:text-[#13008B]"
+                          title={`Upload ${currentUploadType.replace('_',' ')}`}
+                        >
+                          <span className="text-2xl">+</span>
+                        </button>
+                      )}
+                      {list.length === 0 && (
+                        <div className="col-span-full text-sm text-gray-600">
+                          {emptyMessage}
+                        </div>
+                      )}
+                      {list.map((entry, idx) => {
+                        if (isTemplateTab) {
+                          const imageUrl = entry?.imageUrl;
+                          if (!imageUrl) return null;
+                          const isSelected = selectedTemplateUrls.includes(imageUrl);
+                          const handleClick = () => {
+                            setSelectedTemplateUrls(prev => prev.includes(imageUrl) ? prev.filter(u => u !== imageUrl) : [...prev, imageUrl]);
+                          };
+                          return (
+                            <div
+                              key={entry.id || idx}
+                              className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                              onClick={handleClick}
+                              title={`${entry.aspect || 'Unspecified'} • ${entry.label || 'Template'}`}
+                            >
+                              <img src={imageUrl} alt={entry.label || `template-${idx}`} className="w-full h-28 object-cover" />
+                              <div className="p-2">
+                                <span className="text-xs font-semibold text-gray-800 block">
+                                  {entry.aspect || 'Unspecified'}
+                                </span>
+                                {entry.label && (
+                                  <span className="text-[11px] text-gray-600 truncate block">{entry.label}</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+                        const url = entry;
+                        const isSelected = selectedAssetUrl === url;
+                        const handleClick = () => {
+                          setSelectedAssetUrl(url);
+                        };
+                        return (
+                          <div
+                            key={idx}
+                            className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                            onClick={handleClick}
+                            title={url}
+                          >
+                            <img src={url} alt={`${assetsTab}-${idx}`} className="w-full h-28 object-cover" />
+                            <div className="p-2">
+                              <span className="text-xs text-gray-700 truncate block" title={url}>
+                                {assetsTab.replace('_',' ')} {idx+1}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 );
               })()}
               <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3">
                 <button
-                  disabled={!selectedAssetUrl}
+                  disabled={assetsTab==='templates' ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl}
                   onClick={async () => {
                     try {
-                      if (!selectedAssetUrl || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                      const chosen = assetsTab==='templates' ? (selectedTemplateUrls[0] || selectedAssetUrl) : selectedAssetUrl;
+                      if (!chosen || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                      // Enforce only one template for Keep Default
+                      if (assetsTab==='templates' && selectedTemplateUrls.length > 1) {
+                        alert('For Keep Default, you can select only one template.');
+                        return;
+                      }
                       const rows = [...scriptRows];
                       const scene = { ...rows[currentSceneIndex] };
-                      scene.ref_image = [selectedAssetUrl];
+                      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                      if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY') {
+                        scene.background = chosen; scene.background_image = chosen;
+                      } else {
+                        scene.ref_image = [chosen];
+                      }
                       rows[currentSceneIndex] = scene;
                       setScriptRows(rows);
-                      setSelectedRefImages([selectedAssetUrl]);
-                      updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      setSelectedRefImages([chosen]);
+                      if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      // For Keep Default with Templates, persist via update-text setting gen_image=false and ref_image
+                      if (assetsTab === 'templates') {
+                        try {
+                          await updateSceneGenImageFlag(currentSceneIndex, { genImage: false, descriptionOverride: scene?.description ?? '', refImagesOverride: [chosen] });
+                        } catch(_) { /* noop */ }
+                      }
                       // Keep Default: clear description
                       try {
                         const r2 = [...rows];
@@ -4815,26 +6005,38 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           setScriptRows(r2);
                         }
                       } catch(_) {}
-                      // Call update-text with gen_image=false for this scene
-                      await updateSceneGenImageFlag(currentSceneIndex, { genImage: false, descriptionOverride: '', refImagesOverride: [selectedAssetUrl] });
                       setShowAssetsModal(false);
                       setSelectedAssetUrl('');
+                      setSelectedTemplateUrls([]);
                     } catch(_) { /* noop */ }
                   }}
-                  className={`px-3 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                  className={`px-3 py-2 rounded-lg text-sm border ${
+                    (assetsTab==='templates' ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl)
+                      ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
+                      : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
+                  }`}
                 >Keep Default</button>
                 <button
-                  disabled={!selectedAssetUrl}
+                  disabled={assetsTab==='templates' ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl}
                   onClick={async () => {
                     try {
-                      if (!selectedAssetUrl || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
+                      const multi = assetsTab==='templates' ? (selectedTemplateUrls.length > 0 ? selectedTemplateUrls : (selectedAssetUrl ? [selectedAssetUrl] : [])) : (selectedAssetUrl ? [selectedAssetUrl] : []);
+                      if (multi.length === 0 || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
                       const rows = [...scriptRows];
                       const scene = { ...rows[currentSceneIndex] };
-                      scene.ref_image = [selectedAssetUrl];
+                      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                      if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY') {
+                        // Background accepts a single image; use the first
+                        const first = multi[0];
+                        scene.background = first; scene.background_image = first;
+                      } else {
+                        // For SORA/infographics, allow multiple templates as ref images
+                        scene.ref_image = multi;
+                      }
                       rows[currentSceneIndex] = scene;
                       setScriptRows(rows);
-                      setSelectedRefImages([selectedAssetUrl]);
-                      updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      setSelectedRefImages(multi);
+                      if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       setShowAssetsModal(false);
                       setIsEnhancing(true);
                       const sessionId = localStorage.getItem('session_id');
@@ -4869,20 +6071,64 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       const model = String(scene?.mode || scene?.model || '').toUpperCase();
                       let reqBody = { user, session: sessionForBody, scene_number: sceneNumber };
                       if (model === 'SORA') {
-                        reqBody = { ...reqBody, image_links: [selectedAssetUrl] };
+                        reqBody = { ...reqBody, image_links: multi };
                       } else if (model === 'VEO3') {
+                        // For visual updates from assets, keep presenter options empty
                         reqBody = { ...reqBody, presenter_options: {} };
                       } else if (model === 'PLOTLY') {
-                        reqBody = { ...reqBody, chart_type: scene?.chart_type || scene?.chartType || '' };
+                        const first = multi[0];
+                        reqBody = { ...reqBody, chart_type: scene?.chart_type || scene?.chartType || '', background_image: first };
+                      } else if (model === 'ANCHOR') {
+                        const first = multi[0];
+                        reqBody = { ...reqBody, background_image: first };
                       } else {
-                        // Default to SORA-style image link if unknown
-                        reqBody = { ...reqBody, image_links: [selectedAssetUrl] };
+                        // Default to SORA-style image links if unknown
+                        reqBody = { ...reqBody, image_links: multi };
                       }
                       await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
                       });
-                      // After visual update, call update-text with gen_image=true, current description, and selected ref image
-                      await updateSceneGenImageFlag(currentSceneIndex, { genImage: true, descriptionOverride: scene?.description ?? '', refImagesOverride: [selectedAssetUrl] });
+                      // After visual update, fetch latest session and send update-text with current script (index 0)
+                      try {
+                        const refreshResp2 = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                        });
+                        const refreshText2 = await refreshResp2.text();
+                        let refresh2; try { refresh2 = JSON.parse(refreshText2); } catch(_) { refresh2 = refreshText2; }
+                        if (refreshResp2.ok && refresh2 && typeof refresh2 === 'object') {
+                          const sd3 = refresh2?.session_data || refresh2?.session || {};
+                          const user3 = refresh2?.user_data || sd3?.user_data || sd3?.user || {};
+                          const sessionForBody3 = {
+                            session_id: sd3?.session_id || sessionId,
+                            user_id: sd3?.user_id || token,
+                            content: Array.isArray(sd3?.content) ? sd3.content : [],
+                            document_summary: Array.isArray(sd3?.document_summary) ? sd3.document_summary : [{ additionalProp1: {} }],
+                            video_duration: String(sd3?.video_duration || sd3?.videoduration || '60'),
+                            created_at: sd3?.created_at || new Date().toISOString(),
+                            totalsummary: Array.isArray(sd3?.totalsummary) ? sd3.totalsummary : (Array.isArray(sd3?.total_summary) ? sd3.total_summary : []),
+                            messages: Array.isArray(sd3?.messages) ? sd3.messages : [],
+                            scripts: Array.isArray(sd3?.scripts) ? sd3.scripts : [{ additionalProp1: {} }],
+                            videos: Array.isArray(sd3?.videos) ? sd3.videos : [],
+                            images: Array.isArray(sd3?.images) ? sd3.images : [],
+                            final_link: sd3?.final_link || '',
+                            videoType: sd3?.videoType || sd3?.video_type || '',
+                            brand_style_interpretation: sd3?.brand_style_interpretation,
+                            additionalProp1: sd3?.additionalProp1 || {}
+                          };
+                          const scriptsArr = Array.isArray(sd3?.scripts) ? sd3.scripts : [];
+                          const currentScriptObj = scriptsArr[0] || {};
+                          // Normalize script object to update-text "changed_script" shape
+                          const changed_script = currentScriptObj?.airesponse && currentScriptObj?.userquery
+                            ? { userquery: currentScriptObj.userquery, airesponse: currentScriptObj.airesponse, version: String(currentScriptObj.version || 'v1') }
+                            : (currentScriptObj?.script
+                              ? { userquery: (currentScriptObj.script?.userquery || []), airesponse: (currentScriptObj.script?.airesponse || []), version: String(currentScriptObj.script?.version || 'v1') }
+                              : { userquery: [], airesponse: [], version: 'v1' });
+                          const updateBody = { user: user3, session: sessionForBody3, changed_script };
+                          await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updateBody)
+                          });
+                        }
+                      } catch(_) { /* noop */ }
                       // refresh
                       try {
                         const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -4898,10 +6144,14 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
                           setScriptRows(newRows);
                         }
-                      } finally { setIsEnhancing(false); setSelectedAssetUrl(''); }
+                      } finally { setIsEnhancing(false); setSelectedAssetUrl(''); setSelectedTemplateUrls([]); }
                     } catch(_) { setIsEnhancing(false); /* noop */ }
                   }}
-                  className={`px-3 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-[#13008B] text-white hover:bg-blue-800'}`}
+                   className={`px-3 py-2 rounded-lg text-sm text-white ${
+                    (assetsTab==='templates' ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl)
+                      ? 'bg-blue-300 cursor-not-allowed'
+                      : 'bg-[#13008B] hover:bg-blue-800'
+                   }`}
                 >Generate</button>
               </div>
             </div>
@@ -4931,17 +6181,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               <button onClick={() => !isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`text-white w-8 h-8 transition-all duration-300 rounded-full ${isRegenerating ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:text-[#13008B] hover:bg-[#e4e0ff]'}`}>✕</button>
             </div>
             <div className="space-y-4">
-              {(() => {
-                try {
-                  const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
-                  const vt = ((typeof window !== 'undefined' && localStorage.getItem(`video_type_value:${sid}`)) || selectedVideoType || '').toLowerCase();
-                  const isHybrid = vt === 'hybrid';
-                  if (!isHybrid) return null;
-                } catch (_) { /* noop */ }
-                return (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Scene Type</label>
-                    <div className="flex items-center gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Video Type</label>
+                <div className="flex items-center gap-4">
                       <label className="inline-flex items-center gap-2 cursor-pointer">
                         <input type="radio" name="regen-model" checked={regenModel==='VEO3'} onChange={()=>setRegenModel('VEO3')} disabled={isRegenerating} />
                         <span>Avatar</span>
@@ -4954,82 +6196,44 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                         <input type="radio" name="regen-model" checked={regenModel==='PLOTLY'} onChange={()=>setRegenModel('PLOTLY')} disabled={isRegenerating} />
                         <span>Financial</span>
                       </label>
-                    </div>
-                  </div>
-                );
-              })()}
-              {(regenStep === 2 && regenModel==='PLOTLY') && (
-                <div className="mt-3 space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
-                    <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
-                      <option value="">Select</option>
-                      <option value="pie">Pie</option>
-                      <option value="bar">Bar</option>
-                      <option value="line">Line</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
-                    <textarea value={regenChartData} onChange={(e)=>setRegenChartData(e.target.value)} rows={4} className="w-full p-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Upload Document (to summarize)</label>
-                    <input type="file" accept=".pdf,.doc,.docx,.txt" disabled={isUploadingRegenDoc} onChange={async (e)=>{
-                      const file = e.target.files?.[0]; if (!file) return; setIsUploadingRegenDoc(true);
-                      try {
-                        const userId = localStorage.getItem('token');
-                        const sessionId = localStorage.getItem('session_id');
-                        if (!userId || !sessionId) throw new Error('Missing session');
-                        const form = new FormData(); form.append('files', file); form.append('user_id', userId); form.append('session_id', sessionId);
-                        const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
-                        const ex = await fetch(extractUrl, { method: 'POST', body: form }); const tx = await ex.text(); if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
-                        let exJson; try { exJson = JSON.parse(tx); } catch(_) { exJson = {}; }
-                        let documents = [];
-                        if (Array.isArray(exJson?.documents)) documents = exJson.documents;
-                        else if (Array.isArray(exJson)) documents = exJson;
-                        else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
-                        else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
-                        let sessionObj = { session_id: sessionId, user_id: userId };
-                        try {
-                          const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id: userId, session_id: sessionId }) });
-                          const st = await sResp.text(); let sj; try { sj = JSON.parse(st); } catch(_) { sj = {}; }
-                          const sd = sj?.session_data || sj?.session || {};
-                          sessionObj = {
-                            session_id: sd.session_id || sessionId,
-                            user_id: sd.user_id || userId,
-                            content: Array.isArray(sd.content) ? sd.content : [],
-                            document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-                            video_duration: String(sd.video_duration || sd.videoduration || '60'),
-                            created_at: sd.created_at || new Date().toISOString(),
-                            totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
-                            messages: Array.isArray(sd.messages) ? sd.messages : [],
-                            scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
-                            videos: Array.isArray(sd.videos) ? sd.videos : [],
-                            images: Array.isArray(sd.images) ? sd.images : [],
-                            final_link: sd.final_link || '',
-                            videoType: sd.videoType || sd.video_type || '',
-                            additionalProp1: sd.additionalProp1 || {}
-                          };
-                        } catch(_) {}
-                        const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
-                        const sum = await fetch(summaryUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ session: sessionObj, documents }) });
-                        const ts = await sum.text(); let js; try { js = JSON.parse(ts); } catch(_) { js = {}; }
-                        if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
-                        let firstSummary = '';
-                        try {
-                          const arr = Array.isArray(js?.summaries) ? js.summaries : (Array.isArray(js?.summary) ? js.summary : (Array.isArray(js?.total_summary) ? js.total_summary : []));
-                          if (Array.isArray(arr) && arr.length > 0) { const item = arr[0]; firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item)); }
-                          else if (typeof js?.summary === 'string') firstSummary = js.summary; else if (typeof js?.total_summary === 'string') firstSummary = js.total_summary;
-                        } catch(_) {}
-                        if (firstSummary) setRegenDocSummary(String(firstSummary));
-                      } catch(err) { alert(err?.message || 'Upload failed'); }
-                      finally { setIsUploadingRegenDoc(false); e.target.value=''; }
-                    }} />
-                    {isUploadingRegenDoc && (<div className="text-xs text-gray-500 mt-1">Processing document…</div>)}
-                  </div>
+                      {regenModel==='PLOTLY' && (
+                        <div className="ml-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                          <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
+                            <option value="">Select</option>
+                            <option value="bar">bar</option>
+                            <option value="grouped_bar">grouped_bar</option>
+                            <option value="stacked_bar">stacked_bar</option>
+                            <option value="waterfall">waterfall</option>
+                            <option value="line">line</option>
+                            <option value="multi_line">multi_line</option>
+                            <option value="area">area</option>
+                            <option value="pie">pie</option>
+                            <option value="donut">donut</option>
+                            <option value="treemap">treemap</option>
+                            <option value="scatter">scatter</option>
+                            <option value="bubble">bubble</option>
+                            <option value="heatmap">heatmap</option>
+                            <option value="combo_bar_line">combo_bar_line</option>
+                            <option value="funnel">funnel</option>
+                            <option value="histogram">histogram</option>
+                            <option value="box">box</option>
+                            <option value="candlestick">candlestick</option>
+                          </select>
+                          <div className="mt-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
+                            <textarea value={regenChartData} onChange={(e)=>setRegenChartData(e.target.value)} rows={4} className="w-full p-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
+                          </div>
+                          {regenDocSummary && (
+                            <div className="mt-2">
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Document Summary</label>
+                              <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{regenDocSummary}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                 </div>
-              )}
+              </div>
               {regenStep === 1 && (
                 <div className="flex justify-end pt-1">
                   <button
@@ -5138,7 +6342,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       {/* Inject CSS for thinking dots animation */}
       <style>{thinkingDotsStyles}</style>
       
-      {/* Main Content Area */}
+      {/* Main Content Area (hidden in Script Editor mode) */}
+     {!scenesMode && (
      <div className="flex-1 flex flex-col overflow-hidden overflow-x-hidden">
         {!isChatLoading && chatHistory.length === 0 && uploadedFiles.length === 0 ? (
           // Welcome message when no chat history and no files
@@ -5342,24 +6547,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   {message.type === 'ai' && (
                     <div className="flex items-center gap-3 mt-2 flex-wrap">
                       {/* Toolbar icons */}
-                      <button onClick={() => copyMessageText(message.content)} className="text-gray-500 hover:text-gray-800 transition-colors" title="Copy">
-                        <CopyIcon className="w-4 h-4" />
-                      </button>
-                      <button className="text-gray-500 hover:text-gray-800 transition-colors" title="Like">
-                        <ThumbsUp className="w-4 h-4" />
-                      </button>
-                      <button className="text-gray-500 hover:text-gray-800 transition-colors" title="Dislike">
-                        <ThumbsDown className="w-4 h-4" />
-                      </button>
-                      <button className="text-gray-500 hover:text-gray-800 transition-colors" title="Regenerate">
-                        <RefreshCcw className="w-4 h-4" />
-                      </button>
-                      <button className="text-gray-500 hover:text-gray-800 transition-colors" title="More">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </button>
+                     
 
                       {/* Divider */}
-                      <span className="hidden sm:inline-block w-px h-5 bg-gray-200 mx-1" />
+                    
 
                       {/* Generate/Script buttons */}
                       {(() => {
@@ -5374,7 +6565,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                 }}
                                 className={`flex items-center justify-center gap-2 px-3 py-2 border rounded-lg transition-colors shadow-sm bg-white border-gray-200 hover:bg-gray-50 text-gray-900`}>
                                 <div className="w-5 h-5 rounded-full bg-blue-700 flex items-center justify-center text-white text-[10px] font-bold">S</div>
-                                <span className={`text-sm font-medium`}>{imagesAvailable ? 'Go to Scenes' : 'Generate Scenes'}</span>
+                                <span className={`text-sm font-medium`}>{imagesAvailable ? 'Go to Storyboard' : 'Generate Storyboard'}</span>
                               </button>
                             );
                           } else {
@@ -5421,6 +6612,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           </div>
         )}
       </div>
+      )}
 
              {/* Chat Input or File Upload Display */}
        {!scenesMode && (
@@ -5437,7 +6629,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                  <textarea
                    ref={chatInputRef}
                    rows={1}
-                   placeholder="Hi! Tell Me How We Can Maximize Your Video Generation?"
+                   placeholder="Talk to me or upload the documents you want to summarize"
                    className="w-full px-3 py-2 lg:py-3 pr-28 lg:pr-36 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm lg:text-base leading-5 resize-none overflow-hidden scrollbar-hide whitespace-pre-wrap break-words"
                    value={inputMessage}
                    onChange={(e) => {

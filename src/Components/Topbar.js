@@ -1,14 +1,12 @@
 
 import React from 'react'
-import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
-import { FaPlus, FaSignOutAlt } from "react-icons/fa";
+import { FaBars, FaPlus, FaSignOutAlt } from "react-icons/fa";
 import { selectUser, selectIsAuthenticated, logoutUser } from '../redux/slices/userSlice';
 import { selectVideoJob } from '../redux/slices/videoJobSlice';
 
 const Topbar = () => {
-     const [sidebarOpen, setSidebarOpen] = useState(false);
      const dispatch = useDispatch();
      const navigate = useNavigate();
      const videoJob = useSelector(selectVideoJob);
@@ -26,72 +24,83 @@ const Topbar = () => {
      };
      
      return (
-       <div>
-          {/* Header */}
-           <div className="bg-white border-b border-gray-200 px-4 rounded-lg lg:px-8 py-4 h-[9vh] flex-shrink-0">
-             <div className="flex items-center justify-between">
-               <div className="flex items-center gap-4">
-                 <button 
-                   className="lg:hidden p-2 rounded-md hover:bg-gray-100"
-                   onClick={() => setSidebarOpen(true)}
-                 >
-                   <div className="w-6 h-6 flex flex-col justify-center space-y-1">
-                     <div className="w-full h-0.5 bg-gray-600"></div>
-                     <div className="w-full h-0.5 bg-gray-600"></div>
-                     <div className="w-full h-0.5 bg-gray-600"></div>
-                   </div>
-                 </button>
-                 <h1 className="text-xl lg:text-xl font-semibold text-gray-900">Welcome to Reel Reports</h1>
-               </div>
-               <div className="flex items-center gap-3">
-               {videoJob?.jobId && videoJob.status !== 'failed' && videoJob.status !== 'succeeded' && (
-                 <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full border bg-white border-gray-200 text-sm text-gray-700">
-                   <span className="font-medium">Video:</span>
-                   <span className={videoJob.status==='succeeded' ? 'text-green-700' : videoJob.status==='failed' ? 'text-red-700' : 'text-blue-700'}>
-                     {videoJob.status || 'queued'} {typeof videoJob?.progress?.percent === 'number' ? `• ${videoJob.progress.percent}%` : ''}
-                   </span>
-                 </div>
-               )}
-               { isAuthenticated && user ?
-                ( 
-                 <div className="flex items-center gap-3">
-                   <Link to="/profile">
-                     <div className="w-10 h-10 lg:w-10 lg:h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center overflow-hidden">
-                       {user.picture ? (
-                         <img 
-                           src={user.picture} 
-                           alt="Profile" 
-                           className="w-full h-full object-cover"
-                         />
-                       ) : (
-                         <div className="w-8 h-8 lg:w-8 lg:h-8 rounded-full bg-cover bg-center" style={{backgroundImage: "url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiNGNTkzMTYiLz4KPGNpcmNsZSBjeD0iMjAiIGN5PSIxNiIgcj0iNiIgZmlsbD0iI0ZGRkZGRiIvPgo8cGF0aCBkPSJNMTAgMzJDMTAgMjYuNDc3MiAxNC40NzcyIDIyIDE5IDIySDIxQzI1LjUyMjggMjIgMzAgMjYuNDc3MiAzMCAzMlYzNEgxMFYzMloiIGZpbGw9IiNGRkZGRkYiLz4KPC9zdmc+Cg==')"}}></div>
-                       )}
-                     </div>
-                   </Link>
-                   <button 
-                     onClick={handleLogout}
-                     className="flex items-center gap-2 px-3 py-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                     title="Logout"
-                   >
-                     <FaSignOutAlt className="w-4 h-4" />
-                     <span className="hidden lg:inline">Logout</span>
-                   </button>
-                 </div>
-                ) : (
-                   <div className='flex items-center gap-3'>
-                       <Link className='' to="/login">
-                       <button className='bg-[#13008B] flex items-center justify-start gap-2 text-white px-4 py-2 rounded-lg'><FaPlus />Create an Account</button>
-                     </Link>
-                     <Link to="/login">
-                       <button className='bg-[white] text-black px-4 py-2 rounded-lg'>Login</button>
-                     </Link>
-                   
-                   </div>
-                 )}
-               </div>
+       <header className="sticky  z-20 mb-2 flex items-center justify-between rounded-3xl border border-white/60 bg-white/90 px-4 py-4 shadow-[0_18px_45px_rgba(19,0,139,0.12)] backdrop-blur-lg transition-all lg:px-8">
+         <div className="flex items-center gap-4">
+           <button
+             className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E4E1FF] bg-white text-[#13008B] shadow-sm transition hover:border-[#c2bbff] hover:text-[#0F006B] lg:hidden"
+             onClick={() => {
+               if (typeof window !== 'undefined') {
+                 window.dispatchEvent(new CustomEvent('sidebar-toggle'));
+               }
+             }}
+             type="button"
+             aria-label="Open navigation"
+           >
+             <FaBars className="h-4 w-4" />
+           </button>
+           <h1 className="text-lg font-semibold text-[#13008B] lg:text-xl">Welcome to Reel Reports</h1>
+         </div>
+
+         <div className="flex items-center gap-3">
+           {videoJob?.jobId && videoJob.status !== 'failed' && videoJob.status !== 'succeeded' && (
+             <div className="hidden items-center gap-2 rounded-full border border-[#E4E1FF] bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm md:flex">
+               <span className="font-medium text-[#13008B]">Video:</span>
+               <span className={videoJob.status === 'succeeded' ? 'text-green-700' : videoJob.status === 'failed' ? 'text-red-700' : 'text-[#4B3CC4]'}>
+                 {videoJob.status || 'queued'} {typeof videoJob?.progress?.percent === 'number' ? `• ${videoJob.progress.percent}%` : ''}
+               </span>
              </div>
-           </div>
-       </div>
+           )}
+
+           {isAuthenticated && user ? (
+             <div className="flex items-center gap-3">
+               <Link to="/profile" className="group inline-flex items-center gap-2">
+                 <div className="h-11 w-11 rounded-full bg-gradient-to-br from-[#FFB347] via-[#FFA13D] to-[#FF8A3D] p-[2px] transition group-hover:from-[#FFA13D] group-hover:to-[#FF6A3D]">
+                   <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-white">
+                     {user.picture ? (
+                       <img
+                         src={user.picture}
+                         alt="Profile"
+                         className="h-full w-full object-cover"
+                       />
+                     ) : (
+                       <div
+                         className="h-full w-full bg-cover bg-center"
+                         style={{
+                           backgroundImage:
+                             "url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMjAiIGZpbGw9IiNGNTkzMTYiLz4KPGNpcmNsZSBjeD0iMjAiIGN5PSIxNiIgcj0iNiIgZmlsbD0iI0ZGRkZGRiIvPgo8cGF0aCBkPSJNMTAgMzJDMTAgMjYuNDc3MiAxNC40NzcyIDIyIDE5IDIySDIxQzI1LjUyMjggMjIgMzAgMjYuNDc3MiAzMCAzMlYzNEgxMFYzMloiIGZpbGw9IiNGRkZGRkYiLz4KPC9zdmc+Cg==')"
+                         }}
+                       ></div>
+                     )}
+                   </div>
+                 </div>
+               </Link>
+               <button
+                 onClick={handleLogout}
+                 className="flex items-center gap-2 rounded-xl border border-transparent bg-white px-3 py-2 text-sm font-medium text-[#4B3CC4] transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                 title="Logout"
+                 type="button"
+               >
+                 <FaSignOutAlt className="h-4 w-4" />
+                 <span className="hidden lg:inline">Logout</span>
+               </button>
+             </div>
+           ) : (
+             <div className="flex items-center gap-3">
+               <Link to="/login">
+                 <button className="flex items-center gap-2 rounded-xl bg-[#13008B] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:bg-[#0f006b]">
+                   <FaPlus className="h-4 w-4" />
+                   Create an Account
+                 </button>
+               </Link>
+               <Link to="/login">
+                 <button className="rounded-xl border border-[#D8D3FF] bg-white px-4 py-2 text-sm font-semibold text-[#13008B] shadow-sm transition hover:border-[#13008B]/40 hover:text-[#0f006b]">
+                   Login
+                 </button>
+               </Link>
+             </div>
+           )}
+         </div>
+       </header>
      )
 }
 

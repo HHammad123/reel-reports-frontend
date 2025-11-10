@@ -52,6 +52,7 @@ const ScriptEditor = ({
             onOpenImagesList={onOpenImagesList}
             imagesAvailable={imagesAvailable}
             scenesMode={true}
+            enablePresenterOptions={true}
             initialScenes={initialScenes}
             onBackToChat={onBack}
             key='script-editor'

@@ -890,7 +890,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
       videos: Array.isArray(sd?.videos) ? sd.videos : [],
       images: Array.isArray(sd?.images) ? sd.images : [],
       final_link: sd?.final_link || '',
-      videoType: sd?.videoType || sd?.video_type || ''
+      videoType: sd?.videoType || ''
     };
     return { user, sessionForBody, sd };
   };

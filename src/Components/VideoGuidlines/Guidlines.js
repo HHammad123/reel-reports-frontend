@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { selectGuidelinesForm, setGuidelinesState } from '../../redux/slices/guidelinesSlice'
 import { Link } from 'react-router-dom'
@@ -43,35 +43,92 @@ const Guidlines = () => {
   const colorInputRef = useRef(null)
   const avatarInputRef = useRef(null)
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false)
-  // Audio refs for hover-play of brand voices
-  const brandVoiceAudioRefs = useRef({})
-  const stopAllBrandVoice = () => {
-    try {
-      const map = brandVoiceAudioRefs.current || {}
-      Object.keys(map).forEach(k => {
-        const a = map[k];
-        if (a) { try { a.pause(); a.currentTime = 0 } catch (_) {} }
-      })
-    } catch (_) { /* noop */ }
-  }
-  const playBrandVoice = (i, url) => {
-    try {
-      stopAllBrandVoice()
-      let a = brandVoiceAudioRefs.current[i]
-      if (!a || a.src !== url) {
-        a = new Audio(url)
-        brandVoiceAudioRefs.current[i] = a
+
+  const extractBrandVoiceName = useCallback((voice, index) => {
+    if (!voice) return `Voice ${index + 1}`
+    if (typeof voice === 'object' && voice !== null) {
+      const candidates = [
+        voice.name,
+        voice.voiceover_name,
+        voice.voice_name,
+        voice.voiceName,
+        voice.title,
+        voice.display_name,
+        voice.label
+      ]
+      const match = candidates.find(value => typeof value === 'string' && value.trim())
+      if (match) return match.trim()
+    }
+    return `Voice ${index + 1}`
+  }, [])
+
+  const uniqueBrandVoiceOptions = useMemo(() => {
+    const source = Array.isArray(brandVoices) ? brandVoices : []
+    const seen = new Map()
+    return source.reduce((acc, voice, index) => {
+      const name = extractBrandVoiceName(voice, index)
+      const key = name.trim().toLowerCase()
+      if (!seen.has(key)) {
+        seen.set(key, true)
+        acc.push({ name, index })
       }
-      a.currentTime = 0
-      a.play().catch(() => {})
-    } catch (_) { /* noop */ }
-  }
-  const stopBrandVoice = (i) => {
+      return acc
+    }, [])
+  }, [brandVoices, extractBrandVoiceName])
+
+  // Presenter options (for Avatar/Hybrid video types)
+  const PRESENTER_OPTIONS = [
+    { option: 'Confident Entrance (Walk-in)', user_description: 'The [Presenter] enters confidently from the side, walks to the center, and pauses, ready to address the audience against a [background].', prompt_template: 'Generate a cinematic 4K Veo 3 shot of [Presenter] in professional attire walking confidently from the left, stopping center-frame against a [background]. The presenter should make natural eye contact with the camera, have a controlled, authoritative pace, and be lit by soft, professional studio lighting. Ensure realistic motion and a balanced composition.', prompt_sample: 'Generate a cinematic 4K Veo 3 shot of a woman with dark hair in a sharp navy blue suit walking confidently from the left, stopping center-frame against a bright, minimalist office lobby with a large window and green plants. She makes natural eye contact with the camera, her pace controlled and authoritative. The scene is lit by soft, diffused studio lighting that creates a professional, flattering look. Realistic motion physics and a perfectly balanced medium shot composition.', sample_video: 'https://example.com/sample_confident_entry.mp4' },
+    { option: 'Direct Address (Step Forward)', user_description: "The [Presenter] takes a deliberate step toward the camera, creating a sense of direct engagement, and begins speaking to the viewer from a [background].", prompt_template: 'Create a Veo 3 cinematic medium shot of [Presenter] in a [background] taking one confident step forward. The camera should subtly move with them, enhancing the feeling of direct address. Maintain sharp focus on the [Presenter]\'s face, shallow depth of field, warm, inviting lighting, and lifelike, engaging body language.', prompt_sample: 'Create a Veo 3 cinematic medium shot of a male presenter in a light grey turtleneck and blazer, set against a modern studio with warm wooden panels and soft ambient light. He takes one confident step forward, and the camera subtly pushes in with him, creating a strong sense of direct engagement. His face is in sharp focus, with a shallow depth of field blurring the background. The lighting is warm and inviting, highlighting his engaging body language.', sample_video: 'https://example.com/sample_step_forward.mp4' },
+    { option: 'Data Visualization (Gesture)', user_description: 'The [Presenter] stands mid-frame within a [background], gesturing clearly and naturally toward on-screen graphics (e.g., charts, text) that will be added later.', prompt_template: 'Generate a professional 4K Veo 3 scene. [Presenter] stands in a [background], gesturing decisively toward an empty space (for future graphics). Their body language must be clear, gaze direction must follow the gesture, and hand articulation must be precise. Use clean, even lighting and cinematic realism.', prompt_sample: 'Generate a professional 4K Veo 3 scene. A female data scientist in a crisp white shirt stands in a clean, futuristic white studio background. She gestures decisively with an open palm toward the empty space to her right, as if presenting a growth chart. Her gaze follows the gesture, and her hand articulation is precise. The shot uses clean, even, high-key lighting and cinematic realism.', sample_video: 'https://example.com/sample_gesture_graphics.mp4' },
+    { option: 'Walk and Talk (Tracking Shot)', user_description: 'A smooth tracking shot follows the [Presenter] as they walk across the [background], explaining a concept with natural gestures and articulation.', prompt_template: 'Generate a 4K Veo 3 smooth tracking shot (stabilized gimbal or dolly feel) following [Presenter] walking left-to-right across a [background]. The [Presenter] should look mostly at the camera while walking and talking, using expressive hand gestures. Ensure natural motion, crisp lighting, and synchronized lip movement for narration.', prompt_sample: 'Generate a 4K Veo 3 smooth tracking shot with a stabilized gimbal feel, following an architect in a casual-smart outfit as he walks left-to-right through a bright, open-plan modern office space with glass partitions. He looks directly at the camera, talking and using expressive hand gestures. The motion is natural, the lighting is crisp and airy, and his lip movements are perfectly synchronized for narration.', sample_video: 'https://example.com/sample_walk_across.mp4' },
+    { option: 'Dynamic Interaction (Virtual Elements)', user_description: 'The [Presenter] stands in a [background] and dynamically interacts with virtual 3D objects or data visualizations that appear around them, as if manipulating them.', prompt_template: 'Create a high-tech cinematic Veo 3 render of [Presenter] in a [background], dynamically engaging with virtual 3D elements (e.g., rotating a model, swiping through data). Ensure natural interaction timing, accurate eye-tracking on the virtual objects, and immersive lighting that realistically reflects off the [Presenter]. Seamless, futuristic motion realism is key.', prompt_sample: 'Create a high-tech cinematic Veo 3 render of a tech CEO on a dark, sleek holographic interface stage. She dynamically engages with a floating 3D model of a new product, rotating it with her hands. Her eye-tracking is accurate, and the blue light from the hologram realistically reflects on her face and clothes. The motion is seamless and futuristic.', sample_video: 'https://example.com/sample_virtual_interact.mp4' },
+    { option: 'Seated at Desk (Explainer)', user_description: 'The [Presenter] is seated at a professional desk in a [background], speaking directly to the camera in a clear, informative manner.', prompt_template: 'Generate a 4K Veo 3 medium shot of [Presenter] seated at a modern, clean desk in a [background] (e.g., office, studio). The [Presenter] should be leaning slightly forward, speaking engagingly to the camera. Use professional 3-point lighting, sharp focus, and a clean, uncluttered composition.', prompt_sample: 'Generate a 4K Veo 3 medium shot of a friendly financial advisor seated at a modern oak desk in a tasteful home office with a blurred bookshelf and a plant. He is leaning slightly forward, speaking engagingly to the camera. The shot uses professional 3-point lighting (soft key, fill, and a subtle hair light) for a polished, trustworthy look. The composition is clean, with sharp focus on the presenter.', sample_video: 'https://example.com/sample_seated_desk.mp4' },
+    { option: 'Podium Presentation (Keynote)', user_description: 'The [Presenter] stands confidently behind a podium in a [background] (e.g., stage, conference room), delivering a formal presentation.', prompt_template: 'Create a professional Veo 3 medium-long shot of [Presenter] standing behind a sleek podium against a [background] (e.g., large screen, stage curtains). The [Presenter] should exhibit authoritative posture, use purposeful hand gestures, and deliver a convincing speech. Lighting should be dramatic but clear, simulating a stage environment.', prompt_sample: 'Create a professional Veo 3 medium-long shot of a CEO in a dark suit standing behind a sleek, modern podium. The background is a large, softly lit stage with a massive blue presentation screen. The presenter has an authoritative posture and uses purposeful hand gestures. The lighting simulates a professional stage environment, with a strong, flattering spotlight on the presenter and dramatic, colored uplighting in the background.', sample_video: 'https://example.com/sample_podium_keynote.mp4' },
+    { option: 'Whiteboard Explanation (Strategy)', user_description: 'The [Presenter] stands next to a whiteboard or glassboard in a [background], writing or drawing to illustrate a point for the viewer.', prompt_template: 'Generate a 4K Veo 3 wide shot of [Presenter] standing beside a whiteboard/glassboard in a [background] (e.g., meeting room, innovation lab). The [Presenter] should be actively writing or drawing a diagram, turning occasionally to explain to the camera. Ensure the motion of writing is realistic and the presenter\'s focus is divided naturally between the board and the viewer.', prompt_sample: 'Generate a 4K Veo 3 wide shot of a project manager in a collared shirt standing beside a large glassboard in a bright, collaborative meeting room. She is actively drawing a flowchart with a black marker, turning every few seconds to explain a point directly to the camera. The motion of her writing is fluid and realistic. The room is filled with natural light from large windows.', sample_video: 'https://example.com/sample_whiteboard.mp4' },
+    { option: 'Emphatic Close-up (Key Message)', user_description: "The shot tightens to a close-up on the [Presenter]'s face as they deliver a critical message with conviction and sincerity, set in a [background].", prompt_template: "Create a tight cinematic Veo 3 close-up shot of [Presenter] in a [background]. The focus is entirely on their facial expression, which should convey sincerity and conviction. The background should be softly blurred (deep bokeh). Use soft, flattering key lighting to highlight their expression. This shot is for delivering a key takeaway.", prompt_sample: 'Create a tight cinematic Veo 3 close-up shot (from the shoulders up) of a senior executive in a softly lit studio. The focus is razor-sharp on her eyes, conveying deep sincerity and conviction. The background is extremely blurred, with beautiful, deep bokeh. A soft, flattering key light is used, creating gentle shadows and highlighting her focused expression. This shot is for a powerful key takeaway.', sample_video: 'https://example.com/sample_close_up.mp4' },
+    { option: 'anchor mode', size: '', position: 'bottomleft' }
+  ];
+  const [selectedPresenter, setSelectedPresenter] = useState(null);
+  const [isPresenterVisible, setIsPresenterVisible] = useState(false);
+  const [anchorSize, setAnchorSize] = useState('');
+  const [anchorPosition, setAnchorPosition] = useState('bottomleft');
+  useEffect(() => {
     try {
-      const a = brandVoiceAudioRefs.current[i]
-      if (a) { a.pause(); a.currentTime = 0 }
+      const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+      // Hide presenter options entirely in Guidelines for all video types
+      const visible = false;
+      setIsPresenterVisible(visible);
+      // restore selection if any
+      const saved = sid ? localStorage.getItem(`presenter_option:${sid}`) : null;
+      if (saved) {
+        const obj = JSON.parse(saved);
+        setSelectedPresenter(obj);
+        if (obj && obj.option === 'anchor mode') {
+          if (obj.size) setAnchorSize(obj.size);
+          if (obj.position) setAnchorPosition(obj.position);
+        }
+      }
     } catch (_) { /* noop */ }
-  }
+  }, []);
+  const handlePresenterSelect = (opt) => {
+    setSelectedPresenter(opt);
+    try {
+      const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+      const payload = opt && opt.option === 'anchor mode' ? { ...opt, size: (anchorSize || ''), position: (anchorPosition || 'bottomleft') } : opt;
+      if (sid) localStorage.setItem(`presenter_option:${sid}`, JSON.stringify(payload));
+      else localStorage.setItem('presenter_option', JSON.stringify(payload));
+    } catch (_) { /* noop */ }
+  };
+  useEffect(() => {
+    try {
+      if (!selectedPresenter || selectedPresenter.option !== 'anchor mode') return;
+      const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+      const payload = { ...selectedPresenter, size: anchorSize, position: anchorPosition };
+      if (sid) localStorage.setItem(`presenter_option:${sid}`, JSON.stringify(payload));
+      else localStorage.setItem('presenter_option', JSON.stringify(payload));
+    } catch (_) { /* noop */ }
+  }, [anchorSize, anchorPosition]);
 
   const fontOptions = [
     // System/web-safe
@@ -314,10 +371,9 @@ const Guidlines = () => {
     { id: "marketing", label: "Marketing Pitch / Proposal" }
   ];
   const goals = [
-    { id: "inform", label: "Inform" },
-    { id: "promote", label: "Promote" },
-    { id: "summarize", label: "Summarize" },
-    { id: "educate", label: "Educate" },
+    { id: "inform", label: "Internal communication" },
+    { id: "promote", label: "Public relations" },
+    { id: "summarize", label: "Financial reporting" },
     { id: "other", label: "Other (please specify)" }
   ];
   const handleSelect = (goalId) => {
@@ -336,6 +392,7 @@ const Guidlines = () => {
   const [openContent, setOpenContent] = useState(false)
   const [openStyle, setOpenStyle] = useState(false)
   const [openTechnical, setOpenTechnical] = useState(false)
+  const [openPresenter, setOpenPresenter] = useState(false)
   const [openAudio, setOpenAudio] = useState(false)
 
   // Function to close all accordions except the one being opened
@@ -345,6 +402,7 @@ const Guidlines = () => {
     setOpenStyle(accordionName === 'style')
     setOpenTechnical(accordionName === 'technical')
     setOpenAudio(accordionName === 'audio')
+    setOpenPresenter(accordionName === 'presenter')
   }
   const [selectedAudience, setSelectedAudience] = useState("general"); // Default to "General public"
   const [otherTextaud, setOtherTextaud] = useState("");
@@ -564,18 +622,28 @@ const Guidlines = () => {
   const [isOpenAspect, setIsOpenAspect] = useState(false);
   const [selectedAspect, setSelectedAspect] = useState("16_9"); // Default to "16:9 (Standard widescreen)"
   const [otherAspectText, setOtherAspectText] = useState("");
+  const [customAspectWidth, setCustomAspectWidth] = useState("");
+  const [customAspectHeight, setCustomAspectHeight] = useState("");
   const [descAspect, setDescAspect] = useState("");
 
   const optionsAspect = [
     { id: "16_9", label: "16:9 (Standard widescreen)" },
-    { id: "1_1", label: "1:1 (Square, ideal for Instagram)" },
-    { id: "9_16", label: "9:16 (Vertical, ideal for TikTok, Stories)" },
-    { id: "4_5", label: "4:5 (Portrait, suitable for Instagram feeds)" },
-    { id: "other", label: "Other (please specify)" },
+    { id: "9_16", label: "9:16 (Vertical, ideal for TikTok, Reels, Stories)" },
+    { id: "custom", label: "Custom aspect ratio" },
   ];
 
   const handleSelectAspect = (id) => {
-    setSelectedAspect(id);
+    if (id === 'custom') {
+      setSelectedAspect('custom');
+      if (customAspectWidth && customAspectHeight) {
+        setOtherAspectText(`${customAspectWidth}:${customAspectHeight}`);
+      } else {
+        setOtherAspectText('');
+      }
+    } else {
+      setSelectedAspect(id);
+      setOtherAspectText('');
+    }
   };
 
   // Audio and Effects
@@ -746,8 +814,17 @@ const Guidlines = () => {
       if (s.selectedFormat) setSelectedFormat(s.selectedFormat);
       if (typeof s.otherFormatText === 'string') setOtherFormatText(s.otherFormatText);
       if (typeof s.descFormat === 'string') setDescFormat(s.descFormat);
-      if (s.selectedAspect) setSelectedAspect(s.selectedAspect);
-      if (typeof s.otherAspectText === 'string') setOtherAspectText(s.otherAspectText);
+      if (s.selectedAspect) setSelectedAspect(s.selectedAspect === 'other' ? 'custom' : s.selectedAspect);
+      if (typeof s.otherAspectText === 'string') {
+        setOtherAspectText(s.otherAspectText);
+        const match = s.otherAspectText.match(/(\d+)\s*[:xX\/]\s*(\d+)/);
+        if (match) {
+          setCustomAspectWidth(match[1]);
+          setCustomAspectHeight(match[2]);
+        }
+      }
+      if (typeof s.customAspectWidth === 'string') setCustomAspectWidth(s.customAspectWidth);
+      if (typeof s.customAspectHeight === 'string') setCustomAspectHeight(s.customAspectHeight);
       if (typeof s.descAspect === 'string') setDescAspect(s.descAspect);
       // Audio & effects
       if (s.selectedMusic) setSelectedMusic(s.selectedMusic);
@@ -769,7 +846,7 @@ const Guidlines = () => {
         selectedLogo, selectedColor, selectedFonts, selectedColors: Array.from(selectedColors || []), customColors, currentColor,
         selectedFont, selectedGraphicsOption, selectedCTA, descCTA, selectedSummary, descSummary,
         selectedAvatar, selectedAvatarFromLibrary, uploadedAvatar, descAvatar,
-        selectedDuration, descDuration, selectedFormat, otherFormatText, descFormat, selectedAspect, otherAspectText, descAspect,
+        selectedDuration, descDuration, selectedFormat, otherFormatText, descFormat, selectedAspect, otherAspectText, customAspectWidth, customAspectHeight, descAspect,
         selectedMusic, descMusic, selectedVoice2, selectedVoiceFromLibrary, descVoice, selectedFeature, descFeatures,
       };
       dispatch(setGuidelinesState(state));
@@ -781,7 +858,7 @@ const Guidlines = () => {
     selectedLogo, selectedColor, selectedFonts, selectedColors, customColors, currentColor,
     selectedFont, selectedGraphicsOption, selectedCTA, descCTA, selectedSummary, descSummary,
     selectedAvatar, selectedAvatarFromLibrary, uploadedAvatar, descAvatar,
-    selectedDuration, descDuration, selectedFormat, otherFormatText, descFormat, selectedAspect, otherAspectText, descAspect,
+    selectedDuration, descDuration, selectedFormat, otherFormatText, descFormat, selectedAspect, otherAspectText, customAspectWidth, customAspectHeight, descAspect,
     selectedMusic, descMusic, selectedVoice2, selectedVoiceFromLibrary, descVoice, selectedFeature, descFeatures,
   ])
 
@@ -1286,12 +1363,87 @@ const Guidlines = () => {
           </div>
           
          
-                    
+        
            
            {/* Avatar Question */}
           
         </div>
       </div>
+
+      {/* Presenter Options (Avatar/Hybrid) */}
+      {isPresenterVisible && (
+        <>
+        <div
+          onClick={() => handleAccordionToggle('presenter')}
+          className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
+        >
+          <span className="text-[18px] text-gray-600">Presenter Options</span>
+          {openPresenter ? <FaAngleUp /> : <FaAngleDown />}
+        </div>
+        <div className={`transition-all duration-500 ease-in-out overflow-hidden ${openPresenter ? 'max-h-[2000px] mt-4 opacity-100' : 'max-h-0 opacity-0'}`}>
+        <div className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-1 border border-gray-200 rounded-lg divide-y">
+              {PRESENTER_OPTIONS.map((opt, idx) => {
+                const active = selectedPresenter && selectedPresenter.option === opt.option;
+                return (
+                  <button key={idx} type="button" onClick={() => handlePresenterSelect(opt)} className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}>
+                    <div className="font-medium text-gray-900 text-sm">{opt.option}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="md:col-span-2">
+              {!selectedPresenter && (
+                <div className="text-sm text-gray-500">Select a presenter option to preview its sample.</div>
+              )}
+              {selectedPresenter && (
+                <div className="space-y-3">
+                  <div className="text-lg font-semibold text-gray-900">{selectedPresenter.option}</div>
+                  {selectedPresenter.sample_video ? (
+                    <div className="aspect-video w-full bg-black/5 rounded-lg overflow-hidden border">
+                      <video controls className="w-full h-full">
+                        <source src={selectedPresenter.sample_video} type="video/mp4" />
+                      </video>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-600">No sample available.</div>
+                  )}
+                  {selectedPresenter.sample_video && (
+                    <div>
+                      <a className="text-blue-600 text-sm hover:underline" href={selectedPresenter.sample_video} target="_blank" rel="noreferrer">Open sample in new tab</a>
+                    </div>
+                  )}
+                  {selectedPresenter.option === 'anchor mode' && (
+                    <div className="mt-2 border-t pt-3">
+                      <div className="text-sm font-medium text-gray-800 mb-2">Anchor Settings</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-gray-600">Size</label>
+                          <input value={anchorSize} onChange={(e)=>setAnchorSize(e.target.value)} placeholder="e.g., small, medium, large or px" className="px-3 py-2 border rounded-lg" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-gray-600">Position</label>
+                          <select value={anchorPosition} onChange={(e)=>setAnchorPosition(e.target.value)} className="px-3 py-2 border rounded-lg">
+                            <option value="topleft">Top Left</option>
+                            <option value="topcenter">Top Center</option>
+                            <option value="topright">Top Right</option>
+                            <option value="bottomcenter">Bottom Center</option>
+                            <option value="bottomleft">Bottom Left</option>
+                            <option value="bottomright">Bottom Right</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        </div>
+        </>
+      )}
 
       {/* Technical and Format Constraints */}
 
@@ -1373,38 +1525,60 @@ const Guidlines = () => {
           <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">What aspect ratio should the video be published in?</span>
             <div className="flex flex-col gap-3">
-              {optionsAspect.map((opt) => (
-                <div key={opt.id} className="flex items-center gap-3">
-                  <button
-                    onClick={() => handleSelectAspect(opt.id)}
-                    className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
-                  ${selectedAspect === opt.id
-                        ? "bg-green-500 border-green-500"
-                        : "bg-white border-gray-400"
-                      }`}
-                  >
-                    {selectedAspect === opt.id && (
-                      <FaCheck className="text-white text-sm" />
+              {optionsAspect.map((opt) => {
+                const isSelected = selectedAspect === opt.id;
+                return (
+                  <div key={opt.id} className="flex flex-col gap-2">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => handleSelectAspect(opt.id)}
+                        className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
+                          ${isSelected ? "bg-green-500 border-green-500" : "bg-white border-gray-400"}`}
+                      >
+                        {isSelected && <FaCheck className="text-white text-sm" />}
+                      </button>
+                      <label
+                        onClick={() => handleSelectAspect(opt.id)}
+                        className="cursor-pointer"
+                      >
+                        {opt.label}
+                      </label>
+                    </div>
+                    {opt.id === "custom" && isSelected && (
+                      <div className="ml-9 flex items-center gap-3 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            value={customAspectWidth}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^\d]/g, '');
+                              setCustomAspectWidth(val);
+                              setOtherAspectText(val && customAspectHeight ? `${val}:${customAspectHeight}` : '');
+                            }}
+                            placeholder="Width"
+                            className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                          />
+                          <span className="text-sm text-gray-500">:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={customAspectHeight}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^\d]/g, '');
+                              setCustomAspectHeight(val);
+                              setOtherAspectText(customAspectWidth && val ? `${customAspectWidth}:${val}` : '');
+                            }}
+                            placeholder="Height"
+                            className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500">Enter numerical values (e.g., 4 and 5 for 4:5)</p>
+                      </div>
                     )}
-                  </button>
-                  <label
-                    onClick={() => handleSelectAspect(opt.id)}
-                    className="cursor-pointer"
-                  >
-                    {opt.label}
-                  </label>
-
-                  {opt.id === "other" && selectedAspect === "other" && (
-                    <input
-                      type="text"
-                      value={otherAspectText}
-                      onChange={(e) => setOtherAspectText(e.target.value)}
-                      placeholder="Please specify"
-                      className="border-b border-gray-400 outline-none ml-2"
-                    />
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1469,25 +1643,29 @@ const Guidlines = () => {
                    </div> */}
                    {/* Brand voices, circular + add */}
                    <div className="mb-2">
-                     <p className="text-sm text-gray-600 mb-2">Choose from your files:</p>
-                     <div className="flex flex-wrap gap-4 items-start">
-                       {Array.isArray(brandVoices) && brandVoices.length > 0 && brandVoices.map((v, i) => {
-                         const url = typeof v === 'string' ? v : (v?.url || '');
-                         const active = selectedVoiceFromLibrary === i;
-                         return (
-                           <div key={i} className="flex flex-col items-center gap-1">
-                             <button
-                               onMouseEnter={() => playBrandVoice(i, url)}
-                               onMouseLeave={() => stopBrandVoice(i)}
-                               onClick={() => setSelectedVoiceFromLibrary(i)}
-                               className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${active ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'}`}>
-                               <FaMicrophone className={`${active ? 'text-blue-700' : 'text-gray-600'}`} />
-                             </button>
-                             <span className="text-xs text-gray-600">Voice {i+1}</span>
-                           </div>
-                         );
-                       })}
-                       <div className="flex flex-col items-center gap-1">
+                    <p className="text-sm text-gray-600 mb-2">Choose from your files:</p>
+                    <div className="flex flex-wrap gap-4 items-start">
+                      {uniqueBrandVoiceOptions.length > 0 ? (
+                        uniqueBrandVoiceOptions.map(({ name, index }) => {
+                          const active = selectedVoiceFromLibrary === index
+                          return (
+                            <button
+                              key={`${name}-${index}`}
+                              onClick={() => setSelectedVoiceFromLibrary(index)}
+                              className={`px-4 py-2 rounded-full border text-sm font-medium transition-all ${
+                                active
+                                  ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              {name}
+                            </button>
+                          )
+                        })
+                      ) : (
+                        <span className="text-xs text-gray-500">No saved voices found.</span>
+                      )}
+                      <div className="flex flex-col items-center gap-1">
                          <button onClick={() => setIsVoiceModalOpen(true)} className="w-20 h-20 rounded-full flex items-center justify-center border border-dashed border-gray-400 text-gray-500 hover:bg-gray-50" title="Add voice">
                            <FaPlus className="w-6 h-6" />
                          </button>
@@ -1653,6 +1831,13 @@ const Guidlines = () => {
                   selectedVoiceUrl = typeof v === 'string' ? v : (v?.url || '');
                 }
               } catch (_) { /* noop */ }
+              const aspectValue = (() => {
+                if (selectedAspect === 'custom' || selectedAspect === 'other') {
+                  if (customAspectWidth && customAspectHeight) return `${customAspectWidth}:${customAspectHeight}`;
+                  return otherAspectText || '';
+                }
+                return selectedAspect || '';
+              })();
               const payload = {
                 purpose_and_audience: {
                   // Add selected video type into purpose_and_audience
@@ -1701,11 +1886,11 @@ const Guidlines = () => {
                      question: 'Do you want an avatar?',
                      answer: 'No'
                    }
-                 },
-                technical_and_formal_constraints: {
+                },
+               technical_and_formal_constraints: {
                   video_length: selectedDuration || '',
                   video_format: selectedFormat === 'other' ? otherFormatText : (selectedFormat || ''),
-                  aspect_ratio: selectedAspect === 'other' ? otherAspectText : (selectedAspect || '')
+                  aspect_ratio: aspectValue
                 },
                                  audio_and_effects: [
                   {

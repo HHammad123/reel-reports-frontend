@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import bg from "../../asset/bg-home.png"
-import { FaImages, FaPlay, FaPlayCircle, FaUserFriends } from 'react-icons/fa'
+import { FaChevronLeft, FaChevronRight, FaImages, FaPlay, FaPlayCircle, FaRegEdit, FaThLarge, FaUserFriends, FaVideo } from 'react-icons/fa'
 import { useNavigate } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 import { selectToken } from '../../redux/slices/userSlice'
@@ -11,6 +11,10 @@ const DashboardItems = () => {
   const [recentVideos, setRecentVideos] = useState([]);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
   const [recentError, setRecentError] = useState('');
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(
+    typeof window !== 'undefined' ? window.innerWidth : 1280
+  );
 
   const handleCompleteProfile = useCallback(() => {
 		navigate('/onboarding');
@@ -36,8 +40,54 @@ const DashboardItems = () => {
       alert('Unable to start a new chat. Please try again.');
     }
   }, [navigate, token]);
+
+	useEffect(() => {
+		if (typeof window === 'undefined') return;
+		const handleResize = () => setViewportWidth(window.innerWidth);
+		window.addEventListener('resize', handleResize);
+		return () => window.removeEventListener('resize', handleResize);
+	}, []);
+	const openTutorial = () => {
+	  try { localStorage.setItem('show_tutorial_video', 'true'); } catch(_) {}
+	  if (typeof window !== 'undefined' && typeof window.openTutorialVideo === 'function') {
+	    window.openTutorialVideo();
+	  }
+	};
+
+	const handleStartBuildReel = useCallback(async () => {
+		try {
+			try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
+			const userToken = token || localStorage.getItem('token') || '';
+			if (!userToken) { navigate('/login'); return; }
+			const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userToken })
+			});
+			const text = await resp.text();
+			let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+			if (!resp.ok) throw new Error(`sessions/new failed: ${resp.status} ${text}`);
+			const newId = data?.session?.session_id || data?.session_id || data?.id;
+			if (!newId) throw new Error('Session ID missing in response');
+			try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
+			navigate(`/buildreel/${newId}`);
+		} catch (e) {
+			console.error('Failed to create build reel session:', e);
+			alert('Unable to open Build Reel. Please try again.');
+		}
+	}, [navigate, token]);
+
 	const cards = [
-		
+		{
+			id: 0,
+			icon: <FaPlayCircle className="text-[#13008B] w-12 h-12" />,
+			label: "Generate Reel",
+			onClick: handleStartGenerating,
+		},
+		{
+			id: 1,
+			icon: <FaThLarge className="text-[#13008B] w-12 h-12" />,
+			label: "Build Reel",
+			onClick: handleStartBuildReel,
+		},
 		{
 			id: 2,
 			link: "/media",
@@ -48,7 +98,14 @@ const DashboardItems = () => {
 			id: 3,
 			link: "/profile",
 			icon: <FaUserFriends className="text-[#13008B] w-12 h-12" />,
-			label: "My Profile",
+			label: "Update Brand Guidelines",
+		},
+		{
+			id: 4,
+			link: "#tutorial",
+			icon: <FaVideo className="text-[#13008B] w-12 h-12" />,
+			label: "Tutorial Video",
+			onClick: openTutorial,
 		},
 	];
   useEffect(() => {
@@ -84,21 +141,14 @@ const DashboardItems = () => {
 			<div className="flex flex-col md:flex-row items-end justify-between">
 				{/* Left Section */}
 				<div className="flex-1 text-left">
-					<h1 className="text-2xl md:text-3xl font-bold text-gray-900 leading-snug">
-						Start Generating Highly First Reel Report Today
+					<h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-snug">
+					Communication, brought to life, within branding guidelines and under your control
 					</h1>
 					<p className="mt-2 text-gray-600 text-sm md:text-base">
-						Premium Quality Faster Performance
+					Communicate and engage better and faster
 					</p>
 
-					<div className="mt-6 flex gap-4">
-						<button onClick={handleStartGenerating} className="bg-[#13008B] text-white px-6 py-3 rounded-lg font-medium hover:bg-[#0F0070] transition">
-							Start Generating
-						</button>
-					<button onClick={handleCompleteProfile} className="border border-[#13008B] text-[#13008B] px-6 py-3 rounded-lg font-medium hover:bg-[#F5F3FF] transition">
-						Complete Profile
-					</button>
-					</div>
+					
 				</div>
 
 				{/* Right Section - Most recent video */}
@@ -125,15 +175,16 @@ const DashboardItems = () => {
 				</div>
 			</div>
 			<div className='flex flex-col mt-5 justify-start items-start'>
-				<h3 className='text-[20px] font-semibold'>Start our video generation journey:</h3>
+				<h3 className='text-[20px] font-semibold'>Start your video generation journey:</h3>
 				<div className="flex gap-6 mt-2">
 					{cards.map((card) => (
 						<div
 							key={card.id}
-							className="w-48 h-48 bg-gray-100 rounded-lg shadow-sm flex flex-col items-center justify-center hover:shadow-md cursor-pointer transition"
+							className="w-48 h-48  bg-gray-100 rounded-lg shadow-sm flex flex-col items-center justify-center hover:shadow-md cursor-pointer transition"
+							onClick={() => { if (card.onClick) { card.onClick(); return; } if (card.link) navigate(card.link); }}
 						>
 							{card.icon}
-							<p className="mt-4 text-[#13008B] font-semibold text-lg">
+							<p className="mt-4 text-[#13008B] font-semibold text-center text-lg">
 								{card.label}
 							</p>
 						</div>

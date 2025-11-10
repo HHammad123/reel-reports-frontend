@@ -1,7 +1,70 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, CheckCircle, Circle, ArrowLeft } from 'lucide-react';
 
-const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
+const wrapAdditional = (value) => {
+  if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+    return { additionalProp1: value }
+  }
+  return { additionalProp1: {} }
+}
+
+const toAdditionalArray = (items) => {
+  if (!Array.isArray(items) || items.length === 0) return [wrapAdditional({})]
+  return items.map(item => {
+    if (item && typeof item === 'object') return wrapAdditional(item)
+    if (item != null) return wrapAdditional({ value: item })
+    return wrapAdditional({})
+  })
+}
+
+const mapToStringArray = (arr) => {
+  if (!Array.isArray(arr)) return []
+  return arr
+    .map(item => {
+      if (typeof item === 'string') return item
+      if (item && typeof item === 'object') {
+        return item.name || item.title || item.url || item.id || JSON.stringify(item)
+      }
+      return item != null ? String(item) : ''
+    })
+    .filter(Boolean)
+}
+
+const mapVoiceoversToObjects = (arr = []) => {
+  if (!Array.isArray(arr)) return []
+  return arr
+    .map(item => {
+      if (!item || typeof item !== 'object') return null
+      const url = item.url || item.audio_url || item.file || item.link || ''
+      if (!url) return null
+      return {
+        url,
+        name: item.name || item.voiceover_name || item.title || '',
+        type: item.type || item.voiceover_type || '',
+        created_at: item.created_at || item.uploaded_at || item.timestamp || new Date().toISOString()
+      }
+    })
+    .filter(Boolean)
+}
+
+const normalizeBrandIdentity = (bi = {}) => ({
+  logo: Array.isArray(bi.logo) ? bi.logo : (Array.isArray(bi.logos) ? bi.logos : []),
+  fonts: Array.isArray(bi.fonts) ? bi.fonts : [],
+  icons: Array.isArray(bi.icon) ? bi.icon : (Array.isArray(bi.icons) ? bi.icons : []),
+  colors: Array.isArray(bi.colors) ? bi.colors : [],
+  spacing: bi.spacing || bi.spacing_scale || '',
+  tagline: bi.tagline || ''
+})
+
+const deriveLastUserQuery = (messages = []) => {
+  if (!Array.isArray(messages)) return ''
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const candidate = messages[i]?.userquery || messages[i]?.user_query || messages[i]?.query || ''
+    if (typeof candidate === 'string' && candidate.trim()) return candidate
+  }
+  return ''
+}
+const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -36,18 +99,22 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
       } catch (_) { /* noop */ }
       const data = questionsData || {};
       const rawQuestions = data?.questions || data?.questionnaire || data?.items || [];
-      const normalized = rawQuestions.map((q, index) => {
-        const optionsArray = Array.isArray(q?.options) ? q.options : [];
-        return {
-          id: q?.id ?? index + 1,
-          question: q?.question || q?.text || '',
-          type: optionsArray.length > 0 ? 'multiple_choice' : 'text',
-          options: optionsArray.map(opt =>
-            typeof opt === 'string' ? opt : (opt?.text ?? String(opt))
-          ),
-          required: q?.required ?? true
-        };
-      });
+      const normalized = (rawQuestions || [])
+        .filter(Boolean)
+        .map((q, index) => {
+          const optionsArray = Array.isArray(q?.options) ? q.options : [];
+          const text = (q?.question || q?.text || '').toString();
+          return {
+            id: q?.id ?? index + 1,
+            question: text || `Question ${index + 1}`,
+            type: optionsArray.length > 0 ? 'multiple_choice' : 'text',
+            options: optionsArray.map(opt =>
+              typeof opt === 'string' ? opt : (opt?.text ?? String(opt))
+            ),
+            required: q?.required ?? true
+          };
+        })
+        .filter(q => typeof q.question === 'string');
       setQuestions(normalized);
       setIsLoading(false);
     } catch (err) {
@@ -84,7 +151,7 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
 
   const handleSubmit = () => {
     // Build array of { question, answer } with answer always as text
-    const answersArray = questions.map(q => ({
+    const answersArray = (questions || []).filter(Boolean).map(q => ({
       question: q.question,
       answer: answers[q.id] || ''
     }));
@@ -108,21 +175,16 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
        const guidelinesRaw = localStorage.getItem('guidelines_payload');
        const guidelines = guidelinesRaw ? JSON.parse(guidelinesRaw) : null;
  
-       const aiQues = questions.map(q => ({ question: q.question, answer: answers[q.id] || '' }));
+       const aiQues = (questions || []).filter(Boolean).map(q => ({ question: q.question, answer: answers[q.id] || '' }));
  
-       const additonalprop1 = {
-         ai_ques: aiQues,
-         ...(guidelines ? {
-           purpose_and_audience: guidelines.purpose_and_audience,
-           content_focus_and_emphasis: guidelines.content_focus_and_emphasis,
-           style_and_visual_pref: guidelines.style_and_visual_pref,
-           technical_and_formal_constraints: guidelines.technical_and_formal_constraints,
-           audio_and_effects: guidelines.audio_and_effects
-         } : {})
-       };
- 
-       const questionnaire_context = [{ additonalprop1 }];
- 
+       // Presenter option (from Guidelines selection)
+       let presenterOpt = null;
+       try {
+         const raw = (sessionId && localStorage.getItem(`presenter_option:${sessionId}`)) || localStorage.getItem('presenter_option');
+         if (raw) presenterOpt = JSON.parse(raw);
+       } catch (_) { /* noop */ }
+
+       // Build questionnaire_context per required schema
        // Fetch current session data from API (do not create a new object)
        let sessionPayload = undefined;
        try {
@@ -151,12 +213,14 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
       let qVideoType = 'hybrid';
       try {
         const sd = sessionPayload || {};
-        qVideoType = sd?.videoType || sd?.video_type || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
+        qVideoType = sd?.videoType || localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid';
       } catch (_) { /* noop */ }
       const qvt = String(qVideoType || '').toLowerCase();
       let scriptEndpoint = 'scripts/hybrid/generate';
-      if (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic') scriptEndpoint = 'scripts/infographics/generate';
-      if (qvt === 'financial') scriptEndpoint = 'scripts/financial/generate';
+      if (qvt === 'avatar' || qvt === 'avatars' || qvt === 'avatar based') scriptEndpoint = 'scripts/avatar/generate';
+      else if (qvt === 'hybrid') scriptEndpoint = 'scripts/hybrid/generate';
+      else if (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic') scriptEndpoint = 'scripts/infographics/generate';
+      else if (qvt === 'financial') scriptEndpoint = 'scripts/financial/generate';
 
       // Build full payload with user + session + questionnaire context
       let userMeta = {};
@@ -172,6 +236,17 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
       const templatesArr = brandAssets?.template || brandAssets?.templates || [];
       const voiceoverArr = brandAssets?.voiceover || brandAssets?.voiceovers || [];
 
+      const brandIdentity = wrapAdditional(normalizeBrandIdentity(bi));
+      const toneVoice = wrapAdditional({
+        context: tv?.context || '',
+        brand_personality: Array.isArray(tv?.brand_personality) ? tv.brand_personality : [],
+        communication_style_pace: Array.isArray(tv?.communication_style_pace) ? tv.communication_style_pace : []
+      });
+      const lookFeel = wrapAdditional({
+        iconography: Array.isArray(lf?.iconography) ? lf.iconography : [],
+        graphic_elements: Array.isArray(lf?.graphic_elements) ? lf.graphic_elements : [],
+        aesthetic_consistency: Array.isArray(lf?.aesthetic_consistency) ? lf.aesthetic_consistency : []
+      });
       const userPayload = {
         id: userMeta?.id || effectiveUserId || '',
         email: userMeta?.email || '',
@@ -179,36 +254,57 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
         created_at: userMeta?.created_at || new Date().toISOString(),
         avatar_url: userMeta?.avatar_url || '',
         folder_url: brandAssets?.folder_url || '',
-        brand_identity: {
-          logo: bi?.logo || [],
-          fonts: bi?.fonts || [],
-          icons: bi?.icon || bi?.icons || [],
-          colors: bi?.colors || [],
-          spacing: bi?.spacing,
-          tagline: bi?.tagline
-        },
-        tone_and_voice: {
-          context: tv?.context || '',
-          brand_personality: tv?.brand_personality || [],
-          communication_style_pace: tv?.communication_style_pace || []
-        },
-        look_and_feel: {
-          iconography: lf?.iconography || [],
-          graphic_elements: lf?.graphic_elements || [],
-          aesthetic_consistency: lf?.aesthetic_consistency || []
-        },
-        templates: templatesArr,
-        voiceover: voiceoverArr
+        brand_identity: brandIdentity,
+        tone_and_voice: toneVoice,
+        look_and_feel: lookFeel,
+        templates: mapToStringArray(templatesArr),
+        voiceover: mapVoiceoversToObjects(voiceoverArr)
       };
 
+      const resolvedVideoType = qvt || sessionPayload?.videoType || '';
+      const resolvedToneForScript = sessionPayload?.video_tone || sessionPayload?.videoTone || 'professional';
+      const sessionData = {
+        session_id: sessionPayload?.session_id || sessionId || '',
+        user_id: sessionPayload?.user_id || effectiveUserId || '',
+        title: sessionPayload?.title || '',
+        video_duration: String(sessionPayload?.video_duration || '60'),
+        created_at: sessionPayload?.created_at || new Date().toISOString(),
+        updated_at: sessionPayload?.updated_at || new Date().toISOString(),
+        document_summary: toAdditionalArray(sessionPayload?.document_summary),
+        messages: toAdditionalArray(sessionPayload?.messages),
+        total_summary: mapToStringArray(sessionPayload?.total_summary),
+        scripts: mapToStringArray(sessionPayload?.scripts),
+        videos: toAdditionalArray(sessionPayload?.videos),
+        images: mapToStringArray(sessionPayload?.images),
+        final_link: sessionPayload?.final_link || '',
+        videoType: resolvedVideoType,
+        brand_style_interpretation: wrapAdditional(sessionPayload?.brand_style_interpretation || {}),
+        additionalProp1: wrapAdditional(sessionPayload?.additionalProp1 || {})
+      };
+
+      if (!sessionData.document_summary.length) sessionData.document_summary = [wrapAdditional({})];
+      if (!sessionData.messages.length) sessionData.messages = [wrapAdditional({})];
+      if (!sessionData.videos.length) sessionData.videos = [wrapAdditional({})];
+      if (!sessionData.images.length) sessionData.images = [];
+      if (!sessionData.scripts.length) sessionData.scripts = [];
+      if (!sessionData.total_summary.length) sessionData.total_summary = [];
+
+      const questionnaireAdditional = {};
+      if (Array.isArray(aiQues) && aiQues.length) questionnaireAdditional.ai_questions = aiQues;
+      if (presenterOpt) questionnaireAdditional.presenter_options = presenterOpt;
+      if (guidelines) questionnaireAdditional.guidelines = guidelines;
+      const questionnaireContext = [{
+        additionalProp1: Object.keys(questionnaireAdditional).length ? questionnaireAdditional : {}
+      }];
+      const lastUserQuery = deriveLastUserQuery(sessionPayload?.messages || sessionData.messages || []);
       const fullPayload = {
         user: userPayload,
-        session: (sessionPayload || {}),
-        video_length: Number((sessionPayload && sessionPayload.video_duration) ? sessionPayload.video_duration : 60),
-        video_tone: (sessionPayload && sessionPayload.video_tone) ? sessionPayload.video_tone : 'professional',
-        questionnaire_context,
+        session: sessionData,
+        video_length: Number(sessionPayload?.video_duration || 60),
+        video_tone: resolvedToneForScript,
+        questionnaire_context: questionnaireContext,
         is_followup: false,
-        user_query: ''
+        user_query: lastUserQuery || ''
       };
 
       console.log('Generate Script request:', scriptEndpoint, fullPayload);
@@ -385,7 +481,40 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
     );
   }
 
-  const currentQuestion = questions[currentQuestionIndex];
+  if (!questions.length) {
+    return (
+      <div className="bg-white h-full w-full rounded-lg p-[20px] flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="text-xl font-semibold text-gray-800">No questions available</div>
+          <p className="text-gray-600 max-w-md">
+            We could not find any questions for this questionnaire. You can go back to the guidelines or generate a script directly.
+          </p>
+          <div className="flex flex-wrap gap-3 justify-center">
+            <button
+              onClick={onPreviousStep}
+              className="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors flex items-center gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Guidelines
+            </button>
+            <button
+              onClick={handleGenerateScript}
+              disabled={isGenerating}
+              className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                isGenerating
+                  ? 'bg-purple-300 text-white cursor-not-allowed'
+                  : 'bg-purple-600 text-white hover:bg-purple-700'
+              }`}
+            >
+              {isGenerating ? 'Generating…' : 'Generate Script'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const currentQuestion = questions[currentQuestionIndex] || null;
   const isLastQuestion = currentQuestionIndex === questions.length - 1;
   // All questions are optional; allow proceeding without answer
   const canProceed = true;
@@ -395,7 +524,7 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Step 2: Dynamic Questionnaire</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Super Prompted Questionnaire</h2>
           <p className="text-gray-600">Please answer the following questions to help us create your video</p>
         </div>
 
@@ -420,15 +549,19 @@ const DynamicQuestion = ({ onNextStep, onPreviousStep, questionsData }) => {
         {/* Question */}
         <div className="bg-gray-50 rounded-lg p-6 mb-8">
           <div className="mb-4">
-            <span className="inline-block bg-purple-100 text-purple-800 text-sm font-medium px-3 py-1 rounded-full mb-3">
-              Question {currentQuestionIndex + 1}
-            </span>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {currentQuestion.question}
-            </h3>
+            {currentQuestion && (
+              <>
+                <span className="inline-block bg-purple-100 text-purple-800 text-sm font-medium px-3 py-1 rounded-full mb-3">
+                  Question {currentQuestionIndex + 1}
+                </span>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  {currentQuestion?.question ?? ''}
+                </h3>
+              </>
+            )}
           </div>
           
-          {renderQuestion(currentQuestion)}
+          {currentQuestion && renderQuestion(currentQuestion)}
 
           {/* Voice-over tools moved to Guidelines step */}
         </div>
