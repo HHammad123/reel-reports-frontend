@@ -1,13 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { useDispatch } from 'react-redux';
-import { setJob } from '../redux/slices/videoJobSlice';
-import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check, Maximize2, RefreshCcw, ChevronLeft, ChevronRight, ChevronDown, Copy as CopyIcon, ThumbsUp, ThumbsDown, MoreHorizontal, Trash2 } from 'lucide-react';
-import { FaChartBar, FaUser } from 'react-icons/fa';
-import { Link } from 'react-router-dom';
+import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check, Maximize2, RefreshCcw, ChevronLeft, ChevronRight, ChevronDown, MoreHorizontal, Trash2 } from 'lucide-react';
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
 
-const resolveTemplateAssetUrl = (entry) => {
+const resolveTemplateAssetUrl = (entry) => {  
   if (!entry) return '';
   if (typeof entry === 'string') return entry.trim();
   if (typeof entry !== 'object') return '';
@@ -35,7 +31,7 @@ const normalizeTemplateAspectLabel = (aspect) => {
   if (!aspect || typeof aspect !== 'string') return 'Unspecified';
   const trimmed = aspect.trim();
   if (!trimmed) return 'Unspecified';
-  const normalized = trimmed.replace(/[xX]/g, ':').replace(/\s+/g, '');
+  const normalized = trimmed.replace(/[xX_]/g, ':').replace(/\s+/g, '');
   if (/^\d+:\d+$/.test(normalized)) return normalized;
   const lower = normalized.toLowerCase();
   if (lower.includes('portrait')) return '9:16';
@@ -43,7 +39,7 @@ const normalizeTemplateAspectLabel = (aspect) => {
   return trimmed;
 };
 
-const flattenTemplateAssets = (templates = []) => {
+const flattenTemplateAssets = (templatesInput = []) => {
   const normalized = [];
 
   const pushEntry = (entry, aspectHint, labelHint, keyHint) => {
@@ -52,6 +48,12 @@ const flattenTemplateAssets = (templates = []) => {
       (entry.template && typeof entry.template === 'object' ? entry.template : entry);
     const imageUrl = resolveTemplateAssetUrl(templateObj);
     if (!imageUrl) return;
+    const trimmedUrl = imageUrl.trim();
+    const lowerUrl = trimmedUrl.toLowerCase();
+    const looksLikeHttp = /^https?:\/\//.test(trimmedUrl);
+    const looksLikeData = trimmedUrl.startsWith('data:image/');
+    const hasImageExtension = /(\.png|\.jpe?g|\.webp|\.gif|\.bmp|\.svg)(\?|$)/.test(lowerUrl);
+    if (!(looksLikeHttp || looksLikeData || hasImageExtension)) return;
     const aspectSource =
       templateObj?.aspect_ratio ||
       templateObj?.ratio ||
@@ -82,30 +84,325 @@ const flattenTemplateAssets = (templates = []) => {
       raw: templateObj
     });
   };
+  const looksLikeTemplateObject = (obj) => {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+    const candidate =
+      obj.template && typeof obj.template === 'object' ? obj.template : obj;
+    return !!resolveTemplateAssetUrl(candidate);
+  };
 
-  templates.forEach((item, idx) => {
-    if (!item) return;
-    if (typeof item === 'string') {
-      pushEntry(item, '', `Template ${idx + 1}`, `template-${idx}`);
+  const processNode = (node, aspectHint = '', labelHint = '', keyHint = 'template') => {
+    if (!node) return;
+    if (typeof node === 'string') {
+      pushEntry(node, aspectHint, labelHint || `Template ${normalized.length + 1}`, keyHint);
       return;
     }
-    const aspectHint = normalizeTemplateAspectLabel(
-      item.aspect_ratio || item.ratio || item.orientation || ''
-    );
-    const nestedTemplates = [
-      ...(Array.isArray(item.preset_templates) ? item.preset_templates : []),
-      ...(Array.isArray(item.uploaded_templates) ? item.uploaded_templates : [])
-    ];
-    if (nestedTemplates.length > 0) {
-      nestedTemplates.forEach((entry, entryIdx) => {
-        pushEntry(entry, aspectHint, `${aspectHint} Template ${entryIdx + 1}`, `${idx}-${entryIdx}`);
+    if (Array.isArray(node)) {
+      node.forEach((child, idx) => {
+        processNode(child, aspectHint, labelHint, `${keyHint}-${idx}`);
       });
-    } else {
-      pushEntry(item, aspectHint, `Template ${idx + 1}`, `template-${idx}`);
+      return;
     }
-  });
+    if (typeof node === 'object') {
+      if (looksLikeTemplateObject(node)) {
+        const directAspect =
+          node?.aspect_ratio || node?.ratio || node?.orientation || aspectHint;
+        const aspect = normalizeTemplateAspectLabel(directAspect);
+        pushEntry(node, aspect, labelHint, keyHint);
+        return;
+      }
+      const aspectFromNode = normalizeTemplateAspectLabel(
+        node?.aspect_ratio || node?.ratio || node?.orientation || aspectHint
+      );
+      const nestedTemplates = [
+        ...(Array.isArray(node.preset_templates) ? node.preset_templates : []),
+        ...(Array.isArray(node.uploaded_templates) ? node.uploaded_templates : [])
+      ];
+      const handledKeys = new Set();
+      if (Array.isArray(node.preset_templates)) handledKeys.add('preset_templates');
+      if (Array.isArray(node.uploaded_templates)) handledKeys.add('uploaded_templates');
+      if (nestedTemplates.length > 0) {
+        nestedTemplates.forEach((child, idx) => {
+          processNode(
+            child,
+            aspectFromNode,
+            `${aspectFromNode} Template ${idx + 1}`,
+            `${keyHint}-${idx}`
+          );
+        });
+      }
+      const entries = Object.entries(node).filter(([childKey]) => !handledKeys.has(childKey));
+      if (entries.length === 0) return;
+      entries.forEach(([childKey, childVal], idx) => {
+        if (childVal == null) return;
+        const aspectFromKey = normalizeTemplateAspectLabel(childKey);
+        const nextAspect =
+          aspectFromKey && aspectFromKey !== 'Unspecified'
+            ? aspectFromKey
+            : aspectFromNode;
+        const childLabel =
+          typeof childKey === 'string' && childKey.trim().length > 0
+            ? childKey
+            : labelHint;
+        processNode(childVal, nextAspect, childLabel, `${keyHint}-${childKey || idx}`);
+      });
+      return;
+    }
+  };
+
+  processNode(templatesInput);
 
   return normalized;
+};
+
+const parseDurationToSeconds = (input) => {
+  try {
+    if (typeof input === 'number' && Number.isFinite(input)) return Math.round(input);
+    if (typeof input !== 'string') return null;
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    const rangeMatch = trimmed.match(/(\d+)\s*[-–]\s*(\d+)/);
+    if (rangeMatch) {
+      const endVal = Number(rangeMatch[2]);
+      return Number.isFinite(endVal) ? endVal : null;
+    }
+    const matches = trimmed.match(/(\d+(\.\d+)?)/g);
+    if (matches && matches.length > 0) {
+      const last = Number(matches[matches.length - 1]);
+      return Number.isFinite(last) ? Math.round(last) : null;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const computeWordCount = (text) => {
+  if (typeof text !== 'string') return 0;
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+};
+
+const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
+  const base =
+    sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)
+      ? { ...sessionData }
+      : {};
+  if (base.id && !base.session_id) base.session_id = base.id;
+  delete base.id;
+  base.session_id = base.session_id || sessionId || '';
+  base.user_id = base.user_id || token || '';
+  if (base.videoduration && !base.video_duration) base.video_duration = base.videoduration;
+  base.video_duration = String(base.video_duration || '60');
+  base.created_at = base.created_at || new Date().toISOString();
+  base.updated_at = base.updated_at || new Date().toISOString();
+  base.content = Array.isArray(base.content) ? base.content : [];
+  base.document_summary = Array.isArray(base.document_summary) ? base.document_summary : [];
+  base.messages = Array.isArray(base.messages) ? base.messages : [];
+  if (Array.isArray(base.totalsummary) && !Array.isArray(base.total_summary)) {
+    base.total_summary = base.totalsummary;
+  }
+  base.total_summary = Array.isArray(base.total_summary) ? base.total_summary : [];
+  base.scripts = Array.isArray(base.scripts) ? base.scripts : [];
+  base.videos = Array.isArray(base.videos) ? base.videos : [];
+  base.images = Array.isArray(base.images) ? base.images : [];
+  if (!base.final_link) base.final_link = base.final_link || '';
+  if (!base.videoType && base.video_type) base.videoType = base.video_type;
+  if (!base.brand_style_interpretation || typeof base.brand_style_interpretation !== 'object') {
+    base.brand_style_interpretation = {};
+  }
+  if ('additionalProp1' in base) delete base.additionalProp1;
+  if ('user_data' in base) delete base.user_data;
+  if ('user' in base) delete base.user;
+  delete base.videoduration;
+  delete base.video_type;
+  delete base.totalsummary;
+  return base;
+};
+
+const normalizeUserSnapshot = (userData = {}, token = '') => {
+  const base =
+    userData && typeof userData === 'object' && !Array.isArray(userData)
+      ? { ...userData }
+      : {};
+  if (!base.id) base.id = base.user_id || base._id || token || '';
+  if (!base.display_name) base.display_name = base.displayName || base.name || '';
+  if (!base.email && base.Email) base.email = base.Email;
+  if (!base.created_at) base.created_at = new Date().toISOString();
+  if (!base.avatar_url && base.avatarUrl) base.avatar_url = base.avatarUrl;
+  if (!base.folder_url && base.folderUrl) base.folder_url = base.folderUrl;
+  if (!Array.isArray(base.templates)) base.templates = [];
+  if (!Array.isArray(base.voiceover)) {
+    base.voiceover = Array.isArray(base.voiceovers) ? base.voiceovers : [];
+  }
+  delete base.user_id;
+  delete base._id;
+  delete base.avatarUrl;
+  delete base.folderUrl;
+  delete base.voiceovers;
+  delete base.displayName;
+  delete base.Email;
+  return base;
+};
+
+const formatUserForVisual = (userData = {}, token = '') => {
+  const fallbackObject = { additionalProp1: {} };
+  const ensureObject = (val) =>
+    val && typeof val === 'object' && !Array.isArray(val) ? val : { ...fallbackObject };
+  const ensureVoiceoverArray = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map((vo = {}) => ({
+      url: vo?.url || vo?.voice_url || vo?.voiceUrl || '',
+      name: vo?.name || vo?.label || '',
+      type: vo?.type || vo?.voice_type || '',
+      created_at: vo?.created_at || vo?.createdAt || new Date().toISOString()
+    }));
+  };
+  const ensureArrayOfStrings = (arr) => (Array.isArray(arr) ? arr.map(String) : []);
+  return {
+    id: String(userData?.id || userData?._id || token || ''),
+    email: userData?.email || userData?.Email || '',
+    display_name: userData?.display_name || userData?.displayName || userData?.name || '',
+    created_at: userData?.created_at || new Date().toISOString(),
+    avatar_url: userData?.avatar_url || userData?.avatarUrl || '',
+    folder_url: userData?.folder_url || userData?.folderUrl || '',
+    brand_identity: ensureObject(userData?.brand_identity || userData?.brandIdentity),
+    tone_and_voice: ensureObject(userData?.tone_and_voice || userData?.toneAndVoice),
+    look_and_feel: ensureObject(userData?.look_and_feel || userData?.lookAndFeel),
+    templates: ensureArrayOfStrings(userData?.templates),
+    voiceover: ensureVoiceoverArray(userData?.voiceover || userData?.voiceovers)
+  };
+};
+
+const formatSessionForVisual = (sessionData = {}, sessionId = '', token = '') => {
+  const ensureArray = (arr, fallback) =>
+    Array.isArray(arr) && arr.length > 0 ? arr : fallback;
+  return {
+    session_id: sessionData?.session_id || sessionId,
+    user_id: sessionData?.user_id || token,
+    title: sessionData?.title || '',
+    video_duration: String(sessionData?.video_duration || '60'),
+    created_at: sessionData?.created_at || new Date().toISOString(),
+    updated_at: sessionData?.updated_at || new Date().toISOString(),
+    document_summary: ensureArray(sessionData?.document_summary, [{ additionalProp1: {} }]),
+    messages: ensureArray(sessionData?.messages, [{ additionalProp1: {} }]),
+    total_summary: ensureArray(
+      sessionData?.total_summary,
+      ensureArray(sessionData?.totalsummary, [''])
+    ),
+    scripts: ensureArray(sessionData?.scripts, ['']),
+    videos: ensureArray(sessionData?.videos, [{ additionalProp1: {} }]),
+    images: ensureArray(sessionData?.images, ['']),
+    final_link: sessionData?.final_link || '',
+    videoType: sessionData?.videoType || sessionData?.video_type || '',
+    brand_style_interpretation:
+      sessionData?.brand_style_interpretation && typeof sessionData.brand_style_interpretation === 'object'
+        ? sessionData.brand_style_interpretation
+        : { additionalProp1: {} },
+    additionalProp1:
+      sessionData?.additionalProp1 && typeof sessionData.additionalProp1 === 'object'
+        ? sessionData.additionalProp1
+        : {}
+  };
+};
+
+const extractAspectRatioFromSessionPayload = (payload) => {
+  try {
+    if (!payload || typeof payload !== 'object') return '';
+    const visited = new Set();
+    const queue = [];
+    const enqueue = (node) => {
+      if (!node) return;
+      if (Array.isArray(node)) {
+        node.forEach(enqueue);
+        return;
+      }
+      if (typeof node !== 'object') return;
+      if (visited.has(node)) return;
+      visited.add(node);
+      queue.push(node);
+    };
+    const readAspectFromGuidelines = (obj) => {
+      if (!obj || typeof obj !== 'object') return '';
+      const guidelines =
+        obj.guidelines ||
+        obj.Guidelines ||
+        obj.guideLines;
+      if (!guidelines || typeof guidelines !== 'object') return '';
+      const technical =
+        guidelines.technical_and_formal_constraints ||
+        guidelines.technicalAndFormalConstraints ||
+        guidelines.technical_formal_constraints;
+      if (!technical || typeof technical !== 'object') return '';
+      const aspect =
+        technical.aspect_ratio ||
+        technical.aspectRatio ||
+        technical.aspectratio;
+      if (typeof aspect === 'string' && aspect.trim()) return aspect;
+      if (Array.isArray(aspect)) {
+        const found = aspect.find((item) => typeof item === 'string' && item.trim());
+        if (found) return found;
+      }
+      return '';
+    };
+    const readAspectFromScript = (script) => {
+      if (!script || typeof script !== 'object') return '';
+      const userQuery =
+        script.userquery ||
+        script.user_query ||
+        script.userQuery ||
+        script.UserQuery;
+      const candidates = [
+        readAspectFromGuidelines(userQuery),
+        readAspectFromGuidelines(script),
+        readAspectFromGuidelines(userQuery?.additionalProp1),
+        readAspectFromGuidelines(script?.additionalProp1),
+        readAspectFromGuidelines(userQuery?.additional_prop1),
+        readAspectFromGuidelines(script?.additional_prop1),
+        readAspectFromGuidelines(userQuery?.additionalProps),
+        readAspectFromGuidelines(script?.additionalProps),
+        readAspectFromGuidelines(userQuery?.additional_properties),
+        readAspectFromGuidelines(script?.additional_properties)
+      ];
+      for (const candidate of candidates) {
+        if (candidate) return candidate;
+      }
+      return '';
+    };
+
+    enqueue(payload?.session_data);
+    enqueue(payload?.session);
+    enqueue(payload);
+
+    while (queue.length > 0) {
+      const node = queue.shift();
+      if (!node || typeof node !== 'object') continue;
+
+      const aspectFromNode = readAspectFromGuidelines(node);
+      if (aspectFromNode) return aspectFromNode;
+
+      const scripts = node.scripts;
+      if (Array.isArray(scripts)) {
+        for (const script of scripts) {
+          const aspect = readAspectFromScript(script);
+          if (aspect) return aspect;
+          enqueue(script);
+        }
+      } else if (scripts && typeof scripts === 'object') {
+        const aspect = readAspectFromScript(scripts);
+        if (aspect) return aspect;
+        enqueue(scripts);
+      }
+
+      Object.values(node).forEach(enqueue);
+    }
+
+    return '';
+  } catch (_) {
+    return '';
+  }
 };
 
 const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false }) => {
@@ -121,10 +418,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isGeneratingQuestionnaire, setIsGeneratingQuestionnaire] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false); // no longer used for images
-  // Scenes Images overlay state
   const [showImagesOverlay, setShowImagesOverlay] = useState(false);
   const [imagesJobId, setImagesJobId] = useState('');
-  const dispatch = useDispatch();
   const [videoCountdown, setVideoCountdown] = useState(0);
   const fileInputRef = useRef(null);
   const chatInputRef = useRef(null);
@@ -138,51 +433,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [draggedTabIndex, setDraggedTabIndex] = useState(null);
   const [dragOverTabIndex, setDragOverTabIndex] = useState(null);
   const [hasOrderChanged, setHasOrderChanged] = useState(false);
-  // Presenter confirmation (ANCHOR model)
-  const [showPresenterConfirm, setShowPresenterConfirm] = useState(false);
-  const [pendingPresenterOption, setPendingPresenterOption] = useState('');
-  const [isApplyingPresenter, setIsApplyingPresenter] = useState(false);
+  // Presenter preset state
+  const [selectedPresenterPreset, setSelectedPresenterPreset] = useState('');
+  const [presenterPresetOriginal, setPresenterPresetOriginal] = useState('');
+  const [presenterPresetDirty, setPresenterPresetDirty] = useState(false);
+  const [showPresenterSaveConfirm, setShowPresenterSaveConfirm] = useState(false);
+  const [pendingPresenterPresetId, setPendingPresenterPresetId] = useState('');
+  const [pendingPresenterPresetLabel, setPendingPresenterPresetLabel] = useState('');
+  const [isSavingPresenterPreset, setIsSavingPresenterPreset] = useState(false);
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
-
-  // Apply selected presenter option: update scene visual, then update text
-  const applyPresenterOptionSelection = async (selOption) => {
-    setIsApplyingPresenter(true);
-    const token = localStorage.getItem('token');
-    const sessionId = localStorage.getItem('session_id');
-    if (!token || !sessionId) return;
-    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-    });
-    const sessionText = await sessionResp.text();
-    let sessionData; try { sessionData = JSON.parse(sessionText); } catch(_) { sessionData = sessionText; }
-    const sd = (sessionData?.session_data || sessionData?.session || {});
-    const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
-    const sessionForBody = {
-      session_id: sd?.session_id || sessionId,
-      user_id: sd?.user_id || token,
-      title: sd?.title || '',
-      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-      created_at: sd?.created_at || new Date().toISOString(),
-      updated_at: sd?.updated_at || new Date().toISOString(),
-      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-      messages: Array.isArray(sd?.messages) ? sd.messages : [{ additionalProp1: {} }],
-      total_summary: Array.isArray(sd?.total_summary) ? sd.total_summary : (Array.isArray(sd?.totalsummary) ? sd.totalsummary : []),
-      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [''],
-      videos: Array.isArray(sd?.videos) ? sd.videos : [{ additionalProp1: {} }],
-      images: Array.isArray(sd?.images) ? sd.images : [''],
-      final_link: sd?.final_link || '',
-      videoType: sd?.videoType || sd?.video_type || '',
-      brand_style_interpretation: sd?.brand_style_interpretation || { additionalProp1: {} },
-      additionalProp1: sd?.additionalProp1 || {}
-    };
-    const cur = scriptRows[currentSceneIndex];
-    const sceneNumber = cur?.scene_number ?? (currentSceneIndex + 1);
-    const reqBody = { user, session: sessionForBody, scene_number: sceneNumber, presenter_options: { option: selOption } };
-    await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
-    });
-    setIsApplyingPresenter(false);
-  };
 
   // Move scene left/right utilities for tab controls
   const moveSceneLeft = (index) => {
@@ -228,13 +487,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [newSceneDescription, setNewSceneDescription] = useState('');
   const [newSceneVideoType, setNewSceneVideoType] = useState('Avatar Based');
   const [isAddingScene, setIsAddingScene] = useState(false);
-  const [addSceneStep, setAddSceneStep] = useState(1); // 1: pick model, 2: suggestions
+  const [addSceneStep, setAddSceneStep] = useState(1); // 1: pick model, 2+: flow-specific steps
   const [newSceneChartType, setNewSceneChartType] = useState('');
   const [newSceneChartData, setNewSceneChartData] = useState('');
   const [newSceneDocSummary, setNewSceneDocSummary] = useState('');
   const [isUploadingNewSceneDoc, setIsUploadingNewSceneDoc] = useState(false);
   const [newSceneContent, setNewSceneContent] = useState('');
   const [newSceneSelectedIdx, setNewSceneSelectedIdx] = useState(-1);
+  const [newScenePresenterPresetId, setNewScenePresenterPresetId] = useState('');
+  const [newScenePresenterPresetLabel, setNewScenePresenterPresetLabel] = useState('');
+  const [isLoadingNewScenePresenter, setIsLoadingNewScenePresenter] = useState(false);
+  const [newScenePresenterError, setNewScenePresenterError] = useState('');
+  const [requiresAvatarPresenterSelection, setRequiresAvatarPresenterSelection] = useState(false);
   const [isSavingReorder, setIsSavingReorder] = useState(false);
   const [isDeletingScene, setIsDeletingScene] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -255,6 +519,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [regenSceneContent, setRegenSceneContent] = useState('');
   const [regenSelectedIdx, setRegenSelectedIdx] = useState(-1);
   const [regenManualText, setRegenManualText] = useState('');
+const [regenPresenterPresetId, setRegenPresenterPresetId] = useState('');
+const [regenPresenterPresetLabel, setRegenPresenterPresetLabel] = useState('');
+const [isLoadingRegenPresenter, setIsLoadingRegenPresenter] = useState(false);
+const [regenPresenterError, setRegenPresenterError] = useState('');
+const [requiresRegenPresenterSelection, setRequiresRegenPresenterSelection] = useState(false);
+const [showGenerateSummaryModal, setShowGenerateSummaryModal] = useState(false);
+const [generateSummaryPosition, setGenerateSummaryPosition] = useState('');
+const [generateSummaryError, setGenerateSummaryError] = useState('');
+const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   // Snapshot current scene when entering edit to allow cancel revert
   const [editSnapshot, setEditSnapshot] = useState(null);
   useEffect(() => {
@@ -347,15 +620,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isEnhancing, setIsEnhancing] = useState(false);
   // Only show 5 scene tabs at a time without scroll
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
-  const [refImageUrlInput, setRefImageUrlInput] = useState('');
   // Multiple selection of ref images by URL
   const [selectedRefImages, setSelectedRefImages] = useState([]);
-  // Templates modal + state
-  const [showTemplatesModal, setShowTemplatesModal] = useState(false);
-  const [brandTemplates, setBrandTemplates] = useState([]);
-  const [useDefaultTemplate, setUseDefaultTemplate] = useState(true); // legacy (not used in new assets modal)
-  // Generate toggle for assets modal (default: No Generate)
-  const [isGenerate, setIsGenerate] = useState(false);
   // Removed template upload in assets picker per requirements
   // Brand assets modal state (logos, icons, uploaded_images, templates, voiceover)
   const [showAssetsModal, setShowAssetsModal] = useState(false);
@@ -364,13 +630,22 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isAssetsLoading, setIsAssetsLoading] = useState(false);
   // Multi-select support for Templates in assets modal
   const [selectedTemplateUrls, setSelectedTemplateUrls] = useState([]);
-  const [templateAspectFilter, setTemplateAspectFilter] = useState('All');
+  const [sessionTemplateAspect, setSessionTemplateAspect] = useState('');
+  const [presenterPresets, setPresenterPresets] = useState({
+    VEO3: [],
+    ANCHOR: []
+  });
+  const [isLoadingPresenterPresets, setIsLoadingPresenterPresets] = useState(false);
+  const [presenterPresetsError, setPresenterPresetsError] = useState('');
+  const [isDescriptionEditing, setIsDescriptionEditing] = useState(false);
+  const [pendingDescription, setPendingDescription] = useState('');
+  const [descriptionSceneIndex, setDescriptionSceneIndex] = useState(null);
   const assetsUploadInputRef = useRef(null);
   const [pendingUploadType, setPendingUploadType] = useState('');
   // Selected asset in Choose Asset modal
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('');
   const normalizedTemplateAssets = useMemo(
-    () => flattenTemplateAssets(Array.isArray(assetsData.templates) ? assetsData.templates : []),
+    () => flattenTemplateAssets(assetsData.templates),
     [assetsData.templates]
   );
   const templateAspectOptions = useMemo(() => {
@@ -386,25 +661,460 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     return String(scene?.model || scene?.mode || '').toUpperCase();
   }, [scriptRows, currentSceneIndex]);
   const shouldFilterTemplatesByAspect = currentSceneModelUpper === 'SORA' || currentSceneModelUpper === 'PLOTLY';
+  const effectiveTemplateAspect = useMemo(() => {
+    if (sessionTemplateAspect) return sessionTemplateAspect;
+    if (shouldFilterTemplatesByAspect) {
+      const prioritized = templateAspectOptions.find(opt => opt && opt !== 'Unspecified');
+      return prioritized || templateAspectOptions[0] || '';
+    }
+    return '';
+  }, [sessionTemplateAspect, shouldFilterTemplatesByAspect, templateAspectOptions]);
+  const matchesAspect = (aspectValue, targetAspect) => {
+    if (!targetAspect) return true;
+    const normalizedTarget = normalizeTemplateAspectLabel(targetAspect);
+    const normalizedValue = normalizeTemplateAspectLabel(
+      typeof aspectValue === 'string' ? aspectValue : ''
+    );
+    return (
+      normalizedTarget &&
+      normalizedValue &&
+      normalizedValue === normalizedTarget
+    );
+  };
+  const filteredTemplateAssets = useMemo(() => {
+    if (!Array.isArray(normalizedTemplateAssets)) return [];
+    if (!effectiveTemplateAspect) return normalizedTemplateAssets;
+    return normalizedTemplateAssets.filter((item) =>
+      matchesAspect(item?.aspect, effectiveTemplateAspect)
+    );
+  }, [normalizedTemplateAssets, effectiveTemplateAspect]);
+  const templateLookupByUrl = useMemo(() => {
+    const map = new Map();
+    filteredTemplateAssets.forEach((item) => {
+      if (item?.imageUrl) map.set(item.imageUrl, item);
+    });
+    normalizedTemplateAssets.forEach((item) => {
+      if (item?.imageUrl && !map.has(item.imageUrl)) {
+        map.set(item.imageUrl, item);
+      }
+    });
+    return map;
+  }, [normalizedTemplateAssets, filteredTemplateAssets]);
+  const buildBackgroundImagePayload = (urls = []) => {
+    const seen = new Set();
+    const payload = [];
+    (Array.isArray(urls) ? urls : [urls]).forEach((url) => {
+      if (typeof url !== 'string') return;
+      const trimmed = url.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      const templateEntry = templateLookupByUrl.get(trimmed);
+      const rawTemplate = templateEntry?.raw || {};
+      const templateId =
+        templateEntry?.id ||
+        rawTemplate?.template_id ||
+        rawTemplate?.templateId ||
+        rawTemplate?.id ||
+        '';
+      payload.push({
+        image_url: trimmed,
+        template_id: templateId ? String(templateId) : ''
+      });
+    });
+    return payload;
+  };
+  const sendUpdateSceneVisualWithTemplates = async (sceneNumber, templateUrls = []) => {
+    try {
+      const background_image = buildBackgroundImagePayload(templateUrls);
+      if (background_image.length === 0) return;
+      const { session, user } = await buildSessionAndUserForScene();
+      const token = localStorage.getItem('token') || '';
+      const formattedUser = formatUserForVisual(user, token);
+      const formattedSession = formatSessionForVisual(
+        session,
+        session?.session_id,
+        session?.user_id
+      );
+      const payload = {
+        user: formattedUser,
+        session: formattedSession,
+        scene_number: Number(sceneNumber) || 0,
+        background_image
+      };
+      await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+    } catch (err) {
+      console.error('update-scene-visual failed:', err);
+    }
+  };
+  useEffect(() => {
+    if (!showAssetsModal || assetsTab !== 'templates') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+        if (!token || !sessionId) {
+          if (!cancelled) setSessionTemplateAspect('');
+          return;
+        }
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = null; }
+        if (cancelled) return;
+        if (!resp.ok || !data || typeof data !== 'object') {
+          setSessionTemplateAspect('');
+          return;
+        }
+        const rawAspect = extractAspectRatioFromSessionPayload(data);
+        const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
+        if (normalizedAspect && normalizedAspect !== 'Unspecified') {
+          setSessionTemplateAspect(normalizedAspect);
+          try { console.log('[templates] session aspect ratio detected:', normalizedAspect); } catch (_) { /* noop */ }
+        } else {
+          setSessionTemplateAspect('');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSessionTemplateAspect('');
+          try { console.warn('Failed to load session aspect ratio:', err); } catch (_) { /* noop */ }
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showAssetsModal, assetsTab]);
+  useEffect(() => {
+    if (!enablePresenterOptions) {
+      setPresenterPresets({ VEO3: [], ANCHOR: [] });
+      setPresenterPresetsError('');
+      setIsLoadingPresenterPresets(false);
+      return;
+    }
+    const scene =
+      Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+        ? scriptRows[currentSceneIndex]
+        : null;
+    const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+    if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') {
+      setPresenterPresets({ VEO3: [], ANCHOR: [] });
+      setPresenterPresetsError('');
+      setIsLoadingPresenterPresets(false);
+      return;
+    }
+    let ignore = false;
+    const fetchPresenterPresets = async () => {
+      try {
+        setIsLoadingPresenterPresets(true);
+        setPresenterPresetsError('');
+        if (presenterPresets[modelUpper] && presenterPresets[modelUpper].length > 0) {
+          setIsLoadingPresenterPresets(false);
+          return;
+        }
+        const { rawSession, rawUser } = await buildSessionAndUserForScene();
+        if (ignore) return;
+        const token = localStorage.getItem('token') || '';
+        const userId =
+          rawUser?.id ||
+          rawUser?.user_id ||
+          rawUser?._id ||
+          token;
+        const rawAspect =
+          extractAspectRatioFromSessionPayload({
+            session_data: rawSession,
+            session: rawSession,
+            user_data: rawUser,
+            user: rawUser
+          }) || sessionTemplateAspect;
+        const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
+        const aspectParam = normalizedAspect || '';
+        const modeParam = modelUpper === 'VEO3' ? 'veo3_presets' : 'anchor_presets';
+        const params = new URLSearchParams();
+        if (userId) params.set('user_id', String(userId));
+        if (aspectParam) params.set('aspect_ratio', aspectParam);
+        params.set('mode', modeParam);
+        const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/presets?${params.toString()}`;
+        const resp = await fetch(url, { method: 'GET' });
+        const text = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+        console.log('[presenter] presets response', { url, data });
+        if (!resp.ok) throw new Error(`presets request failed: ${resp.status}`);
+        const listSource = Array.isArray(data?.presets)
+          ? data.presets
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data)
+              ? data
+              : [];
+        const normalizedList = listSource
+          .map((item) => {
+            if (!item) return null;
+            if (typeof item === 'string') return { option: item, preset_id: String(item) };
+            if (typeof item === 'object') {
+              const option =
+                item.option ||
+                item.name ||
+                item.title ||
+                item.label ||
+                '';
+              if (!option) return null;
+              const presetId =
+                item.preset_id ||
+                item.presetId ||
+                item.id ||
+                item.value ||
+                item.option_id ||
+                item.optionId ||
+                option;
+              const rawPreviewUrl =
+                item.sample_video ||
+                item.sampleVideo ||
+                item.sample_video_url ||
+                item.sampleVideoUrl ||
+                item.preview_url ||
+                item.previewUrl ||
+                item.sample_image ||
+                item.sampleImage ||
+                item.thumbnail ||
+                item.thumbnail_url ||
+                item.thumbnailUrl ||
+                item.image ||
+                item.image_url ||
+                item.imageUrl ||
+                '';
+              const rawPreviewType =
+                item.sample_video_type ||
+                item.sampleVideoType ||
+                item.sample_type ||
+                item.sampleType ||
+                item.preview_type ||
+                item.previewType ||
+                '';
+              const inferPreviewType = (url) => {
+                if (!url || typeof url !== 'string') return '';
+                const clean = url.split('?')[0].toLowerCase();
+                const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                return '';
+              };
+              const sampleVideoType =
+                rawPreviewType && typeof rawPreviewType === 'string'
+                  ? rawPreviewType.toLowerCase()
+                  : inferPreviewType(rawPreviewUrl);
+              return {
+                option,
+                preset_id: String(presetId),
+                sample_video: rawPreviewUrl || '',
+                sample_video_type: sampleVideoType
+              };
+            }
+            return null;
+          })
+          .filter(Boolean);
+        if (!ignore) {
+          setPresenterPresets((prev) => ({
+            ...prev,
+            [modelUpper]: normalizedList
+          }));
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.warn('Failed to load presenter presets:', err);
+          setPresenterPresets((prev) => ({
+            ...prev,
+            [modelUpper]: []
+          }));
+          setPresenterPresetsError(err?.message || 'Failed to load presets');
+        }
+      } finally {
+        if (!ignore) setIsLoadingPresenterPresets(false);
+      }
+    };
+    fetchPresenterPresets();
+    return () => {
+      ignore = true;
+    };
+  }, [enablePresenterOptions, scriptRows, currentSceneIndex, sessionTemplateAspect]);
 
   useEffect(() => {
+    if (!enablePresenterOptions) {
+      setSelectedPresenterPreset('');
+      setPresenterPresetOriginal('');
+      setPresenterPresetDirty(false);
+      return;
+    }
+    const scene =
+      Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+        ? scriptRows[currentSceneIndex]
+        : null;
+    if (!scene) {
+      setSelectedPresenterPreset('');
+      setPresenterPresetOriginal('');
+      setPresenterPresetDirty(false);
+      return;
+    }
+    const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+    if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') {
+      setSelectedPresenterPreset('');
+      setPresenterPresetOriginal('');
+      setPresenterPresetDirty(false);
+      return;
+    }
+    const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+    const scenePresetId = scene?.presenter_options?.preset_id
+      ? String(scene.presenter_options.preset_id)
+      : '';
+    const scenePresetLabel = scene?.presenter_options?.option
+      ? String(scene.presenter_options.option)
+      : '';
+    let resolvedValue = scenePresetId;
+    if (!resolvedValue && scenePresetLabel) {
+      const match = list.find(
+        (item) => String(item?.option || '').toLowerCase() === scenePresetLabel.toLowerCase()
+      );
+      if (match?.preset_id) resolvedValue = String(match.preset_id);
+    }
+    if (!resolvedValue && list.length > 0) {
+      resolvedValue = String(list[0].preset_id || list[0].option || '');
+    }
+    const normalizedResolved = resolvedValue ? String(resolvedValue) : '';
+    setSelectedPresenterPreset(normalizedResolved);
+    setPresenterPresetOriginal(normalizedResolved);
+    setPresenterPresetDirty(false);
+  }, [enablePresenterOptions, scriptRows, currentSceneIndex, presenterPresets]);
+
+  const handlePresenterPresetChange = (value) => {
+    const normalizedValue = value != null ? String(value) : '';
+    setSelectedPresenterPreset(normalizedValue);
+    setPresenterPresetDirty(normalizedValue !== presenterPresetOriginal);
+  };
+
+  const handleConfirmPresenterPresetSave = async () => {
+    if (!pendingPresenterPresetId) return;
+    setIsSavingPresenterPreset(true);
+    try {
+      const sessionId = localStorage.getItem('session_id') || '';
+      const token = localStorage.getItem('token') || '';
+      const { rawSession, rawUser } = await buildSessionAndUserForScene();
+      const sanitizedSession = sanitizeSessionSnapshot(rawSession, sessionId, token);
+      const normalizedUser = normalizeUserSnapshot(rawUser, token);
+      const scene =
+        Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+          ? scriptRows[currentSceneIndex]
+          : null;
+      const sceneNumber = scene?.scene_number ?? currentSceneIndex + 1;
+      const payload = {
+        user: normalizedUser,
+        session: sanitizedSession,
+        scene_number: sceneNumber,
+        preset_id: String(pendingPresenterPresetId || '')
+      };
+      const resp = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-preset',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+      const text = await resp.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+      if (!resp.ok) {
+        throw new Error(`scripts/update-preset failed: ${resp.status} ${text}`);
+      }
+      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+      const savedPreset =
+        list.find(
+          (item) =>
+            String(item?.preset_id || item?.option || '') === String(pendingPresenterPresetId)
+        ) || {};
+      const savedLabel = pendingPresenterPresetLabel || savedPreset.option || '';
+      if (scene) {
+        const rows = [...(scriptRows || [])];
+        const updated = {
+          ...scene,
+          presenter_options: {
+            ...(scene.presenter_options || {}),
+            option: savedLabel,
+            preset_id: pendingPresenterPresetId
+          }
+        };
+        rows[currentSceneIndex] = updated;
+        setScriptRows(rows);
+      }
+      try {
+        const stored = { option: savedLabel, preset_id: pendingPresenterPresetId };
+        if (sessionId) localStorage.setItem(`presenter_option:${sessionId}`, JSON.stringify(stored));
+        else localStorage.setItem('presenter_option', JSON.stringify(stored));
+      } catch (_) { /* noop */ }
+      const savedIdString = String(pendingPresenterPresetId || '');
+      setPresenterPresetOriginal(savedIdString);
+      setPresenterPresetDirty(false);
+      setSelectedPresenterPreset(savedIdString);
+    } catch (e) {
+      console.error('scripts/update-preset failed:', e);
+      alert('Failed to update presenter preset. Please try again.');
+    } finally {
+      setIsSavingPresenterPreset(false);
+      setShowPresenterSaveConfirm(false);
+      setPendingPresenterPresetId('');
+      setPendingPresenterPresetLabel('');
+    }
+  };
+  useEffect(() => {
+    const scene =
+      Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+        ? scriptRows[currentSceneIndex]
+        : null;
+    const desc = scene?.description || '';
+    setPendingDescription(desc);
+    setDescriptionSceneIndex(currentSceneIndex);
+    setIsDescriptionEditing(false);
+  }, [scriptRows, currentSceneIndex]);
+  useEffect(() => {
     if (assetsTab !== 'templates') return;
-    if (!shouldFilterTemplatesByAspect) {
-      setTemplateAspectFilter('All');
-      return;
-    }
-    if (templateAspectOptions.length === 0) {
-      setTemplateAspectFilter('All');
-      return;
-    }
-    setTemplateAspectFilter(prev => {
-      if (prev === 'All' && templateAspectOptions.length > 1) return prev;
-      if (templateAspectOptions.includes(prev)) return prev;
-      return templateAspectOptions.length > 1 ? 'All' : templateAspectOptions[0];
-    });
-  }, [assetsTab, shouldFilterTemplatesByAspect, templateAspectOptions]);
+    try {
+      const aspectSummary = Array.from(
+        new Set(
+          (filteredTemplateAssets || []).map((item) =>
+            normalizeTemplateAspectLabel(item?.aspect || '')
+          )
+        )
+      );
+      console.log('[templates] normalized assets', {
+        filter: effectiveTemplateAspect || 'All',
+        total: normalizedTemplateAssets.length,
+        shown: filteredTemplateAssets.length,
+        aspectsShown: aspectSummary,
+        templates: filteredTemplateAssets
+      });
+    } catch (_) { /* noop */ }
+  }, [assetsTab, normalizedTemplateAssets, filteredTemplateAssets, effectiveTemplateAspect]);
   // Kebab menu inline component for header actions
-  const KebabMenu = ({ canUndo, canRedo, onUndo, onRedo, onDelete, onRegenerate, onEdit, onSwitchAvatar, onSwitchInfographic, onSwitchFinancial, isDeleting, hasScenes, isSwitching }) => {
+  const KebabMenu = ({ canUndo, canRedo, onUndo, onRedo, onDelete, onRegenerate, onEdit, onGenerateSummary, onSwitchAvatar, onSwitchInfographic, onSwitchFinancial, isDeleting, hasScenes, isSwitching, isGeneratingSummary, showSwitchAvatar = true, showSwitchInfographic = true, showSwitchFinancial = true }) => {
     const [open, setOpen] = React.useState(false);
     const ref = React.useRef(null);
     React.useEffect(() => {
@@ -420,6 +1130,21 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         {open && (
           <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden">
             <div className="py-1">
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  if (!isGeneratingSummary && onGenerateSummary) onGenerateSummary();
+                }}
+                disabled={!hasScenes || isGeneratingSummary}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${
+                  (!hasScenes || isGeneratingSummary)
+                    ? 'text-gray-400 cursor-not-allowed'
+                    : 'hover:bg-gray-50'
+                }`}
+              >
+                <FileText className="w-4 h-4 text-[#13008B]" />
+                <span>Generate Summary</span>
+              </button>
               <button onClick={() => { setOpen(false); onRegenerate(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50">
                 <RefreshCcw className="w-4 h-4 text-[#13008B]" />
                 <span>Regenerate Scene</span>
@@ -429,16 +1154,26 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 <span>Edit Scenes</span>
               </button>
               <div className="my-1 h-px bg-gray-100" />
-              <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-gray-500">Switch Model</div>
-              <button onClick={() => { setOpen(false); onSwitchAvatar && onSwitchAvatar(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
-                <span>Avatar Based</span>
-              </button>
-              <button onClick={() => { setOpen(false); onSwitchInfographic && onSwitchInfographic(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
-                <span>Infographic</span>
-              </button>
-              <button onClick={() => { setOpen(false); onSwitchFinancial && onSwitchFinancial(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
-                <span>Financial</span>
-              </button>
+              {(showSwitchAvatar || showSwitchInfographic || showSwitchFinancial) && (
+                <>
+                  <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-gray-500">Switch Model</div>
+                  {showSwitchAvatar && (
+                    <button onClick={() => { setOpen(false); onSwitchAvatar && onSwitchAvatar(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                      <span>Avatar Based</span>
+                    </button>
+                  )}
+                  {showSwitchInfographic && (
+                    <button onClick={() => { setOpen(false); onSwitchInfographic && onSwitchInfographic(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                      <span>Infographic</span>
+                    </button>
+                  )}
+                  {showSwitchFinancial && (
+                    <button onClick={() => { setOpen(false); onSwitchFinancial && onSwitchFinancial(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
+                      <span>Financial</span>
+                    </button>
+                  )}
+                </>
+              )}
               <div className="my-1 h-px bg-gray-100" />
               <button onClick={() => { setOpen(false); onUndo(); }} disabled={!canUndo} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canUndo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}>
                 <RefreshCcw className="w-4 h-4 rotate-180" />
@@ -456,6 +1191,100 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
             </div>
           </div>
         )}
+  {showPresenterSaveConfirm && (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+      <div className="w-[92%] max-w-md rounded-lg bg-white p-5 shadow-xl">
+        <h3 className="text-lg font-semibold text-[#13008B]">Save Presenter Option?</h3>
+        <div className="mt-3 space-y-1 text-sm text-gray-700">
+          <p>
+            Selected preset:{' '}
+            <span className="font-medium text-gray-900">
+              {pendingPresenterPresetLabel || 'Unknown'}
+            </span>
+          </p>
+          <p>This will update the presenter preset for the current scene.</p>
+        </div>
+        <div className="mt-5 flex justify-end gap-3">
+          <button
+            onClick={() => {
+              if (isSavingPresenterPreset) return;
+              setShowPresenterSaveConfirm(false);
+              setPendingPresenterPresetId('');
+              setPendingPresenterPresetLabel('');
+            }}
+            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-70"
+            disabled={isSavingPresenterPreset}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirmPresenterPresetSave}
+            className="rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-[#9aa0d0]"
+            disabled={isSavingPresenterPreset}
+          >
+            {isSavingPresenterPreset ? 'Saving…' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {isSavingPresenterPreset && !showPresenterSaveConfirm && (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+      <div className="flex items-center gap-3 rounded-lg bg-white px-6 py-4 shadow-xl">
+        <div className="h-6 w-6 animate-spin rounded-full border-4 border-[#13008B] border-t-transparent" />
+        <span className="text-sm font-medium text-gray-800">Saving presenter option…</span>
+      </div>
+    </div>
+  )}
+
+  {showGenerateSummaryModal && (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-[#13008B]">Generate Summary</h3>
+        <p className="mt-2 text-sm text-gray-600">
+          Choose the scene position (1-based) to generate a summary for. The first scene is position 1.
+        </p>
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Scene Position
+          </label>
+          <input
+            type="number"
+            min="1"
+            max={Math.max(1, Array.isArray(scriptRows) ? scriptRows.length : 1)}
+            value={generateSummaryPosition}
+            onChange={(e) => setGenerateSummaryPosition(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#13008B] focus:outline-none focus:ring-2 focus:ring-[#13008B]/20"
+            disabled={isGeneratingSummary}
+          />
+        </div>
+        {generateSummaryError && (
+          <div className="mt-3 text-sm text-red-600">{generateSummaryError}</div>
+        )}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            onClick={closeGenerateSummaryPrompt}
+            disabled={isGeneratingSummary}
+            className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleGenerateSummary}
+            disabled={isGeneratingSummary}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-[#9aa0d0]"
+          >
+            {isGeneratingSummary && (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            )}
+            <span>{isGeneratingSummary ? 'Generating…' : 'Generate'}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
       </div>
     );
   };
@@ -541,7 +1370,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       return outRows;
     } catch (_) { return rows; }
   };
-
   // Upload images with flexible folder targeting (folder_url or user_id)
   // If user_id provided: uploads to user's uploaded_images folder
   // If folder_url provided: uploads to specified folder
@@ -1053,7 +1881,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       </div>
     );
   };
-
   // Listen for script-generated events (from DynamicQuestion)
   React.useEffect(() => {
     const onScriptGenerated = (e) => {
@@ -1136,20 +1963,74 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         } catch (_) { return []; }
       };
 
+      const cloneTemplate = (input) => {
+        if (!input || typeof input !== 'object') return null;
+        if (Array.isArray(input)) return [...input];
+        return { ...input };
+      };
+
       const toRow = (row, idx) => {
         const refs = normRefs(
           row?.ref_image ?? row?.reference_image ?? row?.ref_img ?? row?.ref_images ?? row?.reference_images
         );
+        const promptTemplate = (() => {
+          const candidates = [
+            row?.veo3_prompt_template,
+            row?.veo_prompt_template,
+            row?.veo3PromptTemplate,
+            row?.prompt_template,
+            row?.promptTemplate
+          ];
+          for (const cand of candidates) {
+            if (cand && typeof cand === 'object') {
+              return cloneTemplate(cand);
+            }
+          }
+          return null;
+        })();
+        const anchorPromptTemplate = (() => {
+          const candidates = [
+            row?.anchor_prompt_template,
+            row?.anchorPromptTemplate
+          ];
+          for (const cand of candidates) {
+            if (cand && typeof cand === 'object') {
+              return cloneTemplate(cand);
+            }
+          }
+          return null;
+        })();
+        const sceneNumber = row?.scene_number ?? row?.sceneNo ?? row?.scene_no ?? row?.no ?? (idx + 1);
+        const mode = row?.model ?? row?.mode_type ?? row?.video_mode ?? row?.mode ?? '';
+        const folderLink = row?.folder_link ?? row?.folderLink ?? row?.folder ?? '';
+        const timeline = coalesce(row?.timeline, row?.time, row?.duration, row?.additional, row?.additional_info, row?.timestamp);
+        const narration = coalesce(row?.narration, row?.voice_over_script, row?.voice_over, row?.voiceover, row?.voice);
+        const description = coalesce(row?.description, row?.desc, row?.scene_title, row?.title, row?.scene, row?.content, row?.text);
+        const fontSizeValue = row?.font_size != null ? row.font_size : row?.fontSize;
+        const fontStyleValue = row?.font_style ?? row?.fontStyle ?? '';
+        const durationSource =
+          row?.scene_duration ??
+          row?.duration ??
+          row?.timeline ??
+          row?.time ??
+          '';
+        const durationValue = parseDurationToSeconds(durationSource);
+        const wordCountValue =
+          typeof row?.word_count === 'number'
+            ? row.word_count
+            : computeWordCount(narration || description || '');
+
         return {
-          scene_number: row?.scene_number ?? row?.sceneNo ?? row?.scene_no ?? row?.no ?? (idx + 1),
-          mode: row?.model ?? row?.mode_type ?? row?.video_mode ?? row?.mode ?? '',
+          scene_number: sceneNumber,
+          mode,
           // Always preserve ref_image from API responses (e.g., from update-text API)
           ref_image: refs,
-          folderLink: row?.folder_link ?? row?.folderLink ?? row?.folder ?? '',
-          timeline: coalesce(row?.timeline, row?.time, row?.duration, row?.additional, row?.additional_info, row?.timestamp),
+          folderLink,
+          timeline,
+          duration: durationValue,
           scene_title: coalesce(row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
-          narration: coalesce(row?.narration, row?.voice_over_script, row?.voice_over, row?.voiceover, row?.voice),
-          description: coalesce(row?.description, row?.desc, row?.scene_title, row?.title, row?.scene, row?.content, row?.text),
+          narration,
+          description,
           gen_image: (typeof row?.gen_image === 'boolean') ? row.gen_image : undefined,
           additional: coalesce(row?.additional, row?.additional_info, row?.notes, row?.extra, row?.additionalInformation),
           // Chart-specific fields for Financial (PLOTLY) scenes
@@ -1159,13 +2040,16 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           chartData: row?.chartData ?? row?.chart_data ?? null,
           // Styling and colors
           colors: Array.isArray(row?.colors) ? row.colors : [],
-          font_size: (row?.font_size != null ? row.font_size : row?.fontSize),
-          fontSize: (row?.fontSize != null ? row.fontSize : row?.font_size),
-          font_style: row?.font_style ?? row?.fontStyle ?? '',
-          fontStyle: row?.fontStyle ?? row?.font_style ?? '',
+          font_size: fontSizeValue,
+          fontSize: fontSizeValue,
+          font_style: fontStyleValue,
+          fontStyle: fontStyleValue,
           text_to_be_included: Array.isArray(row?.text_to_be_included)
             ? row.text_to_be_included.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
-            : (typeof row?.text_to_include === 'string' && row.text_to_include.trim() ? [row.text_to_include.trim()] : [])
+            : (typeof row?.text_to_include === 'string' && row.text_to_include.trim() ? [row.text_to_include.trim()] : []),
+          veo3_prompt_template: promptTemplate,
+          anchor_prompt_template: anchorPromptTemplate,
+          word_count: wordCountValue
         };
       };
 
@@ -1244,15 +2128,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }
 
       // Fallback: single row stringified
-      const rows = [{
-        scene_number: 1,
-        mode: '',
-        ref_image: [],
-        folderLink: '',
-        timeline: '',
-        narration: '',
-        description: typeof script === 'string' ? script : JSON.stringify(script, null, 2),
-        additional: ''
+      const rows = [{ 
+        scene_number: 1, 
+        mode: '', 
+        ref_image: [], 
+        folderLink: '', 
+        timeline: '', 
+        narration: '', 
+        description: typeof script === 'string' ? script : JSON.stringify(script, null, 2), 
+        additional: '' 
       }];
       return { rows, metadata };
     } catch (_) {
@@ -1270,7 +2154,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       return { rows, metadata };
     }
   };
-
   // Auto-select video type based on current scene's mode
   useEffect(() => {
     if (Array.isArray(scriptRows) && scriptRows.length > 0 && scriptRows[currentSceneIndex]) {
@@ -1477,6 +2360,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       setRegenChartData('');
       setIsUploadingRegenDoc(false);
       setRegenManualText('');
+      setRegenPresenterPresetId('');
+      setRegenPresenterPresetLabel('');
+      setRegenPresenterError('');
+      setIsLoadingRegenPresenter(false);
+      setRequiresRegenPresenterSelection(false);
       const sceneModel = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
       setRegenModel(sceneModel || 'SORA');
       setShowRegenModal(true);
@@ -1545,8 +2433,27 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         action: 'regenerate'
       };
       if (modelUpper === 'VEO3') {
-        // For guidelines/regenerate flows, send empty presenter options
-        body.presenter_options = {};
+        const list = Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : [];
+        const selectedPreset = list.find(
+          (preset) => String(preset?.preset_id) === String(regenPresenterPresetId || '')
+        );
+        if (regenPresenterPresetId && selectedPreset) {
+          const presenterPayload = {
+            preset_id: String(selectedPreset.preset_id),
+            option: selectedPreset.option || regenPresenterPresetLabel || ''
+          };
+          if (selectedPreset.sample_video) {
+            presenterPayload.sample_video = selectedPreset.sample_video;
+          }
+          body.presenter_options = presenterPayload;
+        } else if (regenPresenterPresetLabel || regenPresenterPresetId) {
+          body.presenter_options = {
+            preset_id: String(regenPresenterPresetId || ''),
+            option: regenPresenterPresetLabel || ''
+          };
+        } else {
+          body.presenter_options = {};
+        }
       }
       if (modelUpper === 'PLOTLY') {
         body.chart_type = (regenChartType || scriptRows?.[currentSceneIndex]?.chart_type || scriptRows?.[currentSceneIndex]?.chartType || '').toLowerCase();
@@ -1582,7 +2489,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       alert('Failed to regenerate scene. Please try again.');
     } finally { setIsRegenerating(false); }
   };
-
   // Delete current scene
   const handleDeleteScene = async () => {
     if (isDeletingScene) return;
@@ -1679,8 +2585,80 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       setNewSceneContent('');
       setNewSceneSelectedIdx(-1);
       setIsUploadingNewSceneDoc(false);
+      setNewScenePresenterPresetId('');
+      setNewScenePresenterPresetLabel('');
+      setNewScenePresenterError('');
+      setIsLoadingNewScenePresenter(false);
+      setRequiresAvatarPresenterSelection(false);
       setShowAddSceneModal(true);
     } catch (_) { /* noop */ }
+  };
+
+  const openGenerateSummaryPrompt = () => {
+    try {
+      const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+      const fallback = total > 0 ? Math.min((currentSceneIndex ?? 0) + 1, total) : 1;
+      setGenerateSummaryPosition(String(fallback));
+    } catch (_) {
+      setGenerateSummaryPosition('1');
+    }
+    setGenerateSummaryError('');
+    setShowGenerateSummaryModal(true);
+  };
+
+  const closeGenerateSummaryPrompt = () => {
+    if (isGeneratingSummary) return;
+    setShowGenerateSummaryModal(false);
+  };
+
+  const handleGenerateSummary = async () => {
+    try {
+      const totalScenes = Array.isArray(scriptRows) ? scriptRows.length : 0;
+      if (!totalScenes) {
+        setGenerateSummaryError('No scenes available to summarize.');
+        return;
+      }
+      let parsed = parseInt(generateSummaryPosition, 10);
+      if (Number.isNaN(parsed) || parsed < 1) parsed = 1;
+      if (parsed > totalScenes) parsed = totalScenes;
+      const position = Math.max(0, parsed - 1);
+
+      setIsGeneratingSummary(true);
+      setGenerateSummaryError('');
+      const { session, user } = await buildSessionAndUserForScene();
+      const payload = { session, user, position };
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/generate-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`generate-summary failed: ${resp.status} ${text}`);
+      try { console.log('[generate-summary] success', { payload, data }); } catch (_) { /* noop */ }
+      const container = data?.script ? { script: data.script } : data;
+      try {
+        localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+        localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+      } catch (_) { /* noop */ }
+      applyScriptContainer(container, { can_undo: data?.can_undo, can_redo: data?.can_redo });
+      try {
+        const normalized = normalizeScriptToRows(container);
+        const rows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+        if (rows.length > 0) {
+          const nextIdx = Math.min(position, rows.length - 1);
+          setCurrentSceneIndex(nextIdx);
+        }
+      } catch (_) { /* noop */ }
+      setShowGenerateSummaryModal(false);
+    } catch (err) {
+      const message = err?.message || 'Failed to generate summary.';
+      setGenerateSummaryError(message);
+      try { console.error('generate-summary failed:', err); } catch (_) { /* noop */ }
+    } finally {
+      setIsGeneratingSummary(false);
+    }
   };
 
   // Helper to build session + user payload from user-session-data
@@ -1696,25 +2674,146 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     if (!resp.ok) throw new Error(`user-session/data failed: ${resp.status} ${text}`);
     const sd = json?.session_data || json?.session || {};
     const user = json?.user_data || sd?.user_data || sd?.user || {};
+    const totalSummaryArr = Array.isArray(sd?.total_summary)
+      ? sd.total_summary
+      : (Array.isArray(sd?.totalsummary) ? sd.totalsummary : []);
+    const documentSummaryArr = Array.isArray(sd?.document_summary)
+      ? sd.document_summary
+      : [{ additionalProp1: {} }];
+    const messagesArr = Array.isArray(sd?.messages)
+      ? sd.messages
+      : [{ additionalProp1: {} }];
+    const scriptsArr = Array.isArray(sd?.scripts)
+      ? sd.scripts
+      : [''];
+    const videosArr = Array.isArray(sd?.videos)
+      ? sd.videos
+      : [{ additionalProp1: {} }];
+    const imagesArr = Array.isArray(sd?.images)
+      ? sd.images
+      : [''];
     const session = {
       session_id: sd?.session_id || sessionId,
       user_id: sd?.user_id || token,
+      title: sd?.title || '',
       content: Array.isArray(sd?.content) ? sd.content : [],
-      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+      document_summary: documentSummaryArr,
       video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
       created_at: sd?.created_at || new Date().toISOString(),
-      totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-      messages: Array.isArray(sd?.messages) ? sd.messages : [],
-      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
-      videos: Array.isArray(sd?.videos) ? sd.videos : [],
-      images: Array.isArray(sd?.images) ? sd.images : [],
+      updated_at: sd?.updated_at || new Date().toISOString(),
+      totalsummary: totalSummaryArr,
+      total_summary: totalSummaryArr,
+      messages: messagesArr,
+      scripts: scriptsArr,
+      videos: videosArr,
+      images: imagesArr,
       final_link: sd?.final_link || '',
       videoType: sd?.videoType || sd?.video_type || '',
       brand_style_interpretation: sd?.brand_style_interpretation,
       additionalProp1: sd?.additionalProp1 || {}
     };
-    return { session, user };
+    return { session, user, rawSession: sd, rawUser: user };
   };
+
+  const fetchPresenterPresetsForModel = React.useCallback(
+    async (modelUpper) => {
+      const upper = String(modelUpper || '').toUpperCase();
+      if (!enablePresenterOptions || (upper !== 'VEO3' && upper !== 'ANCHOR')) return [];
+      const existing = Array.isArray(presenterPresets[upper]) ? presenterPresets[upper] : [];
+      if (existing.length > 0) return existing;
+      try {
+        const { rawSession, rawUser } = await buildSessionAndUserForScene();
+        const token = localStorage.getItem('token') || '';
+        const userId =
+          rawUser?.id ||
+          rawUser?.user_id ||
+          rawUser?._id ||
+          token;
+        const rawAspect =
+          extractAspectRatioFromSessionPayload({
+            session_data: rawSession,
+            session: rawSession,
+            user_data: rawUser,
+            user: rawUser
+          }) || sessionTemplateAspect;
+        const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
+        const params = new URLSearchParams();
+        if (userId) params.set('user_id', String(userId));
+        params.set('mode', upper === 'VEO3' ? 'veo3_presets' : 'anchor_presets');
+        if (normalizedAspect && normalizedAspect !== 'Unspecified') {
+          params.set('aspect_ratio', normalizedAspect);
+        }
+        const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/presets?${params.toString()}`;
+        const resp = await fetch(url, { method: 'GET' });
+        const text = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+        if (!resp.ok) throw new Error(`presets request failed: ${resp.status}`);
+        const listSource = Array.isArray(data?.presets)
+          ? data.presets
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data)
+              ? data
+              : [];
+        const normalizedList = listSource
+          .map((item) => {
+            if (!item) return null;
+            if (typeof item === 'string') {
+              return { option: item, preset_id: String(item) };
+            }
+            if (typeof item === 'object') {
+              const option =
+                item.option ||
+                item.name ||
+                item.title ||
+                item.label ||
+                '';
+              if (!option) return null;
+              const presetId =
+                item.preset_id ||
+                item.presetId ||
+                item.id ||
+                item.value ||
+                item.option_id ||
+                item.optionId ||
+                option;
+              return {
+                option,
+                preset_id: String(presetId),
+                sample_video:
+                  item.sample_video ||
+                  item.sampleVideo ||
+                  item.preview_url ||
+                  item.previewUrl ||
+                  ''
+              };
+            }
+            return null;
+          })
+          .filter(Boolean);
+        setPresenterPresets((prev) => ({
+          ...prev,
+          [upper]: normalizedList
+        }));
+        setPresenterPresetsError('');
+        return normalizedList;
+      } catch (err) {
+        console.warn('Failed to fetch presenter presets for add-scene:', err);
+        setPresenterPresets((prev) => ({
+          ...prev,
+          [upper]: []
+        }));
+        setPresenterPresetsError(err?.message || 'Failed to load presenter presets');
+        return [];
+      }
+    },
+    [enablePresenterOptions, presenterPresets, sessionTemplateAspect, buildSessionAndUserForScene]
+  );
 
   // Add-scene via API with given content (used by suggestions and manual)
   const addSceneViaAPI = async (sceneContent) => {
@@ -1738,8 +2837,26 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         model_type: desiredModel
       };
       if (desiredModel === 'VEO3') {
-        // For add-scene, keep presenter options empty in guidelines flow
-        body.presenter_options = {};
+        const selectedPreset = (Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : []).find(
+          (preset) => String(preset?.preset_id) === String(newScenePresenterPresetId || '')
+        );
+        if (newScenePresenterPresetId && selectedPreset) {
+          const presenterPayload = {
+            preset_id: String(selectedPreset.preset_id),
+            option: selectedPreset.option || newScenePresenterPresetLabel || ''
+          };
+          if (selectedPreset.sample_video) {
+            presenterPayload.sample_video = selectedPreset.sample_video;
+          }
+          body.presenter_options = presenterPayload;
+        } else if (newScenePresenterPresetLabel || newScenePresenterPresetId) {
+          body.presenter_options = {
+            preset_id: String(newScenePresenterPresetId || ''),
+            option: newScenePresenterPresetLabel || ''
+          };
+        } else {
+          body.presenter_options = {};
+        }
       }
       if (desiredModel === 'PLOTLY') {
         body.chart_type = (newSceneChartType || scriptRows?.[currentSceneIndex]?.chart_type || scriptRows?.[currentSceneIndex]?.chartType || '').toLowerCase();
@@ -1776,6 +2893,54 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     }
   };
 
+  const handleAvatarPresenterNext = async () => {
+    try {
+      if (!requiresAvatarPresenterSelection) return;
+      setNewScenePresenterError('');
+      if (!newScenePresenterPresetId) {
+        setNewScenePresenterError('Please select a presenter option before continuing.');
+        return;
+      }
+      const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+      const idx =
+        (typeof insertSceneIndex === 'number' && insertSceneIndex >= 0 && insertSceneIndex <= total)
+          ? insertSceneIndex
+          : total;
+      setSceneSuggestions([]);
+      setNewSceneSelectedIdx(-1);
+      setNewSceneContent('');
+      setNewSceneDescription('');
+      setAddSceneStep(3);
+      await fetchSceneSuggestions('VEO3', idx, 'add');
+    } catch (err) {
+      console.error('Failed to continue add-scene flow for presenter selection:', err);
+      setNewScenePresenterError(err?.message || 'Failed to load scene suggestions. Please try again.');
+      setAddSceneStep(2);
+    }
+  };
+
+  const handleRegenPresenterNext = async () => {
+    try {
+      if (!requiresRegenPresenterSelection) return;
+      setRegenPresenterError('');
+      if (!regenPresenterPresetId) {
+        setRegenPresenterError('Please select a presenter option before continuing.');
+        return;
+      }
+      const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+      const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
+      setRegenSceneContent('');
+      setRegenSelectedIdx(-1);
+      setRegenPresenterError('');
+      setRegenStep(3);
+      await fetchSceneSuggestions('VEO3', idx, 'regen');
+    } catch (err) {
+      console.error('Failed to continue regenerate flow for presenter selection:', err);
+      setRegenPresenterError(err?.message || 'Failed to load scene suggestions. Please try again.');
+      setRegenStep(2);
+    }
+  };
+
   const addSceneToRows = async () => {
     try {
       if (isAddingScene) return;
@@ -1789,7 +2954,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       setIsAddingScene(false);
     }
   };
-
   // Generate Script directly from Chat using saved questionnaire and guidelines
   const generateScriptFromChat = async () => {
     try {
@@ -2034,7 +3198,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const removeFile = (index) => {
     setUploadedFiles(prev => prev.filter((_, i) => i !== index));
   };
-
   // Get file icon based on type
   const getFileIcon = (file) => {
     const type = (file?.type || '').toLowerCase();
@@ -2583,7 +3746,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     const seconds = String((total || 0) % 60).padStart(2, '0');
     return `${minutes}:${seconds}`;
   };
-
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
 
@@ -3077,7 +4239,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       });
     } catch (_) { /* noop */ }
   };
-
   // Save edited narration/description for scenes via update-text API
   const saveEditedScriptText = async () => {
     if (isUpdatingText) return;
@@ -3141,39 +4302,66 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       // 2) Build changed_script.airesponse from current UI rows (preserve scene_number)
       const rows = Array.isArray(scriptRows) ? scriptRows : [];
-      const airesponse = rows.map((r, idx) => ({
-        scene_number: r?.scene_number,
-        scene_title: r?.scene_title ?? '',
-        model: r?.mode ?? r?.model ?? '',
-        timeline: r?.timeline ?? '',
-        narration: r?.narration ?? '',
-        desc: r?.description ?? '',
-        gen_image: (typeof r?.gen_image === 'boolean') ? r.gen_image : undefined,
-        // Preserve visual/styling fields so they are not dropped server-side
-        chart_type: r?.chart_type ?? r?.chartType ?? '',
-        chart_data: r?.chart_data ?? r?.chartData ?? undefined,
-        colors: Array.isArray(r?.colors) ? r.colors : [],
-        font_style: r?.font_style ?? r?.fontStyle ?? '',
-        font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
-        text_to_be_included: Array.isArray(r?.text_to_be_included)
-          ? r.text_to_be_included
-          : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
-        ref_image: filterImageUrls(
-          Array.isArray(r?.ref_image)
-            ? r.ref_image
-            : (typeof r?.ref_image === 'string' && r.ref_image.trim())
-            ? [r.ref_image]
-            : []
-        ),
-        // Include avatar/background to avoid clearing when saving
-        avatar: r?.avatar ?? '',
-        background: r?.background ?? r?.background_image ?? '',
-        background_image: r?.background_image ?? r?.background ?? '',
-        // Include model-specific option blobs
-        presenter_options: r?.presenter_options ?? undefined,
-        anchor_options: r?.anchor_options ?? undefined,
-        folderLink: r?.folderLink ?? r?.folder_link ?? '',
-      }));
+      const clonePromptTemplate = (tpl) => {
+        if (!tpl || typeof tpl !== 'object') return null;
+        if (Array.isArray(tpl)) return [...tpl];
+        return { ...tpl };
+      };
+      const airesponse = rows.map((r, idx) => {
+        const narrationVal = r?.narration ?? '';
+        const descriptionVal = r?.description ?? '';
+        const durationCandidate =
+          (typeof r?.duration === 'number' && Number.isFinite(r.duration))
+            ? Math.round(r.duration)
+            : (typeof r?.duration === 'string' && r.duration.trim()
+                ? parseDurationToSeconds(r.duration)
+                : (typeof r?.scene_duration === 'string' && r.scene_duration.trim()
+                    ? parseDurationToSeconds(r.scene_duration)
+                    : (typeof r?.timeline === 'string' && r.timeline.trim()
+                        ? parseDurationToSeconds(r.timeline)
+                        : null)));
+        const wordCountVal =
+          typeof r?.word_count === 'number'
+            ? r.word_count
+            : computeWordCount(narrationVal || descriptionVal || '');
+        return {
+          scene_number: r?.scene_number,
+          scene_title: r?.scene_title ?? '',
+          model: r?.mode ?? r?.model ?? '',
+          timeline: r?.timeline ?? '',
+          duration: durationCandidate != null && !Number.isNaN(durationCandidate) ? durationCandidate : undefined,
+          narration: narrationVal,
+          desc: descriptionVal,
+          word_count: wordCountVal,
+          gen_image: (typeof r?.gen_image === 'boolean') ? r.gen_image : undefined,
+          // Preserve visual/styling fields so they are not dropped server-side
+          chart_type: r?.chart_type ?? r?.chartType ?? '',
+          chart_data: r?.chart_data ?? r?.chartData ?? undefined,
+          colors: Array.isArray(r?.colors) ? r.colors : [],
+          font_style: r?.font_style ?? r?.fontStyle ?? '',
+          font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
+          text_to_be_included: Array.isArray(r?.text_to_be_included)
+            ? r.text_to_be_included
+            : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
+          ref_image: filterImageUrls(
+            Array.isArray(r?.ref_image)
+              ? r.ref_image
+              : (typeof r?.ref_image === 'string' && r.ref_image.trim())
+              ? [r.ref_image]
+              : []
+          ),
+          // Include avatar/background to avoid clearing when saving
+          avatar: r?.avatar ?? '',
+          background: r?.background ?? r?.background_image ?? '',
+          background_image: r?.background_image ?? r?.background ?? '',
+          // Include model-specific option blobs
+          presenter_options: r?.presenter_options ?? undefined,
+          anchor_options: r?.anchor_options ?? undefined,
+          folderLink: r?.folderLink ?? r?.folder_link ?? '',
+          veo3_prompt_template: clonePromptTemplate(r?.veo3_prompt_template),
+          anchor_prompt_template: clonePromptTemplate(r?.anchor_prompt_template)
+        };
+      });
 
       const requestBody = {
         user: userForBody,
@@ -3247,7 +4435,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       setIsUpdatingText(false);
     }
   };
-
   // Helper: Update a single scene's gen_image flag (and optional description) via update-text API
   const updateSceneGenImageFlag = async (sceneIdx, { genImage, descriptionOverride, refImagesOverride, backgroundOverride, backgroundImageOverride, avatarOverride } = {}) => {
     try {
@@ -3261,62 +4448,254 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const sessText = await sessionResp.text();
       let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
       if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
-      const sd = sessJson?.session_data || sessJson?.session || {};
-      const user = sessJson?.user_data || sd?.user_data || sd?.user || {};
-      const sessionForBody = {
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-        content: Array.isArray(sd?.content) ? sd.content : [],
-        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-        created_at: sd?.created_at || new Date().toISOString(),
-        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-        messages: Array.isArray(sd?.messages) ? sd.messages : [],
-        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
-        videos: Array.isArray(sd?.videos) ? sd.videos : [],
-        images: Array.isArray(sd?.images) ? sd.images : [],
-        final_link: sd?.final_link || '',
-        videoType: sd?.videoType || sd?.video_type || '',
-        additionalProp1: sd?.additionalProp1 || {}
-      };
-      const originalUserquery = Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [];
-      const scriptVersion = (Array.isArray(sd?.scripts) && sd.scripts[0]?.version) || sd?.version || 'v1';
+      const rawSession = sessJson?.session_data || sessJson?.session || {};
+      const sessionForBody = sanitizeSessionSnapshot(rawSession, sessionId, token);
+      const rawUser = sessJson?.user_data || rawSession?.user_data || rawSession?.user || {};
+      const user = normalizeUserSnapshot(rawUser, token);
+      const scriptsSource = Array.isArray(sessionForBody?.scripts) ? sessionForBody.scripts : [];
+      const primaryScript = scriptsSource[0] || {};
+      const originalUserquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+      const scriptVersion =
+        primaryScript?.version ||
+        sessionForBody?.version ||
+        'v1';
+      const airesponseSource = Array.isArray(primaryScript?.airesponse)
+        ? primaryScript.airesponse.map((item) => (item && typeof item === 'object' ? { ...item } : item))
+        : [];
       const rows = Array.isArray(scriptRows) ? scriptRows : [];
-      const airesponse = rows.map((r, idx) => {
-        const isTarget = idx === sceneIdx;
-        return {
-          scene_number: r?.scene_number,
-          scene_title: r?.scene_title ?? '',
-          model: r?.mode ?? r?.model ?? '',
-          timeline: r?.timeline ?? '',
-          narration: r?.narration ?? '',
-          desc: isTarget && typeof descriptionOverride === 'string' ? descriptionOverride : (r?.description ?? ''),
-          gen_image: (isTarget && typeof genImage === 'boolean') ? genImage : ((typeof r?.gen_image === 'boolean') ? r.gen_image : undefined),
-          // Preserve visual/styling fields so they are not dropped
-          chart_type: r?.chart_type ?? r?.chartType ?? '',
-          chart_data: r?.chart_data ?? r?.chartData ?? undefined,
-          colors: Array.isArray(r?.colors) ? r.colors : [],
-          font_style: r?.font_style ?? r?.fontStyle ?? '',
-          font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? '',
-          text_to_be_included: Array.isArray(r?.text_to_be_included)
-            ? r.text_to_be_included
-            : (typeof r?.text_to_include === 'string' && r.text_to_include.trim() ? [r.text_to_include.trim()] : []),
-          ref_image: filterImageUrls(
-            isTarget && Array.isArray(refImagesOverride) && refImagesOverride.length > 0
-              ? refImagesOverride
-              : (Array.isArray(r?.ref_image) ? r.ref_image : (typeof r?.ref_image === 'string' && r.ref_image.trim() ? [r.ref_image] : []))
-          ),
-          // Include avatar/background (ANCHOR) if present/overridden
-          avatar: isTarget ? (avatarOverride ?? r?.avatar ?? '') : (r?.avatar ?? ''),
-          background: isTarget ? ((backgroundOverride ?? backgroundImageOverride) ?? r?.background ?? r?.background_image ?? '') : (r?.background ?? r?.background_image ?? ''),
-          background_image: isTarget ? ((backgroundImageOverride ?? backgroundOverride) ?? r?.background_image ?? r?.background ?? '') : (r?.background_image ?? r?.background ?? ''),
-          // Include model-specific option blobs
-          presenter_options: r?.presenter_options ?? undefined,
-          anchor_options: r?.anchor_options ?? undefined,
-          folderLink: r?.folderLink ?? r?.folder_link ?? '',
-        };
+      const targetRow = rows[sceneIdx] || {};
+      const targetSceneNumber = targetRow?.scene_number ?? (sceneIdx + 1);
+
+      const applyField = (obj, keys, value) => {
+        for (const key of keys) {
+          if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            obj[key] = value;
+            return true;
+          }
+        }
+        return false;
+      };
+
+      const clonePromptTemplate = (tpl) => {
+        if (!tpl || typeof tpl !== 'object') return null;
+        if (Array.isArray(tpl)) return [...tpl];
+        return { ...tpl };
+      };
+
+      let matchedScene = false;
+      const airesponse = airesponseSource.map((scene, idx) => {
+        if (!scene || typeof scene !== 'object') return scene;
+        const sceneNumber =
+          scene?.scene_number ??
+          scene?.scene_no ??
+          scene?.sceneNo ??
+          scene?.scene ??
+          (idx + 1);
+        if (sceneNumber !== targetSceneNumber) {
+          return { ...scene };
+        }
+        matchedScene = true;
+        const clone = { ...scene };
+
+        const descriptionVal =
+          typeof descriptionOverride === 'string'
+            ? descriptionOverride
+            : (targetRow?.description ?? clone.desc ?? clone.description ?? '');
+        const narrationVal =
+          typeof targetRow?.narration === 'string' && targetRow.narration.trim()
+            ? targetRow.narration
+            : (clone.narration ??
+              clone.voice_over ??
+              clone.voiceover ??
+              clone.voice ??
+              '');
+
+        const refImages = (() => {
+          if (Array.isArray(refImagesOverride) && refImagesOverride.length > 0) {
+            return filterImageUrls(refImagesOverride);
+          }
+          if (Array.isArray(targetRow?.ref_image)) return filterImageUrls(targetRow.ref_image);
+          if (typeof targetRow?.ref_image === 'string' && targetRow.ref_image.trim()) {
+            return filterImageUrls([targetRow.ref_image]);
+          }
+          return Array.isArray(clone.ref_image) ? filterImageUrls(clone.ref_image) : [];
+        })();
+
+        const backgroundVal =
+          backgroundOverride ??
+          backgroundImageOverride ??
+          targetRow?.background ??
+          targetRow?.background_image ??
+          clone.background ??
+          clone.background_image ??
+          '';
+        const backgroundImageVal =
+          backgroundImageOverride ??
+          backgroundOverride ??
+          targetRow?.background_image ??
+          targetRow?.background ??
+          clone.background_image ??
+          clone.background ??
+          '';
+        const avatarVal =
+          typeof avatarOverride === 'string'
+            ? avatarOverride
+            : (targetRow?.avatar ?? clone.avatar);
+
+        applyField(clone, ['scene_number', 'scene_no', 'sceneNo', 'scene'], targetSceneNumber);
+        if (!applyField(clone, ['scene_title', 'sceneTitle', 'title'], targetRow?.scene_title ?? clone.scene_title ?? clone.title)) {
+          clone.scene_title = targetRow?.scene_title ?? clone.scene_title ?? '';
+        }
+        if (!applyField(clone, ['model', 'mode'], targetRow?.mode ?? targetRow?.model ?? clone.model ?? clone.mode)) {
+          clone.model = targetRow?.mode ?? targetRow?.model ?? clone.model ?? '';
+        }
+        applyField(clone, ['timeline', 'time'], targetRow?.timeline ?? clone.timeline ?? '');
+        if (!applyField(clone, ['narration', 'voice_over', 'voiceover', 'voice'], narrationVal)) {
+          clone.narration = narrationVal;
+        }
+        if (!applyField(clone, ['desc', 'description'], descriptionVal)) {
+          clone.desc = descriptionVal;
+        }
+        const durationCandidate =
+          (typeof targetRow?.duration === 'number' && Number.isFinite(targetRow.duration) ? Math.round(targetRow.duration) : null) ??
+          (typeof targetRow?.duration === 'string' && targetRow.duration.trim()
+            ? parseDurationToSeconds(targetRow.duration)
+            : null) ??
+          (typeof targetRow?.scene_duration === 'string' && targetRow.scene_duration.trim()
+            ? parseDurationToSeconds(targetRow.scene_duration)
+            : null) ??
+          (typeof targetRow?.timeline === 'string' && targetRow.timeline.trim()
+            ? parseDurationToSeconds(targetRow.timeline)
+            : null);
+        if (durationCandidate != null && !Number.isNaN(durationCandidate)) {
+          applyField(clone, ['duration', 'scene_duration'], durationCandidate);
+        }
+        const wordCountVal =
+          typeof targetRow?.word_count === 'number'
+            ? targetRow.word_count
+            : (typeof clone.word_count === 'number'
+                ? clone.word_count
+                : computeWordCount(narrationVal || descriptionVal || ''));
+        if (!applyField(clone, ['word_count'], wordCountVal)) {
+          clone.word_count = wordCountVal;
+        }
+        if (typeof genImage === 'boolean') {
+          applyField(clone, ['gen_image'], genImage);
+        } else if (typeof targetRow?.gen_image === 'boolean') {
+          applyField(clone, ['gen_image'], targetRow.gen_image);
+        }
+        applyField(clone, ['chart_type', 'chartType'], targetRow?.chart_type ?? targetRow?.chartType ?? clone.chart_type ?? clone.chartType);
+        applyField(clone, ['chart_data', 'chartData'], targetRow?.chart_data ?? targetRow?.chartData ?? clone.chart_data ?? clone.chartData);
+        applyField(clone, ['colors'], Array.isArray(targetRow?.colors) ? targetRow.colors : clone.colors ?? []);
+        applyField(clone, ['font_style', 'fontStyle'], targetRow?.font_style ?? targetRow?.fontStyle ?? clone.font_style ?? clone.fontStyle);
+        const fontSizeVal = targetRow?.font_size ?? targetRow?.fontSize ?? targetRow?.fontsize ?? clone.font_size ?? clone.fontSize;
+        applyField(clone, ['font_size', 'fontSize'], fontSizeVal);
+        if (Array.isArray(targetRow?.text_to_be_included)) {
+          applyField(clone, ['text_to_be_included'], targetRow.text_to_be_included);
+        }
+        if (refImages.length > 0) {
+          clone.ref_image = refImages;
+        }
+        if (avatarVal !== undefined) clone.avatar = avatarVal;
+        clone.background = backgroundVal;
+        clone.background_image = backgroundImageVal;
+        if (targetRow?.presenter_options) clone.presenter_options = targetRow.presenter_options;
+        if (targetRow?.anchor_options) clone.anchor_options = targetRow.anchor_options;
+        if (targetRow?.anchor_prompt_template && typeof targetRow.anchor_prompt_template === 'object') {
+          clone.anchor_prompt_template = clonePromptTemplate(targetRow.anchor_prompt_template);
+        }
+        clone.folderLink = targetRow?.folderLink ?? targetRow?.folder_link ?? clone.folderLink ?? clone.folder_link ?? '';
+        if (targetRow?.veo3_prompt_template && typeof targetRow.veo3_prompt_template === 'object') {
+          clone.veo3_prompt_template = clonePromptTemplate(targetRow.veo3_prompt_template);
+        }
+
+        return clone;
       });
-      const requestBody = { user, session: sessionForBody, changed_script: { userquery: originalUserquery, airesponse, version: String(scriptVersion || 'v1') } };
+
+      const finalAiresponse = (() => {
+        if (matchedScene) return airesponse;
+        const fallbackRow = targetRow;
+        const refImages = Array.isArray(refImagesOverride) && refImagesOverride.length > 0
+          ? filterImageUrls(refImagesOverride)
+          : Array.isArray(fallbackRow?.ref_image)
+            ? filterImageUrls(fallbackRow.ref_image)
+            : [];
+        const descriptionVal =
+          typeof descriptionOverride === 'string'
+            ? descriptionOverride
+            : (fallbackRow?.description ?? '');
+        const backgroundVal =
+          backgroundOverride ??
+          backgroundImageOverride ??
+          fallbackRow?.background ??
+          fallbackRow?.background_image ??
+          '';
+        const backgroundImageVal =
+          backgroundImageOverride ??
+          backgroundOverride ??
+          fallbackRow?.background_image ??
+          fallbackRow?.background ??
+          '';
+        const fallbackDuration =
+          (typeof fallbackRow?.duration === 'number' && Number.isFinite(fallbackRow.duration) ? Math.round(fallbackRow.duration) : null) ??
+          (typeof fallbackRow?.duration === 'string' && fallbackRow.duration.trim()
+            ? parseDurationToSeconds(fallbackRow.duration)
+            : null) ??
+          (typeof fallbackRow?.scene_duration === 'string' && fallbackRow.scene_duration.trim()
+            ? parseDurationToSeconds(fallbackRow.scene_duration)
+            : null) ??
+          (typeof fallbackRow?.timeline === 'string' && fallbackRow.timeline.trim()
+            ? parseDurationToSeconds(fallbackRow.timeline)
+            : null);
+        const fallbackNarration = fallbackRow?.narration ?? '';
+        const fallbackWordCount =
+          typeof fallbackRow?.word_count === 'number'
+            ? fallbackRow.word_count
+            : computeWordCount(fallbackNarration || descriptionVal || '');
+        const fallbackScene = {
+          scene_number: targetSceneNumber,
+          scene_title: fallbackRow?.scene_title ?? '',
+          model: fallbackRow?.mode ?? fallbackRow?.model ?? '',
+          timeline: fallbackRow?.timeline ?? '',
+          duration: fallbackDuration != null && !Number.isNaN(fallbackDuration) ? fallbackDuration : undefined,
+          narration: fallbackNarration,
+          desc: descriptionVal,
+          gen_image: typeof genImage === 'boolean' ? genImage : (typeof fallbackRow?.gen_image === 'boolean' ? fallbackRow.gen_image : undefined),
+          chart_type: fallbackRow?.chart_type ?? fallbackRow?.chartType ?? '',
+          chart_data: fallbackRow?.chart_data ?? fallbackRow?.chartData ?? undefined,
+          colors: Array.isArray(fallbackRow?.colors) ? fallbackRow.colors : [],
+          font_style: fallbackRow?.font_style ?? fallbackRow?.fontStyle ?? '',
+          font_size: fallbackRow?.font_size ?? fallbackRow?.fontSize ?? fallbackRow?.fontsize ?? '',
+          text_to_be_included: Array.isArray(fallbackRow?.text_to_be_included)
+            ? fallbackRow.text_to_be_included
+            : (typeof fallbackRow?.text_to_include === 'string' && fallbackRow.text_to_include.trim() ? [fallbackRow.text_to_include.trim()] : []),
+          ref_image: refImages,
+          avatar: typeof avatarOverride === 'string' ? avatarOverride : (fallbackRow?.avatar ?? ''),
+          background: backgroundVal,
+          background_image: backgroundImageVal,
+          presenter_options: fallbackRow?.presenter_options,
+          anchor_options: fallbackRow?.anchor_options,
+          folderLink: fallbackRow?.folderLink ?? fallbackRow?.folder_link ?? '',
+          anchor_prompt_template: fallbackRow?.anchor_prompt_template && typeof fallbackRow.anchor_prompt_template === 'object'
+            ? clonePromptTemplate(fallbackRow.anchor_prompt_template)
+            : undefined,
+          word_count: fallbackWordCount
+        };
+        if (fallbackRow?.veo3_prompt_template && typeof fallbackRow.veo3_prompt_template === 'object') {
+          fallbackScene.veo3_prompt_template = clonePromptTemplate(fallbackRow.veo3_prompt_template);
+        }
+        return [...airesponse, fallbackScene];
+      })();
+
+      const requestBody = {
+        user,
+        session: sessionForBody,
+        changed_script: {
+          userquery: originalUserquery,
+          airesponse: finalAiresponse,
+          version: String(scriptVersion || 'v1')
+        }
+      };
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
@@ -3502,9 +4881,51 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   };
   console.log(scriptRows)
 
+  const activeScene = useMemo(() => {
+    if (!Array.isArray(scriptRows) || scriptRows.length === 0) return null;
+    const safeIndex = Math.min(Math.max(currentSceneIndex ?? 0, 0), scriptRows.length - 1);
+    return scriptRows[safeIndex] || null;
+  }, [scriptRows, currentSceneIndex]);
 
-  
+  const activeModelType = useMemo(() => {
+    const candidates = [
+      activeScene?.video_type,
+      activeScene?.videoType,
+      activeScene?.mode,
+      activeScene?.mode_type,
+      activeScene?.model,
+      selectedVideoType
+    ];
+    const firstValid = candidates.find(
+      (val) => typeof val === 'string' && val.trim().length > 0
+    );
+    if (!firstValid) return '';
+    const upper = firstValid.trim().toUpperCase();
+    if (['VEO3', 'AVATAR', 'AVATAR BASED', 'AVATAR-BASED'].includes(upper)) return 'Avatar Based';
+    if (['PLOTLY', 'FINANCIAL', 'FINANCE'].includes(upper)) return 'Financial';
+    if (['SORA', 'INFOGRAPHIC', 'INFOGRAPHICS'].includes(upper)) return 'Infographic';
+    return firstValid.trim();
+  }, [activeScene, selectedVideoType]);
 
+  const isActiveAvatarModel = activeModelType === 'Avatar Based';
+  const isActiveInfographicModel = activeModelType === 'Infographic';
+  const isActiveFinancialModel = activeModelType === 'Financial';
+
+  const isAvatarModelSelected = newSceneVideoType === 'Avatar Based';
+  const isInfographicModelSelected = newSceneVideoType === 'Infographic';
+  const isFinancialModelSelected = newSceneVideoType === 'Financial';
+  const suggestionStep =
+    enablePresenterOptions && isAvatarModelSelected && requiresAvatarPresenterSelection ? 3 : 2;
+  const showSuggestionSection = addSceneStep >= suggestionStep;
+  const isPresenterSelectionPhase =
+    enablePresenterOptions && isAvatarModelSelected && requiresAvatarPresenterSelection && addSceneStep === 2;
+  const regenModelUpper = String(regenModel || '').toUpperCase();
+  const isRegenAvatarModel = regenModelUpper === 'VEO3';
+  const regenSuggestionStep =
+    enablePresenterOptions && isRegenAvatarModel && requiresRegenPresenterSelection ? 3 : 2;
+  const showRegenSuggestionSection = regenStep >= regenSuggestionStep;
+  const isRegenPresenterSelectionPhase =
+    enablePresenterOptions && isRegenAvatarModel && requiresRegenPresenterSelection && regenStep === 2;
   return (
     <div className='bg-white h-[79vh] flex justify-between flex-col rounded-lg mt-3 p-6'>
       {/* Add Scene Modal */}
@@ -3520,7 +4941,19 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   {['Avatar Based', 'Infographic', 'Financial'].map((type) => (
                     <button
                       key={type}
-                      onClick={() => setNewSceneVideoType(type)}
+                      onClick={() => {
+                        setNewSceneVideoType(type);
+                        setAddSceneStep(1);
+                        setSceneSuggestions([]);
+                        setNewSceneSelectedIdx(-1);
+                        setNewSceneContent('');
+                        setNewSceneDescription('');
+                        setRequiresAvatarPresenterSelection(false);
+                        setNewScenePresenterPresetId('');
+                        setNewScenePresenterPresetLabel('');
+                        setNewScenePresenterError('');
+                        setIsLoadingNewScenePresenter(false);
+                      }}
                       className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
                         newSceneVideoType === type
                           ? 'bg-[#13008B] text-white'
@@ -3532,7 +4965,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   ))}
                 </div>
               </div>
-              {newSceneVideoType === 'Financial' && addSceneStep === 2 && (
+              {newSceneVideoType === 'Financial' && addSceneStep >= 2 && (
                 <div className="space-y-2">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
@@ -3643,7 +5076,84 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   </div>
                 </div>
               )}
-              {addSceneStep === 2 && (
+              {isPresenterSelectionPhase && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700">Presenter Options</label>
+                    {newScenePresenterPresetId && (
+                      <span className="text-xs text-gray-500">Selected: {newScenePresenterPresetLabel || 'Presenter'}</span>
+                    )}
+                  </div>
+                  {isLoadingNewScenePresenter ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                      Loading presenter options…
+                    </div>
+                  ) : (() => {
+                    const avatarPresenterOptions = Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : [];
+                    if (avatarPresenterOptions.length === 0) {
+                      return (
+                        <div className="text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-2">
+                          No presenter options available for this configuration.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {avatarPresenterOptions.map((preset, idx) => {
+                          const id = String(preset?.preset_id ?? '');
+                          const selected = String(newScenePresenterPresetId || '') === id;
+                          return (
+                            <button
+                              key={id || idx}
+                              type="button"
+                              onClick={() => {
+                                setNewScenePresenterPresetId(id);
+                                setNewScenePresenterPresetLabel(preset?.option || '');
+                                setNewScenePresenterError('');
+                              }}
+                              className={`w-full text-left border rounded-lg px-3 py-3 transition-all ${
+                                selected
+                                  ? 'border-[#13008B] bg-[#f3f1ff] shadow-sm'
+                                  : 'border-gray-200 bg-white hover:border-[#13008B]'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-gray-800">
+                                    {preset?.option || 'Presenter'}
+                                  </p>
+                                  {preset?.sample_video && (
+                                    <a
+                                      href={preset.sample_video}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="mt-1 inline-flex items-center gap-1 text-xs text-[#13008B] underline"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      Preview sample
+                                    </a>
+                                  )}
+                                </div>
+                                {selected && <Check className="w-4 h-4 text-[#13008B]" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                  {newScenePresenterError && (
+                    <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
+                      {newScenePresenterError}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    Select a presenter preset to continue. You can preview samples where available.
+                  </p>
+                </div>
+              )}
+              {showSuggestionSection && (
               <div>
                 {/* Suggestions */}
                 <label className="block text-sm font-medium text-gray-700 mb-1">Suggestions</label>
@@ -3679,7 +5189,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 )}
               </div>
               )}
-              {addSceneStep === 2 && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
+              {showSuggestionSection && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -3703,19 +5213,83 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               </button>
               {addSceneStep === 1 && (
                 <button
+                  disabled={isLoadingNewScenePresenter || isSuggestingScenes}
                   onClick={async () => {
-                    const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
-                    const idx = (typeof insertSceneIndex === 'number' && insertSceneIndex >= 0 && insertSceneIndex <= total) ? insertSceneIndex : total;
-                    const modelType = newSceneVideoType === 'Avatar Based' ? 'VEO3' : (newSceneVideoType === 'Financial' ? 'PLOTLY' : 'SORA');
-                    await fetchSceneSuggestions(modelType, idx, 'add');
-                    setAddSceneStep(2);
+                    try {
+                      const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+                      const idx =
+                        (typeof insertSceneIndex === 'number' && insertSceneIndex >= 0 && insertSceneIndex <= total)
+                          ? insertSceneIndex
+                          : total;
+                      const modelType =
+                        newSceneVideoType === 'Avatar Based'
+                          ? 'VEO3'
+                          : (newSceneVideoType === 'Financial' ? 'PLOTLY' : 'SORA');
+                      setSceneSuggestions([]);
+                      setNewSceneSelectedIdx(-1);
+                      setNewSceneContent('');
+                      setNewSceneDescription('');
+                      setNewScenePresenterError('');
+                      if (enablePresenterOptions && modelType === 'VEO3') {
+                        setNewScenePresenterPresetId('');
+                        setNewScenePresenterPresetLabel('');
+                        setIsLoadingNewScenePresenter(true);
+                        try {
+                          const list = await fetchPresenterPresetsForModel('VEO3');
+                          const normalizedList = Array.isArray(list) ? list : [];
+                          if (normalizedList.length > 0) {
+                            setRequiresAvatarPresenterSelection(true);
+                            if (normalizedList.length === 1) {
+                              setNewScenePresenterPresetId(String(normalizedList[0].preset_id));
+                              setNewScenePresenterPresetLabel(normalizedList[0].option || '');
+                            }
+                            setAddSceneStep(2);
+                            return;
+                          }
+                          setRequiresAvatarPresenterSelection(false);
+                        } catch (err) {
+                          setRequiresAvatarPresenterSelection(false);
+                          setNewScenePresenterError(err?.message || 'Failed to load presenter options');
+                        } finally {
+                          setIsLoadingNewScenePresenter(false);
+                        }
+                      } else {
+                        setRequiresAvatarPresenterSelection(false);
+                      }
+                      await fetchSceneSuggestions(modelType, idx, 'add');
+                      setAddSceneStep(2);
+                    } catch (err) {
+                      console.error('Failed to continue add-scene flow:', err);
+                      setNewScenePresenterError(err?.message || 'Failed to continue add-scene flow.');
+                    }
                   }}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-blue-800"
+                  className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                    isLoadingNewScenePresenter || isSuggestingScenes
+                      ? 'bg-[#9aa0d0] cursor-not-allowed'
+                      : 'bg-[#13008B] hover:bg-blue-800'
+                  }`}
                 >
                   Continue
                 </button>
               )}
-              {addSceneStep === 2 && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
+              {requiresAvatarPresenterSelection && addSceneStep === 2 && (
+                <button
+                  onClick={handleAvatarPresenterNext}
+                  disabled={
+                    isLoadingNewScenePresenter ||
+                    isSuggestingScenes ||
+                    !newScenePresenterPresetId
+                  }
+                  className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                    isLoadingNewScenePresenter || isSuggestingScenes || !newScenePresenterPresetId
+                      ? 'bg-[#9aa0d0] cursor-not-allowed'
+                      : 'bg-[#13008B] hover:bg-blue-800'
+                  }`}
+                >
+                  {isSuggestingScenes ? 'Loading…' : 'Next'}
+                </button>
+              )}
+              {showSuggestionSection && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
                 <button
                   onClick={addSceneToRows}
                   disabled={isAddingScene}
@@ -3725,62 +5299,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 </button>
               )}
             </div>
-          </div>
-        </div>
-      )}
-      {/* Confirm Presenter Option (ANCHOR) Popup */}
-      {showPresenterConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
-            <h3 className="text-lg font-semibold text-[#13008B]">Apply Presenter Option?</h3>
-            <div className="mt-3 text-sm text-gray-700">
-              <p>Selected: {pendingPresenterOption || '-'}</p>
-              <p>This will update the scene visuals. Continue?</p>
-            </div>
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                onClick={() => { setShowPresenterConfirm(false); setPendingPresenterOption(''); }}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  const sel = pendingPresenterOption;
-                  setShowPresenterConfirm(false);
-                  setPendingPresenterOption('');
-                  try {
-                    await applyPresenterOptionSelection(sel);
-                    // reflect local state and persist selection
-                    try {
-                      const rows = [...(scriptRows||[])];
-                      const sc = { ...rows[currentSceneIndex] };
-                      sc.presenter_options = { option: sel };
-                      rows[currentSceneIndex] = sc;
-                      setScriptRows(rows);
-                    } catch(_) {}
-                    try {
-                      const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
-                      const payload = { option: sel };
-                      if (sid) localStorage.setItem(`presenter_option:${sid}`, JSON.stringify(payload));
-                      else localStorage.setItem('presenter_option', JSON.stringify(payload));
-                    } catch(_) {}
-                  } catch(e) { /* noop */ }
-                }}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-[#0f0066]"
-              >
-                Confirm
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Presenter apply loader overlay */}
-      {isApplyingPresenter && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
-            <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <div className="text-sm font-medium text-gray-800">Applying presenter option…</div>
           </div>
         </div>
       )}
@@ -4147,12 +5665,17 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     onDelete={() => setShowDeleteConfirm(true)}
                     onRegenerate={openRegenerateWithSuggestions}
                     onEdit={() => setIsEditingScene(true)}
+                    onGenerateSummary={openGenerateSummaryPrompt}
                     onSwitchAvatar={() => openModelChangeConfirm('Avatar Based')}
                     onSwitchInfographic={() => openModelChangeConfirm('Infographic')}
                     onSwitchFinancial={() => openModelChangeConfirm('Financial')}
                     isDeleting={isDeletingScene}
                     hasScenes={Array.isArray(scriptRows) && scriptRows.length > 0}
                     isSwitching={isSwitchingModel}
+                    isGeneratingSummary={isGeneratingSummary}
+                    showSwitchAvatar={!isActiveAvatarModel}
+                    showSwitchInfographic={!isActiveInfographicModel}
+                    showSwitchFinancial={!isActiveFinancialModel}
                   />
                 </div>
                 {!scenesMode && (<button onClick={() => {
@@ -4643,156 +6166,149 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           );
                         }
                         // Default: Description for non-Financial (non-PLOTLY) scenes
-                        return (
-                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                            <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
-                            {isEditingScene ? (
+                        const sceneDescription =
+                          Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+                            ? scriptRows[currentSceneIndex].description || ''
+                            : '';
+                        const isInlineEditing =
+                          !isEditingScene &&
+                          isDescriptionEditing &&
+                          descriptionSceneIndex === currentSceneIndex;
+                        const startInlineEditing = () => {
+                          setPendingDescription(sceneDescription);
+                          setDescriptionSceneIndex(currentSceneIndex);
+                          setIsDescriptionEditing(true);
+                        };
+                        const cancelInlineEditing = () => {
+                          setPendingDescription(sceneDescription);
+                          setIsDescriptionEditing(false);
+                          setDescriptionSceneIndex(null);
+                        };
+                        const saveInlineDescription = async () => {
+                          try {
+                            const scene =
+                              Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+                                ? scriptRows[currentSceneIndex]
+                                : null;
+                            const sceneNumber = (scene?.scene_number ?? (currentSceneIndex + 1)) || 0;
+                            const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                            const nextDescription = pendingDescription || '';
+                            const narrationText = scene?.narration || '';
+                            const computedWordCount = computeWordCount(narrationText || nextDescription);
+                            handleSceneUpdate(currentSceneIndex, 'description', nextDescription);
+                            handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
+
+                            if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+                              try {
+                                const { session, user } = await buildSessionAndUserForScene();
+                                const token = localStorage.getItem('token') || '';
+                                const formattedUser = formatUserForVisual(user, token);
+                                const formattedSession = formatSessionForVisual(
+                                  session,
+                                  session?.session_id,
+                                  session?.user_id
+                                );
+                                const payload = {
+                                  user: formattedUser,
+                                  session: formattedSession,
+                                  scene_number: Number(sceneNumber) || 0,
+                                  custom_desc: nextDescription
+                                };
+                                await fetch(
+                                  'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/custom-desc',
+                                  {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload)
+                                  }
+                                );
+                              } catch (err) {
+                                console.warn('custom-desc update failed:', err);
+                              }
+                            } else if (modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
+                              try {
+                                await updateSceneGenImageFlag(currentSceneIndex, {
+                                  descriptionOverride: nextDescription
+                                });
+                              } catch (err) {
+                                console.warn('update-text description failed:', err);
+                              }
+                            } else {
+                              // Default to update-text flow for any other models
+                              try {
+                                await updateSceneGenImageFlag(currentSceneIndex, {
+                                  descriptionOverride: nextDescription
+                                });
+                              } catch (err) {
+                                console.warn('description update failed:', err);
+                              }
+                            }
+                          } catch (_) {
+                            /* noop */
+                          }
+                          setIsDescriptionEditing(false);
+                          setDescriptionSceneIndex(null);
+                        };
+                        if (isEditingScene) {
+                          return (
+                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                              <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
+                              {!isInlineEditing && (
+                              <p className="mt-2 text-xs text-gray-500">Double-click the description to edit.</p>
+                            )}
                               <textarea
-                                value={Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex].description || '' : ''}
+                                value={sceneDescription}
                                 onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
                                 rows={4}
                                 placeholder="Enter scene description"
                               />
-                            ) : (
-                              <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
-                                {Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? (scriptRows[currentSceneIndex].description || '-') : '-'}
-                              </div>
-                            )}
-                      </div>
-                    );
-                  })()}
-                      {(() => {
-                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
-                        if (!scene) return null;
-                        const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                        const isSora = sceneModelUpper === 'SORA';
-                        const isAnchor = sceneModelUpper === 'ANCHOR';
-                        const isPlotly = sceneModelUpper === 'PLOTLY';
-                        const isVeo = sceneModelUpper === 'VEO3';
-                        if (!(isSora || isAnchor || isPlotly || isVeo)) return null;
-                        const colors = Array.isArray(scene?.colors)
-                          ? scene.colors
-                          : (typeof scene?.colors === 'string' && scene.colors.trim()
-                            ? scene.colors.split(',').map((s) => s.trim()).filter(Boolean)
-                            : []);
-                        const fontSizeVal = Number(scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16) || 16;
-                        const fontStyleVal = scene?.font_style ?? scene?.fontStyle ?? '';
-                        const showFontControls = isSora || isAnchor || isPlotly;
-                        const fontOptions = (() => {
-                          const opts = Array.isArray(brandFonts) ? [...brandFonts] : [];
-                          if (fontStyleVal && !opts.includes(fontStyleVal)) opts.unshift(fontStyleVal);
-                          return opts;
-                        })();
-                        const gridClass = showFontControls ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4';
+                            </div>
+                          );
+                        }
                         return (
-                          <div className="mt-4">
-                            <button
-                              type="button"
-                              onClick={() => setAdvancedOptionsOpen((prev) => !prev)}
-                              className="flex w-full items-center justify-between rounded-lg border border-[#D8D3FF] bg-white px-4 py-3 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#F6F4FF]"
-                            >
-                              <span>Advanced Style Options</span>
-                              <ChevronDown className={`h-4 w-4 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`} />
-                            </button>
-                            {advancedOptionsOpen && (
-                              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-4">
-                                <div className={gridClass}>
-                                  <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Colors</label>
-                                    <div className="flex flex-wrap gap-2">
-                                      {(colors || []).map((c, i) => (
-                                        <button
-                                          key={`${c}-${i}`}
-                                          type="button"
-                                          onClick={() => {
-                                            if (isEditingScene) {
-                                              const next = colors.filter((_, idx) => idx !== i);
-                                              handleSceneUpdate(currentSceneIndex, 'colors', next);
-                                            }
-                                          }}
-                                          className="w-7 h-7 rounded border border-gray-300"
-                                          style={{ background: c }}
-                                          title={isEditingScene ? `Remove ${c}` : c}
-                                        />
-                                      ))}
-                                      {(!colors || colors.length === 0) && (
-                                        <span className="text-sm text-gray-500">-</span>
-                                      )}
-                                    </div>
-                                    {isEditingScene && (
-                                      <div className="flex items-center gap-2 mt-2">
-                                        <input
-                                          type="text"
-                                          placeholder="#000000"
-                                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              const val = (e.currentTarget.value || '').trim();
-                                              if (val) {
-                                                const next = Array.from(new Set([...(colors || []), val]));
-                                                handleSceneUpdate(currentSceneIndex, 'colors', next);
-                                                e.currentTarget.value = '';
-                                              }
-                                            }
-                                          }}
-                                        />
-                                        <span className="text-xs text-gray-500">Press Enter to add</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                  {showFontControls && (
-                                    <>
-                                      <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">Font Size</label>
-                                        <div className="flex items-center gap-3">
-                                          <input
-                                            type="range"
-                                            min={8}
-                                            max={72}
-                                            step={1}
-                                            value={fontSizeVal}
-                                            onChange={(e) =>
-                                              handleSceneUpdate(currentSceneIndex, 'font_size', Number(e.target.value))
-                                            }
-                                            className="flex-1"
-                                            disabled={!isEditingScene}
-                                          />
-                                          <span className="inline-block w-12 text-right text-sm text-gray-700">{fontSizeVal}px</span>
-                                        </div>
-                                      </div>
-                                      <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">Font Style</label>
-                                        <select
-                                          value={fontStyleVal}
-                                          onChange={(e) => handleSceneUpdate(currentSceneIndex, 'font_style', e.target.value)}
-                                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${
-                                            isEditingScene ? 'border-gray-300' : 'border-gray-200 bg-white text-gray-800'
-                                          }`}
-                                          disabled={!isEditingScene}
-                                        >
-                                          <option value="">Select font</option>
-                                          {fontOptions.length > 0 ? (
-                                            fontOptions.map((f) => (
-                                              <option key={f} value={f} style={{ fontFamily: f }}>
-                                                {f}
-                                              </option>
-                                            ))
-                                          ) : (
-                                            <option value="" disabled>
-                                              No fonts found in Brand Identity
-                                            </option>
-                                          )}
-                                        </select>
-                                      </div>
-                                    </>
-                                  )}
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-lg font-semibold text-gray-800">Description</h4>
+                              {isInlineEditing ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100"
+                                    onClick={cancelInlineEditing}
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800"
+                                    onClick={saveInlineDescription}
+                                  >
+                                    Save
+                                  </button>
                                 </div>
-                              </div>
-                            )}
+                              ) : (
+                                <p className="text-xs text-gray-500">Double-click the description to edit.</p>
+                              )}
+                            </div>
+                            <textarea
+                              value={isInlineEditing ? pendingDescription : sceneDescription}
+                              onChange={(e) => setPendingDescription(e.target.value)}
+                              onDoubleClick={startInlineEditing}
+                              readOnly={!isInlineEditing}
+                              className={`w-full px-3 py-2 rounded-lg border ${
+                                isInlineEditing
+                                  ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
+                                  : 'border-gray-200 bg-white text-gray-800 cursor-pointer'
+                              }`}
+                              rows={4}
+                              placeholder="Double-click to edit description"
+                            />
+                            
                           </div>
                         );
-                      })()}
+                  })()}
+                    
                       {(() => {
                         const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                         if (!scene) return null;
@@ -4931,43 +6447,49 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                             vt = ((typeof window !== 'undefined' && localStorage.getItem(`video_type_value:${sid}`)) || selectedVideoType || '').toLowerCase();
                           } catch (_) { /* noop */ }
                           const sceneModelUpper = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
+                          const showAvatarOption = !(sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR');
+                          const showInfographicOption = sceneModelUpper !== 'SORA';
+                          const showFinancialOption = sceneModelUpper !== 'PLOTLY';
                           return (
                             <div className="flex flex-wrap gap-3">
-                              {/* Avatar */}
-                              <button
-                                type="button"
-                                disabled={!(sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR')}
-                                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  (sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR')
-                                    ? 'bg-[#13008B] text-white'
-                                    : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
-                                }`}
-                              >
-                                Avatar
-                              </button>
-                              {/* Infographic */}
-                              <button
-                                type="button"
-                                disabled={sceneModelUpper !== 'SORA'}
-                                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                                  (sceneModelUpper === 'SORA')
-                                    ? 'bg-[#13008B] text-white'
-                                    : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
-                                }`}
-                              >
-                                Infographic
-                              </button>
-                              {/* Financial (selected when scene model is PLOTLY) */}
-                              <button
-                                type="button"
-                                disabled={sceneModelUpper !== 'PLOTLY'}
-                                className={`px-4 py-2 rounded-full text-sm font-medium ${
-                                  sceneModelUpper === 'PLOTLY' ? 'bg-[#13008B] text-white' : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
-                                }`}
-                                title={sceneModelUpper === 'PLOTLY' ? 'Current model' : 'Switch model from menu to enable'}
-                              >
-                                Financial
-                              </button>
+                              {showAvatarOption && (
+                                <button
+                                  type="button"
+                                  disabled={!(sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR')}
+                                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                                    (sceneModelUpper === 'VEO3' || sceneModelUpper === 'ANCHOR')
+                                      ? 'bg-[#13008B] text-white'
+                                      : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                  }`}
+                                >
+                                  Avatar
+                                </button>
+                              )}
+                              {showInfographicOption && (
+                                <button
+                                  type="button"
+                                  disabled={sceneModelUpper !== 'SORA'}
+                                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                                    sceneModelUpper === 'SORA'
+                                      ? 'bg-[#13008B] text-white'
+                                      : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                  }`}
+                                >
+                                  Infographic
+                                </button>
+                              )}
+                              {showFinancialOption && (
+                                <button
+                                  type="button"
+                                  disabled={sceneModelUpper !== 'PLOTLY'}
+                                  className={`px-4 py-2 rounded-full text-sm font-medium ${
+                                    sceneModelUpper === 'PLOTLY' ? 'bg-[#13008B] text-white' : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                                  }`}
+                                  title={sceneModelUpper === 'PLOTLY' ? 'Current model' : 'Switch model from menu to enable'}
+                                >
+                                  Financial
+                                </button>
+                              )}
                             </div>
                           );
                         })()}
@@ -4976,149 +6498,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                         )}
                       </div>
                       );})()}
-
-                      {(() => {
-                        // Presenter Options for VEO3
-                        // Only show in contexts that explicitly enable it (Script Editor)
-                        if (!enablePresenterOptions) return null;
-                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
-                        const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                        // Show presenter options in Script Editor for VEO3 and ANCHOR models
-                        if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return null;
-                        const presenterOptions = [
-                          'Confident Entrance (Walk-in)',
-                          'Direct Address (Step Forward)',
-                          'Data Visualization (Gesture)',
-                          'Walk and Talk (Tracking Shot)',
-                          'Dynamic Interaction (Virtual Elements)',
-                          'Seated at Desk (Explainer)',
-                          'Podium Presentation (Keynote)',
-                          'Whiteboard Explanation (Strategy)',
-                          'Emphatic Close-up (Key Message)',
-                          'anchor mode'
-                        ];
-                        // Resolve current selection (prefer scene, fallback to saved guideline choice)
-                        let current = (scene?.presenter_options && scene.presenter_options.option) || '';
-                        try {
-                          if (!current) {
-                            const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
-                            const raw = (sid && localStorage.getItem(`presenter_option:${sid}`)) || localStorage.getItem('presenter_option');
-                            if (raw) {
-                              const obj = JSON.parse(raw);
-                              if (obj && obj.option) current = obj.option;
-                            }
-                          }
-                        } catch (_) { /* noop */ }
-                        // Replace dropdown with Guidelines-like selector
-                        const optionsList = [
-                          { option: 'Confident Entrance (Walk-in)', sample_video: 'https://example.com/sample_confident_entry.mp4' },
-                          { option: 'Direct Address (Step Forward)', sample_video: 'https://example.com/sample_step_forward.mp4' },
-                          { option: 'Data Visualization (Gesture)', sample_video: 'https://example.com/sample_gesture_graphics.mp4' },
-                          { option: 'Walk and Talk (Tracking Shot)', sample_video: 'https://example.com/sample_walk_across.mp4' },
-                          { option: 'Dynamic Interaction (Virtual Elements)' },
-                          { option: 'Seated at Desk (Explainer)' },
-                          { option: 'Podium Presentation (Keynote)' },
-                          { option: 'Whiteboard Explanation (Strategy)' },
-                          { option: 'Emphatic Close-up (Key Message)' },
-                          { option: 'anchor mode' }
-                        ];
-                        return (
-                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                            <h4 className="text-lg font-semibold text-gray-800 mb-3">Presenter Options</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              <div className="md:col-span-1 border border-gray-200 rounded-lg divide-y">
-                                {optionsList.map((po, idx) => {
-                                  const opt = po.option || String(po);
-                                  const active = current === opt;
-                                  return (
-                                    <button key={idx} type="button" onClick={async () => {
-                                      const sel = opt;
-                                  try {
-                                    const token = localStorage.getItem('token');
-                                    const sessionId = localStorage.getItem('session_id');
-                                    if (!token || !sessionId) return;
-                                    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-                                    });
-                                    const sessionText = await sessionResp.text();
-                                    let sessionData; try { sessionData = JSON.parse(sessionText); } catch(_) { sessionData = sessionText; }
-                                    const sd = (sessionData?.session_data || sessionData?.session || {});
-                                    const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
-                                    const sessionForBody = {
-                                      session_id: sd?.session_id || sessionId,
-                                      user_id: sd?.user_id || token,
-                                      content: Array.isArray(sd?.content) ? sd.content : [],
-                                      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
-                                      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-                                      created_at: sd?.created_at || new Date().toISOString(),
-                                      totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-                                      messages: Array.isArray(sd?.messages) ? sd.messages : []
-                                    };
-                                    const sceneNumber = scene?.scene_number ?? (currentSceneIndex + 1);
-                                    // Always show confirmation modal before applying presenter option
-                                    setPendingPresenterOption(sel);
-                                    setShowPresenterConfirm(true);
-                                    return;
-                                  } catch(err) { console.warn('Presenter update failed:', err); }
-                                    }} className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}>
-                                      <div className="font-medium text-gray-900 text-sm">{opt}</div>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              <div className="md:col-span-2">
-                                {!current && (
-                                  <div className="text-sm text-gray-500">Select a presenter option to preview its sample.</div>
-                                )}
-                                {current && (() => {
-                                  const cur = optionsList.find(po => (po.option||String(po))===current) || {};
-                                  return (
-                                    <div className="space-y-3">
-                                      <div className="text-lg font-semibold text-gray-900">{current}</div>
-                                      {cur.sample_video ? (
-                                        <div className="aspect-video w-full bg-black/5 rounded-lg overflow-hidden border">
-                                          <video controls className="w-full h-full"><source src={cur.sample_video} type="video/mp4" /></video>
-                                        </div>
-                                      ) : (
-                                        <div className="text-sm text-gray-600">No sample available.</div>
-                                      )}
-                                      {current === 'anchor mode' && (
-                                        <div className="mt-2 border-t pt-3">
-                                          <div className="text-sm font-medium text-gray-800 mb-2">Anchor Settings</div>
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <div className="flex flex-col gap-1">
-                                              <label className="text-xs text-gray-600">Size</label>
-                                              <input value={scene?.anchor_options?.size||''} onChange={(e)=>{
-                                                const rows=[...(scriptRows||[])]; const sc={...rows[currentSceneIndex]}; sc.anchor_options={...(sc.anchor_options||{}), size:e.target.value}; rows[currentSceneIndex]=sc; setScriptRows(rows);
-                                              }} placeholder="e.g., small, medium, large or px" className="px-3 py-2 border rounded-lg" />
-                                            </div>
-                                            <div className="flex flex-col gap-1">
-                                              <label className="text-xs text-gray-600">Position</label>
-                                              <select value={scene?.anchor_options?.position||''} onChange={(e)=>{
-                                                const rows=[...(scriptRows||[])]; const sc={...rows[currentSceneIndex]}; sc.anchor_options={...(sc.anchor_options||{}), position:e.target.value}; rows[currentSceneIndex]=sc; setScriptRows(rows);
-                                              }} className="px-3 py-2 border rounded-lg">
-                                                <option value="">Select position</option>
-                                                <option value="topleft">Top Left</option>
-                                                <option value="topcenter">Top Center</option>
-                                                <option value="topright">Top Right</option>
-                                                <option value="bottomleft">Bottom Left</option>
-                                                <option value="bottomcenter">Bottom Center</option>
-                                                <option value="bottomright">Bottom Right</option>
-                                              </select>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                     {(() => { const scene = scriptRows?.[currentSceneIndex]; const m = String(scene?.model||scene?.mode||'').toUpperCase(); const isAvatarish = (m==='VEO3' || m==='ANCHOR'); return isAvatarish; })() ? (
+                      {(() => { const scene = scriptRows?.[currentSceneIndex]; const m = String(scene?.model||scene?.mode||'').toUpperCase(); const isAvatarish = (m==='VEO3' || m==='ANCHOR'); return isAvatarish; })() ? (
                        <>
                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                          <h4 className="text-lg font-semibold text-gray-800 mb-4">Select an Avatar</h4>
@@ -5282,14 +6662,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                   const token = localStorage.getItem('token');
                                   if (!token) { alert('Missing user'); return; }
                                   try {
-                                    setAssetsTab('templates'); setIsGenerate(false); setShowAssetsModal(true);
+                                    setAssetsTab('templates');
+                                    setShowAssetsModal(true);
                                     const cacheKey = `brand_assets_images:${token}`; const cached = localStorage.getItem(cacheKey);
                                     if (cached) {
                                       const data = JSON.parse(cached);
                                       const logos = Array.isArray(data?.logos) ? data.logos : [];
                                       const icons = Array.isArray(data?.icons) ? data.icons : [];
                                       const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
-                                      const templates = Array.isArray(data?.templates) ? data.templates : [];
+                                      const templates = data?.templates ?? [];
                                       const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
                                       setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
                                     } else {
@@ -5344,7 +6725,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                            };
                           return (
                             <div className="flex items-center justify-between mb-4">
-                              <h4 className="text-lg font-semibold text-gray-800">{String((scene?.model||scene?.mode||'')).toUpperCase()==='ANCHOR' ? 'Select a Background Image' : 'Select a Reference Image'}</h4>
+                              <h4 className="text-lg font-semibold text-gray-800">Select a Background Image</h4>
                               <button type="button" onClick={onToggle} className={cls} title="Toggle Generate Image" disabled={disabled}>
                                 <span className="text-sm text-gray-800">{genVal ? 'True' : 'False'}</span>
                                 <span className={`relative inline-flex w-10 h-5 rounded-full ${genVal ? 'bg-green-500' : 'bg-gray-400'}`}>
@@ -5519,7 +6900,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               const token = localStorage.getItem('token');
                               if (!token) { alert('Missing user'); return; }
                               setAssetsTab('templates');
-                              setIsGenerate(false);
+                              setShowAssetsModal(false);
                               setShowAssetsModal(true);
                               // Load from cache only; ScriptEditor preloads and refreshes cache on mount
                               try {
@@ -5530,7 +6911,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                   const logos = Array.isArray(data?.logos) ? data.logos : [];
                                   const icons = Array.isArray(data?.icons) ? data.icons : [];
                                   const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
-                                  const templates = Array.isArray(data?.templates) ? data.templates : [];
+                                  const templates = data?.templates ?? [];
                                   const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
                                   setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
                                 } else {
@@ -5553,15 +6934,167 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                        </div>
                        
                      )}
-
-                     {(() => {
+                      {(() => {
+                        // Presenter Options for VEO3
+                        // Only show in contexts that explicitly enable it (Script Editor)
+                        if (!enablePresenterOptions) return null;
+                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        // Show presenter options in Script Editor for VEO3 models only
+                        if (modelUpper !== 'VEO3') return null;
+                        // Resolve current selection (prefer scene, fallback to saved guideline choice)
+                        let current = (scene?.presenter_options && scene.presenter_options.option) || '';
+                        try {
+                          if (!current) {
+                            const sid = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+                            const raw = (sid && localStorage.getItem(`presenter_option:${sid}`)) || localStorage.getItem('presenter_option');
+                            if (raw) {
+                              const obj = JSON.parse(raw);
+                              if (obj && obj.option) current = obj.option;
+                            }
+                          }
+                        } catch (_) { /* noop */ }
+                        // Replace dropdown with Guidelines-like selector
+                        const optionsList = Array.isArray(presenterPresets[modelUpper])
+                          ? presenterPresets[modelUpper]
+                          : [];
+                        const selectedPreset =
+                          optionsList.find(
+                            (opt) =>
+                              String(opt?.preset_id || opt?.option || '') ===
+                              String(selectedPresenterPreset || '')
+                          ) || null;
+                        const savedPresenterLabel = scene?.presenter_options?.option || '';
+                        const canSave =
+                          presenterPresetDirty &&
+                          !!selectedPresenterPreset &&
+                          !isLoadingPresenterPresets;
+                        return (
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <h4 className="text-lg font-semibold text-gray-800">Presenter Options</h4>
+                                {/* Removed current preset label per request */}
+                                {presenterPresetDirty && (
+                                  <p className="text-xs text-amber-600">You have unsaved changes.</p>
+                                )}
+                              </div>
+                              {canSave && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!selectedPresenterPreset) return;
+                                    setPendingPresenterPresetId(String(selectedPresenterPreset));
+                                    setPendingPresenterPresetLabel(
+                                      selectedPreset?.option || ''
+                                    );
+                                    setShowPresenterSaveConfirm(true);
+                                  }}
+                                  className="inline-flex items-center gap-2 rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+                                >
+                                  Save
+                                </button>
+                              )}
+                            </div>
+                            <div className="mt-3">
+                              {isLoadingPresenterPresets ? (
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                  <span className="inline-flex h-4 w-4 animate-spin rounded-full border-2 border-[#13008B] border-t-transparent" />
+                                  Loading presenter presets…
+                                </div>
+                              ) : optionsList.length === 0 ? (
+                                <div className="rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600">
+                                  No presenter presets available for this configuration.
+                                </div>
+                              ) : (
+                                <div className="flex gap-3 overflow-x-auto pb-2">
+                                  {optionsList.map((po) => {
+                                    const value = String(po.preset_id || po.option || '');
+                                    const isSelected = String(selectedPresenterPreset || '') === value;
+                                    const previewUrl = po.sample_video || '';
+                                    const previewType = String(po.sample_video_type || '').toLowerCase();
+                                    const inferPreviewType = (url) => {
+                                      if (!url || typeof url !== 'string') return '';
+                                      const clean = url.split('?')[0].toLowerCase();
+                                      const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                                      const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                                      if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                                      if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                                      return '';
+                                    };
+                                    const resolvedType = previewType || inferPreviewType(previewUrl);
+                                    const isVideo = resolvedType === 'video';
+                                    const isImage = resolvedType === 'image';
+                                    return (
+                                      <button
+                                        key={value}
+                                        type="button"
+                                        onClick={() => handlePresenterPresetChange(value)}
+                                        className={`relative flex min-w-[220px] max-w-[260px] flex-col overflow-hidden rounded-lg border transition-shadow ${
+                                          isSelected
+                                            ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
+                                            : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
+                                        }`}
+                                      >
+                                        {isSelected && (
+                                          <span className="absolute right-3 top-3 rounded-full bg-[#13008B] px-2 py-0.5 text-xs font-medium text-white z-10">
+                                            Selected
+                                          </span>
+                                        )}
+                                        <div className="flex-1 bg-black/5">
+                                          {previewUrl ? (
+                                            isVideo ? (
+                                              <video
+                                                className="h-full w-full object-cover"
+                                                muted
+                                                playsInline
+                                                loop
+                                              >
+                                                <source src={previewUrl} type="video/mp4" />
+                                              </video>
+                                            ) : isImage ? (
+                                              <img
+                                                src={previewUrl}
+                                                alt={`${po.option} preview`}
+                                                className="h-full w-full object-cover"
+                                              />
+                                            ) : (
+                                              <div className="flex h-40 w-full items-center justify-center bg-gray-100 text-sm text-gray-500">
+                                                Preview available
+                                              </div>
+                                            )
+                                          ) : (
+                                            <div className="flex h-40 w-full items-center justify-center bg-gray-100 text-sm text-gray-500">
+                                              No preview available
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center px-3 py-2 text-left">
+                                          <span className="text-sm font-semibold text-gray-800">
+                                            {po.option}
+                                          </span>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                            {presenterPresetsError && (
+                              <div className="mt-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                                {presenterPresetsError}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {(() => {
                        // Anchor-specific options: size and position
                        const scene = scriptRows?.[currentSceneIndex];
                        const modelUpper = String(scene?.model||scene?.mode||'').toUpperCase();
                        if (modelUpper !== 'ANCHOR') return null;
                        const opts = (scene?.anchor_options && typeof scene.anchor_options==='object') ? scene.anchor_options : {};
-                       const size = opts.size || '';
-                       const position = opts.position || '';
+                      const size = opts.size || '';
                        const update = (patch) => {
                          const next = { ...(scene?.anchor_options||{}), ...patch };
                          handleSceneUpdate(currentSceneIndex, 'anchor_options', next);
@@ -5569,7 +7102,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                        return (
                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                            <h4 className="text-lg font-semibold text-gray-800 mb-4">Anchor Options</h4>
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 gap-4">
                              <div>
                                <label className="block text-sm font-medium text-gray-700 mb-2">Size</label>
                                <input
@@ -5581,27 +7114,235 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
                                />
                              </div>
-                             <div>
-                               <label className="block text-sm font-medium text-gray-700 mb-2">Position</label>
-                               <select
-                                 value={position}
-                                 onChange={(e) => update({ position: e.target.value })}
-                                 disabled={!isEditingScene}
-                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
-                               >
-                                 <option value="">Select position</option>
-                                 <option value="topleft">Top Left</option>
-                                 <option value="topcenter">Top Center</option>
-                                 <option value="topright">Top Right</option>
-                                 <option value="bottomleft">Bottom Left</option>
-                                 <option value="bottomcenter">Bottom Center</option>
-                                 <option value="bottomright">Bottom Right</option>
-                               </select>
-                             </div>
                            </div>
                          </div>
                        );
                      })()}
+                    
+                     {(() => {
+                        const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        if (!scene) return null;
+                        const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        const isSora = sceneModelUpper === 'SORA';
+                        const isAnchor = sceneModelUpper === 'ANCHOR';
+                        const isPlotly = sceneModelUpper === 'PLOTLY';
+                        const isVeo = sceneModelUpper === 'VEO3';
+                        if (!(isSora || isAnchor || isPlotly || isVeo)) return null;
+                        const colors = Array.isArray(scene?.colors)
+                          ? scene.colors
+                          : (typeof scene?.colors === 'string' && scene.colors.trim()
+                            ? scene.colors.split(',').map((s) => s.trim()).filter(Boolean)
+                            : []);
+                        const fontSizeVal = Number(scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16) || 16;
+                        const fontStyleVal = scene?.font_style ?? scene?.fontStyle ?? '';
+                        const showFontControls = isSora || isAnchor || isPlotly;
+                        const fontOptions = (() => {
+                          const opts = Array.isArray(brandFonts) ? [...brandFonts] : [];
+                          if (fontStyleVal && !opts.includes(fontStyleVal)) opts.unshift(fontStyleVal);
+                          return opts;
+                        })();
+                        const gridClass = showFontControls ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4';
+                        return (
+                          <div className="mt-4">
+                            <button
+                              type="button"
+                              onClick={() => setAdvancedOptionsOpen((prev) => !prev)}
+                              className="flex w-full items-center justify-between rounded-lg border border-[#D8D3FF] bg-white px-4 py-3 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#F6F4FF]"
+                            >
+                              <span>Advanced Style Options</span>
+                              <ChevronDown className={`h-4 w-4 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {advancedOptionsOpen && (
+                              <div className="mt-3 space-y-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-4">
+                                <div className={gridClass}>
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Colors</label>
+                                    <div className="flex flex-wrap gap-2">
+                                      {(colors || []).map((c, i) => (
+                                        <button
+                                          key={`${c}-${i}`}
+                                          type="button"
+                                          onClick={() => {
+                                            if (isEditingScene) {
+                                              const next = colors.filter((_, idx) => idx !== i);
+                                              handleSceneUpdate(currentSceneIndex, 'colors', next);
+                                            }
+                                          }}
+                                          className="w-7 h-7 rounded border border-gray-300"
+                                          style={{ background: c }}
+                                          title={isEditingScene ? `Remove ${c}` : c}
+                                        />
+                                      ))}
+                                      {(!colors || colors.length === 0) && (
+                                        <span className="text-sm text-gray-500">-</span>
+                                      )}
+                                    </div>
+                                    {isEditingScene && (
+                                      <div className="flex items-center gap-2 mt-2">
+                                        <input
+                                          type="text"
+                                          placeholder="#000000"
+                                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              const val = (e.currentTarget.value || '').trim();
+                                              if (val) {
+                                                const next = Array.from(new Set([...(colors || []), val]));
+                                                handleSceneUpdate(currentSceneIndex, 'colors', next);
+                                                e.currentTarget.value = '';
+                                              }
+                                            }
+                                          }}
+                                        />
+                                        <span className="text-xs text-gray-500">Press Enter to add</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {showFontControls && (
+                                    <>
+                                      <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Font Size</label>
+                                        <div className="flex items-center gap-3">
+                                          <input
+                                            type="range"
+                                            min={8}
+                                            max={72}
+                                            step={1}
+                                            value={fontSizeVal}
+                                            onChange={(e) =>
+                                              handleSceneUpdate(currentSceneIndex, 'font_size', Number(e.target.value))
+                                            }
+                                            className="flex-1"
+                                            disabled={!isEditingScene}
+                                          />
+                                          <span className="inline-block w-12 text-right text-sm text-gray-700">{fontSizeVal}px</span>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Font Style</label>
+                                        <select
+                                          value={fontStyleVal}
+                                          onChange={(e) => handleSceneUpdate(currentSceneIndex, 'font_style', e.target.value)}
+                                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${
+                                            isEditingScene ? 'border-gray-300' : 'border-gray-200 bg-white text-gray-800'
+                                          }`}
+                                          disabled={!isEditingScene}
+                                        >
+                                          <option value="">Select font</option>
+                                          {fontOptions.length > 0 ? (
+                                            fontOptions.map((f) => (
+                                              <option key={f} value={f} style={{ fontFamily: f }}>
+                                                {f}
+                                              </option>
+                                            ))
+                                          ) : (
+                                            <option value="" disabled>
+                                              No fonts found in Brand Identity
+                                            </option>
+                                          )}
+                                        </select>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Font Size</p>
+                                    <p className="mt-1 text-sm text-gray-800">{fontSizeVal ? `${fontSizeVal}px` : '-'}</p>
+                                  </div>
+                                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Font Style</p>
+                                    <p className="mt-1 text-sm text-gray-800 break-words">{fontStyleVal || '-'}</p>
+                                  </div>
+                                </div>
+                                {isVeo && scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object' && Object.keys(scene.veo3_prompt_template).length > 0 && (
+                                  <div className="rounded-lg border border-gray-200 bg-white p-4">
+                                    <div className="mb-3 flex items-center justify-between">
+                                      <h5 className="text-sm font-semibold text-gray-800">VEO3 Prompt Template</h5>
+                                      <span className="text-xs text-gray-500">
+                                        {isEditingScene ? 'Editable' : 'Read only'}
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                      {Object.entries(scene.veo3_prompt_template).map(([key, value]) => {
+                                        const displayValue =
+                                          typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+                                        if (isEditingScene) {
+                                          const onChange = (val) => {
+                                            const currentTemplate = {
+                                              ...(scene.veo3_prompt_template || {})
+                                            };
+                                            currentTemplate[key] = val;
+                                            handleSceneUpdate(
+                                              currentSceneIndex,
+                                              'veo3_prompt_template',
+                                              currentTemplate
+                                            );
+                                          };
+                                          return (
+                                            <div
+                                              key={key}
+                                              className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
+                                            >
+                                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                                {key.replace(/_/g, ' ')}
+                                              </p>
+                                              <textarea
+                                                value={displayValue}
+                                                onChange={(e) => onChange(e.target.value)}
+                                                rows={3}
+                                                className="mt-1 w-full resize-y rounded-md border border-blue-200 px-3 py-2 text-sm text-gray-800 focus:border-transparent focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                          );
+                                        }
+                                        return (
+                                          <div
+                                            key={key}
+                                            className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
+                                          >
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                              {key.replace(/_/g, ' ')}
+                                            </p>
+                                            <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
+                                              {displayValue}
+                                            </p>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                {isAnchor && scene?.anchor_prompt_template && typeof scene.anchor_prompt_template === 'object' && Object.keys(scene.anchor_prompt_template).length > 0 && (
+                                  <div className="rounded-lg border border-gray-200 bg-white p-4">
+                                    <div className="mb-3 flex items-center justify-between">
+                                      <h5 className="text-sm font-semibold text-gray-800">Anchor Prompt Template</h5>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                      {Object.entries(scene.anchor_prompt_template)
+                                        .filter(([key]) => key !== 'anchor_positions')
+                                        .map(([key, value]) => (
+                                          <div
+                                            key={key}
+                                            className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
+                                          >
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                              {key.replace(/_/g, ' ')}
+                                            </p>
+                                            <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
+                                              {typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2)}
+                                            </p>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                     
                    </div>
                  )}
                </div>
@@ -5688,7 +7429,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               <h3 className="text-lg font-semibold text-gray-900">Change Chart Type?</h3>
               <button onClick={()=>!isUpdatingChartType && setShowChartTypeConfirm(false)} disabled={isUpdatingChartType} className={`w-8 h-8 rounded-full ${isUpdatingChartType ? 'bg-gray-200 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200'}`}>✕</button>
             </div>
-            <p className="text-sm text-gray-700 mb-4">This will update visuals to chart type “{pendingChartType}”. Continue?</p>
+            <p className="text-sm text-gray-700 mb-4">This will update visuals to chart type "
+{pendingChartType}". Continue?</p>
             <div className="flex items-center justify-end gap-2">
               <button onClick={()=>setShowChartTypeConfirm(false)} disabled={isUpdatingChartType} className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Cancel</button>
               <button
@@ -5807,9 +7549,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     const logos1 = Array.isArray(data1?.logos) ? data1.logos : [];
                     const icons1 = Array.isArray(data1?.icons) ? data1.icons : [];
                     const uploaded_images1 = Array.isArray(data1?.uploaded_images) ? data1.uploaded_images : [];
-                    const templates1 = Array.isArray(data1?.templates) ? data1.templates : [];
+                    const templates1 = data1?.templates ?? [];
                     const documents_images1 = Array.isArray(data1?.documents_images) ? data1.documents_images : [];
 
+                 
                     // 2) UPDATE assets (best-effort; echo back current snapshot)
                     const updateBody = {
                       user_id: token,
@@ -5830,7 +7573,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     const logos = Array.isArray(data2?.logos) ? data2.logos : [];
                     const icons = Array.isArray(data2?.icons) ? data2.icons : [];
                     const uploaded_images = Array.isArray(data2?.uploaded_images) ? data2.uploaded_images : [];
-                    const templates = Array.isArray(data2?.templates) ? data2.templates : [];
+                    const templates = data2?.templates ?? [];
                     const documents_images = Array.isArray(data2?.documents_images) ? data2.documents_images : [];
                     setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
                   } finally {
@@ -5860,45 +7603,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 const currentUploadType = uploadTypeMap[assetsTab] || '';
                 const isTemplateTab = assetsTab === 'templates';
                 const rawList = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
-                const templateFilterOptions = templateAspectOptions.length > 1 ? ['All', ...templateAspectOptions] : templateAspectOptions;
-                const showAspectFilterControls = isTemplateTab && shouldFilterTemplatesByAspect && templateFilterOptions.length > 0;
-                const effectiveTemplateFilter = showAspectFilterControls
-                  ? (templateAspectFilter && (templateAspectFilter === 'All' || templateAspectOptions.includes(templateAspectFilter))
-                      ? templateAspectFilter
-                      : (templateFilterOptions[0] || 'All'))
-                  : '';
-                const templateList = isTemplateTab
-                  ? normalizedTemplateAssets.filter(item => {
-                      if (!showAspectFilterControls || !effectiveTemplateFilter || effectiveTemplateFilter === 'All') return true;
-                      const aspectLabel = item.aspect || 'Unspecified';
-                      return aspectLabel === effectiveTemplateFilter;
-                    })
-                  : [];
+                const templateList = isTemplateTab ? filteredTemplateAssets : [];
                 const list = isTemplateTab ? templateList : rawList;
                 const emptyMessage = isTemplateTab
-                  ? (normalizedTemplateAssets.length === 0 ? 'No templates found.' : 'No templates available for this aspect ratio.')
+                  ? (normalizedTemplateAssets.length === 0 ? 'No templates found.' : 'No templates available for the selected aspect ratio.')
                   : 'No assets found.';
                 return (
                   <>
-                    {showAspectFilterControls && (
-                      <div className="flex flex-wrap items-center gap-2 mb-4">
-                        {templateFilterOptions.map(option => {
-                          const isActive = option === effectiveTemplateFilter || (!effectiveTemplateFilter && option === templateFilterOptions[0]);
-                          return (
-                            <button
-                              type="button"
-                              key={option}
-                              onClick={() => setTemplateAspectFilter(option)}
-                              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                                isActive ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-200 hover:border-[#13008B]'
-                              }`}
-                            >
-                              {option === 'All' ? 'All' : option}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
                       {currentUploadType && (
                         <button
@@ -5921,7 +7632,17 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           if (!imageUrl) return null;
                           const isSelected = selectedTemplateUrls.includes(imageUrl);
                           const handleClick = () => {
-                            setSelectedTemplateUrls(prev => prev.includes(imageUrl) ? prev.filter(u => u !== imageUrl) : [...prev, imageUrl]);
+                            setSelectedTemplateUrls(prev => {
+                              const exists = prev.includes(imageUrl);
+                              if (exists) {
+                                return prev.filter(u => u !== imageUrl);
+                              }
+                              const next = [...prev, imageUrl];
+                              if (next.length > 2) {
+                                next.shift();
+                              }
+                              return next;
+                            });
                           };
                           return (
                             <div
@@ -5933,7 +7654,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               <img src={imageUrl} alt={entry.label || `template-${idx}`} className="w-full h-28 object-cover" />
                               <div className="p-2">
                                 <span className="text-xs font-semibold text-gray-800 block">
-                                  {entry.aspect || 'Unspecified'}
+                                  {normalizeTemplateAspectLabel(entry.aspect || '') || 'Unspecified'}
                                 </span>
                                 {entry.label && (
                                   <span className="text-[11px] text-gray-600 truncate block">{entry.label}</span>
@@ -5975,10 +7696,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       const chosen = assetsTab==='templates' ? (selectedTemplateUrls[0] || selectedAssetUrl) : selectedAssetUrl;
                       if (!chosen || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
                       // Enforce only one template for Keep Default
-                      if (assetsTab==='templates' && selectedTemplateUrls.length > 1) {
-                        alert('For Keep Default, you can select only one template.');
-                        return;
-                      }
+                      // if (assetsTab==='templates' && selectedTemplateUrls.length > 1) {
+                      //   alert('For Keep Default, you can select only one template.');
+                      //   return;
+                      // }
                       const rows = [...scriptRows];
                       const scene = { ...rows[currentSceneIndex] };
                       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
@@ -5994,7 +7715,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       // For Keep Default with Templates, persist via update-text setting gen_image=false and ref_image
                       if (assetsTab === 'templates') {
                         try {
-                          await updateSceneGenImageFlag(currentSceneIndex, { genImage: false, descriptionOverride: scene?.description ?? '', refImagesOverride: [chosen] });
+                          await updateSceneGenImageFlag(currentSceneIndex, {
+                            genImage: false,
+                            descriptionOverride: scene?.description ?? '',
+                            refImagesOverride: [chosen]
+                          });
                         } catch(_) { /* noop */ }
                       }
                       // Keep Default: clear description
@@ -6033,11 +7758,28 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                         // For SORA/infographics, allow multiple templates as ref images
                         scene.ref_image = multi;
                       }
+                      if (assetsTab === 'templates') {
+                        scene.gen_image = false;
+                      }
                       rows[currentSceneIndex] = scene;
                       setScriptRows(rows);
                       setSelectedRefImages(multi);
                       if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       setShowAssetsModal(false);
+                      if (assetsTab === 'templates') {
+                        try {
+                          setIsEnhancing(true);
+                          await sendUpdateSceneVisualWithTemplates(
+                            scene?.scene_number ?? (currentSceneIndex + 1),
+                            multi
+                          );
+                        } finally {
+                          setIsEnhancing(false);
+                        }
+                        setSelectedAssetUrl('');
+                        setSelectedTemplateUrls([]);
+                        return;
+                      }
                       setIsEnhancing(true);
                       const sessionId = localStorage.getItem('session_id');
                       const token = localStorage.getItem('token');
@@ -6088,47 +7830,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
                       });
-                      // After visual update, fetch latest session and send update-text with current script (index 0)
-                      try {
-                        const refreshResp2 = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-                        });
-                        const refreshText2 = await refreshResp2.text();
-                        let refresh2; try { refresh2 = JSON.parse(refreshText2); } catch(_) { refresh2 = refreshText2; }
-                        if (refreshResp2.ok && refresh2 && typeof refresh2 === 'object') {
-                          const sd3 = refresh2?.session_data || refresh2?.session || {};
-                          const user3 = refresh2?.user_data || sd3?.user_data || sd3?.user || {};
-                          const sessionForBody3 = {
-                            session_id: sd3?.session_id || sessionId,
-                            user_id: sd3?.user_id || token,
-                            content: Array.isArray(sd3?.content) ? sd3.content : [],
-                            document_summary: Array.isArray(sd3?.document_summary) ? sd3.document_summary : [{ additionalProp1: {} }],
-                            video_duration: String(sd3?.video_duration || sd3?.videoduration || '60'),
-                            created_at: sd3?.created_at || new Date().toISOString(),
-                            totalsummary: Array.isArray(sd3?.totalsummary) ? sd3.totalsummary : (Array.isArray(sd3?.total_summary) ? sd3.total_summary : []),
-                            messages: Array.isArray(sd3?.messages) ? sd3.messages : [],
-                            scripts: Array.isArray(sd3?.scripts) ? sd3.scripts : [{ additionalProp1: {} }],
-                            videos: Array.isArray(sd3?.videos) ? sd3.videos : [],
-                            images: Array.isArray(sd3?.images) ? sd3.images : [],
-                            final_link: sd3?.final_link || '',
-                            videoType: sd3?.videoType || sd3?.video_type || '',
-                            brand_style_interpretation: sd3?.brand_style_interpretation,
-                            additionalProp1: sd3?.additionalProp1 || {}
-                          };
-                          const scriptsArr = Array.isArray(sd3?.scripts) ? sd3.scripts : [];
-                          const currentScriptObj = scriptsArr[0] || {};
-                          // Normalize script object to update-text "changed_script" shape
-                          const changed_script = currentScriptObj?.airesponse && currentScriptObj?.userquery
-                            ? { userquery: currentScriptObj.userquery, airesponse: currentScriptObj.airesponse, version: String(currentScriptObj.version || 'v1') }
-                            : (currentScriptObj?.script
-                              ? { userquery: (currentScriptObj.script?.userquery || []), airesponse: (currentScriptObj.script?.airesponse || []), version: String(currentScriptObj.script?.version || 'v1') }
-                              : { userquery: [], airesponse: [], version: 'v1' });
-                          const updateBody = { user: user3, session: sessionForBody3, changed_script };
-                          await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updateBody)
-                          });
-                        }
-                      } catch(_) { /* noop */ }
                       // refresh
                       try {
                         const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -6185,15 +7886,69 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 <label className="block text-sm font-medium text-gray-700 mb-1">Video Type</label>
                 <div className="flex items-center gap-4">
                       <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="regen-model" checked={regenModel==='VEO3'} onChange={()=>setRegenModel('VEO3')} disabled={isRegenerating} />
+                        <input
+                          type="radio"
+                          name="regen-model"
+                          checked={regenModel==='VEO3'}
+                          onChange={()=>{
+                            if (isRegenerating) return;
+                            setRegenModel('VEO3');
+                            setRegenStep(1);
+                            setRegenSuggestions([]);
+                            setRegenSelectedIdx(-1);
+                            setRegenSceneContent('');
+                            setRegenPresenterPresetId('');
+                            setRegenPresenterPresetLabel('');
+                            setRegenPresenterError('');
+                            setIsLoadingRegenPresenter(false);
+                            setRequiresRegenPresenterSelection(false);
+                          }}
+                          disabled={isRegenerating}
+                        />
                         <span>Avatar</span>
                       </label>
                       <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="regen-model" checked={regenModel==='SORA'} onChange={()=>setRegenModel('SORA')} disabled={isRegenerating} />
+                        <input
+                          type="radio"
+                          name="regen-model"
+                          checked={regenModel==='SORA'}
+                          onChange={()=>{
+                            if (isRegenerating) return;
+                            setRegenModel('SORA');
+                            setRegenStep(1);
+                            setRegenSuggestions([]);
+                            setRegenSelectedIdx(-1);
+                            setRegenSceneContent('');
+                            setRegenPresenterPresetId('');
+                            setRegenPresenterPresetLabel('');
+                            setRegenPresenterError('');
+                            setIsLoadingRegenPresenter(false);
+                            setRequiresRegenPresenterSelection(false);
+                          }}
+                          disabled={isRegenerating}
+                        />
                         <span>Infographic</span>
                       </label>
                       <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input type="radio" name="regen-model" checked={regenModel==='PLOTLY'} onChange={()=>setRegenModel('PLOTLY')} disabled={isRegenerating} />
+                        <input
+                          type="radio"
+                          name="regen-model"
+                          checked={regenModel==='PLOTLY'}
+                          onChange={()=>{
+                            if (isRegenerating) return;
+                            setRegenModel('PLOTLY');
+                            setRegenStep(1);
+                            setRegenSuggestions([]);
+                            setRegenSelectedIdx(-1);
+                            setRegenSceneContent('');
+                            setRegenPresenterPresetId('');
+                            setRegenPresenterPresetLabel('');
+                            setRegenPresenterError('');
+                            setIsLoadingRegenPresenter(false);
+                            setRequiresRegenPresenterSelection(false);
+                          }}
+                          disabled={isRegenerating}
+                        />
                         <span>Financial</span>
                       </label>
                       {regenModel==='PLOTLY' && (
@@ -6237,14 +7992,169 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               {regenStep === 1 && (
                 <div className="flex justify-end pt-1">
                   <button
-                    onClick={async ()=>{ const total = Array.isArray(scriptRows) ? scriptRows.length : 0; const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total)); await fetchSceneSuggestions(regenModel || 'SORA', idx, 'regen'); setRegenStep(2); }}
-                    className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[#13008B] hover:bg-blue-800"
+                    disabled={isRegenerating || isLoadingRegenPresenter || isSuggestingRegen}
+                    onClick={async ()=>{
+                      try {
+                        if (isRegenerating || isLoadingRegenPresenter || isSuggestingRegen) return;
+                        setRegenPresenterError('');
+                        setRegenSelectedIdx(-1);
+                        setRegenSceneContent('');
+                        const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+                        const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
+                        const modelUpper = (regenModel || 'SORA').toUpperCase();
+                        if (enablePresenterOptions && modelUpper === 'VEO3') {
+                          setRegenPresenterPresetId('');
+                          setRegenPresenterPresetLabel('');
+                          setIsLoadingRegenPresenter(true);
+                          try {
+                            const list = await fetchPresenterPresetsForModel('VEO3');
+                            const normalizedList = Array.isArray(list) ? list : [];
+                            if (normalizedList.length > 0) {
+                              setRequiresRegenPresenterSelection(true);
+                              if (normalizedList.length === 1) {
+                                setRegenPresenterPresetId(String(normalizedList[0].preset_id));
+                                setRegenPresenterPresetLabel(normalizedList[0].option || '');
+                              }
+                              setRegenStep(2);
+                              return;
+                            }
+                            setRequiresRegenPresenterSelection(false);
+                          } catch (err) {
+                            setRequiresRegenPresenterSelection(false);
+                            setRegenPresenterError(err?.message || 'Failed to load presenter options');
+                          } finally {
+                            setIsLoadingRegenPresenter(false);
+                          }
+                        } else {
+                          setRequiresRegenPresenterSelection(false);
+                          setRegenPresenterPresetId('');
+                          setRegenPresenterPresetLabel('');
+                        }
+                        await fetchSceneSuggestions(modelUpper || 'SORA', idx, 'regen');
+                        setRegenStep(2);
+                      } catch (err) {
+                        console.error('Failed to continue regenerate flow:', err);
+                        setRegenPresenterError(err?.message || 'Failed to continue regenerate flow.');
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                      isRegenerating || isLoadingRegenPresenter || isSuggestingRegen
+                        ? 'bg-[#9aa0d0] cursor-not-allowed'
+                        : 'bg-[#13008B] hover:bg-blue-800'
+                    }`}
                   >
                     Continue
                   </button>
                 </div>
               )}
-              {regenStep === 2 && (
+              {isRegenPresenterSelectionPhase && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700">Presenter Options</label>
+                    {regenPresenterPresetId && (
+                      <span className="text-xs text-gray-500">
+                        Selected: {regenPresenterPresetLabel || 'Presenter'}
+                      </span>
+                    )}
+                  </div>
+                  {isLoadingRegenPresenter ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                      Loading presenter options…
+                    </div>
+                  ) : (() => {
+                    const avatarPresenterOptions = Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : [];
+                    if (avatarPresenterOptions.length === 0) {
+                      return (
+                        <div className="text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-2">
+                          No presenter options available for this configuration.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        {avatarPresenterOptions.map((preset, idx) => {
+                          const id = String(preset?.preset_id ?? '');
+                          const selected = String(regenPresenterPresetId || '') === id;
+                          return (
+                            <button
+                              key={id || idx}
+                              type="button"
+                              onClick={() => {
+                                setRegenPresenterPresetId(id);
+                                setRegenPresenterPresetLabel(preset?.option || '');
+                                setRegenPresenterError('');
+                              }}
+                              className={`w-full text-left border rounded-lg px-3 py-3 transition-all ${
+                                selected
+                                  ? 'border-[#13008B] bg-[#f3f1ff] shadow-sm'
+                                  : 'border-gray-200 bg-white hover:border-[#13008B]'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-gray-800">
+                                    {preset?.option || 'Presenter'}
+                                  </p>
+                                  {preset?.sample_video && (
+                                    <a
+                                      href={preset.sample_video}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="mt-1 inline-flex items-center gap-1 text-xs text-[#13008B] underline"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      Preview sample
+                                    </a>
+                                  )}
+                                </div>
+                                {selected && <Check className="w-4 h-4 text-[#13008B]" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                  {regenPresenterError && (
+                    <div className="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
+                      {regenPresenterError}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    Select a presenter preset to continue. You can preview samples where available.
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isRegenerating) setShowRegenModal(false);
+                      }}
+                      disabled={isRegenerating}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                        isRegenerating
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRegenPresenterNext}
+                      disabled={isRegenerating || !regenPresenterPresetId}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                        isRegenerating || !regenPresenterPresetId
+                          ? 'bg-[#9aa0d0] cursor-not-allowed'
+                          : 'bg-[#13008B] hover:bg-blue-800'
+                      }`}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+              {showRegenSuggestionSection && (
               <div className="mt-3">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Suggestions</label>
                 {isSuggestingRegen ? (
@@ -6285,7 +8195,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 </div>
               )}
               
-              {regenStep === 2 && (
+              {showRegenSuggestionSection && (
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button onClick={()=>!isRegenerating && setShowRegenModal(false)} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>Cancel</button>
                   <button onClick={handleRegenerateScene} disabled={isRegenerating} className={`px-4 py-2 rounded-lg text-sm font-medium ${isRegenerating ? 'bg-blue-300 cursor-not-allowed text-white' : 'bg-[#13008B] text-white hover:bg-blue-800'}`}>{isRegenerating ? 'Regenerating…' : 'Regenerate Scene'}</button>
@@ -6800,7 +8710,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
        </div>
        )}
     </div>
-  )
-}
+  );
+};
 
 export default Chat;

@@ -1,61 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, CheckCircle, Circle, ArrowLeft } from 'lucide-react';
 
-const wrapAdditional = (value) => {
-  if (value && typeof value === 'object' && Object.keys(value).length > 0) {
-    return { additionalProp1: value }
-  }
-  return { additionalProp1: {} }
-}
-
-const toAdditionalArray = (items) => {
-  if (!Array.isArray(items) || items.length === 0) return [wrapAdditional({})]
-  return items.map(item => {
-    if (item && typeof item === 'object') return wrapAdditional(item)
-    if (item != null) return wrapAdditional({ value: item })
-    return wrapAdditional({})
-  })
-}
-
-const mapToStringArray = (arr) => {
-  if (!Array.isArray(arr)) return []
-  return arr
-    .map(item => {
-      if (typeof item === 'string') return item
-      if (item && typeof item === 'object') {
-        return item.name || item.title || item.url || item.id || JSON.stringify(item)
-      }
-      return item != null ? String(item) : ''
-    })
-    .filter(Boolean)
-}
-
-const mapVoiceoversToObjects = (arr = []) => {
-  if (!Array.isArray(arr)) return []
-  return arr
-    .map(item => {
-      if (!item || typeof item !== 'object') return null
-      const url = item.url || item.audio_url || item.file || item.link || ''
-      if (!url) return null
-      return {
-        url,
-        name: item.name || item.voiceover_name || item.title || '',
-        type: item.type || item.voiceover_type || '',
-        created_at: item.created_at || item.uploaded_at || item.timestamp || new Date().toISOString()
-      }
-    })
-    .filter(Boolean)
-}
-
-const normalizeBrandIdentity = (bi = {}) => ({
-  logo: Array.isArray(bi.logo) ? bi.logo : (Array.isArray(bi.logos) ? bi.logos : []),
-  fonts: Array.isArray(bi.fonts) ? bi.fonts : [],
-  icons: Array.isArray(bi.icon) ? bi.icon : (Array.isArray(bi.icons) ? bi.icons : []),
-  colors: Array.isArray(bi.colors) ? bi.colors : [],
-  spacing: bi.spacing || bi.spacing_scale || '',
-  tagline: bi.tagline || ''
-})
-
 const deriveLastUserQuery = (messages = []) => {
   if (!Array.isArray(messages)) return ''
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -184,32 +129,49 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
          if (raw) presenterOpt = JSON.parse(raw);
        } catch (_) { /* noop */ }
 
-       // Build questionnaire_context per required schema
-       // Fetch current session data from API (do not create a new object)
-       let sessionPayload = undefined;
+      // Build questionnaire_context per required schema
+      // Fetch current session + user data snapshot
+      let sessionPayload = {};
+      let userPayload = {};
        try {
          const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
            body: JSON.stringify({ user_id: effectiveUserId, session_id: sessionId })
          });
-         if (resp.ok) {
-           const sessionDataResponse = await resp.json();
-           const sd = sessionDataResponse?.session_data || {};
-           // Prefer passing through the session object mostly as-is; ensure ids present
-           sessionPayload = {
-             ...(typeof sd === 'object' ? sd : {}),
-             session_id: sd.session_id || sessionId || '',
-             user_id: sd.user_id || effectiveUserId || ''
-           };
-         } else {
+        const text = await resp.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (_) {
+          parsed = {};
+        }
+        if (!resp.ok) {
            console.warn('Failed to load session data; status:', resp.status);
+        } else {
+          const sd = parsed?.session_data ?? parsed?.session;
+          const ud = parsed?.user_data ?? parsed?.user;
+          if (sd && typeof sd === 'object' && !Array.isArray(sd)) {
+            sessionPayload = { ...sd };
+          }
+          if (ud && typeof ud === 'object' && !Array.isArray(ud)) {
+            userPayload = { ...ud };
+          }
          }
        } catch (e) {
          console.error('Error fetching current session data:', e);
        }
 
       // Derive video type from latest session data or localStorage
+      if (sessionPayload && typeof sessionPayload === 'object' && !Array.isArray(sessionPayload)) {
+        if (sessionPayload.id && !sessionPayload.session_id) {
+          sessionPayload.session_id = sessionPayload.id;
+        }
+        if (sessionPayload.id) {
+          delete sessionPayload.id;
+        }
+      }
+
       let qVideoType = 'hybrid';
       try {
         const sd = sessionPayload || {};
@@ -222,85 +184,23 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
       else if (qvt === 'infographic' || qvt === 'infographics' || qvt === 'inforgraphic') scriptEndpoint = 'scripts/infographics/generate';
       else if (qvt === 'financial') scriptEndpoint = 'scripts/financial/generate';
 
-      // Build full payload with user + session + questionnaire context
-      let userMeta = {};
-      try { userMeta = JSON.parse(localStorage.getItem('user') || '{}') || {}; } catch (_) { userMeta = {}; }
-      let brandAssets = {};
-      try {
-        const userId = token || '';
-        brandAssets = JSON.parse(localStorage.getItem(`brand_assets_analysis:${userId}`) || localStorage.getItem('brand_assets_analysis') || '{}') || {};
-      } catch (_) { brandAssets = {}; }
-      const bi = brandAssets?.brand_identity || {};
-      const tv = brandAssets?.tone_and_voice || {};
-      const lf = brandAssets?.look_and_feel || {};
-      const templatesArr = brandAssets?.template || brandAssets?.templates || [];
-      const voiceoverArr = brandAssets?.voiceover || brandAssets?.voiceovers || [];
-
-      const brandIdentity = wrapAdditional(normalizeBrandIdentity(bi));
-      const toneVoice = wrapAdditional({
-        context: tv?.context || '',
-        brand_personality: Array.isArray(tv?.brand_personality) ? tv.brand_personality : [],
-        communication_style_pace: Array.isArray(tv?.communication_style_pace) ? tv.communication_style_pace : []
-      });
-      const lookFeel = wrapAdditional({
-        iconography: Array.isArray(lf?.iconography) ? lf.iconography : [],
-        graphic_elements: Array.isArray(lf?.graphic_elements) ? lf.graphic_elements : [],
-        aesthetic_consistency: Array.isArray(lf?.aesthetic_consistency) ? lf.aesthetic_consistency : []
-      });
-      const userPayload = {
-        id: userMeta?.id || effectiveUserId || '',
-        email: userMeta?.email || '',
-        display_name: userMeta?.display_name || userMeta?.name || '',
-        created_at: userMeta?.created_at || new Date().toISOString(),
-        avatar_url: userMeta?.avatar_url || '',
-        folder_url: brandAssets?.folder_url || '',
-        brand_identity: brandIdentity,
-        tone_and_voice: toneVoice,
-        look_and_feel: lookFeel,
-        templates: mapToStringArray(templatesArr),
-        voiceover: mapVoiceoversToObjects(voiceoverArr)
-      };
-
-      const resolvedVideoType = qvt || sessionPayload?.videoType || '';
       const resolvedToneForScript = sessionPayload?.video_tone || sessionPayload?.videoTone || 'professional';
-      const sessionData = {
-        session_id: sessionPayload?.session_id || sessionId || '',
-        user_id: sessionPayload?.user_id || effectiveUserId || '',
-        title: sessionPayload?.title || '',
-        video_duration: String(sessionPayload?.video_duration || '60'),
-        created_at: sessionPayload?.created_at || new Date().toISOString(),
-        updated_at: sessionPayload?.updated_at || new Date().toISOString(),
-        document_summary: toAdditionalArray(sessionPayload?.document_summary),
-        messages: toAdditionalArray(sessionPayload?.messages),
-        total_summary: mapToStringArray(sessionPayload?.total_summary),
-        scripts: mapToStringArray(sessionPayload?.scripts),
-        videos: toAdditionalArray(sessionPayload?.videos),
-        images: mapToStringArray(sessionPayload?.images),
-        final_link: sessionPayload?.final_link || '',
-        videoType: resolvedVideoType,
-        brand_style_interpretation: wrapAdditional(sessionPayload?.brand_style_interpretation || {}),
-        additionalProp1: wrapAdditional(sessionPayload?.additionalProp1 || {})
-      };
-
-      if (!sessionData.document_summary.length) sessionData.document_summary = [wrapAdditional({})];
-      if (!sessionData.messages.length) sessionData.messages = [wrapAdditional({})];
-      if (!sessionData.videos.length) sessionData.videos = [wrapAdditional({})];
-      if (!sessionData.images.length) sessionData.images = [];
-      if (!sessionData.scripts.length) sessionData.scripts = [];
-      if (!sessionData.total_summary.length) sessionData.total_summary = [];
 
       const questionnaireAdditional = {};
       if (Array.isArray(aiQues) && aiQues.length) questionnaireAdditional.ai_questions = aiQues;
       if (presenterOpt) questionnaireAdditional.presenter_options = presenterOpt;
       if (guidelines) questionnaireAdditional.guidelines = guidelines;
-      const questionnaireContext = [{
-        additionalProp1: Object.keys(questionnaireAdditional).length ? questionnaireAdditional : {}
-      }];
-      const lastUserQuery = deriveLastUserQuery(sessionPayload?.messages || sessionData.messages || []);
+      const questionnaireContext = Object.keys(questionnaireAdditional).length ? [questionnaireAdditional] : [];
+      const lastUserQuery = deriveLastUserQuery(Array.isArray(sessionPayload?.messages) ? sessionPayload.messages : []);
+      const sessionVideoDuration =
+        sessionPayload?.video_duration ??
+        sessionPayload?.videoDuration ??
+        sessionPayload?.videoduration ??
+        60;
       const fullPayload = {
         user: userPayload,
-        session: sessionData,
-        video_length: Number(sessionPayload?.video_duration || 60),
+        session: sessionPayload,
+        video_length: Number(sessionVideoDuration || 60),
         video_tone: resolvedToneForScript,
         questionnaire_context: questionnaireContext,
         is_followup: false,

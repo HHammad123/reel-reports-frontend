@@ -154,18 +154,29 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     setHistoryIndex(prev => Math.min(prev + 1, 49))
   }, [scale, stretchX, stretchY, position, rotation, flipHorizontal, flipVertical, historyIndex])
 
+  const computeFitScale = useCallback((targetImage = image) => {
+    if (!targetImage) return 1
+    const availableWidth = canvasSize.width || 1
+    const availableHeight = canvasSize.height || 1
+    const scaleX = availableWidth / targetImage.width
+    const scaleY = availableHeight / targetImage.height
+    const fit = Math.min(scaleX, scaleY)
+    return Math.max(0.05, Math.min(fit, 5))
+  }, [image, canvasSize.width, canvasSize.height])
+
   const resetTransforms = useCallback(() => {
     const targetImage = imageRef.current || image
-    setScale(1)
+    const fitScale = computeFitScale(targetImage)
+    setScale(fitScale)
     setStretchX(1)
     setStretchY(1)
     setRotation(0)
     setFlipHorizontal(false)
     setFlipVertical(false)
-    const newPos = centerImage({ scale: 1, stretchX: 1, stretchY: 1, image: targetImage })
+    const newPos = centerImage({ scale: fitScale, stretchX: 1, stretchY: 1, image: targetImage })
     setHasPositionedInitial(true)
     saveToHistory({
-      scale: 1,
+      scale: fitScale,
       stretchX: 1,
       stretchY: 1,
       rotation: 0,
@@ -173,7 +184,7 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
       flipVertical: false,
       position: newPos || { x: 0, y: 0 }
     })
-  }, [centerImage, image, saveToHistory])
+  }, [centerImage, image, saveToHistory, computeFitScale])
 
   const handleStretchChange = useCallback((axis, percentValue) => {
     if (!imageLoaded) return
@@ -294,13 +305,24 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     if (imageLoaded && image && canvasRef.current) {
       drawCanvas()
     }
-  }, [imageLoaded, image, scale, position, rotation, flipHorizontal, flipVertical, isCropping, cropArea, canvasSize])
+  }, [imageLoaded, image, scale, position, rotation, flipHorizontal, flipVertical, isCropping, cropArea, canvasSize, isDragging])
 
   useEffect(() => {
-    if (!imageLoaded || !image || hasPositionedInitial) return
-    centerImage()
+    if (!isOpen || !imageLoaded || !image || hasPositionedInitial) return
+    const fitScale = computeFitScale(image)
+    setScale(fitScale)
+    const newPos = centerImage({ image, scale: fitScale, stretchX: 1, stretchY: 1 })
     setHasPositionedInitial(true)
-  }, [imageLoaded, image, centerImage, hasPositionedInitial])
+    saveToHistory({
+      scale: fitScale,
+      stretchX: 1,
+      stretchY: 1,
+      rotation: 0,
+      flipHorizontal: false,
+      flipVertical: false,
+      position: newPos || { x: 0, y: 0 }
+    })
+  }, [isOpen, imageLoaded, image, centerImage, hasPositionedInitial, computeFitScale, saveToHistory])
 
   const drawCanvas = () => {
     const canvas = canvasRef.current
@@ -332,7 +354,7 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     ctx.translate(-image.width / 2, -image.height / 2)
     ctx.drawImage(image, 0, 0, image.width, image.height)
     
-    if (!isCropping) {
+    if (!isCropping && isDragging) {
       ctx.strokeStyle = 'rgba(99, 102, 241, 0.9)'
       ctx.lineWidth = 2
       ctx.setLineDash([10, 6])

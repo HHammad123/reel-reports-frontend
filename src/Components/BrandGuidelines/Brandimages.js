@@ -236,6 +236,15 @@ const SLIDER_STEPS = [-2, -1, 0, 1, 2]
 
 const formatStepLabel = (value) => (value > 0 ? `+${value}` : `${value}`)
 
+const formatSliderDisplayName = (name = '') => {
+  if (!name) return ''
+  return String(name)
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+    .trim()
+}
+
 const percentToStepValue = (value) => {
   const num = Number(value)
   if (Number.isNaN(num)) return 0
@@ -258,6 +267,33 @@ const describeSliderSelection = (name, percentValue) => {
   return Math.abs(step) === 2 ? baseLabel : `${baseLabel} (moderate)`
 }
 
+const normalizeDescriptorText = (value = '') =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const inferStepFromLabel = (name = '', label = '') => {
+  const normalizedLabel = normalizeDescriptorText(label)
+  if (!normalizedLabel) return null
+  if (normalizedLabel.includes('balanced')) return 0
+  const meta = SLIDER_DEFINITIONS[normalizeSliderKey(name)] || {}
+  const leftKey = normalizeDescriptorText(meta.left || '')
+  const rightKey = normalizeDescriptorText(meta.right || '')
+  const matchesLeft = leftKey && normalizedLabel.includes(leftKey)
+  const matchesRight = rightKey && normalizedLabel.includes(rightKey)
+  if (matchesLeft && !matchesRight) return -2
+  if (matchesRight && !matchesLeft) return 2
+  return null
+}
+
+const getStepValueForEntry = (entry = {}) => {
+  const inferred = inferStepFromLabel(entry.name, entry.label)
+  if (typeof inferred === 'number') return inferred
+  return percentToStepValue(entry.percentage)
+}
+
 const clampPercent = (value) => {
   const num = Number(value)
   if (Number.isNaN(num)) return 50
@@ -275,12 +311,28 @@ const formatSliderEntry = (entry) => {
     }
   }
   const name = entry.name || entry.label || ''
-  const percentage = clampPercent(entry.percentage)
+  const hasPercent =
+    Object.prototype.hasOwnProperty.call(entry, 'percentage') &&
+    entry.percentage !== null &&
+    entry.percentage !== undefined &&
+    !Number.isNaN(Number(entry.percentage))
+  let percentage = hasPercent ? clampPercent(entry.percentage) : undefined
+  let label = entry.label || ''
+  const inferredStep = inferStepFromLabel(name, label)
+  if (!hasPercent && typeof inferredStep === 'number') {
+    percentage = stepToPercentValue(inferredStep)
+  }
+  if (percentage === undefined) {
+    percentage = 50
+  }
+  if (!label) {
+    label = describeSliderSelection(name, percentage)
+  }
   return {
     ...entry,
     name,
     percentage,
-    label: entry.label || describeSliderSelection(name, percentage)
+    label
   }
 }
 
@@ -506,6 +558,39 @@ const Brandimages = () => {
   // Record flow state
   const [voiceoverBaseName, setVoiceoverBaseName] = useState('')
   const [voiceWizardStep, setVoiceWizardStep] = useState('name') // name | tone ids | complete
+
+  const updateTemplatesState = useCallback((tpls) => {
+    const arr = Array.isArray(tpls) ? tpls : []
+    setTemplates(arr)
+    const aspectValues = arr
+      .filter(item => item && typeof item === 'object')
+      .map(item => item.aspect_ratio || item.ratio || item.orientation || '')
+      .filter(Boolean)
+    setSelectedTemplateAspect(prev => {
+      if (prev && aspectValues.includes(prev)) return prev
+      return aspectValues.length ? aspectValues[0] : ''
+    })
+  }, [setSelectedTemplateAspect, setTemplates])
+
+  const syncStateFromProfile = useCallback((profile) => {
+    if (!profile || typeof profile !== 'object') return
+    const bi = profile.brand_identity || {}
+    setTagline(bi.tagline || '')
+    setSpacing(bi.spacing || '')
+    setCaptionLocation(profile?.caption_location || profile?.brand_identity?.caption_location || '')
+    setLogos(bi.logo || [])
+    setIcons(bi.icon || bi.icons || [])
+    setFonts(bi.fonts || [])
+    setColors(bi.colors || [])
+    const tv = profile.tone_and_voice || {}
+    setToneVoice(hydrateToneVoiceState(tv))
+    const lf = profile.look_and_feel || {}
+    setLookFeel(hydrateLookFeelState(lf))
+    const tpls = profile.template || profile.templates || []
+    updateTemplatesState(tpls)
+    const vos = profile.voiceover || []
+    setVoiceovers(Array.isArray(vos) ? vos : [])
+  }, [setCaptionLocation, setColors, setFonts, setIcons, setLogos, setSpacing, setTagline, setToneVoice, setLookFeel, updateTemplatesState, setVoiceovers])
   const [generatedContent, setGeneratedContent] = useState('')
   const [isSavingVoiceover, setIsSavingVoiceover] = useState(false)
   const currentVoiceStepIndex = useMemo(() => {
@@ -857,6 +942,12 @@ const Brandimages = () => {
       } catch (refreshError) {
         console.warn('Failed to refresh brand assets after image update', refreshError)
       }
+      try {
+        const refreshedProfile = await getBrandProfileById({ userId, profileId: selectedProfileId })
+        syncStateFromProfile(refreshedProfile)
+      } catch (profileRefreshError) {
+        console.warn('Failed to refresh profile after image update', profileRefreshError)
+      }
       if (imageEditorCallback) {
         try {
           await imageEditorCallback({ file, dataUrl, blob, fileName })
@@ -877,7 +968,7 @@ const Brandimages = () => {
     } finally {
       setIsSavingImageEditor(false)
     }
-  }, [getBrandAssetsByUserId, imageEditorCallback, imageEditorTemplateId, replaceTemplateImage, selectedProfileId])
+  }, [getBrandAssetsByUserId, getBrandProfileById, imageEditorCallback, imageEditorTemplateId, replaceTemplateImage, selectedProfileId, syncStateFromProfile])
 
   // Sync helper functions for base/pair images
   const mapPositionToOtherFormat = (position) => {
@@ -2077,19 +2168,6 @@ const Brandimages = () => {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isPlacementOverlayOpen, placementBoxes, placementSelectedBoxId, placementCopiedBox, updatePlacementBoxes])
-
-  const updateTemplatesState = (tpls) => {
-    const arr = Array.isArray(tpls) ? tpls : []
-    setTemplates(arr)
-    const aspectValues = arr
-      .filter(item => item && typeof item === 'object')
-      .map(item => item.aspect_ratio || item.ratio || item.orientation || '')
-      .filter(Boolean)
-    setSelectedTemplateAspect(prev => {
-      if (prev && aspectValues.includes(prev)) return prev
-      return aspectValues.length ? aspectValues[0] : ''
-    })
-  }
 
   const structuredTemplates = useMemo(() => {
     return (templates || []).map((item, index) => {
@@ -3334,50 +3412,48 @@ const Brandimages = () => {
                 <div className="text-sm text-gray-600 mb-1">Context</div>
                 <textarea value={workingTone.context} onChange={e => setWorkingTone(prev => ({ ...prev, context: e.target.value }))} className="w-full border rounded-md px-3 py-2" rows={3} />
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
                 <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                  <div className="text-sm font-medium text-gray-800 mb-1">Brand Personality</div>
-                  <div className="space-y-3">
+                  <div className="text-sm font-medium text-gray-800 mb-3">Brand Personality</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {(workingTone.brand_personality || []).map((m, i) => {
-                      const sliderMeta = SLIDER_DEFINITIONS[normalizeSliderKey(m.name)] || null
-                      const stepValue = percentToStepValue(m.percentage)
-                      const selectionLabel = describeSliderSelection(m.name, m.percentage)
+                      const stepValue = getStepValueForEntry(m)
+                      const selectionLabel = m.label || describeSliderSelection(m.name, m.percentage)
+                      const displayName = formatSliderDisplayName(m.name)
                       return (
-                        <div key={i} className="space-y-1 bg-white rounded-lg border border-gray-100 p-3 shadow-sm">
-                          <div className="flex items-center gap-3">
-                            <span className="w-40 truncate text-xs text-gray-600" title={m.name}>{m.name}</span>
-                            <input
-                              type="range"
-                              min={-2}
-                              max={2}
-                              step={1}
-                              value={stepValue}
-                              onChange={e => {
-                                const step = Number(e.target.value)
-                                const percent = stepToPercentValue(step)
-                                const label = describeSliderSelection(m.name, percent)
-                                setWorkingTone(prev => {
-                                  const arr = [...(prev.brand_personality || [])]
-                                  arr[i] = { ...arr[i], percentage: percent, label }
-                                  return { ...prev, brand_personality: arr }
-                                })
-                              }}
-                              className="flex-1"
-                            />
-                          </div>
-                          <div className="flex justify-between text-[10px] px-1">
-                            {SLIDER_STEPS.map(step => (
-                              <span
-                                key={`${m.name}-step-${step}`}
-                                className={`${stepValue === step ? 'text-[#13008B] font-semibold' : 'text-gray-400'}`}
-                              >
-                                {formatStepLabel(step)}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="flex justify-between text-[10px] text-gray-500 px-1">
-                            <span>{sliderMeta?.left || 'Less'}</span>
-                            <span>{sliderMeta?.right || 'More'}</span>
+                        <div key={i} className="space-y-2 bg-white rounded-lg border border-gray-100 p-3 shadow-sm">
+                          <div className="flex items-start gap-3">
+                            <span className="w-40 truncate text-xs text-gray-600 pt-2" title={m.name}>{displayName}</span>
+                            <div className="flex-1">
+                              <div className="flex justify-between text-[11px] text-gray-400 px-1 pb-1">
+                                {SLIDER_STEPS.map(step => (
+                                  <span
+                                    key={`${m.name}-step-${step}`}
+                                    className={`${stepValue === step ? 'text-[#13008B] font-semibold' : 'text-gray-400'}`}
+                                  >
+                                    {formatStepLabel(step)}
+                                  </span>
+                                ))}
+                              </div>
+                              <input
+                                type="range"
+                                min={-2}
+                                max={2}
+                                step={1}
+                                value={stepValue}
+                                onChange={e => {
+                                  const step = Number(e.target.value)
+                                  const percent = stepToPercentValue(step)
+                                  const label = describeSliderSelection(m.name, percent)
+                                  setWorkingTone(prev => {
+                                    const arr = [...(prev.brand_personality || [])]
+                                    arr[i] = { ...arr[i], percentage: percent, label }
+                                    return { ...prev, brand_personality: arr }
+                                  })
+                                }}
+                                className="w-full accent-[#13008B]"
+                              />
+                            </div>
                           </div>
                           <div className="text-xs text-gray-700 text-right">{selectionLabel}</div>
                         </div>
@@ -3386,48 +3462,46 @@ const Brandimages = () => {
                   </div>
                 </div>
                 <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                  <div className="text-sm font-medium text-gray-800 mb-1">Communication Style Pace</div>
-                  <div className="space-y-3">
+                  <div className="text-sm font-medium text-gray-800 mb-3">Communication Style Pace</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {(workingTone.communication_style_pace || []).map((m, i) => {
-                      const sliderMeta = SLIDER_DEFINITIONS[normalizeSliderKey(m.name)] || null
-                      const stepValue = percentToStepValue(m.percentage)
-                      const selectionLabel = describeSliderSelection(m.name, m.percentage)
+                      const stepValue = getStepValueForEntry(m)
+                      const selectionLabel = m.label || describeSliderSelection(m.name, m.percentage)
+                      const displayName = formatSliderDisplayName(m.name)
                       return (
-                        <div key={i} className="space-y-1">
-                          <div className="flex items-center gap-3">
-                            <span className="w-40 truncate text-xs text-gray-600" title={m.name}>{m.name}</span>
-                            <input
-                              type="range"
-                              min={-2}
-                              max={2}
-                              step={1}
-                              value={stepValue}
-                              onChange={e => {
-                                const step = Number(e.target.value)
-                                const percent = stepToPercentValue(step)
-                                const label = describeSliderSelection(m.name, percent)
-                                setWorkingTone(prev => {
-                                  const arr = [...(prev.communication_style_pace || [])]
-                                  arr[i] = { ...arr[i], percentage: percent, label }
-                                  return { ...prev, communication_style_pace: arr }
-                                })
-                              }}
-                              className="flex-1"
-                            />
-                          </div>
-                          <div className="flex justify-between text-[10px] px-1">
-                            {SLIDER_STEPS.map(step => (
-                              <span
-                                key={`${m.name}-step-${step}`}
-                                className={`${stepValue === step ? 'text-[#13008B] font-semibold' : 'text-gray-400'}`}
-                              >
-                                {formatStepLabel(step)}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="flex justify-between text-[10px] text-gray-500 px-1">
-                            <span>{sliderMeta?.left || 'Less'}</span>
-                            <span>{sliderMeta?.right || 'More'}</span>
+                        <div key={i} className="space-y-2 bg-white rounded-lg border border-gray-100 p-3 shadow-sm">
+                          <div className="flex items-start gap-3">
+                            <span className="w-40 truncate text-xs text-gray-600 pt-2" title={m.name}>{displayName}</span>
+                            <div className="flex-1">
+                              <div className="flex justify-between text-[11px] text-gray-400 px-1 pb-1">
+                                {SLIDER_STEPS.map(step => (
+                                  <span
+                                    key={`${m.name}-step-${step}`}
+                                    className={`${stepValue === step ? 'text-[#13008B] font-semibold' : 'text-gray-400'}`}
+                                  >
+                                    {formatStepLabel(step)}
+                                  </span>
+                                ))}
+                              </div>
+                              <input
+                                type="range"
+                                min={-2}
+                                max={2}
+                                step={1}
+                                value={stepValue}
+                                onChange={e => {
+                                  const step = Number(e.target.value)
+                                  const percent = stepToPercentValue(step)
+                                  const label = describeSliderSelection(m.name, percent)
+                                  setWorkingTone(prev => {
+                                    const arr = [...(prev.communication_style_pace || [])]
+                                    arr[i] = { ...arr[i], percentage: percent, label }
+                                    return { ...prev, communication_style_pace: arr }
+                                  })
+                                }}
+                                className="w-full accent-[#13008B]"
+                              />
+                            </div>
                           </div>
                           <div className="text-xs text-gray-700 text-right">{selectionLabel}</div>
                         </div>
@@ -3503,45 +3577,43 @@ const Brandimages = () => {
                   <div className="text-sm font-semibold text-gray-800 mb-1 capitalize">{section.replace('_',' ')}</div>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {(workingLook[section] || []).map((m, i) => {
-                      const sliderMeta = SLIDER_DEFINITIONS[normalizeSliderKey(m.name)] || null
-                      const stepValue = percentToStepValue(m.percentage)
-                      const selectionLabel = describeSliderSelection(m.name, m.percentage)
+                      const stepValue = getStepValueForEntry(m)
+                      const selectionLabel = m.label || describeSliderSelection(m.name, m.percentage)
+                      const displayName = formatSliderDisplayName(m.name)
                       return (
-                        <div key={i} className="space-y-1 bg-white rounded-lg border border-gray-100 p-3 shadow-sm">
-                          <div className="flex items-center gap-3">
-                            <span className="w-40 truncate text-xs text-gray-600" title={m.name}>{m.name}</span>
-                            <input
-                              type="range"
-                              min={-2}
-                              max={2}
-                              step={1}
-                              value={stepValue}
-                              onChange={e => {
-                                const step = Number(e.target.value)
-                                const percent = stepToPercentValue(step)
-                                const label = describeSliderSelection(m.name, percent)
-                                setWorkingLook(prev => {
-                                  const arr = [...(prev[section] || [])]
-                                  arr[i] = { ...arr[i], percentage: percent, label }
-                                  return { ...prev, [section]: arr }
-                                })
-                              }}
-                              className="flex-1"
-                            />
-                          </div>
-                          <div className="flex justify-between text-[10px] px-1">
-                            {SLIDER_STEPS.map(step => (
-                              <span
-                                key={`${section}-${m.name}-step-${step}`}
-                                className={`${stepValue === step ? 'text-[#13008B] font-semibold' : 'text-gray-400'}`}
-                              >
-                                {formatStepLabel(step)}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="flex justify-between text-[10px] text-gray-500 px-1">
-                            <span>{sliderMeta?.left || 'Less'}</span>
-                            <span>{sliderMeta?.right || 'More'}</span>
+                        <div key={i} className="space-y-2 bg-white rounded-lg border border-gray-100 p-3 shadow-sm">
+                          <div className="flex items-start gap-3">
+                            <span className="w-40 truncate text-xs text-gray-600 pt-2" title={m.name}>{displayName}</span>
+                            <div className="flex-1">
+                              <div className="flex justify-between text-[11px] text-gray-400 px-1 pb-1">
+                                {SLIDER_STEPS.map(step => (
+                                  <span
+                                    key={`${section}-${m.name}-step-${step}`}
+                                    className={`${stepValue === step ? 'text-[#13008B] font-semibold' : 'text-gray-400'}`}
+                                  >
+                                    {formatStepLabel(step)}
+                                  </span>
+                                ))}
+                              </div>
+                              <input
+                                type="range"
+                                min={-2}
+                                max={2}
+                                step={1}
+                                value={stepValue}
+                                onChange={e => {
+                                  const step = Number(e.target.value)
+                                  const percent = stepToPercentValue(step)
+                                  const label = describeSliderSelection(m.name, percent)
+                                  setWorkingLook(prev => {
+                                    const arr = [...(prev[section] || [])]
+                                    arr[i] = { ...arr[i], percentage: percent, label }
+                                    return { ...prev, [section]: arr }
+                                  })
+                                }}
+                                className="w-full accent-[#13008B]"
+                              />
+                            </div>
                           </div>
                           <div className="text-xs text-gray-700 text-right">{selectionLabel}</div>
                         </div>
