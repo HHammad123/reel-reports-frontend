@@ -109,6 +109,7 @@ const Home = () => {
   const [showQuestionnaireOptions, setShowQuestionnaireOptions] = useState(false)
   const [scenesInitialData, setScenesInitialData] = useState(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
+  const [loadingVideoType, setLoadingVideoType] = useState(null) // Track which video type is being loaded
 
   // Redux selectors
   const token = useSelector(selectToken);
@@ -741,9 +742,16 @@ const Home = () => {
   const handleVideoTypeTabChange = async (label) => {
     try {
       setIsCreatingSession(true);
+      // Set loading video type for display in loader
+      setLoadingVideoType(label);
       try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
       const userId = token || localStorage.getItem('token');
-      if (!userId) { navigate('/login'); return; }
+      if (!userId) { 
+        setLoadingVideoType(null);
+        setIsCreatingSession(false);
+        navigate('/login'); 
+        return; 
+      }
       // 1) Create a new session
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId })
@@ -755,12 +763,16 @@ const Home = () => {
       if (!newId) throw new Error('Session ID missing in response');
       try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
 
-      // 2) Map label to API videoType
+      // 2) Map label to API videoType (fix mapping to match Typetabs labels)
       const map = {
-        'Hybrid Video': 'hybrid',
-        'Infographics Video': 'infographic',
-        'Financial Video': 'financial',
-        'Avatar Video': 'avatar'
+        'Hybrid Reel': 'hybrid',
+        'Infographics Reel': 'infographic',
+        'Financial Reel': 'financial',
+        'Avatar Reel': 'avatar',
+        'Hybrid Video': 'hybrid', // Legacy support
+        'Infographics Video': 'infographic', // Legacy support
+        'Financial Video': 'financial', // Legacy support
+        'Avatar Video': 'avatar' // Legacy support
       };
       const videoType = map[label] || 'hybrid';
 
@@ -780,6 +792,9 @@ const Home = () => {
     } catch (e) {
       console.error('Failed changing video type:', e);
       alert('Unable to switch video type. Please try again.');
+      setLoadingVideoType(null);
+      setIsCreatingSession(false);
+      try { localStorage.removeItem('is_creating_session'); } catch(_){}
     }
   };
 
@@ -788,8 +803,12 @@ const Home = () => {
     try {
       const flag = localStorage.getItem('is_creating_session') === 'true';
       setIsCreatingSession(flag);
+      // Clear loading video type after session is loaded
+      if (!flag && loadingVideoType) {
+        setLoadingVideoType(null);
+      }
     } catch(_){}
-  }, [sessionId]);
+  }, [sessionId, loadingVideoType]);
 
   // Function to move from Guidelines to Questionnaire
   const goToNextStep = () => {
@@ -1071,10 +1090,22 @@ const Home = () => {
         setHasSentFirstMessage(history.some(h => h.type === 'user'));
 
         // No auto-opening of script modal on load
+        // Clear video type loading state after session loads successfully
+        try {
+          localStorage.removeItem('is_creating_session');
+          setIsCreatingSession(false);
+          setLoadingVideoType(null);
+        } catch (_) { /* noop */ }
       } catch (e) {
         console.error('Error loading session:', e);
         alert('Unable to load chat session. Starting over.');
         navigate('/');
+        // Clear loading state on error
+        try {
+          localStorage.removeItem('is_creating_session');
+          setIsCreatingSession(false);
+          setLoadingVideoType(null);
+        } catch (_) { /* noop */ }
       } finally {
         setIsChatLoading(false);
       }
@@ -1174,6 +1205,8 @@ const Home = () => {
                   onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch(_){}; setCurrentStep(4); }}
                   imagesAvailable={hasImagesAvailable}
                   onGoToScenes={(scriptContainer) => { setScenesInitialData(scriptContainer || null); setCurrentStep(6); }}
+                  isSwitchingVideoType={isCreatingSession}
+                  loadingVideoType={loadingVideoType}
                   key="chat-component"
                 />
               </ErrorBoundary>

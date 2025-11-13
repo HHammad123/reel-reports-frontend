@@ -405,7 +405,7 @@ const extractAspectRatioFromSessionPayload = (payload) => {
   }
 };
 
-const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false }) => {
+const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false, isSwitchingVideoType = false, loadingVideoType = null }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [thinkingMessageId, setThinkingMessageId] = useState(null);
@@ -4153,12 +4153,30 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     } catch (_) { /* noop */ }
   };
 
+  // Helper: wait for session_id/token to exist in localStorage
+  const waitForSessionReady = async (timeoutMs = 15000, pollMs = 300) => {
+    const start = Date.now();
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (sessionId && token) return { sessionId, token };
+      } catch (_) { /* noop */ }
+      if (Date.now() - start >= timeoutMs) return { sessionId: '', token: '' };
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+  };
+
   // Confirmed: perform the API switch
   const handleVideoTypeSelect = async (videoType) => {
     try {
       if (isSwitchingModel) return;
+      // Turn on overlay immediately; keep it until we finish or error
+      setIsSwitchingModel(true);
       if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) {
         console.warn('Cannot update video type: invalid scene index');
+        setIsSwitchingModel(false);
         return;
       }
       const scene = scriptRows[currentSceneIndex];
@@ -4166,13 +4184,17 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       const currentModel = scene?.mode || scene?.model || '';
       if ((currentModel || '').toUpperCase() === desiredModel.toUpperCase()) {
         setSelectedVideoType(videoType);
+        setIsSwitchingModel(false);
         return;
       }
-
-      setIsSwitchingModel(true);
       // 1) Load session snapshot
-      const sessionId = localStorage.getItem('session_id');
-      const token = localStorage.getItem('token');
+      let sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
+      let token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+      if (!sessionId || !token) {
+        const waited = await waitForSessionReady(20000, 300);
+        sessionId = waited.sessionId;
+        token = waited.token;
+      }
       if (!sessionId || !token) throw new Error('Missing session_id or token');
       const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -5002,7 +5024,18 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const isRegenPresenterSelectionPhase =
     enablePresenterOptions && isRegenAvatarModel && requiresRegenPresenterSelection && regenStep === 2;
   return (
-    <div className='bg-white h-[79vh] flex justify-between flex-col rounded-lg mt-3 p-6'>
+    <div className='bg-white h-[79vh] flex justify-between flex-col rounded-lg mt-3 p-6 relative'>
+      {/* Video Type Switching Loader - Centered circular loader with text */}
+      {isSwitchingVideoType && loadingVideoType && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
+          <div className="bg-white p-8 w-[300px] rounded-lg flex flex-col items-center justify-center shadow-xl">
+            {/* Circular loader spinner */}
+            <div className="w-16 h-16 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin mb-4"></div>
+            {/* Loading text with video type */}
+            <p className="text-lg font-semibold text-gray-900">Loading {loadingVideoType}...</p>
+          </div>
+        </div>
+      )}
       {/* Add Scene Modal */}
       {showAddSceneModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
@@ -8395,6 +8428,26 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
               {isSavingReorder && 'Saving new order…'}
               {isUploadingAvatar && !isUpdatingText && !isSavingReorder && 'Uploading avatar…'}
               {isUploadingSceneImages && !isUpdatingText && !isSavingReorder && !isUploadingAvatar && 'Uploading images…'}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Full-screen loader while switching reel/video type */}
+      {isSwitchingModel && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40">
+          <div className="bg-white/95 max-w-sm w-[90%] rounded-xl shadow-xl px-6 py-5 text-center">
+            <div className="mx-auto mb-3 w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <div className="text-base font-medium text-gray-800">
+              {(() => {
+                const vt = String(pendingModelType || selectedVideoType || '').toLowerCase();
+                let label = pendingModelType || selectedVideoType || 'Video';
+                if (vt.includes('avatar')) label = 'Avatar';
+                else if (vt.includes('info')) label = 'Infographic';
+                else if (vt.includes('financial')) label = 'Financial';
+                else if (vt.includes('hybrid')) label = 'Hybrid';
+                return `Loading ${label}`;
+              })()}
+              <span className="ml-1 thinking-dots"><span className="dot">.</span><span className="dot">.</span><span className="dot">.</span></span>
             </div>
           </div>
         </div>

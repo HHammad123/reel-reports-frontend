@@ -12,6 +12,7 @@ const Guidlines = () => {
   const dispatch = useDispatch()
   const savedForm = useSelector(selectGuidelinesForm)
   const [goal, setGoal] = useState(true)
+  const [brandLogos, setBrandLogos] = useState([]);
   const [showBrand, setShowBrand] = useState(false)
   const [isFontOpen, setIsFontOpen] = useState(false)
   const [selectedFonts, setSelectedFonts] = useState([])
@@ -61,6 +62,26 @@ const Guidlines = () => {
     }
     return `Voice ${index + 1}`
   }, [])
+
+  // If brand assets are present later, auto-enable related toggles
+  useEffect(() => {
+    try {
+      if (Array.isArray(brandLogos) && brandLogos.length > 0) {
+        if (selectedLogo !== 'yes') setSelectedLogo('yes')
+        if (!selectedLogoUrl) {
+          const first = brandLogos[0]
+          const url = typeof first === 'string' ? first : (first?.url || first?.image_url || first?.imageUrl || first?.src || '')
+          if (url) setSelectedLogoUrl(url)
+        }
+      }
+      if (Array.isArray(selectedFonts) && selectedFonts.length > 0 && selectedFont !== 'yes') {
+        setSelectedFont('yes')
+      }
+      if (selectedColors instanceof Set && selectedColors.size > 0 && selectedColor !== 'yes') {
+        setSelectedColor('yes')
+      }
+    } catch (_) { /* noop */ }
+  }, [brandLogos, selectedFonts, selectedColors])
 
   const uniqueBrandVoiceOptions = useMemo(() => {
     const source = Array.isArray(brandVoices) ? brandVoices : []
@@ -311,8 +332,23 @@ const Guidlines = () => {
           const bi = assets?.brand_identity || {}
           const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
           const colors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
-          if (fonts.length) setSelectedFonts(fonts)
-          if (colors.length) setSelectedColors(new Set(colors))
+          if (fonts.length) {
+            setSelectedFonts(fonts)
+            // Auto-enable Font styles when brand fonts exist
+            setSelectedFont((prev) => (prev === 'yes' ? prev : 'yes'))
+          }
+          if (colors.length) {
+            setSelectedColors(new Set(colors))
+            // Auto-enable Specific color schemes when brand colors exist
+            setSelectedColor((prev) => (prev === 'yes' ? prev : 'yes'))
+          }
+          // Auto-enable Logo inclusion and preselect first logo when brand logos exist
+          if (Array.isArray(logos) && logos.length > 0) {
+            setSelectedLogo((prev) => (prev === 'yes' ? prev : 'yes'))
+            const first = logos[0]
+            const url = typeof first === 'string' ? first : (first?.url || first?.image_url || first?.imageUrl || first?.src || '')
+            if (url) setSelectedLogoUrl(url)
+          }
         } catch (_) { /* noop */ }
         try {
           const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean)
@@ -494,7 +530,7 @@ const Guidlines = () => {
 
   const [isOpenLogo, setIsOpenLogo] = useState(false);
   const [selectedLogo, setSelectedLogo] = useState("no"); // Default to "No"
-  const [brandLogos, setBrandLogos] = useState([]);
+
   const [selectedLogoUrl, setSelectedLogoUrl] = useState('');
   const [logoSelectMode, setLogoSelectMode] = useState('assets'); // 'assets' | 'upload'
   const [isLogoUploading, setIsLogoUploading] = useState(false);
