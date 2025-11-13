@@ -527,6 +527,10 @@ const [requiresRegenPresenterSelection, setRequiresRegenPresenterSelection] = us
 const [showGenerateSummaryModal, setShowGenerateSummaryModal] = useState(false);
 const [generateSummaryPosition, setGenerateSummaryPosition] = useState('');
 const [generateSummaryError, setGenerateSummaryError] = useState('');
+const [showCustomDescModal, setShowCustomDescModal] = useState(false);
+const [customDescDescription, setCustomDescDescription] = useState('');
+const [customDescTextarea, setCustomDescTextarea] = useState('');
+const [isSavingCustomDesc, setIsSavingCustomDesc] = useState(false);
 const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   // Snapshot current scene when entering edit to allow cancel revert
   const [editSnapshot, setEditSnapshot] = useState(null);
@@ -1234,6 +1238,15 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       <div className="flex items-center gap-3 rounded-lg bg-white px-6 py-4 shadow-xl">
         <div className="h-6 w-6 animate-spin rounded-full border-4 border-[#13008B] border-t-transparent" />
         <span className="text-sm font-medium text-gray-800">Saving presenter option…</span>
+      </div>
+    </div>
+  )}
+ 
+  {isSwitchingModel && (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+      <div className="flex items-center gap-3 rounded-lg bg-white px-6 py-4 shadow-xl">
+        <span className="h-6 w-6 animate-spin rounded-full border-4 border-[#13008B] border-t-transparent" />
+        <span className="text-sm font-medium text-gray-800">Creating session…</span>
       </div>
     </div>
   )}
@@ -2658,6 +2671,59 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       try { console.error('generate-summary failed:', err); } catch (_) { /* noop */ }
     } finally {
       setIsGeneratingSummary(false);
+    }
+  };
+
+  const handleSaveCustomDesc = async () => {
+    try {
+      setIsSavingCustomDesc(true);
+      if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) {
+        throw new Error('No scene available');
+      }
+      const scene = scriptRows[currentSceneIndex];
+      const sceneNumber = scene?.scene_number ?? (currentSceneIndex + 1);
+      const { session, user } = await buildSessionAndUserForScene();
+      const token = localStorage.getItem('token') || '';
+      const formattedUser = formatUserForVisual(user, token);
+      const formattedSession = formatSessionForVisual(
+        session,
+        session?.session_id,
+        session?.user_id
+      );
+      const payload = {
+        user: formattedUser,
+        session: formattedSession,
+        scene_number: Number(sceneNumber) || 0,
+        custom_desc: customDescDescription
+      };
+      const resp = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/custom-desc',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+      const text = await resp.text();
+      if (!resp.ok) {
+        throw new Error(`custom-desc failed: ${resp.status} ${text}`);
+      }
+      setShowCustomDescModal(false);
+      // Refresh script after save
+      try {
+        const data = text ? JSON.parse(text) : {};
+        const container = data?.script ? { script: data.script } : data;
+        if (container && (container.script || Object.keys(container).length > 0)) {
+          const normalized = normalizeScriptToRows(container);
+          const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+          setScriptRows(newRows);
+        }
+      } catch (_) { /* noop */ }
+    } catch (err) {
+      console.error('custom-desc save failed:', err);
+      alert(err?.message || 'Failed to save custom description');
+    } finally {
+      setIsSavingCustomDesc(false);
     }
   };
 
@@ -4907,6 +4973,15 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     return firstValid.trim();
   }, [activeScene, selectedVideoType]);
 
+  const isSummarySceneActive = useMemo(() => {
+    const title = String(
+      activeScene?.scene_title ||
+      activeScene?.sceneTitle ||
+      ''
+    ).trim().toLowerCase();
+    return title === 'summary';
+  }, [activeScene]);
+
   const isActiveAvatarModel = activeModelType === 'Avatar Based';
   const isActiveInfographicModel = activeModelType === 'Infographic';
   const isActiveFinancialModel = activeModelType === 'Financial';
@@ -5566,6 +5641,46 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           </div>
         </div>
       )}
+      {/* Custom Description Modal */}
+      {showCustomDescModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[92%] max-w-2xl rounded-lg shadow-xl p-6">
+            <h3 className="text-lg font-semibold text-[#13008B] mb-4">Custom Description</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <textarea
+                  value={customDescDescription}
+                  onChange={(e) => setCustomDescDescription(e.target.value)}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-y"
+                  placeholder="Enter description"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCustomDescModal(false);
+                  setCustomDescDescription('');
+                  setCustomDescTextarea('');
+                }}
+                disabled={isSavingCustomDesc}
+                className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveCustomDesc}
+                disabled={isSavingCustomDesc}
+                className="rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-[#9aa0d0]"
+              >
+                {isSavingCustomDesc ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Script Modal (React-driven) */}
       {showScriptModal && (
         <div className={scenesMode ? 'bg-transparent' : 'fixed inset-0 z-50 flex items-center justify-center bg-black/50'}>
@@ -5725,6 +5840,10 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                     const slice = (Array.isArray(scriptRows) ? scriptRows.slice(start, end) : []);
                     return slice.map((scene, idxLocal) => {
                       const index = start + idxLocal;
+                      const rawTitle = String(scene?.scene_title || scene?.sceneTitle || '').trim();
+                      const isSummaryTab = rawTitle.toLowerCase() === 'summary';
+                      const tabLabel = isSummaryTab ? 'Scene Summary' : `Scene ${index + 1}`;
+                      const tabTitle = isSummaryTab ? 'Summary scene' : `Drag to reorder. Currently Scene ${index + 1}`;
                       return (
                     <div
                       key={index}
@@ -5755,7 +5874,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           setDragOverTabIndex(null);
                         }
                       }}
-                      title={`Drag to reorder. Currently Scene ${index + 1}`}
+                      title={tabTitle}
                     >
                       {/* Insert and Move controls (horizontal): left, +, right */}
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -5797,7 +5916,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                              : `bg-gray-100 text-gray-700 hover:bg-gray-200 ${draggedTabIndex === index ? 'opacity-50' : ''}`
                          }`}
                        >
-                         Scene {index + 1}
+                         {tabLabel}
                        </button>
                      </div>
                       );
@@ -5936,9 +6055,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                  const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                                  const mu = String(r?.model || r?.mode || '').toUpperCase();
                                  const vt = (mu === 'VEO3' || mu === 'ANCHOR') ? 'Avatar' : (mu === 'SORA' ? 'Infographic' : (mu === 'PLOTLY' ? 'Financial' : ''));
-                                 return vt ? (
+                                return (!isSummarySceneActive && vt) ? (
                                    <span className="whitespace-nowrap text-sm font-medium text-gray-700">Video Type: <span className="ml-1 px-2 py-0.5 text-xs rounded-full border bg-gray-50 text-gray-700 align-middle">{vt}</span></span>
-                                 ) : null;
+                                ) : null;
                                })()}
                              </div>
                            ) : (
@@ -5948,9 +6067,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                  const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                                  const mu = String(r?.model || r?.mode || '').toUpperCase();
                                  const vt = (mu === 'VEO3' || mu === 'ANCHOR') ? 'Avatar' : (mu === 'SORA' ? 'Infographic' : (mu === 'PLOTLY' ? 'Financial' : ''));
-                                 return vt ? (
+                                return (!isSummarySceneActive && vt) ? (
                                    <span className="text-sm font-medium text-gray-700">Video Type: <span className="ml-1 px-2 py-0.5 text-xs rounded-full border bg-gray-50 text-gray-700 align-middle">{vt}</span></span>
-                                 ) : null;
+                                ) : null;
                                })()}
                               </div>
                            )}
@@ -6312,6 +6431,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       {(() => {
                         const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                         if (!scene) return null;
+                        const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
+                        if (titleLower === 'summary') return null;
                         const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                         if (!(sceneModelUpper === 'SORA' || sceneModelUpper === 'ANCHOR' || sceneModelUpper === 'PLOTLY')) return null;
                         const items = Array.isArray(scene?.text_to_be_included) ? scene.text_to_be_included : [];
@@ -6384,7 +6505,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       })()}
 
                       {/* Text To Be Included */}
-                      {(() => { const r = scriptRows?.[currentSceneIndex]; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
+                      {(() => { const r = scriptRows?.[currentSceneIndex]; const titleLower = String(r?.scene_title || r?.sceneTitle || '').trim().toLowerCase(); if (titleLower === 'summary') return null; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
                         <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                           <h4 className="text-lg font-semibold text-gray-800 mb-2">Text To Be Included</h4>
                         {(() => {
@@ -6437,7 +6558,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       );})()}
 
                                            {/* Video Type Selection */}
-                      {(() => { const r = scriptRows?.[currentSceneIndex]; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
+                      {(() => { const r = scriptRows?.[currentSceneIndex]; const titleLower = String(r?.scene_title || r?.sceneTitle || '').trim().toLowerCase(); if (titleLower === 'summary') return null; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                          <h4 className="text-lg font-semibold text-gray-800 mb-4">Video Type</h4>
                         {(() => {
@@ -6594,6 +6715,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       {(() => {
                         const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                        const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
+                        if (titleLower === 'summary') return null;
                         if (modelUpper !== 'ANCHOR') return null;
                         const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
                         // In Script Editor, keep toggle fully visible even if not actively editing
@@ -6710,6 +6833,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                          {(() => {
                            const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+                           const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
+                           if (titleLower === 'summary') return null;
                            const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
                            // In Script Editor, keep toggle fully visible even if not actively editing
                            const disabled = !isEditingScene;
@@ -6735,9 +6860,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                             </div>
                           );
                         })()}
-                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
                            {(() => {
                              const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+                             const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
+                             if (titleLower === 'summary') return null;
                              const refs = (() => {
                                const r = scene?.ref_image;
                                if (Array.isArray(r)) return r;
@@ -6747,7 +6874,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                              if (refs.length === 0) {
                                return <p className="text-sm text-gray-500 col-span-4">No reference images yet. Add one below.</p>;
                              }
-                            return refs.map((url, idx) => (
+                             return refs.map((url, idx) => (
                               <div
                                 key={idx}
                                 className={`group relative w-24 h-24 rounded-lg border-2 ${
@@ -6859,7 +6986,12 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                             ));
                           })()}
                          </div>
-                         <div className="flex items-center gap-2">
+                          {(() => {
+                            const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+                            const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
+                            if (titleLower === 'summary') return null;
+                            return (
+                          <div className="flex items-center gap-2">
                            {/* Hidden file input for image upload */}
                            <input
                              ref={imageFileInputRef}
@@ -6892,8 +7024,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                  setIsUploadingSceneImages(false);
                                  if (imageFileInputRef.current) imageFileInputRef.current.value = '';
                                }
-                             }}
-                          />
+                              }}
+                           />
                           {/* Upload button removed per requirements */}
                           <button
                             onClick={() => {
@@ -6928,9 +7060,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                             title="Choose from templates"
                           >
                             <File className="w-4 h-4" /> Choose From Template
-                          </button>
-                          {/* Upload Template button removed per requirements */}
-                         </div>
+                           </button>
+                           {/* Upload Template button removed per requirements */}
+                          </div>
+                            );
+                          })()}
                        </div>
                        
                      )}
@@ -6973,7 +7107,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
-                                <h4 className="text-lg font-semibold text-gray-800">Presenter Options</h4>
+                                <h4 className="text-lg font-semibold text-gray-800">Scene Settings</h4>
                                 {/* Removed current preset label per request */}
                                 {presenterPresetDirty && (
                                   <p className="text-xs text-amber-600">You have unsaved changes.</p>
@@ -7007,7 +7141,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                   No presenter presets available for this configuration.
                                 </div>
                               ) : (
-                                <div className="flex gap-3 overflow-x-auto pb-2">
+                                <div className="grid grid-cols-5 gap-3 pb-2">
                                   {optionsList.map((po) => {
                                     const value = String(po.preset_id || po.option || '');
                                     const isSelected = String(selectedPresenterPreset || '') === value;
@@ -7026,57 +7160,73 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                     const isVideo = resolvedType === 'video';
                                     const isImage = resolvedType === 'image';
                                     return (
-                                      <button
-                                        key={value}
-                                        type="button"
-                                        onClick={() => handlePresenterPresetChange(value)}
-                                        className={`relative flex min-w-[220px] max-w-[260px] flex-col overflow-hidden rounded-lg border transition-shadow ${
-                                          isSelected
-                                            ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
-                                            : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
-                                        }`}
-                                      >
-                                        {isSelected && (
-                                          <span className="absolute right-3 top-3 rounded-full bg-[#13008B] px-2 py-0.5 text-xs font-medium text-white z-10">
-                                            Selected
-                                          </span>
-                                        )}
-                                        <div className="flex-1 bg-black/5">
-                                          {previewUrl ? (
-                                            isVideo ? (
-                                              <video
-                                                className="h-full w-full object-cover"
-                                                muted
-                                                playsInline
-                                                loop
-                                              >
-                                                <source src={previewUrl} type="video/mp4" />
-                                              </video>
-                                            ) : isImage ? (
-                                              <img
-                                                src={previewUrl}
-                                                alt={`${po.option} preview`}
-                                                className="h-full w-full object-cover"
-                                              />
-                                            ) : (
-                                              <div className="flex h-40 w-full items-center justify-center bg-gray-100 text-sm text-gray-500">
-                                                Preview available
-                                              </div>
-                                            )
-                                          ) : (
-                                            <div className="flex h-40 w-full items-center justify-center bg-gray-100 text-sm text-gray-500">
-                                              No preview available
-                                            </div>
+                                      <div key={value} className="relative">
+                                        <button
+                                          type="button"
+                                          onClick={() => handlePresenterPresetChange(value)}
+                                          className={`relative flex flex-col overflow-hidden rounded-lg border transition-shadow w-full ${
+                                            isSelected
+                                              ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
+                                              : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
+                                          }`}
+                                        >
+                                          {isSelected && (
+                                            <span className="absolute right-3 top-3 rounded-full bg-[#13008B] px-2 py-0.5 text-xs font-medium text-white z-10">
+                                              Selected
+                                            </span>
                                           )}
-                                        </div>
-                                        <div className="flex items-center px-3 py-2 text-left">
-                                          <span className="text-sm font-semibold text-gray-800">
-                                            {po.option}
-                                          </span>
-                                        </div>
-                                      </button>
+                                          <div className="flex-1 bg-black/5 aspect-video">
+                                            {previewUrl ? (
+                                              isVideo ? (
+                                                <video
+                                                  className="h-full w-full object-cover"
+                                                  muted
+                                                  playsInline
+                                                  loop
+                                                >
+                                                  <source src={previewUrl} type="video/mp4" />
+                                                </video>
+                                              ) : isImage ? (
+                                                <img
+                                                  src={previewUrl}
+                                                  alt={`${po.option} preview`}
+                                                  className="h-full w-full object-cover"
+                                                />
+                                              ) : (
+                                                <div className="flex h-full w-full items-center justify-center bg-gray-100 text-sm text-gray-500">
+                                                  Preview available
+                                                </div>
+                                              )
+                                            ) : (
+                                              <div className="flex h-full w-full items-center justify-center bg-gray-100 text-sm text-gray-500">
+                                                No preview available
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center px-3 py-2 text-left">
+                                            <span className="text-sm font-semibold text-gray-800">
+                                              {po.option}
+                                            </span>
+                                          </div>
+                                        </button>
+                                      </div>
                                     );
                                   })}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                                      const sceneDescription = scene?.description || scene?.scene_title || '';
+                                      setCustomDescDescription(sceneDescription);
+                                      setCustomDescTextarea('');
+                                      setShowCustomDescModal(true);
+                                    }}
+                                    className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-white hover:border-[#13008B] hover:bg-gray-50 transition-colors h-full"
+                                    title="Custom Description"
+                                  >
+                                    <Upload className="w-8 h-8 text-gray-400 mb-1" />
+                                    <span className="text-2xl font-semibold text-gray-400">+</span>
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -7258,7 +7408,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                 {isVeo && scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object' && Object.keys(scene.veo3_prompt_template).length > 0 && (
                                   <div className="rounded-lg border border-gray-200 bg-white p-4">
                                     <div className="mb-3 flex items-center justify-between">
-                                      <h5 className="text-sm font-semibold text-gray-800">VEO3 Prompt Template</h5>
+                                      <h5 className="text-sm font-semibold text-gray-800">Scene Data</h5>
                                       <span className="text-xs text-gray-500">
                                         {isEditingScene ? 'Editable' : 'Read only'}
                                       </span>
@@ -8050,7 +8200,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
               {isRegenPresenterSelectionPhase && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <label className="block text-sm font-medium text-gray-700">Presenter Options</label>
+                    <label className="block text-sm font-medium text-gray-700">Scene Settings</label>
                     {regenPresenterPresetId && (
                       <span className="text-xs text-gray-500">
                         Selected: {regenPresenterPresetLabel || 'Presenter'}
