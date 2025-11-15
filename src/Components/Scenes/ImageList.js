@@ -26,12 +26,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 	  const [editorData, setEditorData] = useState(null);
 	  const [showPromptsAccordion, setShowPromptsAccordion] = useState(false);
 	  const [showImageEdit, setShowImageEdit] = useState(false);
+	  const [editingImageFrame, setEditingImageFrame] = useState(null); // Store the frame being edited
+	  const [editingSceneNumber, setEditingSceneNumber] = useState(null); // Store scene number for the image being edited
+	  const [editingImageIndex, setEditingImageIndex] = useState(null); // Store image index (0 for Image 1, 1 for Image 2)
 
   useEffect(() => {
     let cancelled = false;
     let timeoutId = null;
 
-    const mapSessionImages = (imagesRoot) => {
+    const mapSessionImages = (imagesRoot, veo3BackgroundImages = {}) => {
       let mapped = [];
       const collectUrls = (node) => {
         const urls = [];
@@ -152,11 +155,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   : Array.isArray(primary?.textElements)
                   ? primary.textElements
                   : [];
+                // For VEO3 model, swap refs with background_image URLs from scripts if available
+                const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
+                const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                const sceneNumber = it?.scene_number || idx + 1;
+                const finalRefs =
+                  isVEO3 && veo3BackgroundImages[sceneNumber] && veo3BackgroundImages[sceneNumber].length > 0
+                    ? veo3BackgroundImages[sceneNumber]
+                    : refs;
+                
                 const meta = {
                   description: it?.desc || it?.description || it?.scene_description || '',
                   narration: it?.narration || it?.voiceover || '',
                   textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
-                  model: it?.model || it?.mode || '',
+                  model: modelUpper,
                   imageDimensions,
                   textElements,
                   imageVersionData: imagesContainer,
@@ -178,7 +190,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     )
                   }
                 };
-                pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, refs, meta);
+                pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, finalRefs, meta);
                 return;
               }
             }
@@ -284,7 +296,31 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const stext = await sresp.text();
         let sdata; try { sdata = JSON.parse(stext); } catch (_) { sdata = stext; }
         if (!sresp.ok) throw new Error(`user-session/data failed: ${sresp.status} ${stext}`);
-        const sessionImages = mapSessionImages(sdata?.session_data?.images);
+        
+        // For VEO3: Check scripts data for background_image
+        const sessionData = sdata?.session_data || sdata?.session || {};
+        const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+        const currentScript = scripts[0] || null;
+        const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+        
+        // Extract background_image from VEO3 scenes in scripts
+        const veo3BackgroundImages = {};
+        airesponse.forEach((scene, index) => {
+          if (!scene || typeof scene !== 'object') return;
+          const model = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
+          if (isVEO3) {
+            const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
+            if (backgroundImage.length > 0) {
+              const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+              veo3BackgroundImages[sceneNumber] = backgroundImage
+                .map((bg) => bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '')
+                .filter(Boolean);
+            }
+          }
+        });
+        
+        const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3BackgroundImages);
         if (!cancelled && sessionImages.length > 0) {
           setRows(sessionImages);
           const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
@@ -329,7 +365,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 });
                 const st = await sr.text();
                 let sd; try { sd = JSON.parse(st); } catch(_) { sd = {}; }
-                    const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images);
+                    // Extract background_image from VEO3 scenes in scripts
+                    const sessionData = sd?.session_data || sd?.session || {};
+                    const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+                    const currentScript = scripts[0] || null;
+                    const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+                    
+                    const veo3BackgroundImages = {};
+                    airesponse.forEach((scene, index) => {
+                      if (!scene || typeof scene !== 'object') return;
+                      const model = String(scene?.model || scene?.mode || '').toUpperCase();
+                      const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
+                      if (isVEO3) {
+                        const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
+                        if (backgroundImage.length > 0) {
+                          const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+                          veo3BackgroundImages[sceneNumber] = backgroundImage
+                            .map((bg) => bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '')
+                            .filter(Boolean);
+                        }
+                      }
+                    });
+                    
+                    const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images, veo3BackgroundImages);
                     if (!cancelled) {
                       setRows(sessionImages);
                       if (sessionImages.length > 0) {
@@ -378,6 +436,208 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     load();
     return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
   }, [jobId]);
+
+  // Expose load function for refresh - recreate the load logic without cancellation
+  const refreshLoad = React.useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      if (!session_id || !user_id) { setError('Missing session or user'); setIsLoading(false); return; }
+      
+      const sresp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
+      });
+      const stext = await sresp.text();
+      let sdata; try { sdata = JSON.parse(stext); } catch (_) { sdata = stext; }
+      if (!sresp.ok) throw new Error(`user-session/data failed: ${sresp.status} ${stext}`);
+      
+      // For VEO3: Check scripts data for background_image
+      const sessionData = sdata?.session_data || sdata?.session || {};
+      const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+      const currentScript = scripts[0] || null;
+      const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+      
+      // Extract background_image from VEO3 scenes in scripts
+      const veo3BackgroundImages = {};
+      airesponse.forEach((scene, index) => {
+        if (!scene || typeof scene !== 'object') return;
+        const model = String(scene?.model || scene?.mode || '').toUpperCase();
+        const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
+        if (isVEO3) {
+          const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
+          if (backgroundImage.length > 0) {
+            const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+            veo3BackgroundImages[sceneNumber] = backgroundImage
+              .map((bg) => bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '')
+              .filter(Boolean);
+          }
+        }
+      });
+      
+      const mapSessionImages = (imagesRoot, veo3BackgroundImages = {}) => {
+        let mapped = [];
+        const collectUrls = (node) => {
+          const urls = [];
+          const uniqPush = (v) => {
+            if (typeof v === 'string') {
+              const t = v.trim();
+              if (t && !urls.includes(t)) urls.push(t);
+            }
+          };
+          const gatherFromArray = (arr) => {
+            if (!Array.isArray(arr)) return;
+            arr.forEach((imgObj) => {
+              const base = imgObj?.base_image || imgObj?.baseImage;
+              uniqPush(base?.image_url || base?.imageUrl || base?.url || base?.src || base?.link);
+              uniqPush(imgObj?.image_url || imgObj?.imageUrl || imgObj?.url || imgObj?.src || imgObj?.link);
+            });
+          };
+          gatherFromArray(node?.v1?.images);
+          gatherFromArray(node?.v1?.image);
+          gatherFromArray(node?.image?.v1?.images);
+          gatherFromArray(node?.images?.v1?.images);
+          gatherFromArray(node?.images);
+          gatherFromArray(node?.image);
+          const base = node?.base_image || node?.baseImage;
+          uniqPush(base?.image_url || base?.imageUrl || base?.url || base?.src || base?.link);
+          return urls;
+        };
+
+        const normalizePromptFields = (raw = {}) => {
+          const getFirstString = (obj, keys = []) => {
+            for (const k of keys) {
+              const v = obj?.[k];
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            }
+            return '';
+          };
+          return {
+            final_prompt: getFirstString(raw, ['final_prompt','finalPrompt','prompt','final']),
+            image_summary: getFirstString(raw, ['image_summary','imageSummary','summary']),
+            main_subject_details: getFirstString(raw, ['main_subject_details','mainSubjectDetails','main_subject','subject_details','subject']),
+            pose_or_action: getFirstString(raw, ['pose_or_action','poseOrAction','pose','action']),
+            secondary_elements: getFirstString(raw, ['secondary_elements','secondaryElements','secondaries','secondary']),
+            lighting_and_atmosphere: getFirstString(raw, ['lighting_and_atmosphere','lightingAndAtmosphere','lighting','atmosphere','mood']),
+            framing_and_composition: getFirstString(raw, ['framing_and_composition','framingAndComposition','framing','composition']),
+            technical_enhancers: getFirstString(raw, ['technical_enhancers','technicalEnhancers','technical','enhancers'])
+          };
+        };
+        const pushRow = (num, title, refs, meta = {}) => {
+          const clean = Array.from(new Set((refs || []).filter(Boolean)));
+          if (clean.length > 0) mapped.push({ scene_number: num, scene_title: title || 'Untitled', refs: clean, ...meta });
+        };
+        if (!imagesRoot) return mapped;
+        // Handle object shape: { current_version: 'v1', v1: { images: [ { base_image: { image_url } } ] } }
+        if (typeof imagesRoot === 'object' && !Array.isArray(imagesRoot)) {
+          try {
+            const version = imagesRoot.current_version || 'v1';
+            const vObj = imagesRoot[version] || imagesRoot.v1 || {};
+            const arr = Array.isArray(vObj?.images) ? vObj.images : [];
+            if (arr.length > 0) {
+              const refs = arr
+                .map((it) => (it?.base_image?.image_url || it?.base_image?.imageUrl || it?.image_url || it?.url || ''))
+                .filter(Boolean);
+              const primary = arr[0] || {};
+              const baseImage = primary?.base_image || primary?.baseImage || {};
+              const imageDimensions =
+                baseImage?.image_dimensions ||
+                baseImage?.imageDimensions ||
+                primary?.image_dimensions ||
+                primary?.imageDimensions ||
+                null;
+              const textElements = Array.isArray(primary?.text_elements)
+                ? primary.text_elements
+                : Array.isArray(primary?.textElements)
+                ? primary.textElements
+                : [];
+              pushRow(1, imagesRoot?.scene_title || 'Images', refs, {
+                description: imagesRoot?.description || imagesRoot?.scene_description || '',
+                narration: imagesRoot?.narration || '',
+                textToBeIncluded: imagesRoot?.text_to_be_included || '',
+                imageDimensions,
+                textElements,
+                imageVersionData: imagesRoot,
+                imageFrames: arr,
+                prompts: normalizePromptFields(imagesRoot?.prompts || {})
+              });
+            }
+          } catch (e) {
+            console.error('Error mapping single object:', e);
+          }
+        } else if (Array.isArray(imagesRoot)) {
+          imagesRoot.forEach((it, idx) => {
+            // For VEO3: Use background_image from scripts if available
+            const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
+            const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+            const sceneNumber = it?.scene_number || idx + 1;
+            
+            // If VEO3, prioritize background_image from scripts
+            let refs = collectUrls(it);
+            if (isVEO3 && veo3BackgroundImages[sceneNumber] && veo3BackgroundImages[sceneNumber].length > 0) {
+              refs = veo3BackgroundImages[sceneNumber];
+            }
+            
+            if (refs.length > 0) {
+              const baseImage = it?.base_image || it?.baseImage || {};
+              const imageDimensions =
+                baseImage?.image_dimensions ||
+                baseImage?.imageDimensions ||
+                it?.image_dimensions ||
+                it?.imageDimensions ||
+                null;
+              const textElements = Array.isArray(it?.text_elements)
+                ? it.text_elements
+                : Array.isArray(it?.textElements)
+                ? it.textElements
+                : [];
+              pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, refs, {
+                description: it?.description || it?.scene_description || '',
+                narration: it?.narration || '',
+                textToBeIncluded: it?.text_to_be_included || '',
+                imageDimensions,
+                textElements,
+                imageVersionData: it,
+                imageFrames: Array.isArray(it?.images) ? it.images : [it],
+                prompts: normalizePromptFields(it?.prompts || {})
+              });
+            }
+          });
+        }
+        return mapped;
+      };
+      
+      const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3BackgroundImages);
+      if (sessionImages.length > 0) {
+        setRows(sessionImages);
+        const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
+        const first = refs0[0] || '';
+        const model0 = String(sessionImages[0]?.model || '').toUpperCase();
+        const imgs = model0 === 'PLOTLY' ? [first] : refs0.slice(0,2);
+        setSelected({
+          index: 0,
+          imageUrl: first,
+          images: imgs,
+          title: sessionImages[0]?.scene_title || 'Untitled',
+          sceneNumber: sessionImages[0]?.scene_number ?? '',
+          description: sessionImages[0]?.description || '',
+          narration: sessionImages[0]?.narration || '',
+          textToBeIncluded: sessionImages[0]?.textToBeIncluded || '',
+          model: model0,
+          prompts: sessionImages[0]?.prompts || { opening_frame: {}, closing_frame: {} },
+          imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
+          textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
+          imageVersionData: sessionImages[0]?.imageVersionData || null,
+          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : []
+        });
+      }
+      setIsLoading(false);
+    } catch (e) {
+      setError(e?.message || 'Failed to refresh images');
+      setIsLoading(false);
+    }
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative">
@@ -477,15 +737,51 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           alt={`scene-${selected.sceneNumber}-1`}
                           className="w-full h-full object-contain"
                         />
-                        {/* Edit button on hover - slides in from right */}
-                        <button
-                          type="button"
-                          onClick={() => setShowImageEdit(true)}
-                          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] z-10"
-                          title="Edit Image"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                        {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
+                        {(() => {
+                          // Check if this is VEO3 model with gen_image=false
+                          const modelUpper = String(selected?.model || '').toUpperCase();
+                          const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                          const imageVersionData = selected?.imageVersionData || {};
+                          const versionKey = imageVersionData.current_version || imageVersionData.currentVersion || 'v1';
+                          const verObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
+                          const genImage = verObj?.gen_image !== false; // Default to true if not specified
+                          
+                          // Hide edit button for VEO3 with gen_image=false
+                          if (isVEO3 && !genImage) {
+                            return null;
+                          }
+                          
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Get the frame data for this specific image (Image 1)
+                                const frame = frameForImg1;
+                                if (frame) {
+                                  // Build the JSON structure with base_image, text_elements, and overlay_elements
+                                  const frameData = {
+                                    base_image: frame?.base_image || frame?.baseImage || {
+                                      image_url: img1,
+                                      image_dimensions: selected?.imageDimensions || {}
+                                    },
+                                    text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
+                                                   Array.isArray(frame?.textElements) ? frame.textElements : [],
+                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : []
+                                  };
+                                  setEditingImageFrame(frameData);
+                                  setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
+                                  setEditingImageIndex(0); // Image 1 is index 0
+                                  setShowImageEdit(true);
+                                }
+                              }}
+                              className="absolute right-0 top-[20px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] z-10"
+                              title="Edit Image"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          );
+                        })()}
                         {Array.isArray(textElsForImg1) && textElsForImg1.length > 0 && (
                           <div className="absolute inset-0 pointer-events-none">
                             {textElsForImg1.map((el, idx) => {
@@ -591,15 +887,51 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           alt={`scene-${selected.sceneNumber}-2`}
                           className="w-full h-full object-contain"
                         />
-                        {/* Edit button on hover - slides in from right */}
-                        <button
-                          type="button"
-                          onClick={() => setShowImageEdit(true)}
-                          className="absolute right-0 top-[20px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] z-10"
-                          title="Edit Image"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                        {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
+                        {(() => {
+                          // Check if this is VEO3 model with gen_image=false
+                          const modelUpper = String(selected?.model || '').toUpperCase();
+                          const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                          const imageVersionData = selected?.imageVersionData || {};
+                          const versionKey = imageVersionData.current_version || imageVersionData.currentVersion || 'v1';
+                          const verObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
+                          const genImage = verObj?.gen_image !== false; // Default to true if not specified
+                          
+                          // Hide edit button for VEO3 with gen_image=false
+                          if (isVEO3 && !genImage) {
+                            return null;
+                          }
+                          
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Get the frame data for this specific image (Image 2)
+                                const frame = frameForImg2;
+                                if (frame) {
+                                  // Build the JSON structure with base_image, text_elements, and overlay_elements
+                                  const frameData = {
+                                    base_image: frame?.base_image || frame?.baseImage || {
+                                      image_url: img2,
+                                      image_dimensions: selected?.imageDimensions || {}
+                                    },
+                                    text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
+                                                   Array.isArray(frame?.textElements) ? frame.textElements : [],
+                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : []
+                                  };
+                                  setEditingImageFrame(frameData);
+                                  setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
+                                  setEditingImageIndex(1); // Image 2 is index 1
+                                  setShowImageEdit(true);
+                                }
+                              }}
+                              className="absolute right-0 top-[20px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] z-10"
+                              title="Edit Image"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          );
+                        })()}
                         {Array.isArray(textElsForImg2) && textElsForImg2.length > 0 && (
                           <div className="absolute inset-0 pointer-events-none">
                             {textElsForImg2.map((el, idx) => {
@@ -858,7 +1190,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       {showImageEdit && (
         <ImageEdit
           isOpen={showImageEdit}
-          onClose={() => setShowImageEdit(false)}
+          onClose={() => {
+            setShowImageEdit(false);
+            setEditingImageFrame(null);
+            setEditingSceneNumber(null);
+            setEditingImageIndex(null);
+          }}
+          onRefresh={refreshLoad}
+          frameData={editingImageFrame}
+          sceneNumber={editingSceneNumber}
+          imageIndex={editingImageIndex}
         />
       )}
     </div>

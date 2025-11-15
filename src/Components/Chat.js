@@ -261,12 +261,11 @@ const formatUserForVisual = (userData = {}, token = '') => {
     }));
   };
   const ensureArrayOfStrings = (arr) => (Array.isArray(arr) ? arr.map(String) : []);
-  return {
+  const userObj = {
     id: String(userData?.id || userData?._id || token || ''),
     email: userData?.email || userData?.Email || '',
     display_name: userData?.display_name || userData?.displayName || userData?.name || '',
     created_at: userData?.created_at || new Date().toISOString(),
-    avatar_url: userData?.avatar_url || userData?.avatarUrl || '',
     folder_url: userData?.folder_url || userData?.folderUrl || '',
     brand_identity: ensureObject(userData?.brand_identity || userData?.brandIdentity),
     tone_and_voice: ensureObject(userData?.tone_and_voice || userData?.toneAndVoice),
@@ -274,6 +273,12 @@ const formatUserForVisual = (userData = {}, token = '') => {
     templates: ensureArrayOfStrings(userData?.templates),
     voiceover: ensureVoiceoverArray(userData?.voiceover || userData?.voiceovers)
   };
+  // Only include avatar_url if it has a non-empty value
+  const avatarUrl = userData?.avatar_url || userData?.avatarUrl || '';
+  if (avatarUrl && avatarUrl.trim()) {
+    userObj.avatar_url = avatarUrl.trim();
+  }
+  return userObj;
 };
 
 const formatSessionForVisual = (sessionData = {}, sessionId = '', token = '') => {
@@ -419,6 +424,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false); // no longer used for images
   const [showImagesOverlay, setShowImagesOverlay] = useState(false);
+  const [showMissingAvatarPopup, setShowMissingAvatarPopup] = useState(false);
+  const [missingAvatarScenes, setMissingAvatarScenes] = useState([]);
   const [imagesJobId, setImagesJobId] = useState('');
   const [videoCountdown, setVideoCountdown] = useState(0);
   const fileInputRef = useRef(null);
@@ -1321,14 +1328,15 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isUploadingSceneImages, setIsUploadingSceneImages] = useState(false);
   // Avatar selection/upload state
-  const defaultAvatars = [
-    'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face',
-    'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=150&h=150&fit=crop&crop=face',
-  ];
-  const [avatarOptions, setAvatarOptions] = useState(defaultAvatars);
+  const [avatarOptions, setAvatarOptions] = useState([]);
   const [selectedAvatar, setSelectedAvatar] = useState(null);
   const avatarFileInputRef = useRef(null);
+  const [brandAssetsAvatars, setBrandAssetsAvatars] = useState([]);
+  const [isLoadingAvatars, setIsLoadingAvatars] = useState(false);
+  const [showAvatarUploadPopup, setShowAvatarUploadPopup] = useState(false);
+  const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
+  const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
+  const avatarUploadFileInputRef = useRef(null);
 
   // Helpers for session-scoped localStorage keys
   const getSid = () => {
@@ -1463,6 +1471,76 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     getUserProfile();
   }, [scriptRows]);
 
+  // Load avatars from brand assets API when avatar section is shown
+  React.useEffect(() => {
+    const loadAvatars = async () => {
+      try {
+        const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+        const m = String(scene?.model || scene?.mode || '').toUpperCase();
+        const isAvatarish = (m === 'VEO3' || m === 'ANCHOR');
+        
+        if (!isAvatarish) return;
+        
+        // Check if avatar is already selected for this scene
+        const hasSelectedAvatar = scene?.avatar || selectedAvatar;
+        
+        // If avatar is already selected, try to load from cache only
+        if (hasSelectedAvatar) {
+          const token = localStorage.getItem('token');
+          if (token) {
+            try {
+              const cacheKey = `brand_assets_images:${token}`;
+              const cached = localStorage.getItem(cacheKey);
+              if (cached) {
+                const cachedData = JSON.parse(cached);
+                const avatars = Array.isArray(cachedData?.avatars) ? cachedData.avatars : [];
+                if (avatars.length > 0) {
+                  setBrandAssetsAvatars(avatars);
+                  return; // Use cached data, don't call API
+                }
+              }
+            } catch(_) {}
+          }
+        }
+        
+        // Only call API if no avatar selected or cache is empty
+        setIsLoadingAvatars(true);
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setIsLoadingAvatars(false);
+          return;
+        }
+        
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+        const text = await resp.text();
+        let data; 
+        try { data = JSON.parse(text); } catch(_) { data = text; }
+        
+        if (resp.ok && data && typeof data === 'object') {
+          const avatars = Array.isArray(data?.avatars) ? data.avatars : [];
+          setBrandAssetsAvatars(avatars);
+          // Also cache in localStorage
+          try {
+            const cacheKey = `brand_assets_images:${token}`;
+            const cached = localStorage.getItem(cacheKey);
+            let cachedData = {};
+            if (cached) {
+              try { cachedData = JSON.parse(cached); } catch(_) {}
+            }
+            cachedData.avatars = avatars;
+            localStorage.setItem(cacheKey, JSON.stringify(cachedData));
+          } catch(_) {}
+        }
+      } catch (err) {
+        console.error('Failed to load avatars:', err);
+      } finally {
+        setIsLoadingAvatars(false);
+      }
+    };
+    
+    loadAvatars();
+  }, [currentSceneIndex, scriptRows, selectedAvatar]);
+
   // Copy helper for AI messages (ChatGPT-like)
   const copyMessageText = async (text) => {
     try {
@@ -1553,15 +1631,14 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
               const sn = scene?.scene_number ?? (typeof indexHint === 'number' ? indexHint + 1 : undefined);
               if (sn == null) return scene;
               if (!refMap.has(sn)) return scene;
-              const val = refMap.get(sn) || [];
               const out = scene ? { ...scene } : {};
-              // Only send a single canonical key
-              out.ref_image = val;
+              // Always send ref_image as empty array
+              out.ref_image = [];
               // Ensure no duplicate/synonym keys remain
               if ('ref_images' in out) delete out.ref_images;
               if ('reference_image' in out) delete out.reference_image;
               if ('reference_images' in out) delete out.reference_images;
-              try { console.log('[refs] Applied to payload scene', sn, val); } catch (_) { /* noop */ }
+              try { console.log('[refs] Applied to payload scene', sn, []); } catch (_) { /* noop */ }
               return out;
             } catch (_) { return scene; }
           };
@@ -1745,24 +1822,80 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       // 2) Build request body per new generate-images schema
       const sd = sessionData?.session_data || sessionData?.session || {};
       const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
-      const sessionForBody = {
-        id: sd.session_id || sessionId,
-        user_id: sd.user_id || token,
-        created_at: sd.created_at || new Date().toISOString(),
-        updated_at: sd.updated_at || new Date().toISOString(),
-        content: Array.isArray(sd.content) ? sd.content : [],
-        summarydocument: Array.isArray(sd.document_summary) ? sd.document_summary : [],
-        videoduration: String(sd.video_duration ?? sd.videoduration ?? 60),
-        totalsummary: Array.isArray(sd.total_summary) ? sd.total_summary : (Array.isArray(sd.totalsummary) ? sd.totalsummary : []),
-        messages: Array.isArray(sd.messages) ? sd.messages : [],
-        scripts: Array.isArray(sd.scripts) && sd.scripts.length > 0 ? [sd.scripts[0]] : [{ userquery: [], airesponse: [], version: 'v1', additionalProp1: {} }],
-        videos: Array.isArray(sd.videos) ? sd.videos : [],
-        additionalProp1: {}
-      };
-      // 3) Call /v1/generate-images-queue API (POST) with user_id and session_id
+      
+      // VALIDATION: Check all VEO3 scenes have non-empty background_image array before proceeding
+      const scripts = Array.isArray(sd.scripts) && sd.scripts.length > 0 ? sd.scripts : [];
+      const currentScript = scripts[0] || null; // Get current version (first script)
+      const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+      
+      const missingScenes = [];
+      airesponse.forEach((scene, index) => {
+        if (!scene || typeof scene !== 'object') return;
+        const model = String(scene?.model || scene?.mode || '').toUpperCase();
+        const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
+        
+        if (isVEO3) {
+          // Check if background_image array exists and is not empty
+          const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
+          
+          // Check if background_image array has at least one object
+          const hasBackgroundImage = backgroundImage.length > 0 && backgroundImage.some(bg => {
+            // Check if bg is an object and has at least one property
+            if (!bg || typeof bg !== 'object') return false;
+            // Check for imageurl or image_url property with a non-empty string value
+            const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '';
+            return typeof url === 'string' && url.trim().length > 0;
+          });
+          
+          if (!hasBackgroundImage) {
+            const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+            missingScenes.push(sceneNumber);
+          }
+        }
+      });
+      
+      // If any VEO3 scenes are missing background_image, show popup and stop
+      if (missingScenes.length > 0) {
+        setMissingAvatarScenes(missingScenes);
+        setShowMissingAvatarPopup(true);
+        return; // Stop execution
+      }
+      
+      // 3) Check if regenerate_desc is true in scripts, if so call process-regenerate
+      const regenerateDesc = currentScript?.regenerate_desc || currentScript?.regenerateDesc || false;
+      
+      if (regenerateDesc === true) {
+        // Build request body for process-regenerate with proper structure
+        const formattedUser = formatUserForVisual(user, token);
+        const formattedSession = formatSessionForVisual(sd, sessionId, token);
+        
+        const processRegenerateBody = {
+          user: formattedUser,
+          session: formattedSession
+        };
+        
+        // Call /v1/scripts/process-regenerate with user and session objects
+        const processRegenResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/process-regenerate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(processRegenerateBody)
+        });
+        const processRegenText = await processRegenResp.text();
+        let processRegenData;
+        try {
+          processRegenData = JSON.parse(processRegenText);
+        } catch (_) {
+          processRegenData = processRegenText;
+        }
+        if (!processRegenResp.ok) {
+          throw new Error(`process-regenerate failed: ${processRegenResp.status} ${processRegenText}`);
+        }
+      }
+
+      // 4) Call /v1/generate-images-queue API (POST) with user_id and session_id
       const imgBody = {
         user_id: (user?.id || user?.user_id || localStorage.getItem('token') || ''),
-        session_id: (localStorage.getItem('session_id') || sessionForBody?.session_id || '')
+        session_id: (localStorage.getItem('session_id') || sessionId || '')
       };
       const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(imgBody)
@@ -1772,13 +1905,42 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
       try { localStorage.setItem('images_generate_response', JSON.stringify(imgData)); } catch(_) {}
 
-      // 4) Extract job_id from response and persist it
-      // The job_id will be used to poll /v1/job-status/{job_id} in the ImageList component
+      // 5) Extract job_id from response and start polling /v1/job-status/{job_id}
       const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
       if (jobId) {
         try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
         try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
         setImagesJobId(jobId);
+        
+        // Start polling job-status
+        const pollJobStatus = async () => {
+          try {
+            const statusResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(jobId)}`);
+            const statusText = await statusResp.text();
+            let statusData;
+            try {
+              statusData = JSON.parse(statusText);
+            } catch (_) {
+              statusData = statusText;
+            }
+            if (!statusResp.ok) {
+              console.error(`job-status failed: ${statusResp.status} ${statusText}`);
+              return;
+            }
+            const status = String(statusData?.status || statusData?.job_status || '').toLowerCase();
+            if (status === 'succeeded' || status === 'success' || status === 'completed') {
+              try { localStorage.removeItem('images_generate_pending'); } catch(_){}
+              console.log('Image generation job completed successfully');
+            } else {
+              // Continue polling every 3 seconds
+              setTimeout(pollJobStatus, 3000);
+            }
+          } catch (error) {
+            console.error('Error polling job-status:', error);
+          }
+        };
+        // Start polling after a short delay
+        setTimeout(pollJobStatus, 3000);
       }
       // Show short popup then navigate to images list
       setShowShortGenPopup(true);
@@ -2416,14 +2578,31 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     }
   }, [scriptRows, currentSceneIndex]);
 
-  // Keep avatar selection scoped to the current scene
+  // Initialize selectedAvatar from current scene data (only on scene change, preserve user selection)
   useEffect(() => {
-    try {
-      const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
-      const currentRef = Array.isArray(scene?.ref_image) && scene.ref_image.length > 0 ? (scene.ref_image[0] || null) : null;
-      setSelectedAvatar(currentRef || null);
-    } catch (_) { /* noop */ }
-  }, [currentSceneIndex, scriptRows]);
+    if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+      const scene = scriptRows[currentSceneIndex];
+      const m = String(scene?.model || scene?.mode || '').toUpperCase();
+      const isAvatarish = (m === 'VEO3' || m === 'ANCHOR');
+      
+      if (isAvatarish) {
+        // Check for avatar_urls array first, then avatar field
+        if (Array.isArray(scene?.avatar_urls) && scene.avatar_urls.length > 0) {
+          setSelectedAvatar(scene.avatar_urls[0]);
+        } else if (typeof scene?.avatar === 'string' && scene.avatar.trim()) {
+          setSelectedAvatar(scene.avatar.trim());
+        }
+        // Don't reset to null - preserve user selection if scene doesn't have avatar data yet
+      } else {
+        // Reset for non-avatar scenes
+        setSelectedAvatar(null);
+      }
+    } else {
+      setSelectedAvatar(null);
+    }
+  }, [currentSceneIndex]); // Removed scriptRows from dependencies to prevent resetting on user selection
+
+  // Keep avatar selection scoped to the current scene - removed incorrect ref_image assignment
 
   // Reset text input buffer when switching scenes
   useEffect(() => {
@@ -3362,7 +3541,6 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           email: userPayload.email || '',
           display_name: userPayload.display_name || userPayload.name || '',
           created_at: userPayload.created_at || new Date().toISOString(),
-          avatar_url: userPayload.avatar_url || userPayload.avatar || '',
           folder_url: userPayload.folder_url || '',
           brand_identity: wrapAdditional(normalizedBI),
           tone_and_voice: wrapAdditional(userPayload.tone_and_voice || {}),
@@ -3370,26 +3548,31 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           templates: mapToStringArray(userPayload.templates),
           voiceover: mapVoiceoverObjects(userPayload.voiceover)
         };
+        // Only include avatar_url if it has a non-empty value
+        const avatarUrlValue = userPayload.avatar_url || userPayload.avatar || '';
+        if (avatarUrlValue && avatarUrlValue.trim()) {
+          normalizedUser.avatar_url = avatarUrlValue.trim();
+        }
       }
       const additionalInstructions = {
         ai_questions: Array.isArray(aiQues) ? aiQues : [],
         guidelines: guidelines || null
       };
 
-      const requestPayload = {
-        user: normalizedUser || {
+      const fallbackUser = {
           id: token || '',
           email: '',
           display_name: '',
           created_at: new Date().toISOString(),
-          avatar_url: '',
           folder_url: '',
           brand_identity: wrapAdditional({}),
           tone_and_voice: wrapAdditional({}),
           look_and_feel: wrapAdditional({}),
           templates: [],
           voiceover: []
-        },
+        };
+      const requestPayload = {
+        user: normalizedUser || fallbackUser,
         session: Object.keys(sessionPayload).length ? sessionPayload : {
           session_id: sessionId || '',
           user_id: token || '',
@@ -4452,7 +4635,6 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
             email: u?.email || '',
             display_name: u?.display_name || u?.name || '',
             created_at: u?.created_at || '',
-            avatar_url: u?.avatar_url || '',
             folder_url: u?.folder_url || '',
             brand_identity: u?.brand_identity || {},
             tone_and_voice: u?.tone_and_voice || {},
@@ -4460,6 +4642,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
             templates: Array.isArray(u?.templates) ? u.templates : [],
             voiceover: Array.isArray(u?.voiceover) ? u.voiceover : [],
           };
+          // Only include avatar_url if it has a non-empty value
+          const avatarUrlVal = u?.avatar_url || '';
+          if (avatarUrlVal && avatarUrlVal.trim()) {
+            userForBody.avatar_url = avatarUrlVal.trim();
+          }
         } catch (_) { userForBody = {}; }
       }
       const sessionForBody = {
@@ -4668,10 +4855,31 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
               ? [r.ref_image]
               : []
           ),
-          // Include avatar/background to avoid clearing when saving
-          avatar: r?.avatar ?? '',
-          background: r?.background ?? r?.background_image ?? '',
-          background_image: r?.background_image ?? r?.background ?? '',
+          // Include avatar_urls as array if present, remove avatar field
+          avatar_urls: (() => {
+            if (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0) {
+              return r.avatar_urls.filter(url => typeof url === 'string' && url.trim()).map(url => url.trim());
+            }
+            // Fallback: convert avatar to avatar_urls array
+            if (typeof r?.avatar === 'string' && r.avatar.trim()) {
+              return [r.avatar.trim()];
+            }
+            return [];
+          })(),
+          // Include background_image array only, remove background field
+          background_image: (() => {
+            if (Array.isArray(r?.background_image)) {
+              return r.background_image;
+            }
+            if (typeof r?.background === 'string' && r.background.trim()) {
+              // Convert single background string to array format
+              return [{
+                imageurl: r.background.trim(),
+                imageid: ''
+              }];
+            }
+            return [];
+          })(),
           // Include model-specific option blobs
           presenter_options: r?.presenter_options ?? undefined,
           anchor_options: r?.anchor_options ?? undefined,
@@ -4913,12 +5121,29 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         if (Array.isArray(targetRow?.text_to_be_included)) {
           applyField(clone, ['text_to_be_included'], targetRow.text_to_be_included);
         }
-        if (refImages.length > 0) {
-          clone.ref_image = refImages;
+        // Always set ref_image to empty array
+        clone.ref_image = [];
+        // Remove avatar field - we'll use avatar_urls instead
+        if ('avatar' in clone) {
+          delete clone.avatar;
         }
-        if (avatarVal !== undefined) clone.avatar = avatarVal;
-        clone.background = backgroundVal;
-        clone.background_image = backgroundImageVal;
+        // Remove background field - we'll use background_image array only
+        if ('background' in clone) {
+          delete clone.background;
+        }
+        // Set background_image array only
+        if (Array.isArray(targetRow?.background_image) && targetRow.background_image.length > 0) {
+          clone.background_image = targetRow.background_image;
+        } else if (backgroundImageVal && typeof backgroundImageVal === 'string' && backgroundImageVal.trim()) {
+          // Convert single background string to array format if needed
+          const templateEntry = templateLookupByUrl.get(backgroundImageVal.trim());
+          const rawTemplate = templateEntry?.raw || {};
+          const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
+          clone.background_image = [{
+            imageurl: backgroundImageVal.trim(),
+            imageid: templateId ? String(templateId) : ''
+          }];
+        }
         if (targetRow?.presenter_options) clone.presenter_options = targetRow.presenter_options;
         if (targetRow?.anchor_options) clone.anchor_options = targetRow.anchor_options;
         if (targetRow?.anchor_prompt_template && typeof targetRow.anchor_prompt_template === 'object') {
@@ -4989,10 +5214,24 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           text_to_be_included: Array.isArray(fallbackRow?.text_to_be_included)
             ? fallbackRow.text_to_be_included
             : (typeof fallbackRow?.text_to_include === 'string' && fallbackRow.text_to_include.trim() ? [fallbackRow.text_to_include.trim()] : []),
-          ref_image: refImages,
-          avatar: typeof avatarOverride === 'string' ? avatarOverride : (fallbackRow?.avatar ?? ''),
-          background: backgroundVal,
-          background_image: backgroundImageVal,
+          ref_image: [],
+          // Don't include avatar field - use avatar_urls instead
+          // Don't include background field - use background_image array only
+          background_image: (() => {
+            if (backgroundImageVal && typeof backgroundImageVal === 'string' && backgroundImageVal.trim()) {
+              const templateEntry = templateLookupByUrl.get(backgroundImageVal.trim());
+              const rawTemplate = templateEntry?.raw || {};
+              const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
+              return [{
+                imageurl: backgroundImageVal.trim(),
+                imageid: templateId ? String(templateId) : ''
+              }];
+            }
+            if (Array.isArray(fallbackRow?.background_image)) {
+              return fallbackRow.background_image;
+            }
+            return [];
+          })(),
           presenter_options: fallbackRow?.presenter_options,
           anchor_options: fallbackRow?.anchor_options,
           folderLink: fallbackRow?.folderLink ?? fallbackRow?.folder_link ?? '',
@@ -5020,26 +5259,46 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           const rawTemplate = templateEntry?.raw || {};
           const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
           return [{
-            image_url: bgUrl.trim(),
-            template_id: templateId ? String(templateId) : ''
+            imageurl: bgUrl.trim(),
+            imageid: templateId ? String(templateId) : ''
           }];
         }
         return [];
       })();
 
-      // Get avatar_url for API body
-      const avatarUrlForApiBody = (() => {
-        if (avatarUrl) return avatarUrl;
+      // Get avatar_urls for API body as array of strings
+      const avatarUrlsForApiBody = (() => {
+        if (avatarUrl) {
+          const url = typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
+          return url ? [url] : [];
+        }
         const targetRow = rows[sceneIdx] || {};
-        return targetRow?.avatar || '';
+        if (Array.isArray(targetRow?.avatar_urls) && targetRow.avatar_urls.length > 0) {
+          return targetRow.avatar_urls.filter(url => typeof url === 'string' && url.trim()).map(url => url.trim());
+        }
+        // Fallback: check avatar field and convert to array
+        if (typeof targetRow?.avatar === 'string' && targetRow.avatar.trim()) {
+          return [targetRow.avatar.trim()];
+        }
+        return [];
       })();
 
-      // Attach background array + avatar_url to the targeted scene object
+      // Attach background_image array and avatar_urls array to the targeted scene object, remove avatar and background fields
       const airesponseWithVisuals = (() => {
         if (!Array.isArray(finalAiresponse) || finalAiresponse.length === 0) return finalAiresponse;
-        const cloned = finalAiresponse.map((scene) =>
-          scene && typeof scene === 'object' ? { ...scene } : scene
-        );
+        const cloned = finalAiresponse.map((scene) => {
+          if (!scene || typeof scene !== 'object') return scene;
+          const cleanedScene = { ...scene };
+          // Remove avatar field if present
+          if ('avatar' in cleanedScene) {
+            delete cleanedScene.avatar;
+          }
+          // Remove background field if present (keep only background_image array)
+          if ('background' in cleanedScene && !Array.isArray(cleanedScene.background)) {
+            delete cleanedScene.background;
+          }
+          return cleanedScene;
+        });
         const targetIndex = (() => {
           try {
             const bySceneNumber = cloned.findIndex((scene) => {
@@ -5058,32 +5317,45 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         })();
         const targetSceneObj = cloned[targetIndex];
         if (targetSceneObj && typeof targetSceneObj === 'object') {
+          // Set background_image array if provided
           if (Array.isArray(backgroundImageArray) && backgroundImageArray.length > 0) {
-            // Place background template array on the scene object (0th index for scene 1 etc.)
             targetSceneObj.background_image = backgroundImageArray;
           }
-          if (avatarUrlForApiBody && typeof avatarUrlForApiBody === 'string' && avatarUrlForApiBody.trim()) {
-            targetSceneObj.avatar_url = avatarUrlForApiBody.trim();
+          // Set avatar_urls as array of strings
+          if (Array.isArray(avatarUrlsForApiBody) && avatarUrlsForApiBody.length > 0) {
+            targetSceneObj.avatar_urls = avatarUrlsForApiBody;
+          }
+          // Ensure avatar field is removed
+          if ('avatar' in targetSceneObj) {
+            delete targetSceneObj.avatar;
+          }
+          // Ensure background field is removed (keep only background_image array)
+          if ('background' in targetSceneObj && !Array.isArray(targetSceneObj.background)) {
+            delete targetSceneObj.background;
           }
         }
         return cloned;
       })();
 
-      // Clean user and session objects - remove unnecessary background and avatar keys
+      // Clean user and session objects - remove avatar and background fields
       const cleanUser = { ...user };
-      if (Array.isArray(cleanUser.background) && cleanUser.background.length === 0) {
-        delete cleanUser.background;
-      }
-      if (cleanUser.avatar === '' || cleanUser.avatar === null || cleanUser.avatar === undefined) {
+      // Remove avatar field if present
+      if ('avatar' in cleanUser) {
         delete cleanUser.avatar;
+      }
+      // Remove background field if present (keep only background_image array if it exists)
+      if ('background' in cleanUser && !Array.isArray(cleanUser.background)) {
+        delete cleanUser.background;
       }
       
       const cleanSession = { ...sessionForBody };
-      if (Array.isArray(cleanSession.background) && cleanSession.background.length === 0) {
-        delete cleanSession.background;
-      }
-      if (cleanSession.avatar === '' || cleanSession.avatar === null || cleanSession.avatar === undefined) {
+      // Remove avatar field if present
+      if ('avatar' in cleanSession) {
         delete cleanSession.avatar;
+      }
+      // Remove background field if present (keep only background_image array if it exists)
+      if ('background' in cleanSession && !Array.isArray(cleanSession.background)) {
+        delete cleanSession.background;
       }
 
       const requestBody = {
@@ -5097,13 +5369,13 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       };
 
       // Add background_image array to request body if provided
-      if (backgroundImageArray.length > 0) {
+      if (Array.isArray(backgroundImageArray) && backgroundImageArray.length > 0) {
         requestBody.background_image = backgroundImageArray;
       }
 
-      // Add avatar_url to request body if provided
-      if (avatarUrlForApiBody && typeof avatarUrlForApiBody === 'string' && avatarUrlForApiBody.trim()) {
-        requestBody.avatar_url = avatarUrlForApiBody.trim();
+      // Add avatar_urls as array to request body if provided
+      if (Array.isArray(avatarUrlsForApiBody) && avatarUrlsForApiBody.length > 0) {
+        requestBody.avatar_urls = avatarUrlsForApiBody;
       }
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
@@ -6973,7 +7245,45 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         )}
                       </div>
                       );})()}
-                      {(() => { const scene = scriptRows?.[currentSceneIndex]; const m = String(scene?.model||scene?.mode||'').toUpperCase(); const isAvatarish = (m==='VEO3' || m==='ANCHOR'); return isAvatarish; })() ? (
+                      {(() => { 
+                        const scene = scriptRows?.[currentSceneIndex]; 
+                        const m = String(scene?.model||scene?.mode||'').toUpperCase(); 
+                        const isAvatarish = (m==='VEO3' || m==='ANCHOR'); 
+                        if (!isAvatarish) return null;
+                        
+                        // Get avatar_urls from script/user session data
+                        const getAvatarUrlsFromSession = () => {
+                          try {
+                            // Check session data for avatar_urls
+                            const sessionId = localStorage.getItem('session_id');
+                            const token = localStorage.getItem('token');
+                            if (!sessionId || !token) return [];
+                            
+                            // Try to get from script scene data
+                            const currentScene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+                            if (currentScene && Array.isArray(currentScene.avatar_urls)) {
+                              return currentScene.avatar_urls;
+                            }
+                            
+                            // Try to get from cached brand assets
+                            const cacheKey = `brand_assets_images:${token}`;
+                            const cached = localStorage.getItem(cacheKey);
+                            if (cached) {
+                              const data = JSON.parse(cached);
+                              return Array.isArray(data?.avatar_urls) ? data.avatar_urls : [];
+                            }
+                          } catch(_) {}
+                          return [];
+                        };
+                        
+                        // Combine all avatar sources
+                        const sessionAvatarUrls = getAvatarUrlsFromSession();
+                        const allAvatars = Array.from(new Set([
+                          ...brandAssetsAvatars,
+                          ...sessionAvatarUrls
+                        ]));
+                        
+                        return (
                        <>
                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                          <div className="flex items-center justify-between mb-4">
@@ -6981,101 +7291,73 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                            {!!selectedAvatar && (
                              <button
                                type="button"
-                               className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium"
+                               className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800"
                                onClick={async () => {
                                  try {
                                    if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex] || !selectedAvatar) return;
-                                   const rows = [...scriptRows];
-                                   const scene = { ...rows[currentSceneIndex] };
-                                   const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                                   scene.avatar = selectedAvatar;
-                                   if (modelUpper === 'ANCHOR') {
-                                     try { await updateSceneGenImageFlag(currentSceneIndex, { avatarOverride: selectedAvatar, avatarUrl: selectedAvatar }); } catch(_) {}
-                                   } else {
-                                     try { await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: selectedAvatar }); } catch(_) {}
-                                   }
-                                   rows[currentSceneIndex] = scene;
-                                   setScriptRows(rows);
-                                 } catch (_) { /* noop */ }
+                                   await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: selectedAvatar });
+                                 } catch (err) {
+                                   console.error('Failed to save avatar:', err);
+                                   alert('Failed to save avatar. Please try again.');
+                                 }
                                }}
                              >
                                Save
                              </button>
                            )}
                          </div>
-                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4">
-                           {avatarOptions.map((avatarUrl, index) => (
+                         {isLoadingAvatars ? (
+                           <div className="flex items-center justify-center py-8">
+                             <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                           </div>
+                         ) : (
+                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4">
+                             {allAvatars.length === 0 ? (
+                               <div className="col-span-full text-center py-8 text-gray-500">
+                                 No avatars available. Click "Upload Avatar" to add one.
+                               </div>
+                             ) : (
+                               allAvatars.map((avatarUrl, index) => (
+                                 <button
+                                   type="button"
+                                   key={index}
+                                   onClick={() => {
+                                     try {
+                                       setSelectedAvatar(avatarUrl);
+                                       if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                         const rows = [...scriptRows];
+                                         const scene = { ...rows[currentSceneIndex] };
+                                         scene.avatar = avatarUrl;
+                                         rows[currentSceneIndex] = scene;
+                                         setScriptRows(rows);
+                                       }
+                                     } catch (_) { /* noop */ }
+                                   }}
+                                   className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
+                                     selectedAvatar === avatarUrl ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
+                                   }`}
+                                   title={`Avatar ${index + 1}`}
+                                 >
+                                   <img src={avatarUrl} alt={`Avatar ${index + 1}`} className="w-full h-full object-cover" />
+                                 </button>
+                               ))
+                             )}
                              <button
                                type="button"
-                               key={index}
-                               onClick={() => {
-                                 try {
-                                   setSelectedAvatar(avatarUrl);
-                                   if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                     const rows = [...scriptRows];
-                                     const scene = { ...rows[currentSceneIndex] };
-                                     scene.avatar = avatarUrl;
-                                     rows[currentSceneIndex] = scene;
-                                     setScriptRows(rows);
-                                   }
-                                 } catch (_) { /* noop */ }
-                               }}
-                               className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
-                                 selectedAvatar === avatarUrl ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
-                               }`}
-                               title={`Avatar ${index + 1}`}
+                               onClick={() => setShowAvatarUploadPopup(true)}
+                               className="w-20 h-20 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-[#13008B] transition-colors"
+                               title="Upload Avatar"
                              >
-                               <img src={avatarUrl} alt={`Avatar ${index + 1}`} className="w-full h-full object-cover" />
+                               <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                               </svg>
                              </button>
-                           ))}
-                           {/* Hidden input for avatar upload */}
-                           <input
-                             ref={avatarFileInputRef}
-                             type="file"
-                             accept="image/*"
-                             className="hidden"
-                             onChange={async (e) => {
-                               try {
-                                 const files = Array.from(e.target.files || []);
-                                 if (files.length === 0) return;
-                                 if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                                 const current = scriptRows[currentSceneIndex];
-                                 const folder = current?.folderLink || current?.folder_link || '';
-                                 setIsUploadingAvatar(true);
-                                 const urls = await uploadImagesToFolder([files[0]], folder);
-                                 if (urls.length === 0) { alert('Upload failed. No image URL returned.'); return; }
-                                 const url = urls[0];
-                                 setAvatarOptions(prev => Array.from(new Set([...(prev || []), url])));
-                                 setSelectedAvatar(url);
-                                 // Apply uploaded avatar
-                                 const rows = [...scriptRows];
-                                 const scene = { ...rows[currentSceneIndex] };
-                                 scene.avatar = url;
-                                 rows[currentSceneIndex] = scene;
-                                 setScriptRows(rows);
-                               } catch (err) {
-                                 console.error('Avatar upload failed:', err);
-                                 alert('Failed to upload avatar. Please try again.');
-                               } finally {
-                                 setIsUploadingAvatar(false);
-                                 if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
-                               }
-                             }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => avatarFileInputRef.current && avatarFileInputRef.current.click()}
-                            className={`w-20 h-20 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-[#13008B] transition-colors ${isUploadingAvatar ? 'opacity-60 cursor-not-allowed' : ''}`}
-                            title="Upload avatar"
-                            disabled={isUploadingAvatar}
-                          >
-                            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                            </svg>
-                          </button>
-                         </div>
+                           </div>
+                         )}
                       </div>
-
+                      </>
+                        );
+                      })()}
                       {(() => {
                         const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
@@ -7192,246 +7474,6 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           </div>
                         );
                       })()}
-                       </>
-                    ) : (
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                         {(() => {
-                           const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
-                           const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
-                           if (titleLower === 'summary') return null;
-                           const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
-                           // In Script Editor, keep toggle fully visible even if not actively editing
-                           const disabled = !isEditingScene;
-                           const base = `inline-flex items-center gap-3 px-2 py-1 rounded-full transition-colors ${genVal ? 'bg-green-100' : 'bg-gray-100'}`;
-                           const cls = disabled ? base : base;
-                           const onToggle = async () => {
-                             if (disabled) return;
-                             const next = !genVal;
-                             try {
-                               handleSceneUpdate(currentSceneIndex, 'gen_image', next);
-                               await updateSceneGenImageFlag(currentSceneIndex, { genImage: next });
-                             } catch(_) { /* noop */ }
-                           };
-                          return (
-                            <div className="flex items-center justify-between mb-4">
-                              <h4 className="text-lg font-semibold text-gray-800">Select a Background Image</h4>
-                              <button type="button" onClick={onToggle} className={cls} title="Toggle Generate Image" disabled={disabled}>
-                                <span className="text-sm text-gray-800">{genVal ? 'True' : 'False'}</span>
-                                <span className={`relative inline-flex w-10 h-5 rounded-full ${genVal ? 'bg-green-500' : 'bg-gray-400'}`}>
-                                  <span className={`absolute top-0.5 ${genVal ? 'right-0.5' : 'left-0.5'} w-4 h-4 bg-white rounded-full transition-all`} />
-                                </span>
-                              </button>
-                            </div>
-                          );
-                        })()}
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
-                           {(() => {
-                             const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
-                             const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
-                             if (titleLower === 'summary') return null;
-                             const refs = (() => {
-                               const r = scene?.ref_image;
-                               if (Array.isArray(r)) return r;
-                               if (typeof r === 'string' && r.trim()) return [r.trim()];
-                               return [];
-                             })();
-                             if (refs.length === 0) {
-                               return <p className="text-sm text-gray-500 col-span-4">No reference images yet. Add one below.</p>;
-                             }
-                             return refs.map((url, idx) => (
-                              <div
-                                key={idx}
-                                className={`group relative w-24 h-24 rounded-lg border-2 ${
-                                  (selectedRefImages || []).includes(url)
-                                    ? 'border-green-500 ring-2 ring-green-300'
-                                    : 'border-gray-300'
-                                } overflow-visible transition-colors`}
-                                title={url}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  try {
-                                    // Toggle selection, cap at 3
-                                    setSelectedRefImages(prev => {
-                                      const prevList = Array.isArray(prev) ? [...prev] : [];
-                                      const i = prevList.indexOf(url);
-                                      if (i >= 0) {
-                                        prevList.splice(i, 1);
-                                      } else {
-                                        if (prevList.length >= 3) {
-                                          alert('You can select up to 3 reference images.');
-                                          return prevList;
-                                        }
-                                        prevList.push(url);
-                                      }
-                                      // Apply selection to current scene, overriding previous
-                                      if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                        const rows = [...scriptRows];
-                                        const scene = { ...rows[currentSceneIndex] };
-                                        scene.ref_image = prevList.slice(0, 3);
-                                        rows[currentSceneIndex] = scene;
-                                        setScriptRows(rows);
-                                        updateRefMapForScene(scene.scene_number, scene.ref_image);
-                                      }
-                                      return prevList;
-                                    });
-                                  } catch (_) { /* noop */ }
-                                }}
-                              >
-                                {/* Thumbnail (no auto-zoom on hover) */}
-                                <img
-                                  src={url}
-                                  alt={`Ref ${idx + 1}`}
-                                  className="w-full h-full object-cover"
-                                />
-
-                                {/* Center zoom icon (click to fullscreen) */}
-                                <button
-                                  className="pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                  style={{ width: '36px', height: '36px' }}
-                                  title="Zoom"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setLightboxUrl(url);
-                                    setIsImageLightboxOpen(true);
-                                  }}
-                                >
-                                  <Maximize2 className="w-5 h-5" />
-                                </button>
-
-                                {/* Action buttons overlay */}
-                                <div className="pointer-events-none absolute inset-0 flex items-start justify-between p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  {/* Remove (left) */}
-                                  <button
-                                    className="pointer-events-auto w-6 h-6 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
-                                    title="Remove"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                                        const rows = [...scriptRows];
-                                        const scene = { ...rows[currentSceneIndex] };
-                                        const list = Array.isArray(scene.ref_image) ? [...scene.ref_image] : [];
-                                        list.splice(idx, 1);
-                                        scene.ref_image = list;
-                                        rows[currentSceneIndex] = scene;
-                                        setScriptRows(rows);
-                                        // Remove from selected list if present
-                                        setSelectedRefImages((prev) => (Array.isArray(prev) ? prev.filter((u) => u !== url) : []));
-                                        updateRefMapForScene(scene.scene_number, scene.ref_image);
-                                      } catch (_) { /* noop */ }
-                                    }}
-                                  >
-                                    <X className="w-4 h-4" />
-                                  </button>
-
-                                  {/* Select (right) */}
-                                  <button
-                                    className={`pointer-events-auto w-6 h-6 rounded-full flex items-center justify-center ${'bg-green-600 text-white'}`}
-                                    title={'Use this reference'}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                                        const rows = [...scriptRows];
-                                        const scene = { ...rows[currentSceneIndex] };
-                                        // Replace any existing ref images with the selected one
-                                        scene.ref_image = [url];
-                                        rows[currentSceneIndex] = scene;
-                                        setScriptRows(rows);
-                                        setSelectedRefImages([url]);
-                                        updateRefMapForScene(scene.scene_number, scene.ref_image);
-                                      } catch (_) { /* noop */ }
-                                    }}
-                                  >
-                                    <Check className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            ));
-                          })()}
-                         </div>
-                          {(() => {
-                            const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
-                            const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
-                            if (titleLower === 'summary') return null;
-                            return (
-                          <div className="flex items-center gap-2">
-                           {/* Hidden file input for image upload */}
-                           <input
-                             ref={imageFileInputRef}
-                             type="file"
-                             accept="image/*"
-                             multiple
-                             className="hidden"
-                             onChange={async (e) => {
-                               try {
-                                 const files = Array.from(e.target.files || []);
-                                 if (!files.length) return;
-                                 if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                                 const current = scriptRows[currentSceneIndex];
-                                 const folder = current?.folderLink || current?.folder_link || '';
-                                 setIsUploadingSceneImages(true);
-                                 const urls = await uploadImagesToFolder(files, folder);
-                                 if (!urls || urls.length === 0) { alert('Upload failed. No image URLs returned.'); return; }
-                                 const rows = [...scriptRows];
-                                 const scene = { ...rows[currentSceneIndex] };
-                                 const filtered = filterImageUrls(urls).slice(0, 3);
-                                 scene.ref_image = filtered;
-                                 rows[currentSceneIndex] = scene;
-                                 setScriptRows(rows);
-                                 setSelectedRefImages(filtered);
-                                 updateRefMapForScene(scene.scene_number, scene.ref_image);
-                               } catch (err) {
-                                 console.error('Scene images upload failed:', err);
-                                 alert('Failed to upload images. Please try again.');
-                               } finally {
-                                 setIsUploadingSceneImages(false);
-                                 if (imageFileInputRef.current) imageFileInputRef.current.value = '';
-                               }
-                              }}
-                           />
-                          {/* Upload button removed per requirements */}
-                          <button
-                            onClick={() => {
-                              const token = localStorage.getItem('token');
-                              if (!token) { alert('Missing user'); return; }
-                              setAssetsTab('templates');
-                              setShowAssetsModal(false);
-                              setShowAssetsModal(true);
-                              // Load from cache only; ScriptEditor preloads and refreshes cache on mount
-                              try {
-                                const cacheKey = `brand_assets_images:${token}`;
-                                const cached = localStorage.getItem(cacheKey);
-                                if (cached) {
-                                  const data = JSON.parse(cached);
-                                  const logos = Array.isArray(data?.logos) ? data.logos : [];
-                                  const icons = Array.isArray(data?.icons) ? data.icons : [];
-                                  const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
-                                  const templates = data?.templates ?? [];
-                                  const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
-                                  setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
-                                } else {
-                                  // Empty state; prompt user to wait for preload
-                                  setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
-                                }
-                              } catch(_) {
-                                setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
-                              } finally {
-                                setIsAssetsLoading(false);
-                              }
-                            }}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
-                            title="Choose from templates"
-                          >
-                            <File className="w-4 h-4" /> Choose From Template
-                           </button>
-                           {/* Upload Template button removed per requirements */}
-                          </div>
-                            );
-                          })()}
-                       </div>
-                       
-                     )}
                       {(() => {
                         // Presenter Options for VEO3
                         // Only show in contexts that explicitly enable it (Script Editor)
@@ -8146,11 +8188,21 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           if (!imageUrl) return null;
                           const isSelected = selectedTemplateUrls.includes(imageUrl);
                           const handleClick = () => {
+                            // Check if current scene is VEO3 - if so, only allow single selection
+                            const currentScene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                            const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
+                            const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                            
                             setSelectedTemplateUrls(prev => {
                               const exists = prev.includes(imageUrl);
                               if (exists) {
                                 return prev.filter(u => u !== imageUrl);
                               }
+                              // For VEO3, only allow one template - replace previous selection
+                              if (isVEO3) {
+                                return [imageUrl];
+                              }
+                              // For other models, allow up to 2 templates
                               const next = [...prev, imageUrl];
                               if (next.length > 2) {
                                 next.shift();
@@ -8230,7 +8282,12 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       if (assetsTab === 'templates') {
                         try {
                           // Build background_image array from selected templates
-                          const backgroundImageArray = selectedTemplateUrls.map((url) => {
+                          // For VEO3, only use the first template (single selection enforced)
+                          const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                          const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                          const templatesToUse = isVEO3 && selectedTemplateUrls.length > 0 ? [selectedTemplateUrls[0]] : selectedTemplateUrls;
+                          
+                          const backgroundImageArray = templatesToUse.map((url) => {
                             const trimmedUrl = typeof url === 'string' ? url.trim() : '';
                             if (!trimmedUrl) return null;
                             const templateEntry = templateLookupByUrl.get(trimmedUrl);
@@ -8288,10 +8345,15 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       const rows = [...scriptRows];
                       const scene = { ...rows[currentSceneIndex] };
                       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                      const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                      
                       if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY') {
                         // Background accepts a single image; use the first
                         const first = multi[0];
                         scene.background = first; scene.background_image = first;
+                      } else if (isVEO3) {
+                        // For VEO3, only use the first template (single selection enforced)
+                        scene.ref_image = [multi[0]];
                       } else {
                         // For SORA/infographics, allow multiple templates as ref images
                         scene.ref_image = multi;
@@ -8301,15 +8363,19 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       }
                       rows[currentSceneIndex] = scene;
                       setScriptRows(rows);
-                      setSelectedRefImages(multi);
+                      // For VEO3, only use the first template in selectedRefImages
+                      const refImagesToSet = isVEO3 && multi.length > 0 ? [multi[0]] : multi;
+                      setSelectedRefImages(refImagesToSet);
                       if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       setShowAssetsModal(false);
                       if (assetsTab === 'templates') {
                         try {
                           setIsEnhancing(true);
+                          // For VEO3, only send the first template (single selection enforced)
+                          const templatesToSend = isVEO3 && multi.length > 0 ? [multi[0]] : multi;
                           await sendUpdateSceneVisualWithTemplates(
                             scene?.scene_number ?? (currentSceneIndex + 1),
-                            multi
+                            templatesToSend
                           );
                         } finally {
                           setIsEnhancing(false);
@@ -8763,6 +8829,58 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           </div>
         </div>
       )}
+      {showMissingAvatarPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[90%] max-w-md rounded-lg shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold text-red-600">Missing Required Data</h4>
+              <button
+                onClick={() => {
+                  setShowMissingAvatarPopup(false);
+                  setMissingAvatarScenes([]);
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors text-2xl leading-none"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-sm text-gray-700 mb-4">
+              Please ensure all VEO3 scenes have required data before generating the storyboard.
+            </p>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+              <p className="text-xs text-yellow-800 mb-2 font-medium">Requirements:</p>
+              <p className="text-xs text-yellow-700">
+                All VEO3 scenes must have a non-empty background_image array with at least one image object before generating the storyboard.
+              </p>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <p className="text-sm font-medium text-red-800 mb-2">Missing data in the following scenes:</p>
+              <div className="flex flex-wrap gap-2">
+                {missingAvatarScenes.map((sceneNum, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800 border border-red-300"
+                  >
+                    Scene {sceneNum}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  setShowMissingAvatarPopup(false);
+                  setMissingAvatarScenes([]);
+                }}
+                className="px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm font-medium hover:bg-blue-800 transition-colors"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Short 5s popup for job-based generation */}
       {/* Inline Images view replaces chat when active */}
       {/* Global lightweight loaders for other actions */}
@@ -9092,47 +9210,41 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                {/* Pre-created message buttons */}
               
                
-               <div className="flex gap-2 lg:gap-3">
-                 <div className="flex-1 relative mt-3">
-                 <textarea
+               <div className="flex gap-2">
+                 <div className="flex-1 relative">
+                 <input
+                   type="text"
                    ref={chatInputRef}
-                   rows={1}
                    placeholder="Talk to me or upload the documents you want to summarize"
-                   className="w-full px-3 py-2 lg:py-3 pr-28 lg:pr-36 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm lg:text-base leading-5 resize-none overflow-hidden scrollbar-hide whitespace-pre-wrap break-words"
+                   className="w-full px-3 py-2 pr-24 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none text-sm leading-5"
                    value={inputMessage}
                    onChange={(e) => {
                      setInputMessage(e.target.value);
-                     try {
-                       if (chatInputRef.current) {
-                         chatInputRef.current.style.height = 'auto';
-                         chatInputRef.current.style.height = chatInputRef.current.scrollHeight + 'px';
-                       }
-                     } catch (_) { /* noop */ }
                    }}
                    onKeyDown={handleKeyPress}
                    disabled={isLoading}
                  />
-                 <div className="absolute right-2 lg:right-3 bottom-2 flex gap-1 lg:gap-2">
+                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
                    {/* Send Button */}
                    <button
                      onClick={handleSendMessage}
                      disabled={!inputMessage.trim() || isLoading}
-                     className={`p-1.5 lg:p-2 rounded-lg transition-colors ${
+                     className={`p-1.5 rounded-lg transition-colors ${
                        inputMessage.trim() && !isLoading
                          ? 'text-purple-600 hover:text-purple-700 hover:bg-purple-50'
                          : 'text-gray-400 cursor-not-allowed'
                      }`}
                    >
-                     <Send className="w-4 h-4 lg:w-5 lg:h-5" />
+                     <Send className="w-4 h-4" />
                    </button>
                    
                    {/* File Upload Button */}
                    <button 
                      onClick={() => fileInputRef.current?.click()}
-                     className="p-1.5 lg:p-2 text-gray-400 hover:text-gray-600 transition-colors"
-                  title="Upload Documents (PDF, PPT, PPTX, DOC, DOCX, CSV, XLS, XLSX)"
+                     className="p-1.5 text-gray-400 hover:text-gray-600 transition-colors"
+                     title="Upload Documents (PDF, PPT, PPTX, DOC, DOCX, CSV, XLS, XLSX)"
                    >
-                     <Paperclip className="w-4 h-4 lg:w-5 lg:h-5" />
+                     <Paperclip className="w-4 h-4" />
                    </button>
                    
                    {/* Hidden file input */}
@@ -9267,6 +9379,199 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
          </div>
        </div>
        )}
+
+        {/* Upload Avatar Popup */}
+        {showAvatarUploadPopup && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
+            <div className="bg-white w-[90%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-[#13008B]">Upload Avatar</h3>
+                <button 
+                  onClick={() => {
+                    setShowAvatarUploadPopup(false);
+                    setAvatarUploadFiles([]);
+                  }}
+                  className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              </div>
+              
+              <div className="p-6 overflow-y-auto flex-1">
+                {/* Upload Box */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Select Avatar Files
+                  </label>
+                  <input
+                    ref={avatarUploadFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length > 0) {
+                        setAvatarUploadFiles(prev => {
+                          const newFiles = [...prev];
+                          files.forEach(file => {
+                            if (!newFiles.find(f => f.name === file.name && f.size === file.size)) {
+                              newFiles.push(file);
+                            }
+                          });
+                          return newFiles;
+                        });
+                      }
+                      if (avatarUploadFileInputRef.current) {
+                        avatarUploadFileInputRef.current.value = '';
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => avatarUploadFileInputRef.current?.click()}
+                    className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#13008B] hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="text-center">
+                      <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-sm text-gray-600">Click to select avatar files</p>
+                      <p className="text-xs text-gray-500 mt-1">Supported: JPG, PNG, WEBP</p>
+                    </div>
+                  </button>
+                </div>
+
+                {/* File List */}
+                {avatarUploadFiles.length > 0 && (
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Selected Files ({avatarUploadFiles.length})
+                    </label>
+                    <div className="space-y-2">
+                      {avatarUploadFiles.map((file, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center flex-shrink-0">
+                              <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                              <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(2)} KB</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAvatarUploadFiles(prev => prev.filter((_, i) => i !== index));
+                            }}
+                            className="ml-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                            title="Remove file"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Upload Button */}
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAvatarUploadPopup(false);
+                      setAvatarUploadFiles([]);
+                    }}
+                    className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                    disabled={isUploadingAvatarFiles}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        if (avatarUploadFiles.length === 0) {
+                          alert('Please select at least one file to upload');
+                          return;
+                        }
+                        
+                        const token = localStorage.getItem('token');
+                        if (!token) {
+                          alert('Missing user ID');
+                          return;
+                        }
+                        
+                        setIsUploadingAvatarFiles(true);
+                        const form = new FormData();
+                        form.append('user_id', token);
+                        form.append('file_type', 'avatar');
+                        avatarUploadFiles.forEach(file => {
+                          form.append('files', file);
+                        });
+                        
+                        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', {
+                          method: 'POST',
+                          body: form
+                        });
+                        
+                        const text = await resp.text();
+                        if (!resp.ok) {
+                          throw new Error(`Upload failed: ${resp.status} ${text}`);
+                        }
+                        
+                        // Re-call brand assets GET API
+                        const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+                        const getText = await getResp.text();
+                        let data;
+                        try { data = JSON.parse(getText); } catch(_) { data = getText; }
+                        
+                        if (getResp.ok && data && typeof data === 'object') {
+                          const avatars = Array.isArray(data?.avatars) ? data.avatars : [];
+                          setBrandAssetsAvatars(avatars);
+                          // Update cache
+                          try {
+                            const cacheKey = `brand_assets_images:${token}`;
+                            const cached = localStorage.getItem(cacheKey);
+                            let cachedData = {};
+                            if (cached) {
+                              try { cachedData = JSON.parse(cached); } catch(_) {}
+                            }
+                            cachedData.avatars = avatars;
+                            localStorage.setItem(cacheKey, JSON.stringify(cachedData));
+                          } catch(_) {}
+                        }
+                        
+                        // Close popup and reset
+                        setShowAvatarUploadPopup(false);
+                        setAvatarUploadFiles([]);
+                        alert('Avatar uploaded successfully!');
+                      } catch (err) {
+                        console.error('Avatar upload failed:', err);
+                        alert('Failed to upload avatar: ' + (err?.message || 'Unknown error'));
+                      } finally {
+                        setIsUploadingAvatarFiles(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={isUploadingAvatarFiles || avatarUploadFiles.length === 0}
+                  >
+                    {isUploadingAvatarFiles ? (
+                      <span className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Uploading...
+                      </span>
+                    ) : (
+                      'Upload Avatar'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 };

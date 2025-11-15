@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
+import { FaTimes } from 'react-icons/fa'
 
 // Minimal icon set (inline SVG) for consistent, clean UI
 const Icon = ({ name, size = 18 }) => {
@@ -86,7 +87,10 @@ const Icon = ({ name, size = 18 }) => {
   }
 }
 
-function ImageEdit({ onClose, isOpen = true }) {
+function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = null, imageIndex = null, onRefresh = null }) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   // State management
   const [imageUrl, setImageUrl] = useState('')
   const [imageLoaded, setImageLoaded] = useState(false)
@@ -895,22 +899,27 @@ function ImageEdit({ onClose, isOpen = true }) {
   const getTextEffectStyles = (layer) => {
     let styles = {}
     
-    // Text Shadow
-    switch(layer.textShadow) {
-      case 'drop':
-        styles.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.5)'
-        break
-      case 'soft':
-        styles.textShadow = '0 2px 8px rgba(0, 0, 0, 0.3)'
-        break
-      case 'hard':
-        styles.textShadow = '2px 2px 0 rgba(0, 0, 0, 0.8)'
-        break
-      case 'multiple':
-        styles.textShadow = '1px 1px 0 rgba(255, 255, 255, 0.8), -1px -1px 0 rgba(0, 0, 0, 0.8)'
-        break
-      default:
-        styles.textShadow = 'none'
+    // Text Shadow - use shadowProperties if available (from frame data), otherwise use preset
+    if (layer.shadowProperties) {
+      const sp = layer.shadowProperties;
+      styles.textShadow = `${sp.offsetX}px ${sp.offsetY}px ${sp.blur}px ${sp.color}`;
+    } else {
+      switch(layer.textShadow) {
+        case 'drop':
+          styles.textShadow = '2px 2px 4px rgba(0, 0, 0, 0.5)'
+          break
+        case 'soft':
+          styles.textShadow = '0 2px 8px rgba(0, 0, 0, 0.3)'
+          break
+        case 'hard':
+          styles.textShadow = '2px 2px 0 rgba(0, 0, 0, 0.8)'
+          break
+        case 'multiple':
+          styles.textShadow = '1px 1px 0 rgba(255, 255, 255, 0.8), -1px -1px 0 rgba(0, 0, 0, 0.8)'
+          break
+        default:
+          styles.textShadow = 'none'
+      }
     }
     
     // Text Glow
@@ -1496,56 +1505,427 @@ const handleTemplateJsonLoad = () => {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [undo, redo])
 
+  // Auto-load frame data when popup opens
+  useEffect(() => {
+    if (isOpen && frameData) {
+      try {
+        const data = frameData;
+        
+        // Load base image
+        if (data.base_image?.image_url) {
+          setImageUrl(data.base_image.image_url);
+          
+          const img = new Image();
+          img.onload = () => {
+            setImageUrl(data.base_image.image_url);
+            setImageLoaded(true);
+            
+            const waitForRender = () => {
+              const imgEl = imageRef.current;
+              if (!imgEl || !imgEl.width || !imgEl.height) {
+                requestAnimationFrame(waitForRender);
+                return;
+              }
+              
+              const originalWidth = data.base_image?.image_dimensions?.width || img.naturalWidth;
+              const originalHeight = data.base_image?.image_dimensions?.height || img.naturalHeight;
+              
+              // Convert text_elements to textLayers
+              const textElements = Array.isArray(data.text_elements) ? data.text_elements : [];
+              
+              if (textElements.length > 0) {
+                const convertedLayers = textElements.map((element, index) => {
+                  const x = (element.bounding_box?.x || 0) * originalWidth;
+                  const y = (element.bounding_box?.y || 0) * originalHeight;
+                  const width = (element.bounding_box?.width || 0) * originalWidth;
+                  const height = (element.bounding_box?.height || 0) * originalHeight;
+                  
+                  const shadow = element.effects?.textShadow;
+                  let textShadowValue = 'none';
+                  if (shadow && shadow.enabled) {
+                    textShadowValue = 'drop';
+                  }
+                  
+                  return {
+                    id: Date.now() + index,
+                    text: element.text || '',
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height,
+                    fontSize: element.fontSize || 24,
+                    fontFamily: element.fontFamily || 'Arial',
+                    color: element.fill || '#000000',
+                    fontWeight: element.fontWeight || 'normal',
+                    textAlign: element.layout?.alignment || 'center',
+                    textShadow: textShadowValue,
+                    textGlow: 'none',
+                    wordArt: 'none',
+                    shadowProperties: shadow && shadow.enabled ? {
+                      offsetX: shadow.offsetX || 2,
+                      offsetY: shadow.offsetY || 2,
+                      blur: shadow.blur || 4,
+                      color: shadow.color || 'rgba(0, 0, 0, 0.5)'
+                    } : null
+                  };
+                });
+                setTextLayers(convertedLayers);
+              }
+              
+              // Handle overlay_elements
+              if (data.overlay_elements && Array.isArray(data.overlay_elements) && data.overlay_elements.length > 0) {
+                const ov = data.overlay_elements[0];
+                const bb = ov?.bounding_box || {};
+                
+                const posXNat = (bb.x || 0) * originalWidth;
+                const posYNat = (bb.y || 0) * originalHeight;
+                const targetWNat = (bb.width || 0) * originalWidth;
+                const targetHNat = (bb.height || 0) * originalHeight;
+                
+                const ovUrl = ov?.overlay_image?.image_url;
+                if (ovUrl) {
+                  const oImg = new Image();
+                  oImg.onload = () => {
+                    setOverlayImage(oImg);
+                    setOverlayImageUrl(ovUrl);
+                    setOverlayVisible(true);
+                    
+                    const displayWidth = imgEl.width;
+                    const displayHeight = imgEl.height;
+                    const displayScaleX = displayWidth / originalWidth;
+                    const displayScaleY = displayHeight / originalHeight;
+                    const posXDisp = posXNat * displayScaleX;
+                    const posYDisp = posYNat * displayScaleY;
+                    setOverlayPosition({ x: posXDisp, y: posYDisp });
+                    
+                    const targetWDisp = targetWNat * displayScaleX;
+                    const targetHDisp = targetHNat * displayScaleY;
+                    const scaleX = targetWDisp > 0 ? (targetWDisp / oImg.width) : 1;
+                    const scaleY = targetHDisp > 0 ? (targetHDisp / oImg.height) : 1;
+                    const fitScale = Math.min(scaleX, scaleY);
+                    setOverlayScale(fitScale || 1);
+                  };
+                  oImg.onerror = () => {
+                    console.error('Failed to load overlay image');
+                  };
+                  oImg.src = ovUrl;
+                }
+              }
+            };
+            requestAnimationFrame(waitForRender);
+          };
+          img.onerror = () => {
+            console.error('Failed to load image');
+          };
+          img.src = data.base_image.image_url;
+        }
+      } catch (error) {
+        console.error('Failed to load frame data:', error);
+      }
+    } else if (!isOpen) {
+      // Reset when closing
+      setTextLayers([]);
+      setImageUrl('');
+      setImageLoaded(false);
+      setSelectedLayer(null);
+    }
+  }, [isOpen, frameData]);
+
+  // Convert textLayers back to text_elements format for API
+  const convertTextLayersToElements = () => {
+    if (!imageRef.current || textLayers.length === 0) return [];
+    
+    const imgEl = imageRef.current;
+    const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl.naturalWidth;
+    const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl.naturalHeight;
+    
+    return textLayers.map((layer) => {
+      // Convert pixel coordinates back to normalized (0-1) coordinates
+      const x = originalWidth > 0 ? layer.x / originalWidth : 0;
+      const y = originalHeight > 0 ? layer.y / originalHeight : 0;
+      const width = originalWidth > 0 ? layer.width / originalWidth : 0;
+      const height = originalHeight > 0 ? layer.height / originalHeight : 0;
+      
+      // Reconstruct text element structure
+      const textElement = {
+        fill: layer.color,
+        text: layer.text,
+        type: 'headline',
+        layout: {
+          zIndex: 1,
+          rotation: 0,
+          alignment: layer.textAlign,
+          anchor_point: 'center'
+        },
+        offset: {
+          x: x,
+          y: y
+        },
+        effects: {
+          textShadow: layer.shadowProperties ? {
+            blur: layer.shadowProperties.blur || 4,
+            color: layer.shadowProperties.color || 'rgba(0, 0, 0, 0.5)',
+            enabled: true,
+            offsetX: layer.shadowProperties.offsetX || 2,
+            offsetY: layer.shadowProperties.offsetY || 2
+          } : {
+            enabled: false
+          }
+        },
+        fontSize: layer.fontSize,
+        textStyle: layer.fontWeight === 'bold' ? 'bold' : 'normal',
+        element_id: null,
+        fontFamily: layer.fontFamily,
+        fontWeight: layer.fontWeight,
+        lineHeight: 1.2,
+        textOpacity: 1,
+        textTexture: {
+          enabled: false,
+          image_path: ''
+        },
+        bounding_box: {
+          x: x,
+          y: y,
+          width: width,
+          height: height
+        },
+        textGradient: {
+          type: 'linear',
+          angle: 0,
+          colors: [],
+          enabled: false
+        },
+        letterSpacing: 1,
+        overlay_image: {
+          enabled: false,
+          scaling: {
+            enabled: false,
+            scale_x: 1,
+            scale_y: 1,
+            fit_mode: 'contain'
+          },
+          position: {
+            x: 0,
+            y: 0
+          },
+          image_url: '',
+          image_dimensions: {
+            width: 0,
+            height: 0
+          }
+        }
+      };
+      
+      return textElement;
+    });
+  };
+
+  // Handle save changes
+  const handleSaveChanges = async () => {
+    try {
+      setIsSaving(true);
+      
+      const sessionId = localStorage.getItem('session_id');
+      const userId = localStorage.getItem('token');
+      
+      if (!sessionId || !userId) {
+        alert('Missing session ID or user ID');
+        setIsSaving(false);
+        return;
+      }
+      
+      if (!sceneNumber || imageIndex === null) {
+        alert('Missing scene number or image index');
+        setIsSaving(false);
+        return;
+      }
+      
+      // Convert textLayers to text_elements format
+      const textElements = convertTextLayersToElements();
+      
+      // Convert overlay to overlay_elements format (if present)
+      let overlayElements = [];
+      if (overlayVisible && overlayImage && imageRef.current) {
+        const imgEl = imageRef.current;
+        const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl.naturalWidth;
+        const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl.naturalHeight;
+        const displayWidth = imgEl.width;
+        const displayHeight = imgEl.height;
+        const scaleX = displayWidth / originalWidth;
+        const scaleY = displayHeight / originalHeight;
+        
+        // Convert display position back to natural pixel position, then to normalized
+        const naturalX = overlayPosition.x / scaleX;
+        const naturalY = overlayPosition.y / scaleY;
+        const naturalWidth = (overlayImage.width * overlayScale) / scaleX;
+        const naturalHeight = (overlayImage.height * overlayScale) / scaleY;
+        
+        overlayElements = [
+          {
+            bounding_box: {
+              x: originalWidth > 0 ? naturalX / originalWidth : 0,
+              y: originalHeight > 0 ? naturalY / originalHeight : 0,
+              width: originalWidth > 0 ? naturalWidth / originalWidth : 0,
+              height: originalHeight > 0 ? naturalHeight / originalHeight : 0
+            },
+            overlay_image: {
+              image_url: overlayImageUrl,
+              image_dimensions: {
+                width: overlayImage.width,
+                height: overlayImage.height
+              }
+            }
+          }
+        ];
+      }
+      
+      // Build request body
+      const requestBody = {
+        session_id: sessionId,
+        user_id: userId,
+        updates: [
+          {
+            image_index: imageIndex,
+            scene_number: sceneNumber,
+            text_elements: textElements,
+            overlay_elements: overlayElements
+          }
+        ]
+      };
+      
+      // Make PUT request to API
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/elements', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (_) {
+        responseData = responseText;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${responseText}`);
+      }
+      
+      // Show success popup with updating message
+      setShowSuccessPopup(true);
+      setIsRefreshing(true);
+      
+      // Reload the window after a short delay to show the success message
+      setTimeout(() => {
+        setShowSuccessPopup(false);
+        setIsRefreshing(false);
+        window.location.reload();
+      }, 1500);
+    } catch (error) {
+      console.error('Failed to save changes:', error);
+      alert('Failed to save changes: ' + (error?.message || 'Unknown error'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="relative w-[90vw] h-[90vh] bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col">
-        {/* Close button */}
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 z-[100] w-10 h-10 flex items-center justify-center bg-white hover:bg-red-50 border-2 border-gray-300 hover:border-red-400 rounded-full transition-all shadow-lg hover:shadow-xl text-gray-700 hover:text-red-600 font-bold text-xl"
-            title="Close"
-          >
-            ×
-          </button>
-        )}
-        <div className="flex flex-col h-full overflow-hidden">
-          {/* Header */}
-          <div className="bg-white border-b border-gray-200 px-8 py-4 flex items-center justify-between shadow-sm z-[100] relative">
-            <div className="flex items-center justify-between w-full">
-              <div className="flex items-center gap-6">
-                <h1 className="text-xl font-semibold text-gray-800">Reel Report Image Editor</h1>
-                <p className="text-sm text-gray-600">Image Text Editor</p>
+    <>
+      {/* Success Popup */}
+      {showSuccessPopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full mx-4 transform transition-all">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
               </div>
-              <div className="flex items-center gap-4">
-                <div className="text-sm text-gray-600">{textLayers.length} text layers</div>
-                {onClose && (
-                  <button
-                    onClick={onClose}
-                    className="px-4 py-2 bg-gray-100 hover:bg-red-50 border border-gray-300 hover:border-red-400 rounded-lg text-sm font-medium text-gray-700 hover:text-red-600 transition-all"
-                    title="Close Editor"
-                  >
-                    Close
-                  </button>
-                )}
-              </div>
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">
+                {isRefreshing ? 'Updating Changes...' : 'Changes Done!'}
+              </h3>
+              <p className="text-gray-600 mb-4">
+                {isRefreshing 
+                  ? 'Your changes have been saved and the page is being refreshed.' 
+                  : 'Your changes have been successfully saved.'}
+              </p>
+              <div className="w-8 h-1 bg-[#13008B] rounded-full animate-pulse"></div>
+              {isRefreshing && (
+                <div className="mt-4 flex items-center justify-center">
+                  <div className="w-5 h-5 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
             </div>
           </div>
+        </div>
+      )}
+      
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="relative max-w-9xl h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col">
+        <div className="flex flex-col h-full overflow-hidden">
+    <div className="container">
+      {/* Header */}
+      <div className="header">
+        <div className="flex items-center w-full justify-between">
+          <div className="header-left flex items-center gap-3">
+            <h1 className="header-title">Reel Report Image Editor</h1>
+            <p className="header-subtitle">Image Text Editor</p>
+            {/* Close X button next to title */}
+            
+          </div>
+          <div className="header-right flex items-center gap-4">
+          
+            <button
+              onClick={handleSaveChanges}
+              disabled={isSaving}
+              className="px-6 py-2 bg-[#13008B] hover:bg-[#0f0068] text-white text-sm font-semibold rounded-lg transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              title="Save Changes"
+            >
+              {isSaving ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Icon name="save" size={16} />
+                  Save Changes
+                </>
+              )}
+            </button>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="ml-2 w-8 h-8 flex items-center justify-center bg-gray-100 hover:bg-red-50 border border-gray-300 hover:border-red-400 rounded-full transition-all text-gray-600 hover:text-red-600 font-bold text-lg leading-none"
+                title="Close"
+              >
+                <FaTimes
+                  size={20}
+                  className="text-gray-600 hover:text-red-600"
+                />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
-          {/* Main App Container */}
-          <div className="flex flex-1 overflow-hidden relative">
-            {/* Main Workspace */}
-            <div className="flex flex-1 overflow-hidden">
-              {/* Right Sidebar (Main Navigation for Flyouts) */}
-              <div className="w-[60px] bg-white border-r border-gray-200 flex flex-col overflow-hidden shadow-sm relative min-h-screen">
-                <div className="flex-1 overflow-y-auto p-4">
-                  {/* Undo/Redo Controls */}
-                  <div className="mb-2">
-                    <div className="flex gap-1 justify-center p-1">
+      {/* Main App Container */}
+      <div className="app-container">
+        {/* Main Workspace */}
+        <div className="main-workspace">
+          {/* Right Sidebar (Main Navigation for Flyouts) */}
+          <div className="sidebar">
+            <div className="sidebar-content">
+              {/* Undo/Redo Controls */}
+              <div className="control-panel undo-redo-panel">
+                <div className="undo-redo-buttons">
                   <button 
-                    className={`w-8 h-8 p-0 flex items-center justify-center rounded-md transition-all hover:bg-purple-600 hover:text-white hover:-translate-y-0.5 ${historyIndex < 0 ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    className={`btn btn-icon ${historyIndex < 0 ? 'disabled' : ''}`}
                     onClick={undo}
                     disabled={historyIndex < 0}
                     title="Undo (Ctrl+Z)"
@@ -1553,7 +1933,7 @@ const handleTemplateJsonLoad = () => {
                     <Icon name="undo" size={16} />
                   </button>
                   <button 
-                    className={`w-8 h-8 p-0 flex items-center justify-center rounded-md transition-all hover:bg-purple-600 hover:text-white hover:-translate-y-0.5 ${historyIndex >= history.length - 1 ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    className={`btn btn-icon ${historyIndex >= history.length - 1 ? 'disabled' : ''}`}
                     onClick={redo}
                     disabled={historyIndex >= history.length - 1}
                     title="Redo (Ctrl+Y)"
@@ -1563,140 +1943,90 @@ const handleTemplateJsonLoad = () => {
                 </div>
               </div>
 
-              {/* Import Panel */}
-              <div className="mb-6">
-                <div className={`flex items-center justify-center p-4 cursor-pointer border-b border-gray-200 mb-2 transition-colors hover:bg-gray-100 ${activePanel === 'import' ? 'bg-purple-600' : ''}`} onClick={() => togglePanel('import')}>
-                  <div className={`w-6 h-6 flex items-center justify-center transition-colors ${activePanel === 'import' ? 'text-white' : 'text-gray-600 hover:text-purple-600'}`}>
-                    <Icon name="folder" />
-                </div>
-                </div>
-              </div>
+              {/* Import Panel - Disabled, images auto-load from frameData */}
 
-                  {/* Text Tools Panel */}
-                  <div className="mb-6">
-                    <div className={`flex items-center justify-center p-4 cursor-pointer border-b border-gray-200 mb-2 transition-colors hover:bg-gray-100 ${activePanel === 'text' ? 'bg-purple-600' : ''}`} onClick={() => togglePanel('text')}>
-                      <div className={`w-6 h-6 flex items-center justify-center transition-colors ${activePanel === 'text' ? 'text-white' : 'text-gray-600 hover:text-purple-600'}`}>
-                        <Icon name="edit" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Shapes Panel */}
-                  <div className="mb-6">
-                    <div className={`flex items-center justify-center p-4 cursor-pointer border-b border-gray-200 mb-2 transition-colors hover:bg-gray-100 ${activePanel === 'shapes' ? 'bg-purple-600' : ''}`} onClick={() => togglePanel('shapes')}>
-                      <div className={`w-6 h-6 flex items-center justify-center transition-colors ${activePanel === 'shapes' ? 'text-white' : 'text-gray-600 hover:text-purple-600'}`}>
-                        <Icon name="shape" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Overlay Images Panel */}
-                  <div className="mb-6">
-                    <div className={`flex items-center justify-center p-4 cursor-pointer border-b border-gray-200 mb-2 transition-colors hover:bg-gray-100 ${activePanel === 'overlay' ? 'bg-purple-600' : ''}`} onClick={() => togglePanel('overlay')}>
-                      <div className={`w-6 h-6 flex items-center justify-center transition-colors ${activePanel === 'overlay' ? 'text-white' : 'text-gray-600 hover:text-purple-600'}`}>
-                        <Icon name="image" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Image Editor Panel */}
-                  <div className="mb-6">
-                    <div className={`flex items-center justify-center p-4 cursor-pointer border-b border-gray-200 mb-2 transition-colors hover:bg-gray-100 ${activePanel === 'image-editor' ? 'bg-purple-600' : ''}`} onClick={() => togglePanel('image-editor')}>
-                      <div className={`w-6 h-6 flex items-center justify-center transition-colors ${activePanel === 'image-editor' ? 'text-white' : 'text-gray-600 hover:text-purple-600'}`}>
-                        <Icon name="crop" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Export & Actions Panel */}
-                  <div className="mb-6">
-                    <div className={`flex items-center justify-center p-4 cursor-pointer border-b border-gray-200 mb-2 transition-colors hover:bg-gray-100 ${activePanel === 'export' ? 'bg-purple-600' : ''}`} onClick={() => togglePanel('export')}>
-                      <div className={`w-6 h-6 flex items-center justify-center transition-colors ${activePanel === 'export' ? 'text-white' : 'text-gray-600 hover:text-purple-600'}`}>
-                        <Icon name="save" />
-                      </div>
-                    </div>
+              {/* Text Tools Panel */}
+              <div className="control-panel">
+                <div className={`panel-header ${activePanel === 'text' ? 'active' : ''}`} onClick={() => togglePanel('text')}>
+                  <div className="panel-icon-only">
+                    <Icon name="edit" />
                   </div>
                 </div>
               </div>
+
+              {/* Shapes Panel */}
+              <div className="control-panel">
+                <div className={`panel-header ${activePanel === 'shapes' ? 'active' : ''}`} onClick={() => togglePanel('shapes')}>
+                  <div className="panel-icon-only">
+                    <Icon name="shape" />
+                  </div>
+                </div>
+              </div>
+
+
+              {/* Overlay Images Panel */}
+              <div className="control-panel">
+                <div className={`panel-header ${activePanel === 'overlay' ? 'active' : ''}`} onClick={() => togglePanel('overlay')}>
+                  <div className="panel-icon-only">
+                    <Icon name="image" />
+                    </div>
+                </div>
+              </div>
+
+              {/* Image Editor Panel */}
+              <div className="control-panel">
+                <div className={`panel-header ${activePanel === 'image-editor' ? 'active' : ''}`} onClick={() => togglePanel('image-editor')}>
+                  <div className="panel-icon-only">
+                    <Icon name="crop" />
+                    </div>
+                </div>
+              </div>
+
+              {/* Export & Actions Panel */}
+              <div className="control-panel">
+                <div className={`panel-header ${activePanel === 'export' ? 'active' : ''}`} onClick={() => togglePanel('export')}>
+                  <div className="panel-icon-only">
+                    <Icon name="save" />
+                    </div>
+                </div>
             </div>
+          </div>
+        </div>
 
-            {/* Flyout Panel */}
-            {activePanel && (
-              <div className={`absolute top-0 left-[60px] w-[380px] h-full bg-gradient-to-b from-white to-gray-50 shadow-[0_0_30px_rgba(0,0,0,0.15)] z-10 flex flex-col ${activePanel ? 'translate-x-0' : 'translate-x-full'} transition-transform duration-300 border-l border-gray-200 overflow-hidden`}>
-              <div className="p-8 pb-6 border-b border-gray-200 flex justify-between items-center bg-gradient-to-br from-white to-gray-50 relative">
-                <h3 className="m-0 text-xl font-extrabold text-gray-800 uppercase tracking-wide">{activePanel.charAt(0).toUpperCase() + activePanel.slice(1)}</h3>
-                <button className="absolute top-6 right-6 w-8 h-8 border-none bg-gray-200 text-gray-600 rounded-full cursor-pointer flex items-center justify-center transition-all text-base hover:bg-red-500 hover:text-white hover:scale-110" onClick={() => setActivePanel(null)}>×</button>
+          {/* Flyout Panel */}
+          {activePanel && (
+            <div className={`flyout-panel ${activePanel ? 'active' : ''}`}>
+              <div className="flyout-header">
+                <h3>{activePanel.charAt(0).toUpperCase() + activePanel.slice(1)}</h3>
+                <button className="close-btn" onClick={() => setActivePanel(null)}><FaTimes size={16} className="text-gray-600 hover:text-red-600"/></button>
               </div>
-              <div className="flex-1 p-8 overflow-y-auto flex flex-col gap-6">
-                {activePanel === 'import' && (
-                  <>
-          <div className="mb-8 relative">
-                      <label className="block mb-4 font-bold text-gray-800 text-sm uppercase tracking-wide relative after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-5 after:h-0.5 after:bg-gradient-to-r after:from-purple-600 after:to-purple-400 after:rounded">Load Image</label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageLoad}
-                        className="w-full p-2 px-4 border-2 border-gray-200 rounded-lg text-sm font-medium bg-gray-50 text-gray-700 transition-all shadow-sm focus:outline-none focus:border-purple-600 focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)] focus:-translate-y-0.5 hover:border-gray-300 hover:bg-gray-100 cursor-pointer"
-                      />
-                    </div>
-                    <div className="mb-8 relative">
-                      <label className="block mb-4 font-bold text-gray-800 text-sm uppercase tracking-wide relative after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-5 after:h-0.5 after:bg-gradient-to-r after:from-purple-600 after:to-purple-400 after:rounded">Or Enter Image URL</label>
-                      <input
-                        type="url"
-                        placeholder="https://example.com/image.jpg"
-                        value={imageUrl}
-                        onChange={(e) => setImageUrl(e.target.value)}
-                        className="w-full p-4 border-2 border-gray-200 rounded-lg text-sm font-medium bg-white text-gray-700 transition-all shadow-sm focus:outline-none focus:border-purple-600 focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)] focus:-translate-y-0.5 hover:border-gray-300 mb-2"
-                      />
-                      <button className="w-full px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all inline-flex items-center justify-center gap-2 no-underline whitespace-nowrap relative overflow-hidden min-h-[40px] tracking-wide bg-gradient-to-br from-purple-600 to-purple-400 text-white shadow-[0_4px_14px_0_rgba(124,58,237,0.3)] hover:bg-gradient-to-br hover:from-purple-700 hover:to-purple-600 hover:-translate-y-0.5 hover:shadow-[0_8px_25px_0_rgba(124,58,237,0.4)] active:translate-y-0 active:shadow-[0_4px_14px_0_rgba(124,58,237,0.3)]" onClick={handleImageUrlLoad}>
-                        Load Image
-                      </button>
-                    </div>
-                    <div className="mb-8 relative">
-                    <label className="block mb-4 font-bold text-gray-800 text-sm uppercase tracking-wide relative after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-5 after:h-0.5 after:bg-gradient-to-r after:from-purple-600 after:to-purple-400 after:rounded">Load from JSON</label>
-                    <textarea
-                      placeholder="Paste JSON data here (supports both old and new template format)..."
-                      value={jsonInput}
-                      onChange={(e) => setJsonInput(e.target.value)}
-                      rows="6"
-                      className="w-full p-4 border-2 border-gray-200 rounded-lg text-sm font-medium bg-white text-gray-700 transition-all shadow-sm focus:outline-none focus:border-purple-600 focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)] focus:-translate-y-0.5 hover:border-gray-300 font-mono resize-y min-h-[120px] mb-2"
-                    />
-                    <button className="w-full px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all inline-flex items-center justify-center gap-2 no-underline whitespace-nowrap relative overflow-hidden min-h-[40px] tracking-wide bg-gradient-to-br from-purple-600 to-purple-400 text-white shadow-[0_4px_14px_0_rgba(124,58,237,0.3)] hover:bg-gradient-to-br hover:from-purple-700 hover:to-purple-600 hover:-translate-y-0.5 hover:shadow-[0_8px_25px_0_rgba(124,58,237,0.4)] active:translate-y-0 active:shadow-[0_4px_14px_0_rgba(124,58,237,0.3)] mb-2" onClick={handleTemplateJsonLoad}>
-                      Load Template JSON
-                    </button>
-                    <button className="w-full px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all inline-flex items-center justify-center gap-2 no-underline whitespace-nowrap relative overflow-hidden min-h-[40px] tracking-wide bg-white text-gray-700 border-2 border-gray-200 shadow-sm hover:bg-gray-50 hover:border-purple-600 hover:text-purple-600 hover:-translate-y-0.5 hover:shadow-md active:translate-y-0" onClick={handleJsonLoad}>
-                      Load Old Format JSON
-                    </button>
-                  </div>
-                  </>
-                )}
-
+              <div className="flyout-content">
                 {activePanel === 'text' && (
                   <>
-          <div className="mb-8 relative">
-                      <label className="block mb-4 font-bold text-gray-800 text-sm uppercase tracking-wide relative after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-5 after:h-0.5 after:bg-gradient-to-r after:from-purple-600 after:to-purple-400 after:rounded">Add Text</label>
+          <div className="control-group">
+                      <label>Add Text</label>
               <input
                 type="text"
                         placeholder="Enter text..."
                         value={newText}
                         onChange={(e) => setNewText(e.target.value)}
-                        className="w-full p-4 border-2 border-gray-200 rounded-lg text-sm font-medium bg-white text-gray-700 transition-all shadow-sm focus:outline-none focus:border-purple-600 focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)] focus:-translate-y-0.5 hover:border-gray-300"
+                        className="text-input"
                       />
             </div>
-          <div className="mb-8 relative">
-                      <button className="w-full px-6 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all inline-flex items-center justify-center gap-2 no-underline whitespace-nowrap relative overflow-hidden min-h-[40px] tracking-wide bg-gradient-to-br from-purple-600 to-purple-400 text-white shadow-[0_4px_14px_0_rgba(124,58,237,0.3)] hover:bg-gradient-to-br hover:from-purple-700 hover:to-purple-600 hover:-translate-y-0.5 hover:shadow-[0_8px_25px_0_rgba(124,58,237,0.4)] active:translate-y-0 active:shadow-[0_4px_14px_0_rgba(124,58,237,0.3)]" onClick={handleAddText}>
+          <div className="control-group">
+                      <button className="btn btn-primary" onClick={handleAddText}>
                         Add Text
             </button>
           </div>
           {selectedLayer && (
             <>
-              <div className="mb-8 relative">
-                          <label className="block mb-4 font-bold text-gray-800 text-sm uppercase tracking-wide relative after:content-[''] after:absolute after:-bottom-1 after:left-0 after:w-5 after:h-0.5 after:bg-gradient-to-r after:from-purple-600 after:to-purple-400 after:rounded">Edit Selected Text</label>
+              <div className="control-group">
+                          <label>Edit Selected Text</label>
                 <input
                   type="text"
                   value={selectedLayer.text}
                   onChange={(e) => handleStyleChange('text', e.target.value)}
-                            className="w-full p-4 border-2 border-gray-200 rounded-lg text-sm font-medium bg-white text-gray-700 transition-all shadow-sm focus:outline-none focus:border-purple-600 focus:shadow-[0_0_0_3px_rgba(124,58,237,0.1)] focus:-translate-y-0.5 hover:border-gray-300"
+                            className="text-input"
                 />
               </div>
 
@@ -2391,7 +2721,7 @@ const handleTemplateJsonLoad = () => {
                     <button className="btn btn-primary" onClick={handleExport}>
                       Export Image
                     </button>
-                    <button className="btn btn-secondary" onClick={() => {
+                    {/* <button className="btn btn-secondary" onClick={() => {
                       const data = {
                         image_url: imageUrl,
                         text_layers: textLayers,
@@ -2401,20 +2731,20 @@ const handleTemplateJsonLoad = () => {
                       alert('JSON copied to clipboard!')
                     }}>
                       Copy JSON
-            </button>
+            </button> */}
                   </div>
                 )}
               </div>
-              </div>
-            )}
+            </div>
+          )}
           </div>
 
-          {/* Editor Section */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex-1 bg-white m-4 rounded-lg p-6 shadow-lg relative overflow-hidden flex items-center justify-center">
-              {imageLoaded ? (
-                <div className="relative border-2 border-gray-200 bg-gray-50 cursor-crosshair inline-block rounded-md overflow-hidden">
-                  <img
+        {/* Editor Section */}
+        <div className="editor-section">
+          <div className="canvas-container">
+            {imageLoaded ? (
+              <div className="canvas-wrapper">
+                <img
                   ref={imageRef}
                   src={imageUrl}
                   alt="Loaded"
@@ -2427,7 +2757,7 @@ const handleTemplateJsonLoad = () => {
                 />
                 {isCropping && (
                   <div
-                    className="absolute border-2 border-purple-600 bg-purple-600/10 cursor-move z-[1001] pointer-events-all"
+                    className="crop-overlay"
                     style={{ left: cropArea.x, top: cropArea.y, width: cropArea.width, height: cropArea.height }}
                     onMouseDown={(e) => {
                       e.stopPropagation()
@@ -2450,7 +2780,7 @@ const handleTemplateJsonLoad = () => {
                     }}
                   />
                 )}
-                <div className="relative">
+                <div className="text-layers">
                   {shapeLayers.map((shape) => {
                     const { scaleX, scaleY } = getImageScale()
                     const widthPx = Math.max(shape.width * scaleX, 1)
@@ -2504,15 +2834,15 @@ const handleTemplateJsonLoad = () => {
                     return (
                       <div
                         key={shape.id}
-                        className="absolute cursor-move select-none"
+                        className={`shape-layer ${selectedShape?.id === shape.id ? 'selected' : ''}`}
                         style={wrapperStyle}
                         onClick={() => handleShapeClick(shape)}
                         onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'drag')}
                       >
-                        <div style={innerStyle} />
+                        <div className="shape-inner" style={innerStyle} />
                         {selectedShape?.id === shape.id && (
                           <div
-                            className="absolute w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize -right-1.5 -bottom-1.5 z-10 shadow-sm"
+                            className="resize-handle"
                             onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'resize')}
                           />
                         )}
@@ -2523,13 +2853,17 @@ const handleTemplateJsonLoad = () => {
                     return (
                       <div
   key={layer.id}
-  className={`absolute cursor-move select-none p-0 m-0 border-2 transition-colors z-[2] rounded-sm ${selectedLayer?.id === layer.id ? 'border-purple-600 shadow-[0_0_0_1px_#7c3aed] bg-purple-600/10' : 'border-transparent'}`}
+  className={`text-layer ${selectedLayer?.id === layer.id ? 'selected' : ''}`}
   style={{
+    position: 'absolute',
     left: layer.x * getImageScale().scaleX,
     top: layer.y * getImageScale().scaleY,
     width: layer.width * getImageScale().scaleX,
     height: layer.height * getImageScale().scaleY,
+    cursor: 'move',
+    border: selectedLayer?.id === layer.id ? '2px solid #7c3aed' : '2px solid transparent',
     padding: '4px',
+    backgroundColor: selectedLayer?.id === layer.id ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
   }}
   onClick={() => handleLayerClick(layer)}
   onMouseDown={(e) => handleMouseDown(e, layer.id, 'drag')}
@@ -2566,7 +2900,7 @@ const handleTemplateJsonLoad = () => {
   )}
   {selectedLayer?.id === layer.id && (
     <div
-      className="absolute w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize -right-1.5 -bottom-1.5 z-10 shadow-sm"
+      className="resize-handle"
       onMouseDown={(e) => handleMouseDown(e, layer.id, 'resize')}
     />
   )}
@@ -2578,7 +2912,7 @@ const handleTemplateJsonLoad = () => {
                 {/* Overlay Image */}
                 {overlayVisible && overlayImage && (
                   <div
-                    className="pointer-events-auto"
+                    className="overlay-image"
                     style={{
                       position: 'absolute',
                       left: overlayPosition.x,
@@ -2601,12 +2935,22 @@ const handleTemplateJsonLoad = () => {
                         }}
                     />
                     <div
-                      className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
+                      className="resize-handle"
+                      style={{
+                        position: 'absolute',
+                        bottom: '0',
+                        right: '0',
+                        width: '20px',
+                        height: '20px',
+                        background: '#7c3aed',
+                        cursor: 'nwse-resize',
+                        borderRadius: '0 0 0 10px'
+                      }}
                       onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
                     />
                     {isCropping && croppingTarget === 'overlay' && (
                       <div
-                        className="absolute border-2 border-purple-600 bg-purple-600/10 cursor-move z-[1001] pointer-events-all"
+                        className="crop-overlay"
                         style={{ 
                           left: cropArea.x - overlayPosition.x, 
                           top: cropArea.y - overlayPosition.y, 
@@ -2634,24 +2978,28 @@ const handleTemplateJsonLoad = () => {
                         }}
                       />
                     )}
-                  </div>
+      </div>
                 )}
+                
               </div>
             ) : (
-              <div className="text-center p-12 text-gray-500">
+              <div className="empty-state">
                 <Icon name="image" size={48} />
-                <h3 className="mb-4 text-purple-600 text-xl">Load an Image to Get Started</h3>
-                <p className="text-sm">Enter an image URL above and click 'Load Image'</p>
+                <h3>Load an Image to Get Started</h3>
+                <p>Enter an image URL above and click 'Load Image'</p>
               </div>
             )}
-            </div>
           </div>
+        </div>
+      </div>
 
-          {/* Hidden canvas for export */}
-          <canvas ref={canvasRef} style={{ display: 'none' }} />
+      {/* Hidden canvas for export */}
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
+    </div>
         </div>
       </div>
     </div>
+    </>
   )
 }
 

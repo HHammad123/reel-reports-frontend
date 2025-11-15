@@ -182,14 +182,14 @@
   /* Main App Container */
   .app-container {
     display: flex;
-    flex: 1;
+   
     overflow: hidden;
     position: relative;
   }
   
   .main-workspace {
     display: flex;
-    flex: 1;
+   
     overflow: hidden;
   }
   
