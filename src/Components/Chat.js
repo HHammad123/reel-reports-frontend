@@ -1722,7 +1722,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
 
   // Note: triggerVideoGenerationFromSession is invoked on button click only
 
-  // New: Generate Scenes Images job flow
+  // Generate Storyboard Images Flow:
+  // 1. Call /v1/generate-images-queue (POST) with user_id and session_id
+  // 2. Get job_id from response
+  // 3. Poll /v1/job-status/{job_id} (GET) until status is succeeded
+  // 4. Extract and display images from job-status response
   const triggerGenerateScenes = React.useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
@@ -1755,7 +1759,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         videos: Array.isArray(sd.videos) ? sd.videos : [],
         additionalProp1: {}
       };
-      // 3) Kick off images generation job (queue endpoint)
+      // 3) Call /v1/generate-images-queue API (POST) with user_id and session_id
       const imgBody = {
         user_id: (user?.id || user?.user_id || localStorage.getItem('token') || ''),
         session_id: (localStorage.getItem('session_id') || sessionForBody?.session_id || '')
@@ -1768,7 +1772,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
       try { localStorage.setItem('images_generate_response', JSON.stringify(imgData)); } catch(_) {}
 
-      // 4) Persist job id and show 5s popup before redirect
+      // 4) Extract job_id from response and persist it
+      // The job_id will be used to poll /v1/job-status/{job_id} in the ImageList component
       const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
       if (jobId) {
         try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
@@ -1796,8 +1801,125 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     const [rows, setRows] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [jobStatus, setJobStatus] = useState('');
+    const [activeSceneTab, setActiveSceneTab] = useState(0); // Track active scene tab
+    
+    // Reset active tab when rows change
+    useEffect(() => {
+      if (rows.length > 0 && activeSceneTab >= rows.length) {
+        setActiveSceneTab(0);
+      }
+    }, [rows.length, activeSceneTab]);
+    
     useEffect(() => {
       let pollTimer = null;
+      // Extract images from job-status API response
+      // Handles image_results array structure: image_results[i].v1.image[].base_image.url
+      const extractImagesFromJobStatus = (jobData) => {
+        try {
+          // Primary: Handle image_results array structure
+          // Structure: image_results[scene_index].v1.image[].base_image.url
+          if (Array.isArray(jobData?.image_results) && jobData.image_results.length > 0) {
+            console.log('[ImageList] Extracting from image_results array:', jobData.image_results);
+            return jobData.image_results.map((sceneResult, sceneIdx) => {
+              const sceneNumber = sceneIdx + 1;
+              const imageUrls = [];
+              
+              // Extract from v1.image array - get ALL images from base_image objects
+              const v1Images = sceneResult?.v1?.image;
+              if (Array.isArray(v1Images) && v1Images.length > 0) {
+                v1Images.forEach((imgObj) => {
+                  // First try image_url directly on imgObj
+                  const imageUrl = imgObj?.image_url || imgObj?.imageUrl || '';
+                  if (imageUrl && typeof imageUrl === 'string' && imageUrl.trim()) {
+                    imageUrls.push(imageUrl.trim());
+                  }
+                  
+                  // Get image_url from base_image object (primary source)
+                  const baseImage = imgObj?.base_image;
+                  if (baseImage) {
+                    const baseImageUrl = 
+                      baseImage?.image_url ||
+                      baseImage?.url || 
+                      baseImage?.imageUrl || 
+                      baseImage?.src || 
+                      baseImage?.link || 
+                      '';
+                    if (baseImageUrl && typeof baseImageUrl === 'string' && baseImageUrl.trim() && !imageUrls.includes(baseImageUrl.trim())) {
+                      imageUrls.push(baseImageUrl.trim());
+                    }
+                  }
+                  
+                  // Also try direct url on imgObj as fallback
+                  const directUrl = imgObj?.url || '';
+                  if (directUrl && typeof directUrl === 'string' && directUrl.trim() && !imageUrls.includes(directUrl.trim())) {
+                    imageUrls.push(directUrl.trim());
+                  }
+                });
+              }
+              
+              // Also check for image_url directly on sceneResult
+              const sceneImageUrl = sceneResult?.image_url || sceneResult?.imageUrl || '';
+              if (sceneImageUrl && typeof sceneImageUrl === 'string' && sceneImageUrl.trim() && !imageUrls.includes(sceneImageUrl.trim())) {
+                imageUrls.push(sceneImageUrl.trim());
+              }
+              
+              // Get scene title and description
+              const sceneTitle = 
+                sceneResult?.scene_title || 
+                sceneResult?.title || 
+                sceneResult?.sceneTitle || 
+                sceneResult?.v1?.scene_title || 
+                '';
+              
+              const sceneDescription = 
+                sceneResult?.description || 
+                sceneResult?.desc || 
+                sceneResult?.scene_description || 
+                sceneResult?.v1?.description || 
+                '';
+              
+              console.log(`[ImageList] Scene ${sceneNumber}: Found ${imageUrls.length} image(s)`, imageUrls);
+              
+              return {
+                scene_number: sceneNumber,
+                scene_title: sceneTitle,
+                description: sceneDescription,
+                // Return ALL images, not just the last one
+                refs: imageUrls
+              };
+            });
+          }
+          
+          // Fallback: Try other possible response structures
+          const images = 
+            jobData?.images || 
+            jobData?.result?.images || 
+            jobData?.data?.images ||
+            (Array.isArray(jobData?.result) ? jobData.result : []) ||
+            (Array.isArray(jobData?.data) ? jobData.data : []) ||
+            [];
+          
+          if (Array.isArray(images) && images.length > 0) {
+            // If images is an array of URLs
+            if (typeof images[0] === 'string') {
+              return images.map((url, idx) => ({ scene_number: idx + 1, scene_title: '', refs: [url] }));
+            }
+            // If images is an array of objects with url/image_url properties
+            if (typeof images[0] === 'object') {
+              return images.map((img, idx) => {
+                const url = img?.url || img?.image_url || img?.imageUrl || img?.src || '';
+                return { scene_number: idx + 1, scene_title: img?.scene_title || img?.title || '', refs: [url] };
+              });
+            }
+          }
+          return [];
+        } catch (e) {
+          console.error('Error extracting images from job status:', e);
+          return [];
+        }
+      };
+      
       const loadSessionImages = async () => {
         try {
           const token = localStorage.getItem('token');
@@ -1827,19 +1949,40 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           if (!pendingFlag) { setIsLoading(false); return; }
           pollTimer = setInterval(async () => {
             try {
+              // Poll /v1/job-status/{job_id} API (GET method) to check job status
               const r = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(id)}`);
               const tx = await r.text();
               let d; try { d = JSON.parse(tx); } catch(_) { d = {}; }
               const status = (d?.status || d?.job_status || '').toLowerCase();
+              setJobStatus(status);
+              
+              // Extract images from job-status response but don't show until status is successful
+              const extractedRows = extractImagesFromJobStatus(d);
+              
               if (status === 'succeeded' || status === 'success' || status === 'completed') {
                 clearInterval(pollTimer);
                 pollTimer = null;
-                // refresh session images
-                await loadSessionImages();
+                // Only show images after status is confirmed successful
+                if (extractedRows.length > 0) {
+                  setRows(extractedRows);
+                } else {
+                  // Fallback: try loading from session if no images in response
+                  await loadSessionImages();
+                }
                 setIsLoading(false);
                 try { localStorage.removeItem('images_generate_pending'); } catch(_){}
+              } else if (status === 'failed' || status === 'error') {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                setIsLoading(false);
+                setError('Job failed. Please try again.');
+                try { localStorage.removeItem('images_generate_pending'); } catch(_){}
               }
-            } catch(_) { /* keep polling */ }
+              // Keep loading state true while polling (status is not yet successful)
+            } catch(e) { 
+              console.error('Error polling job status:', e);
+              // keep polling on error
+            }
           }, 3000);
         } catch (e) { setError(e?.message || 'Failed to load images'); }
         finally { /* keep loader until succeeded */ }
@@ -1855,40 +1998,127 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
             {!inline && (<button onClick={() => setShowImagesOverlay(false)} className="px-3 py-1.5 rounded-lg border text-sm">Close</button>)}
           </div>
           <div className={inline ? 'p-4 overflow-y-auto flex-1' : 'p-4 overflow-y-auto'}>
-            {isLoading && (<div className="text-sm text-gray-600">Loading images…</div>)}
-            {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)}
-            <div className="grid grid-cols-1 gap-4">
-              {rows.length === 0 && !isLoading && !error && (
-                <div className="text-sm text-gray-600">No images available yet.</div>
-              )}
-              {rows.map((r, i) => (
-                <div key={i} className="border rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <div className="text-sm text-gray-500">Scene {r.scene_number}</div>
-                      <div className="text-lg font-semibold flex items-center gap-3">
-                        <span>{r.scene_title || 'Untitled'}</span>
-                        {(() => {
-                          const mu = String(r?.model || r?.mode || '').toUpperCase();
-                          const vt = (mu === 'VEO3' || mu === 'ANCHOR') ? 'Avatar' : (mu === 'SORA' ? 'Infographic' : (mu === 'PLOTLY' ? 'Financial' : ''));
-                          return vt ? (
-                            <span className="text-sm font-normal text-gray-600">Video Type: <span className="px-2 py-0.5 text-xs rounded-full border bg-gray-50 text-gray-700 align-middle">{vt}</span></span>
-                          ) : null;
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {r.refs.length === 0 && (<div className="col-span-2 text-sm text-gray-500">No images for this scene.</div>)}
-                    {r.refs.map((u, k) => (
-                      <div key={k} className="w-full aspect-video rounded-lg border overflow-hidden bg-black">
-                        <img src={u} alt={`scene-${r.scene_number}-${k}`} className="w-full h-full object-cover" />
-                      </div>
-                    ))}
-                  </div>
+            {/* Prominent loader while polling job status - shows until status is successful */}
+            {isLoading && (
+              <div className="flex flex-col items-center justify-center py-12 min-h-[400px]">
+                <div className="w-16 h-16 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin mb-4"></div>
+                <p className="text-lg font-semibold text-gray-900 mb-2">Generating Storyboard Images</p>
+                <p className="text-sm text-gray-600">
+                  {jobStatus ? `Status: ${jobStatus.charAt(0).toUpperCase() + jobStatus.slice(1)}` : 'Processing...'}
+                </p>
+                <p className="text-xs text-gray-500 mt-2">Please wait while we generate images for your scenes</p>
+              </div>
+            )}
+            {error && (
+              <div className="flex flex-col items-center justify-center py-12 min-h-[400px]">
+                <div className="text-red-600 mb-2">
+                  <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
                 </div>
-              ))}
-            </div>
+                <p className="text-sm text-red-600 font-medium">{error}</p>
+              </div>
+            )}
+            {/* Only show images when loading is complete and status is successful */}
+            {!isLoading && !error && (
+              <div className="flex flex-col h-full">
+                {rows.length === 0 ? (
+                  <div className="text-sm text-gray-600 text-center py-8">No images available yet.</div>
+                ) : (
+                  <>
+                    {/* Scene Tabs */}
+                    <div className="flex gap-2 border-b border-gray-200 mb-4 overflow-x-auto scrollbar-hide">
+                      {rows.map((r, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setActiveSceneTab(i)}
+                          className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
+                            activeSceneTab === i
+                              ? 'border-b-2 border-[#13008B] text-[#13008B]'
+                              : 'text-gray-600 hover:text-gray-900'
+                          }`}
+                        >
+                          Scene {r.scene_number}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Active Scene Content */}
+                    {rows[activeSceneTab] && (() => {
+                      const activeScene = rows[activeSceneTab];
+                      const sceneImages = Array.isArray(activeScene.refs) ? activeScene.refs : [];
+                      
+                      return (
+                        <div className="flex-1 overflow-y-auto">
+                          {/* Scene Title and Description */}
+                          <div className="mb-4 pb-4 border-b border-gray-200">
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                              {activeScene.scene_title || `Scene ${activeScene.scene_number}`}
+                            </h3>
+                            {activeScene.description && (
+                              <p className="text-sm text-gray-600">{activeScene.description}</p>
+                            )}
+                          </div>
+
+                          {/* Images Grid - 4 columns */}
+                          {sceneImages.length === 0 ? (
+                            <div className="text-sm text-gray-500 text-center py-8">No images available for this scene.</div>
+                          ) : (
+                            <div className="grid grid-cols-4 gap-4">
+                              {sceneImages.map((imageUrl, imgIdx) => (
+                                <div key={imgIdx} className="relative group">
+                                  {/* Edit button - shows on hover at top */}
+                                  <button
+                                    className="absolute top-2 right-2 z-10 w-8 h-8 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title="Edit image"
+                                    onClick={() => {
+                                      // Handle edit action here
+                                      console.log('Edit image', activeScene.scene_number, imgIdx);
+                                    }}
+                                  >
+                                    <svg className="w-4 h-4 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
+                                  </button>
+                                  
+                                  {/* Image container */}
+                                  <div className="w-full aspect-video rounded-lg border overflow-hidden bg-gray-100 relative">
+                                    {imageUrl ? (
+                                      <>
+                                        <img 
+                                          src={imageUrl} 
+                                          alt={`scene-${activeScene.scene_number}-image-${imgIdx + 1}`} 
+                                          className="w-full h-full object-cover"
+                                          onError={(e) => {
+                                            e.target.style.display = 'none';
+                                            const errorDiv = e.target.parentElement.querySelector('.image-error');
+                                            if (errorDiv) {
+                                              errorDiv.classList.remove('hidden');
+                                              errorDiv.classList.add('flex');
+                                            }
+                                          }}
+                                        />
+                                        <div className="image-error absolute inset-0 w-full h-full hidden items-center justify-center text-sm text-gray-500 bg-gray-100">
+                                          Failed to load image
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
+                                        No image available
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -4524,7 +4754,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     }
   };
   // Helper: Update a single scene's gen_image flag (and optional description) via update-text API
-  const updateSceneGenImageFlag = async (sceneIdx, { genImage, descriptionOverride, refImagesOverride, backgroundOverride, backgroundImageOverride, avatarOverride } = {}) => {
+  const updateSceneGenImageFlag = async (sceneIdx, { genImage, descriptionOverride, refImagesOverride, backgroundOverride, backgroundImageOverride, backgroundImageArrayOverride, avatarOverride, avatarUrl } = {}) => {
     try {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
@@ -4629,6 +4859,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           typeof avatarOverride === 'string'
             ? avatarOverride
             : (targetRow?.avatar ?? clone.avatar);
+        // Determine avatar_url for API body (use avatarUrl override, then selected avatar, then scene avatar)
+        const avatarUrlForApi = avatarUrl || avatarVal || targetRow?.avatar || '';
 
         applyField(clone, ['scene_number', 'scene_no', 'sceneNo', 'scene'], targetSceneNumber);
         if (!applyField(clone, ['scene_title', 'sceneTitle', 'title'], targetRow?.scene_title ?? clone.scene_title ?? clone.title)) {
@@ -4775,15 +5007,104 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         return [...airesponse, fallbackScene];
       })();
 
+      // Build background_image array if provided
+      const backgroundImageArray = (() => {
+        if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
+          return backgroundImageArrayOverride;
+        }
+        // If we have a single background image and want to convert to array format
+        const bgUrl = backgroundImageOverride || backgroundOverride || targetRow?.background_image || targetRow?.background || '';
+        if (bgUrl && typeof bgUrl === 'string' && bgUrl.trim()) {
+          // Try to get template ID from templateLookupByUrl
+          const templateEntry = templateLookupByUrl.get(bgUrl.trim());
+          const rawTemplate = templateEntry?.raw || {};
+          const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
+          return [{
+            image_url: bgUrl.trim(),
+            template_id: templateId ? String(templateId) : ''
+          }];
+        }
+        return [];
+      })();
+
+      // Get avatar_url for API body
+      const avatarUrlForApiBody = (() => {
+        if (avatarUrl) return avatarUrl;
+        const targetRow = rows[sceneIdx] || {};
+        return targetRow?.avatar || '';
+      })();
+
+      // Attach background array + avatar_url to the targeted scene object
+      const airesponseWithVisuals = (() => {
+        if (!Array.isArray(finalAiresponse) || finalAiresponse.length === 0) return finalAiresponse;
+        const cloned = finalAiresponse.map((scene) =>
+          scene && typeof scene === 'object' ? { ...scene } : scene
+        );
+        const targetIndex = (() => {
+          try {
+            const bySceneNumber = cloned.findIndex((scene) => {
+              if (!scene || typeof scene !== 'object') return false;
+              const sn =
+                scene.scene_number ??
+                scene.scene_no ??
+                scene.sceneNo ??
+                scene.scene;
+              return sn === targetSceneNumber;
+            });
+            if (bySceneNumber >= 0) return bySceneNumber;
+          } catch (_) { /* noop */ }
+          if (sceneIdx >= 0 && sceneIdx < cloned.length) return sceneIdx;
+          return 0;
+        })();
+        const targetSceneObj = cloned[targetIndex];
+        if (targetSceneObj && typeof targetSceneObj === 'object') {
+          if (Array.isArray(backgroundImageArray) && backgroundImageArray.length > 0) {
+            // Place background template array on the scene object (0th index for scene 1 etc.)
+            targetSceneObj.background_image = backgroundImageArray;
+          }
+          if (avatarUrlForApiBody && typeof avatarUrlForApiBody === 'string' && avatarUrlForApiBody.trim()) {
+            targetSceneObj.avatar_url = avatarUrlForApiBody.trim();
+          }
+        }
+        return cloned;
+      })();
+
+      // Clean user and session objects - remove unnecessary background and avatar keys
+      const cleanUser = { ...user };
+      if (Array.isArray(cleanUser.background) && cleanUser.background.length === 0) {
+        delete cleanUser.background;
+      }
+      if (cleanUser.avatar === '' || cleanUser.avatar === null || cleanUser.avatar === undefined) {
+        delete cleanUser.avatar;
+      }
+      
+      const cleanSession = { ...sessionForBody };
+      if (Array.isArray(cleanSession.background) && cleanSession.background.length === 0) {
+        delete cleanSession.background;
+      }
+      if (cleanSession.avatar === '' || cleanSession.avatar === null || cleanSession.avatar === undefined) {
+        delete cleanSession.avatar;
+      }
+
       const requestBody = {
-        user,
-        session: sessionForBody,
+        user: cleanUser,
+        session: cleanSession,
         changed_script: {
           userquery: originalUserquery,
-          airesponse: finalAiresponse,
+          airesponse: airesponseWithVisuals,
           version: String(scriptVersion || 'v1')
         }
       };
+
+      // Add background_image array to request body if provided
+      if (backgroundImageArray.length > 0) {
+        requestBody.background_image = backgroundImageArray;
+      }
+
+      // Add avatar_url to request body if provided
+      if (avatarUrlForApiBody && typeof avatarUrlForApiBody === 'string' && avatarUrlForApiBody.trim()) {
+        requestBody.avatar_url = avatarUrlForApiBody.trim();
+      }
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
@@ -6655,33 +6976,50 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       {(() => { const scene = scriptRows?.[currentSceneIndex]; const m = String(scene?.model||scene?.mode||'').toUpperCase(); const isAvatarish = (m==='VEO3' || m==='ANCHOR'); return isAvatarish; })() ? (
                        <>
                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                         <h4 className="text-lg font-semibold text-gray-800 mb-4">Select an Avatar</h4>
+                         <div className="flex items-center justify-between mb-4">
+                           <h4 className="text-lg font-semibold text-gray-800">Select an Avatar</h4>
+                           {!!selectedAvatar && (
+                             <button
+                               type="button"
+                               className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium"
+                               onClick={async () => {
+                                 try {
+                                   if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex] || !selectedAvatar) return;
+                                   const rows = [...scriptRows];
+                                   const scene = { ...rows[currentSceneIndex] };
+                                   const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                                   scene.avatar = selectedAvatar;
+                                   if (modelUpper === 'ANCHOR') {
+                                     try { await updateSceneGenImageFlag(currentSceneIndex, { avatarOverride: selectedAvatar, avatarUrl: selectedAvatar }); } catch(_) {}
+                                   } else {
+                                     try { await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: selectedAvatar }); } catch(_) {}
+                                   }
+                                   rows[currentSceneIndex] = scene;
+                                   setScriptRows(rows);
+                                 } catch (_) { /* noop */ }
+                               }}
+                             >
+                               Save
+                             </button>
+                           )}
+                         </div>
                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4">
                            {avatarOptions.map((avatarUrl, index) => (
                              <button
                                type="button"
                                key={index}
-                               onClick={async () => {
-                              try {
-                                 setSelectedAvatar(avatarUrl);
-                                 // Save avatar differently for ANCHOR vs VEO3
-                                 if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                   const rows = [...scriptRows];
-                                   const scene = { ...rows[currentSceneIndex] };
-                                   const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                                   if (modelUpper === 'ANCHOR') {
-                                     scene.avatar = avatarUrl; // store avatar string in scene
-                                     try { await updateSceneGenImageFlag(currentSceneIndex, { avatarOverride: avatarUrl }); } catch(_) {}
-                                   } else {
-                                     // legacy: store as ref_image for non-ANCHOR
-                                     scene.ref_image = [avatarUrl];
-                                     updateRefMapForScene(scene.scene_number, scene.ref_image);
+                               onClick={() => {
+                                 try {
+                                   setSelectedAvatar(avatarUrl);
+                                   if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                     const rows = [...scriptRows];
+                                     const scene = { ...rows[currentSceneIndex] };
+                                     scene.avatar = avatarUrl;
+                                     rows[currentSceneIndex] = scene;
+                                     setScriptRows(rows);
                                    }
-                                   rows[currentSceneIndex] = scene;
-                                   setScriptRows(rows);
-                                 }
-                               } catch (_) { /* noop */ }
-                             }}
+                                 } catch (_) { /* noop */ }
+                               }}
                                className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
                                  selectedAvatar === avatarUrl ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
                                }`}
@@ -6712,14 +7050,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                  // Apply uploaded avatar
                                  const rows = [...scriptRows];
                                  const scene = { ...rows[currentSceneIndex] };
-                                 const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                                 if (modelUpper === 'ANCHOR') {
-                                   scene.avatar = url;
-                                   try { await updateSceneGenImageFlag(currentSceneIndex, { avatarOverride: url }); } catch(_) {}
-                                 } else {
-                                   scene.ref_image = [url];
-                                   updateRefMapForScene(scene.scene_number, scene.ref_image);
-                                 }
+                                 scene.avatar = url;
                                  rows[currentSceneIndex] = scene;
                                  setScriptRows(rows);
                                } catch (err) {
@@ -6750,7 +7081,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                         const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
                         if (titleLower === 'summary') return null;
-                        if (modelUpper !== 'ANCHOR') return null;
+                        if (modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3') return null;
                         const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
                         // In Script Editor, keep toggle fully visible even if not actively editing
                         const disabled = !isEditingScene;
@@ -7898,10 +8229,33 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       // For Keep Default with Templates, persist via update-text setting gen_image=false and ref_image
                       if (assetsTab === 'templates') {
                         try {
+                          // Build background_image array from selected templates
+                          const backgroundImageArray = selectedTemplateUrls.map((url) => {
+                            const trimmedUrl = typeof url === 'string' ? url.trim() : '';
+                            if (!trimmedUrl) return null;
+                            const templateEntry = templateLookupByUrl.get(trimmedUrl);
+                            const rawTemplate = templateEntry?.raw || {};
+                            const templateId = 
+                              templateEntry?.id ||
+                              rawTemplate?.template_id ||
+                              rawTemplate?.templateId ||
+                              rawTemplate?.id ||
+                              '';
+                            return {
+                              image_url: trimmedUrl,
+                              template_id: templateId ? String(templateId) : ''
+                            };
+                          }).filter(item => item !== null);
+
+                          // Get avatar_url from selected avatar or scene
+                          const currentAvatarUrl = scene?.avatar || selectedAvatar || '';
+
                           await updateSceneGenImageFlag(currentSceneIndex, {
                             genImage: false,
                             descriptionOverride: scene?.description ?? '',
-                            refImagesOverride: [chosen]
+                            refImagesOverride: [chosen],
+                            backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined,
+                            avatarUrl: currentAvatarUrl || undefined
                           });
                         } catch(_) { /* noop */ }
                       }
@@ -7924,6 +8278,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
                   }`}
                 >Keep Default</button>
+               
                 <button
                   disabled={assetsTab==='templates' ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl}
                   onClick={async () => {

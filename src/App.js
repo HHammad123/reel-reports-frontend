@@ -24,7 +24,6 @@ import PriceGuidelines from './pages/PriceGuidelines';
 import OAuthCallback2 from './Components/OAuthCallback2';
 import ProtectedRoute from './Components/ProtectedRoute';
 import OAuthCallback from './Components/Login/OAuthCallback';
-import ImageEdit from './pages/ImageEdit';
 import AdminUsers from './pages/AdminUsers';
 import AdminCreateUser from './pages/AdminCreateUser';
 
@@ -63,11 +62,6 @@ function App() {
            <ProtectedRoute>
             {/* sdgsd */}
              <Main />
-           </ProtectedRoute>
-         } />
-         <Route path="/image-edit" element={
-           <ProtectedRoute>
-          <ImageEdit />
            </ProtectedRoute>
          } />
          <Route path="/profile" element={
