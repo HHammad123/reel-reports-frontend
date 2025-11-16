@@ -18,9 +18,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     imageDimensions: null,
     textElements: [],
     imageVersionData: null,
-    imageFrames: []
+    imageFrames: [],
+    isEditable: false
   });
 	  const [isLoading, setIsLoading] = useState(false);
+	  const [isPolling, setIsPolling] = useState(false); // Track if we're polling job-status
 	  const [error, setError] = useState('');
 	  const [showEditor, setShowEditor] = useState(false);
 	  const [editorData, setEditorData] = useState(null);
@@ -34,8 +36,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     let cancelled = false;
     let timeoutId = null;
 
-    const mapSessionImages = (imagesRoot, veo3BackgroundImages = {}) => {
+    const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}) => {
       let mapped = [];
+      const usedSceneNumbers = new Set();
       const collectUrls = (node) => {
         const urls = [];
         const uniqPush = (v) => {
@@ -47,9 +50,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const gatherFromArray = (arr) => {
           if (!Array.isArray(arr)) return;
           arr.forEach((imgObj) => {
+            if (!imgObj) return;
+            if (typeof imgObj === 'string') {
+              uniqPush(imgObj);
+              return;
+            }
             const base = imgObj?.base_image || imgObj?.baseImage;
-            uniqPush(base?.image_url || base?.imageUrl || base?.url || base?.src || base?.link);
-            uniqPush(imgObj?.image_url || imgObj?.imageUrl || imgObj?.url || imgObj?.src || imgObj?.link);
+            uniqPush(
+              base?.image_url ||
+              base?.imageUrl ||
+              base?.imageurl ||
+              base?.url ||
+              base?.src ||
+              base?.link
+            );
+            uniqPush(
+              imgObj?.image_url ||
+              imgObj?.imageUrl ||
+              imgObj?.imageurl ||
+              imgObj?.url ||
+              imgObj?.src ||
+              imgObj?.link
+            );
           });
         };
         gatherFromArray(node?.v1?.images);
@@ -58,8 +80,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         gatherFromArray(node?.images?.v1?.images);
         gatherFromArray(node?.images);
         gatherFromArray(node?.image);
+        // Also gather from background_image / avatar_urls style arrays if present
+        gatherFromArray(node?.background_image);
+        gatherFromArray(node?.backgroundImages);
+        gatherFromArray(node?.avatar_urls);
+        gatherFromArray(node?.avatars);
         const base = node?.base_image || node?.baseImage;
-        uniqPush(base?.image_url || base?.imageUrl || base?.url || base?.src || base?.link);
+        uniqPush(
+          base?.image_url ||
+          base?.imageUrl ||
+          base?.imageurl ||
+          base?.url ||
+          base?.src ||
+          base?.link
+        );
         return urls;
       };
 
@@ -84,7 +118,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       };
       const pushRow = (num, title, refs, meta = {}) => {
         const clean = Array.from(new Set((refs || []).filter(Boolean)));
-        if (clean.length > 0) mapped.push({ scene_number: num, scene_title: title || 'Untitled', refs: clean, ...meta });
+        if (clean.length > 0) {
+          mapped.push({ scene_number: num, scene_title: title || 'Untitled', refs: clean, ...meta });
+          if (num !== undefined && num !== null) {
+            usedSceneNumbers.add(num);
+          }
+        }
       };
       if (!imagesRoot) return mapped;
       // Handle object shape: { current_version: 'v1', v1: { images: [ { base_image: { image_url } } ] } }
@@ -118,6 +157,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               textElements,
               imageVersionData: imagesRoot,
               imageFrames: arr,
+              isEditable: true,
 	              prompts: {
 	                opening_frame: normalizePromptFields(vObj?.opening_frame || vObj?.prompts?.opening_frame || imagesRoot?.opening_frame || imagesRoot?.prompts?.opening_frame || {}),
 	                closing_frame: normalizePromptFields(vObj?.closing_frame || vObj?.prompts?.closing_frame || imagesRoot?.closing_frame || imagesRoot?.prompts?.closing_frame || {})
@@ -150,19 +190,51 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   primary?.image_dimensions ||
                   primary?.imageDimensions ||
                   null;
-                const textElements = Array.isArray(primary?.text_elements)
+              const textElements = Array.isArray(primary?.text_elements)
                   ? primary.text_elements
                   : Array.isArray(primary?.textElements)
                   ? primary.textElements
                   : [];
-                // For VEO3 model, swap refs with background_image URLs from scripts if available
-                const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
-                const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
-                const sceneNumber = it?.scene_number || idx + 1;
-                const finalRefs =
-                  isVEO3 && veo3BackgroundImages[sceneNumber] && veo3BackgroundImages[sceneNumber].length > 0
-                    ? veo3BackgroundImages[sceneNumber]
-                    : refs;
+              // For VEO3 model, swap refs with background_image URLs from scripts if available
+              const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
+              const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+              const sceneNumber = it?.scene_number || idx + 1;
+                let finalRefs = refs;
+                if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                  const scene = veo3ScriptScenesByNumber[sceneNumber];
+                  const extraRefs = [
+                    ...collectUrls(scene),
+                    ...(Array.isArray(scene?.background_image)
+                      ? scene.background_image.map(
+                          (bg) =>
+                            bg?.imageurl ||
+                            bg?.imageUrl ||
+                            bg?.image_url ||
+                            bg?.url ||
+                            bg?.src ||
+                            bg?.link
+                        )
+                      : []),
+                    ...(Array.isArray(scene?.avatar_urls)
+                      ? scene.avatar_urls.map((av) => {
+                          if (typeof av === 'string') return av;
+                          return (
+                            av?.imageurl ||
+                            av?.imageUrl ||
+                            av?.image_url ||
+                            av?.url ||
+                            av?.src ||
+                            av?.link ||
+                            av?.avatar_url ||
+                            ''
+                          );
+                        })
+                      : [])
+                  ].filter(Boolean);
+                  if (extraRefs.length > 0) {
+                    finalRefs = extraRefs;
+                  }
+                }
                 
                 const meta = {
                   description: it?.desc || it?.description || it?.scene_description || '',
@@ -173,6 +245,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   textElements,
                   imageVersionData: imagesContainer,
                   imageFrames: arr,
+                  isEditable: true,
                   prompts: {
                     opening_frame: normalizePromptFields(
                       verObj?.opening_frame ||
@@ -264,6 +337,72 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           pushRow(sc?.scene_number ?? (j + 1), sc?.scene_title || sc?.title, refs, meta);
         });
       }
+      // Add any remaining VEO3 script scenes (with background_image/avatar_urls) that don't have image arrays yet
+      if (veo3ScriptScenesByNumber && typeof veo3ScriptScenesByNumber === 'object') {
+        Object.entries(veo3ScriptScenesByNumber).forEach(([key, scene]) => {
+          if (!scene || typeof scene !== 'object') return;
+          const num =
+            scene?.scene_number ||
+            scene?.scene_no ||
+            scene?.sceneNo ||
+            scene?.scene ||
+            (Number.isFinite(Number(key)) ? Number(key) : undefined);
+          if (num == null || usedSceneNumbers.has(num)) return;
+          const refs = [
+            ...collectUrls(scene),
+            ...(Array.isArray(scene?.background_image)
+              ? scene.background_image.map(
+                  (bg) =>
+                    bg?.imageurl ||
+                    bg?.imageUrl ||
+                    bg?.image_url ||
+                    bg?.url ||
+                    bg?.src ||
+                    bg?.link
+                )
+              : []),
+            ...(Array.isArray(scene?.avatar_urls)
+              ? scene.avatar_urls.map((av) => {
+                  if (typeof av === 'string') return av;
+                  return (
+                    av?.imageurl ||
+                    av?.imageUrl ||
+                    av?.image_url ||
+                    av?.url ||
+                    av?.src ||
+                    av?.link ||
+                    av?.avatar_url ||
+                    ''
+                  );
+                })
+              : [])
+          ].filter(Boolean);
+          const meta = {
+            description: scene?.desc || scene?.description || scene?.scene_description || '',
+            narration: scene?.narration || scene?.voiceover || '',
+            textToBeIncluded: scene?.text_to_be_included || scene?.textToBeIncluded || scene?.include_text || '',
+            model: scene?.model || scene?.mode || '',
+            prompts: {
+              opening_frame: normalizePromptFields(
+                scene?.v1?.opening_frame ||
+                  scene?.v1?.prompts?.opening_frame ||
+                  scene?.opening_frame ||
+                  scene?.prompts?.opening_frame ||
+                  {}
+              ),
+              closing_frame: normalizePromptFields(
+                scene?.v1?.closing_frame ||
+                  scene?.v1?.prompts?.closing_frame ||
+                  scene?.closing_frame ||
+                  scene?.prompts?.closing_frame ||
+                  {}
+              )
+            },
+            isEditable: false
+          };
+          pushRow(num, scene?.scene_title || scene?.title, refs, meta);
+        });
+      }
       return mapped;
     };
 
@@ -297,30 +436,32 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         let sdata; try { sdata = JSON.parse(stext); } catch (_) { sdata = stext; }
         if (!sresp.ok) throw new Error(`user-session/data failed: ${sresp.status} ${stext}`);
         
-        // For VEO3: Check scripts data for background_image
+        // For VEO3: Check scripts data for background_image / avatar_urls (for scenes that may not yet have image arrays)
         const sessionData = sdata?.session_data || sdata?.session || {};
         const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
         const currentScript = scripts[0] || null;
         const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
-        
-        // Extract background_image from VEO3 scenes in scripts
-        const veo3BackgroundImages = {};
+        // Index VEO3 script scenes by scene number so we can use background_image/avatar_urls for scenes missing image arrays
+        const veo3ScriptScenesByNumber = {};
         airesponse.forEach((scene, index) => {
           if (!scene || typeof scene !== 'object') return;
           const model = String(scene?.model || scene?.mode || '').toUpperCase();
-          const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
-          if (isVEO3) {
-            const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
-            if (backgroundImage.length > 0) {
-              const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
-              veo3BackgroundImages[sceneNumber] = backgroundImage
-                .map((bg) => bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '')
-                .filter(Boolean);
-            }
-          }
+          const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
+          if (!isVEO3) return;
+          const sceneNumber =
+            scene?.scene_number ||
+            scene?.scene_no ||
+            scene?.sceneNo ||
+            scene?.scene ||
+            index + 1;
+          veo3ScriptScenesByNumber[sceneNumber] = {
+            ...scene,
+            scene_number: sceneNumber,
+            model
+          };
         });
         
-        const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3BackgroundImages);
+        const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber);
         if (!cancelled && sessionImages.length > 0) {
           setRows(sessionImages);
           const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
@@ -338,16 +479,31 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
             textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
             imageVersionData: sessionImages[0]?.imageVersionData || null,
-            imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : []
+            imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
+            isEditable: !!sessionImages[0]?.isEditable
           });
         }
         // If we have a jobId and either no session images yet or we expect generation, poll job API until done
         const pendingFlag = localStorage.getItem('images_generate_pending') === 'true';
-        const shouldPollJob = !!(jobId || localStorage.getItem('current_images_job_id')) && sessionImages.length === 0 && pendingFlag;
-        if (!shouldPollJob) { setIsLoading(false); return; }
+        const shouldPollJob = !!(jobId || localStorage.getItem('current_images_job_id')) && pendingFlag;
+        
+        // If no job to poll, stop here
+        if (!shouldPollJob) {
+          setIsLoading(false);
+          setIsPolling(false);
+          return;
+        }
 
         const id = jobId || localStorage.getItem('current_images_job_id');
-        if (!id) { setIsLoading(false); return; }
+        if (!id) { 
+          setIsLoading(false);
+          setIsPolling(false);
+          return; 
+        }
+
+        // Ensure loader is visible while polling job-status API
+        setIsLoading(true);
+        setIsPolling(true);
 
         const poll = async () => {
           try {
@@ -365,29 +521,31 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 });
                 const st = await sr.text();
                 let sd; try { sd = JSON.parse(st); } catch(_) { sd = {}; }
-                    // Extract background_image from VEO3 scenes in scripts
+                    // Extract VEO3 script scenes (background_image / avatar_urls) from scripts
                     const sessionData = sd?.session_data || sd?.session || {};
                     const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
                     const currentScript = scripts[0] || null;
                     const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
-                    
-                    const veo3BackgroundImages = {};
+                    const veo3ScriptScenesByNumber = {};
                     airesponse.forEach((scene, index) => {
                       if (!scene || typeof scene !== 'object') return;
                       const model = String(scene?.model || scene?.mode || '').toUpperCase();
-                      const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
-                      if (isVEO3) {
-                        const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
-                        if (backgroundImage.length > 0) {
-                          const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
-                          veo3BackgroundImages[sceneNumber] = backgroundImage
-                            .map((bg) => bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '')
-                            .filter(Boolean);
-                        }
-                      }
+                      const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
+                      if (!isVEO3) return;
+                      const sceneNumber =
+                        scene?.scene_number ||
+                        scene?.scene_no ||
+                        scene?.sceneNo ||
+                        scene?.scene ||
+                        index + 1;
+                      veo3ScriptScenesByNumber[sceneNumber] = {
+                        ...scene,
+                        scene_number: sceneNumber,
+                        model
+                      };
                     });
                     
-                    const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images, veo3BackgroundImages);
+                    const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images, veo3ScriptScenesByNumber);
                     if (!cancelled) {
                       setRows(sessionImages);
                       if (sessionImages.length > 0) {
@@ -409,18 +567,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
                           textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
                           imageVersionData: sessionImages[0]?.imageVersionData || null,
-                          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : []
+                          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
+                          isEditable: !!sessionImages[0]?.isEditable
                         });
                   }
                 }
               } catch(_) { /* ignore */ }
-              if (!cancelled) setIsLoading(false);
+              // Job completed successfully, hide loader
+              if (!cancelled) {
+                setIsLoading(false);
+                setIsPolling(false);
+              }
             } else if (!cancelled) {
+              // Job still in progress, keep polling and loader visible
+              setIsLoading(true);
+              setIsPolling(true);
               timeoutId = setTimeout(poll, 3000);
             }
           } catch (e) {
-            if (!cancelled) setError(e?.message || 'Failed to load images');
-            setIsLoading(false);
+            if (!cancelled) {
+              setError(e?.message || 'Failed to load images');
+              setIsLoading(false);
+              setIsPolling(false);
+            }
           }
         };
         poll();
@@ -441,6 +610,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const refreshLoad = React.useCallback(async () => {
     try {
       setIsLoading(true);
+      setIsPolling(false); // Refresh doesn't poll, it just loads data
       setError('');
       const session_id = localStorage.getItem('session_id');
       const user_id = localStorage.getItem('token');
@@ -453,31 +623,35 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       let sdata; try { sdata = JSON.parse(stext); } catch (_) { sdata = stext; }
       if (!sresp.ok) throw new Error(`user-session/data failed: ${sresp.status} ${stext}`);
       
-      // For VEO3: Check scripts data for background_image
+      // For VEO3: Check scripts data for background_image / avatar_urls (for scenes that may not yet have image arrays)
       const sessionData = sdata?.session_data || sdata?.session || {};
       const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
       const currentScript = scripts[0] || null;
       const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
       
-      // Extract background_image from VEO3 scenes in scripts
-      const veo3BackgroundImages = {};
+      // Index VEO3 script scenes by scene number so we can use background_image/avatar_urls for scenes missing image arrays
+      const veo3ScriptScenesByNumber = {};
       airesponse.forEach((scene, index) => {
         if (!scene || typeof scene !== 'object') return;
         const model = String(scene?.model || scene?.mode || '').toUpperCase();
-        const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
-        if (isVEO3) {
-          const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
-          if (backgroundImage.length > 0) {
-            const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
-            veo3BackgroundImages[sceneNumber] = backgroundImage
-              .map((bg) => bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '')
-              .filter(Boolean);
-          }
-        }
+        const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
+        if (!isVEO3) return;
+        const sceneNumber =
+          scene?.scene_number ||
+          scene?.scene_no ||
+          scene?.sceneNo ||
+          scene?.scene ||
+          index + 1;
+        veo3ScriptScenesByNumber[sceneNumber] = {
+          ...scene,
+          scene_number: sceneNumber,
+          model
+        };
       });
       
-      const mapSessionImages = (imagesRoot, veo3BackgroundImages = {}) => {
+      const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}) => {
         let mapped = [];
+        const usedSceneNumbers = new Set();
         const collectUrls = (node) => {
           const urls = [];
           const uniqPush = (v) => {
@@ -489,9 +663,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           const gatherFromArray = (arr) => {
             if (!Array.isArray(arr)) return;
             arr.forEach((imgObj) => {
+              if (!imgObj) return;
+              if (typeof imgObj === 'string') {
+                uniqPush(imgObj);
+                return;
+              }
               const base = imgObj?.base_image || imgObj?.baseImage;
-              uniqPush(base?.image_url || base?.imageUrl || base?.url || base?.src || base?.link);
-              uniqPush(imgObj?.image_url || imgObj?.imageUrl || imgObj?.url || imgObj?.src || imgObj?.link);
+              uniqPush(
+                base?.image_url ||
+                base?.imageUrl ||
+                base?.imageurl ||
+                base?.url ||
+                base?.src ||
+                base?.link
+              );
+              uniqPush(
+                imgObj?.image_url ||
+                imgObj?.imageUrl ||
+                imgObj?.imageurl ||
+                imgObj?.url ||
+                imgObj?.src ||
+                imgObj?.link
+              );
             });
           };
           gatherFromArray(node?.v1?.images);
@@ -500,8 +693,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           gatherFromArray(node?.images?.v1?.images);
           gatherFromArray(node?.images);
           gatherFromArray(node?.image);
+          gatherFromArray(node?.background_image);
+          gatherFromArray(node?.backgroundImages);
+          gatherFromArray(node?.avatar_urls);
+          gatherFromArray(node?.avatars);
           const base = node?.base_image || node?.baseImage;
-          uniqPush(base?.image_url || base?.imageUrl || base?.url || base?.src || base?.link);
+          uniqPush(
+            base?.image_url ||
+            base?.imageUrl ||
+            base?.imageurl ||
+            base?.url ||
+            base?.src ||
+            base?.link
+          );
           return urls;
         };
 
@@ -526,7 +730,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         };
         const pushRow = (num, title, refs, meta = {}) => {
           const clean = Array.from(new Set((refs || []).filter(Boolean)));
-          if (clean.length > 0) mapped.push({ scene_number: num, scene_title: title || 'Untitled', refs: clean, ...meta });
+          if (clean.length > 0) {
+            mapped.push({ scene_number: num, scene_title: title || 'Untitled', refs: clean, ...meta });
+            if (num !== undefined && num !== null) {
+              usedSceneNumbers.add(num);
+            }
+          }
         };
         if (!imagesRoot) return mapped;
         // Handle object shape: { current_version: 'v1', v1: { images: [ { base_image: { image_url } } ] } }
@@ -560,6 +769,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 textElements,
                 imageVersionData: imagesRoot,
                 imageFrames: arr,
+                isEditable: true,
                 prompts: normalizePromptFields(imagesRoot?.prompts || {})
               });
             }
@@ -568,15 +778,46 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           }
         } else if (Array.isArray(imagesRoot)) {
           imagesRoot.forEach((it, idx) => {
-            // For VEO3: Use background_image from scripts if available
+            // For VEO3: Use background_image/avatar_urls from scripts if available
             const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
-            const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+            const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
             const sceneNumber = it?.scene_number || idx + 1;
             
-            // If VEO3, prioritize background_image from scripts
             let refs = collectUrls(it);
-            if (isVEO3 && veo3BackgroundImages[sceneNumber] && veo3BackgroundImages[sceneNumber].length > 0) {
-              refs = veo3BackgroundImages[sceneNumber];
+            if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+              const scene = veo3ScriptScenesByNumber[sceneNumber];
+              const extraRefs = [
+                ...collectUrls(scene),
+                ...(Array.isArray(scene?.background_image)
+                  ? scene.background_image.map(
+                      (bg) =>
+                        bg?.imageurl ||
+                        bg?.imageUrl ||
+                        bg?.image_url ||
+                        bg?.url ||
+                        bg?.src ||
+                        bg?.link
+                    )
+                  : []),
+                ...(Array.isArray(scene?.avatar_urls)
+                  ? scene.avatar_urls.map((av) => {
+                      if (typeof av === 'string') return av;
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    })
+                  : [])
+              ].filter(Boolean);
+              if (extraRefs.length > 0) {
+                refs = extraRefs;
+              }
             }
             
             if (refs.length > 0) {
@@ -600,15 +841,71 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 textElements,
                 imageVersionData: it,
                 imageFrames: Array.isArray(it?.images) ? it.images : [it],
+                isEditable: true,
                 prompts: normalizePromptFields(it?.prompts || {})
               });
             }
           });
         }
+
+        // Add any remaining VEO3 script scenes (with background_image/avatar_urls) that don't have image arrays yet
+        if (veo3ScriptScenesByNumber && typeof veo3ScriptScenesByNumber === 'object') {
+          Object.entries(veo3ScriptScenesByNumber).forEach(([key, scene]) => {
+            if (!scene || typeof scene !== 'object') return;
+            const num =
+              scene?.scene_number ||
+              scene?.scene_no ||
+              scene?.sceneNo ||
+              scene?.scene ||
+              (Number.isFinite(Number(key)) ? Number(key) : undefined);
+            if (num == null || usedSceneNumbers.has(num)) return;
+            const refs = [
+              ...collectUrls(scene),
+              ...(Array.isArray(scene?.background_image)
+                ? scene.background_image.map(
+                    (bg) =>
+                      bg?.imageurl ||
+                      bg?.imageUrl ||
+                      bg?.image_url ||
+                      bg?.url ||
+                      bg?.src ||
+                      bg?.link
+                  )
+                : []),
+              ...(Array.isArray(scene?.avatar_urls)
+                ? scene.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av;
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  })
+                : [])
+            ].filter(Boolean);
+            const meta = {
+              description: scene?.description || scene?.scene_description || '',
+              narration: scene?.narration || '',
+              textToBeIncluded: scene?.text_to_be_included || '',
+              imageDimensions: null,
+              textElements: [],
+              imageVersionData: null,
+              imageFrames: [],
+              isEditable: false,
+              prompts: normalizePromptFields(scene?.prompts || {})
+            };
+            pushRow(num, scene?.scene_title || scene?.title, refs, meta);
+          });
+        }
         return mapped;
       };
       
-      const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3BackgroundImages);
+      const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber);
       if (sessionImages.length > 0) {
         setRows(sessionImages);
         const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
@@ -629,13 +926,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
           textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
           imageVersionData: sessionImages[0]?.imageVersionData || null,
-          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : []
+          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
+          isEditable: !!sessionImages[0]?.isEditable
         });
       }
       setIsLoading(false);
+      setIsPolling(false);
     } catch (e) {
       setError(e?.message || 'Failed to refresh images');
       setIsLoading(false);
+      setIsPolling(false);
     }
   }, []);
 
@@ -670,17 +970,70 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         </div>
       </div>
 
-      {isLoading && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/70">
-          <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+      {isLoading && isPolling && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-white backdrop-blur-sm">
+          <style>{`
+            @keyframes spin-svg {
+              from {
+                transform: rotate(0deg);
+              }
+              to {
+                transform: rotate(360deg);
+              }
+            }
+            .spinner-circle {
+              animation: spin-svg 1.5s linear infinite;
+            }
+          `}</style>
+          <div className="flex flex-col items-center justify-center space-y-4">
+            {/* Circle Loader */}
+            <div className="relative w-20 h-20">
+              <svg className="w-20 h-20" viewBox="0 0 100 100">
+                {/* Background circle */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="45"
+                  stroke="#E5E7EB"
+                  strokeWidth="8"
+                  fill="none"
+                />
+                {/* Animated circle */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="45"
+                  stroke="#13008B"
+                  strokeWidth="8"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeDasharray="283"
+                  strokeDashoffset="70"
+                  className="spinner-circle"
+                  style={{
+                    transformOrigin: '50% 50%',
+                  }}
+                />
+              </svg>
+              {/* Inner dot */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+              </div>
+            </div>
+            {/* Loading Text */}
+            <div className="text-center space-y-1">
+              <p className="text-lg font-semibold text-[#13008B]">Generating Images</p>
+              <p className="text-sm text-gray-600">Please wait while we create your storyboard...</p>
+            </div>
+          </div>
         </div>
       )}
 
       <div className="p-4 space-y-4 overflow-y-auto overflow-x-hidden">
-        {isLoading && (<div className="text-sm text-gray-600">Loading images…</div>)}
         {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)}
 
-        {selected?.imageUrl && (
+        {/* Only show selected image details when not polling */}
+        {selected?.imageUrl && (!isPolling || rows.length > 0) && (
           <div className="bg-white border rounded-xl p-4 h-[600px] overflow-y-auto scrollbar-hide">
             {/* Top Section: Two Images Side by Side */}
             <div className="grid grid-cols-2 gap-4 mb-4">
@@ -739,6 +1092,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         />
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
+                          // If this scene is not editable (e.g., fallback background/avatar image only), hide edit
+                          if (!selected?.isEditable) {
+                            return null;
+                          }
                           // Check if this is VEO3 model with gen_image=false
                           const modelUpper = String(selected?.model || '').toUpperCase();
                           const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
@@ -889,6 +1246,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         />
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
+                          // If this scene is not editable (e.g., fallback background/avatar image only), hide edit
+                          if (!selected?.isEditable) {
+                            return null;
+                          }
                           // Check if this is VEO3 model with gen_image=false
                           const modelUpper = String(selected?.model || '').toUpperCase();
                           const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
@@ -1090,13 +1451,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           </div>
         )}
 
-        <div className="bg-white border rounded-xl p-4">
-          <div className="text-base font-semibold mb-3">Scene By Scene</div>
-          <div className="flex gap-4 overflow-x-auto overflow-y-hidden scrollbar-hide">
-            {rows.length === 0 && !isLoading && !error && (
-              <div className="text-sm text-gray-600">No images available yet.</div>
-            )}
-            {rows.map((r, i) => {
+        {/* Only show content when not polling (job completed or no job running) */}
+        {(!isPolling || rows.length > 0) && (
+          <div className="bg-white border rounded-xl p-4">
+            <div className="text-base font-semibold mb-3">Scene By Scene</div>
+            <div className="flex gap-4 overflow-x-auto overflow-y-hidden scrollbar-hide">
+              {rows.length === 0 && !isLoading && !error && (
+                <div className="text-sm text-gray-600">No images available yet.</div>
+              )}
+              {rows.map((r, i) => {
               const modelUpper = String(r?.model || '').toUpperCase();
               const first = (r.refs || [])[0];
               const second = (r.refs || [])[1];
@@ -1120,19 +1483,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       imageDimensions: r?.imageDimensions || null,
                       textElements: Array.isArray(r?.textElements) ? r.textElements : [],
                       imageVersionData: r?.imageVersionData || null,
-                      imageFrames: Array.isArray(r?.imageFrames) ? r.imageFrames : []
+                      imageFrames: Array.isArray(r?.imageFrames) ? r.imageFrames : [],
+                      isEditable: !!r?.isEditable
                     });
                   }}
                 >
                   <div className={`rounded-xl border overflow-hidden ${selected.index === i ? 'ring-2 ring-[#13008B]' : ''}`}>
                     {modelUpper === 'PLOTLY' ? (
                       <div
-                        className="w-full bg-black flex items-center justify-center"
-                        style={{
-                          aspectRatio: r?.imageDimensions?.width && r?.imageDimensions?.height
-                            ? `${r.imageDimensions.width} / ${r.imageDimensions.height}`
-                            : '16 / 9'
-                        }}
+                        className="w-full bg-black flex items-center justify-center aspect-[16/9]"
                       >
                         {first ? (
                           <img src={first} alt={`scene-${r.scene_number}-1`} className="max-h-full max-w-full object-contain" />
@@ -1142,12 +1501,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       </div>
                     ) : (
                       <div
-                        className="grid grid-cols-2 gap-0 w-full bg-black"
-                        style={{
-                          aspectRatio: r?.imageDimensions?.width && r?.imageDimensions?.height
-                            ? `${r.imageDimensions.width} / ${r.imageDimensions.height}`
-                            : '16 / 9'
-                        }}
+                        className="grid grid-cols-2 gap-0 w-full bg-black aspect-[16/9]"
                       >
                         <div className="w-full h-full bg-black flex items-center justify-center">
                           {first ? (
@@ -1172,9 +1526,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   ) : null}
                 </div>
               );
-            })}
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {showEditor && (

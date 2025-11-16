@@ -1823,7 +1823,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       const sd = sessionData?.session_data || sessionData?.session || {};
       const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
       
-      // VALIDATION: Check all VEO3 scenes have non-empty background_image array before proceeding
+      // VALIDATION: Check all VEO3 scenes have non-empty background_image and avatar_urls arrays before proceeding
+      // This validates user selections - when users select avatars and background images, they are saved in the session data
+      // and will be checked here before generating the storyboard
       const scripts = Array.isArray(sd.scripts) && sd.scripts.length > 0 ? sd.scripts : [];
       const currentScript = scripts[0] || null; // Get current version (first script)
       const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
@@ -1835,7 +1837,10 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
         
         if (isVEO3) {
-          // Check if background_image array exists and is not empty
+          const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+          let isMissing = false;
+          
+          // Check if background_image array exists and is not empty (validates user's background selection)
           const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
           
           // Check if background_image array has at least one object
@@ -1848,17 +1853,31 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           });
           
           if (!hasBackgroundImage) {
-            const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+            isMissing = true;
+          }
+          
+          // Check if avatar_urls array exists and is not empty (validates user's avatar selection)
+          const avatarUrls = Array.isArray(scene?.avatar_urls) ? scene.avatar_urls : [];
+          const hasAvatarUrls = avatarUrls.length > 0 && avatarUrls.some(url => {
+            return typeof url === 'string' && url.trim().length > 0;
+          });
+          
+          if (!hasAvatarUrls) {
+            isMissing = true;
+          }
+          
+          // If either background_image or avatar_urls is missing (user hasn't selected them), add scene to missing list
+          if (isMissing) {
             missingScenes.push(sceneNumber);
           }
         }
       });
       
-      // If any VEO3 scenes are missing background_image, show popup and stop
+      // If any VEO3 scenes are missing background_image or avatar_urls selections, show popup with scene numbers and stop
       if (missingScenes.length > 0) {
         setMissingAvatarScenes(missingScenes);
         setShowMissingAvatarPopup(true);
-        return; // Stop execution
+        return; // Stop execution - user must select avatar and background for all VEO3 scenes first
       }
       
       // 3) Check if regenerate_desc is true in scripts, if so call process-regenerate
@@ -8846,14 +8865,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
               </button>
             </div>
             <p className="text-sm text-gray-700 mb-4">
-              Please ensure all VEO3 scenes have required data before generating the storyboard.
+              Please ensure all scenes below have required data before generating the video.
             </p>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-              <p className="text-xs text-yellow-800 mb-2 font-medium">Requirements:</p>
-              <p className="text-xs text-yellow-700">
-                All VEO3 scenes must have a non-empty background_image array with at least one image object before generating the storyboard.
-              </p>
-            </div>
+            
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
               <p className="text-sm font-medium text-red-800 mb-2">Missing data in the following scenes:</p>
               <div className="flex flex-wrap gap-2">
