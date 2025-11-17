@@ -40,7 +40,7 @@ const Typetabs = ({ onChangeVideoType }) => {
                 className={`px-4 lg:px-4 py-2 lg:py-2 rounded-lg whitespace-nowrap text-sm lg:text-[1rem] font-medium transition-colors ${
                   activeTab === type
                     ? 'bg-[#13008B] text-white'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    : 'text-black hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
                 {type}

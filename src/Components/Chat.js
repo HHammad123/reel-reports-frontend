@@ -1823,8 +1823,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       const sd = sessionData?.session_data || sessionData?.session || {};
       const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
       
-      // VALIDATION: Check all VEO3 scenes have non-empty background_image and avatar_urls arrays before proceeding
-      // This validates user selections - when users select avatars and background images, they are saved in the session data
+      // VALIDATION: Check all VEO3 scenes have non-empty avatar_urls array before proceeding
+      // This validates user selections - when users select avatars, they are saved in the session data
       // and will be checked here before generating the storyboard
       const scripts = Array.isArray(sd.scripts) && sd.scripts.length > 0 ? sd.scripts : [];
       const currentScript = scripts[0] || null; // Get current version (first script)
@@ -1838,46 +1838,26 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         
         if (isVEO3) {
           const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
-          let isMissing = false;
-          
-          // Check if background_image array exists and is not empty (validates user's background selection)
-          const backgroundImage = Array.isArray(scene?.background_image) ? scene.background_image : [];
-          
-          // Check if background_image array has at least one object
-          const hasBackgroundImage = backgroundImage.length > 0 && backgroundImage.some(bg => {
-            // Check if bg is an object and has at least one property
-            if (!bg || typeof bg !== 'object') return false;
-            // Check for imageurl or image_url property with a non-empty string value
-            const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || '';
-            return typeof url === 'string' && url.trim().length > 0;
-          });
-          
-          if (!hasBackgroundImage) {
-            isMissing = true;
-          }
           
           // Check if avatar_urls array exists and is not empty (validates user's avatar selection)
+          // avatar_urls is compulsory for VEO3 scenes
           const avatarUrls = Array.isArray(scene?.avatar_urls) ? scene.avatar_urls : [];
           const hasAvatarUrls = avatarUrls.length > 0 && avatarUrls.some(url => {
             return typeof url === 'string' && url.trim().length > 0;
           });
           
+          // If avatar_urls is missing (user hasn't selected avatar), add scene to missing list
           if (!hasAvatarUrls) {
-            isMissing = true;
-          }
-          
-          // If either background_image or avatar_urls is missing (user hasn't selected them), add scene to missing list
-          if (isMissing) {
             missingScenes.push(sceneNumber);
           }
         }
       });
       
-      // If any VEO3 scenes are missing background_image or avatar_urls selections, show popup with scene numbers and stop
+      // If any VEO3 scenes are missing avatar_urls selections, show popup with scene numbers and stop
       if (missingScenes.length > 0) {
         setMissingAvatarScenes(missingScenes);
         setShowMissingAvatarPopup(true);
-        return; // Stop execution - user must select avatar and background for all VEO3 scenes first
+        return; // Stop execution - user must select avatar for all VEO3 scenes first
       }
       
       // 3) Check if regenerate_desc is true in scripts, if so call process-regenerate
@@ -7023,7 +7003,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                               <textarea
                                 value={sceneDescription}
                                 onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent !font-medium"
                                 rows={4}
                                 placeholder="Enter scene description"
                               />
@@ -7063,7 +7043,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                               className={`w-full px-3 py-2 rounded-lg border ${
                                 isInlineEditing
                                   ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
-                                  : 'border-gray-200 bg-white text-gray-800 cursor-pointer'
+                                  : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
                               }`}
                               rows={4}
                               placeholder="Double-click to edit description"
@@ -7382,7 +7362,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                         const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
                         if (titleLower === 'summary') return null;
-                        if (modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3') return null;
+                        if (modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3' && modelUpper !== 'SORA') return null;
                         const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
                         // In Script Editor, keep toggle fully visible even if not actively editing
                         const disabled = !isEditingScene;
@@ -7426,13 +7406,45 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                   <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${ (selectedRefImages || []).includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300' } overflow-visible transition-colors`} title={url} onClick={async (e) => {
                                     e.stopPropagation();
                                     try {
-                                      // For ANCHOR, background is a single string
-                                      setSelectedRefImages([url]);
-                                      if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                        const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
-                                        s.background = url; s.background_image = url;
-                                        rows[currentSceneIndex] = s; setScriptRows(rows);
-                                        try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: url, backgroundImageOverride: url }); } catch(_) {}
+                                      const isSora = modelUpper === 'SORA';
+                                      const isAnchor = modelUpper === 'ANCHOR';
+                                      
+                                      if (isSora) {
+                                        // For SORA, allow up to 2 template selections
+                                        const currentSelected = selectedRefImages || [];
+                                        const exists = currentSelected.includes(url);
+                                        let newSelected;
+                                        if (exists) {
+                                          newSelected = currentSelected.filter(u => u !== url);
+                                        } else {
+                                          const next = [...currentSelected, url];
+                                          newSelected = next.length > 2 ? next.slice(-2) : next;
+                                        }
+                                        setSelectedRefImages(newSelected);
+                                        if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                          const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
+                                          s.ref_image = newSelected;
+                                          rows[currentSceneIndex] = s; setScriptRows(rows);
+                                          try { 
+                                            const backgroundImageArray = newSelected.map((u) => ({
+                                              image_url: u,
+                                              template_id: ''
+                                            }));
+                                            await updateSceneGenImageFlag(currentSceneIndex, { 
+                                              refImagesOverride: newSelected,
+                                              backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined
+                                            }); 
+                                          } catch(_) {}
+                                        }
+                                      } else {
+                                        // For ANCHOR/VEO3, background is a single string
+                                        setSelectedRefImages([url]);
+                                        if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                          const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
+                                          s.background = url; s.background_image = url;
+                                          rows[currentSceneIndex] = s; setScriptRows(rows);
+                                          try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: url, backgroundImageOverride: url }); } catch(_) {}
+                                        }
                                       }
                                     } catch(_) {}
                                   }}>
@@ -7477,12 +7489,36 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                   const files = Array.from(e.target.files || []); if (!files.length) return;
                                   if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
                                   const current = scriptRows[currentSceneIndex]; const folder = current?.folderLink || current?.folder_link || '';
+                                  const modelUpper = String(current?.model || current?.mode || '').toUpperCase();
+                                  const isSora = modelUpper === 'SORA';
                                   setIsUploadingSceneImages(true);
                                   const urls = await uploadImagesToFolder(files, folder);
                                   if (!urls || urls.length===0) { alert('Upload failed. No image URLs returned.'); return; }
                                   const rows = [...scriptRows]; const s3 = { ...rows[currentSceneIndex] };
-                                  const filtered = filterImageUrls(urls).slice(0,1); s3.background = filtered[0] || ''; s3.background_image = s3.background; rows[currentSceneIndex] = s3; setScriptRows(rows); setSelectedRefImages(filtered);
-                                  try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: s3.background, backgroundImageOverride: s3.background }); } catch(_) {}
+                                  const filtered = filterImageUrls(urls);
+                                  
+                                  if (isSora) {
+                                    // For SORA, allow up to 2 images
+                                    const limited = filtered.slice(0, 2);
+                                    s3.ref_image = limited;
+                                    rows[currentSceneIndex] = s3; setScriptRows(rows); setSelectedRefImages(limited);
+                                    try { 
+                                      const backgroundImageArray = limited.map((u) => ({
+                                        image_url: u,
+                                        template_id: ''
+                                      }));
+                                      await updateSceneGenImageFlag(currentSceneIndex, { 
+                                        refImagesOverride: limited,
+                                        backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined
+                                      }); 
+                                    } catch(_) {}
+                                  } else {
+                                    // For ANCHOR/VEO3, only one image
+                                    const single = filtered.slice(0, 1);
+                                    s3.background = single[0] || ''; s3.background_image = s3.background; 
+                                    rows[currentSceneIndex] = s3; setScriptRows(rows); setSelectedRefImages(single);
+                                    try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: s3.background, backgroundImageOverride: s3.background }); } catch(_) {}
+                                  }
                                 } catch(err) { console.error('Background images upload failed:', err); alert('Failed to upload background images. Please try again.'); }
                                 finally { setIsUploadingSceneImages(false); if (imageFileInputRef.current) imageFileInputRef.current.value=''; }
                               }} />
@@ -8207,21 +8243,23 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           if (!imageUrl) return null;
                           const isSelected = selectedTemplateUrls.includes(imageUrl);
                           const handleClick = () => {
-                            // Check if current scene is VEO3 - if so, only allow single selection
+                            // Check model type to determine selection limits
                             const currentScene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                             const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
                             const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                            const isSora = modelUpper === 'SORA';
                             
                             setSelectedTemplateUrls(prev => {
                               const exists = prev.includes(imageUrl);
                               if (exists) {
                                 return prev.filter(u => u !== imageUrl);
                               }
-                              // For VEO3, only allow one template - replace previous selection
+                              // For VEO3/ANCHOR, only allow one template - replace previous selection
                               if (isVEO3) {
                                 return [imageUrl];
                               }
-                              // For other models, allow up to 2 templates
+                              // For SORA, allow up to 2 templates
+                              // For other models, also allow up to 2 templates
                               const next = [...prev, imageUrl];
                               if (next.length > 2) {
                                 next.shift();
@@ -8278,35 +8316,61 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                   disabled={assetsTab==='templates' ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl}
                   onClick={async () => {
                     try {
-                      const chosen = assetsTab==='templates' ? (selectedTemplateUrls[0] || selectedAssetUrl) : selectedAssetUrl;
-                      if (!chosen || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
-                      // Enforce only one template for Keep Default
-                      // if (assetsTab==='templates' && selectedTemplateUrls.length > 1) {
-                      //   alert('For Keep Default, you can select only one template.');
-                      //   return;
-                      // }
                       const rows = [...scriptRows];
                       const scene = { ...rows[currentSceneIndex] };
+                      if (!scene || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
                       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                      if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY') {
-                        scene.background = chosen; scene.background_image = chosen;
+                      const isSora = modelUpper === 'SORA';
+                      const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+                      const isAnchor = modelUpper === 'ANCHOR';
+                      const isPlotly = modelUpper === 'PLOTLY';
+                      
+                      if (assetsTab === 'templates') {
+                        // For templates, use selected templates (up to 2 for SORA, 1 for VEO3/ANCHOR)
+                        const templatesToUse = isVEO3 && selectedTemplateUrls.length > 0 
+                          ? [selectedTemplateUrls[0]] 
+                          : (isSora && selectedTemplateUrls.length > 0 
+                            ? selectedTemplateUrls.slice(0, 2) 
+                            : (selectedTemplateUrls.length > 0 ? selectedTemplateUrls : (selectedAssetUrl ? [selectedAssetUrl] : [])));
+                        
+                        if (templatesToUse.length === 0) return;
+                        
+                        if (isAnchor || isPlotly) {
+                          scene.background = templatesToUse[0]; 
+                          scene.background_image = templatesToUse[0];
+                        } else {
+                          scene.ref_image = templatesToUse;
+                        }
+                        rows[currentSceneIndex] = scene;
+                        setScriptRows(rows);
+                        setSelectedRefImages(templatesToUse);
+                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       } else {
-                        scene.ref_image = [chosen];
+                        // For non-templates, use single selected asset
+                        const chosen = selectedAssetUrl;
+                        if (!chosen) return;
+                        if (isAnchor || isPlotly) {
+                          scene.background = chosen; 
+                          scene.background_image = chosen;
+                        } else {
+                          scene.ref_image = [chosen];
+                        }
+                        rows[currentSceneIndex] = scene;
+                        setScriptRows(rows);
+                        setSelectedRefImages([chosen]);
+                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       }
-                      rows[currentSceneIndex] = scene;
-                      setScriptRows(rows);
-                      setSelectedRefImages([chosen]);
-                      if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      
                       // For Keep Default with Templates, persist via update-text setting gen_image=false and ref_image
                       if (assetsTab === 'templates') {
                         try {
                           // Build background_image array from selected templates
-                          // For VEO3, only use the first template (single selection enforced)
-                          const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                          const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
-                          const templatesToUse = isVEO3 && selectedTemplateUrls.length > 0 ? [selectedTemplateUrls[0]] : selectedTemplateUrls;
+                          // templatesToUse was already defined above
+                          const refImagesToUse = isAnchor || isPlotly 
+                            ? [scene.background || scene.background_image || ''] 
+                            : (scene.ref_image || []);
                           
-                          const backgroundImageArray = templatesToUse.map((url) => {
+                          const backgroundImageArray = refImagesToUse.filter(Boolean).map((url) => {
                             const trimmedUrl = typeof url === 'string' ? url.trim() : '';
                             if (!trimmedUrl) return null;
                             const templateEntry = templateLookupByUrl.get(trimmedUrl);
@@ -8329,7 +8393,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           await updateSceneGenImageFlag(currentSceneIndex, {
                             genImage: false,
                             descriptionOverride: scene?.description ?? '',
-                            refImagesOverride: [chosen],
+                            refImagesOverride: refImagesToUse.filter(Boolean),
                             backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined,
                             avatarUrl: currentAvatarUrl || undefined
                           });
@@ -8865,11 +8929,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
               </button>
             </div>
             <p className="text-sm text-gray-700 mb-4">
-              Please ensure all scenes below have required data before generating the video.
+              Please ensure all scenes below have required avatar before generating the video.
             </p>
             
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-              <p className="text-sm font-medium text-red-800 mb-2">Missing data in the following scenes:</p>
+              <p className="text-sm font-medium text-red-800 mb-2">Missing avatar in the following scenes:</p>
               <div className="flex flex-wrap gap-2">
                 {missingAvatarScenes.map((sceneNum, idx) => (
                   <span

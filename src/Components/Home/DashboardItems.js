@@ -96,7 +96,7 @@ const DashboardItems = () => {
 		},
 		{
 			id: 3,
-			link: "/profile",
+			link: "/brandguidelines",
 			icon: <FaUserFriends className="text-[#13008B] w-12 h-12" />,
 			label: "Update Brand Guidelines",
 		},

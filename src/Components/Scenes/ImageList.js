@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, Pencil } from 'lucide-react';
+import { ChevronDown, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
 
@@ -31,6 +31,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 	  const [editingImageFrame, setEditingImageFrame] = useState(null); // Store the frame being edited
 	  const [editingSceneNumber, setEditingSceneNumber] = useState(null); // Store scene number for the image being edited
 	  const [editingImageIndex, setEditingImageIndex] = useState(null); // Store image index (0 for Image 1, 1 for Image 2)
+	  const [showRegeneratePopup, setShowRegeneratePopup] = useState(false);
+	  const [regenerateUserQuery, setRegenerateUserQuery] = useState('');
+	  const [isRegenerating, setIsRegenerating] = useState(false);
+	  const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,9 +84,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         gatherFromArray(node?.images?.v1?.images);
         gatherFromArray(node?.images);
         gatherFromArray(node?.image);
-        // Also gather from background_image / avatar_urls style arrays if present
-        gatherFromArray(node?.background_image);
-        gatherFromArray(node?.backgroundImages);
+        // Only gather from avatar_urls (not background_image)
         gatherFromArray(node?.avatar_urls);
         gatherFromArray(node?.avatars);
         const base = node?.base_image || node?.baseImage;
@@ -195,44 +197,59 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   : Array.isArray(primary?.textElements)
                   ? primary.textElements
                   : [];
-              // For VEO3 model, swap refs with background_image URLs from scripts if available
+              // For VEO3 model, swap refs with avatar_urls from scripts if available
+              // Only use avatar_urls, exclude background_image
               const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
               const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
               const sceneNumber = it?.scene_number || idx + 1;
                 let finalRefs = refs;
                 if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
                   const scene = veo3ScriptScenesByNumber[sceneNumber];
-                  const extraRefs = [
-                    ...collectUrls(scene),
-                    ...(Array.isArray(scene?.background_image)
-                      ? scene.background_image.map(
-                          (bg) =>
-                            bg?.imageurl ||
-                            bg?.imageUrl ||
-                            bg?.image_url ||
-                            bg?.url ||
-                            bg?.src ||
-                            bg?.link
-                        )
-                      : []),
-                    ...(Array.isArray(scene?.avatar_urls)
-                      ? scene.avatar_urls.map((av) => {
-                          if (typeof av === 'string') return av;
-                          return (
-                            av?.imageurl ||
-                            av?.imageUrl ||
-                            av?.image_url ||
-                            av?.url ||
-                            av?.src ||
-                            av?.link ||
-                            av?.avatar_url ||
-                            ''
-                          );
-                        })
-                      : [])
-                  ].filter(Boolean);
-                  if (extraRefs.length > 0) {
-                    finalRefs = extraRefs;
+                  
+                  // Get background_image URLs to exclude them
+                  const backgroundImageUrls = new Set();
+                  if (Array.isArray(scene?.background_image)) {
+                    scene.background_image.forEach((bg) => {
+                      if (bg && typeof bg === 'object') {
+                        const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || bg?.src || bg?.link || '';
+                        if (url && typeof url === 'string') backgroundImageUrls.add(url.trim());
+                      } else if (typeof bg === 'string' && bg.trim()) {
+                        backgroundImageUrls.add(bg.trim());
+                      }
+                    });
+                  }
+                  
+                  // Only use avatar_urls (exclude background_image URLs)
+                  const avatarUrls = Array.isArray(scene?.avatar_urls)
+                    ? scene.avatar_urls.map((av) => {
+                        if (typeof av === 'string') return av.trim();
+                        return (
+                          av?.imageurl ||
+                          av?.imageUrl ||
+                          av?.image_url ||
+                          av?.url ||
+                          av?.src ||
+                          av?.link ||
+                          av?.avatar_url ||
+                          ''
+                        );
+                      }).filter(url => url && typeof url === 'string' && url.trim())
+                    : [];
+                  
+                  // Filter out any background_image URLs from collected refs and only keep avatar_urls
+                  const filteredRefs = refs.filter(url => {
+                    const trimmed = typeof url === 'string' ? url.trim() : '';
+                    return trimmed && !backgroundImageUrls.has(trimmed);
+                  });
+                  
+                  // Combine filtered refs with avatar_urls, removing duplicates
+                  const combinedRefs = [...new Set([...filteredRefs, ...avatarUrls])].filter(Boolean);
+                  
+                  if (combinedRefs.length > 0) {
+                    finalRefs = combinedRefs;
+                  } else if (avatarUrls.length > 0) {
+                    // If no filtered refs, use only avatar_urls
+                    finalRefs = avatarUrls;
                   }
                 }
                 
@@ -337,7 +354,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           pushRow(sc?.scene_number ?? (j + 1), sc?.scene_title || sc?.title, refs, meta);
         });
       }
-      // Add any remaining VEO3 script scenes (with background_image/avatar_urls) that don't have image arrays yet
+      // Add any remaining VEO3 script scenes (with avatar_urls) that don't have image arrays yet
+      // Only use avatar_urls, exclude background_image
       if (veo3ScriptScenesByNumber && typeof veo3ScriptScenesByNumber === 'object') {
         Object.entries(veo3ScriptScenesByNumber).forEach(([key, scene]) => {
           if (!scene || typeof scene !== 'object') return;
@@ -348,35 +366,45 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             scene?.scene ||
             (Number.isFinite(Number(key)) ? Number(key) : undefined);
           if (num == null || usedSceneNumbers.has(num)) return;
-          const refs = [
-            ...collectUrls(scene),
-            ...(Array.isArray(scene?.background_image)
-              ? scene.background_image.map(
-                  (bg) =>
-                    bg?.imageurl ||
-                    bg?.imageUrl ||
-                    bg?.image_url ||
-                    bg?.url ||
-                    bg?.src ||
-                    bg?.link
-                )
-              : []),
-            ...(Array.isArray(scene?.avatar_urls)
-              ? scene.avatar_urls.map((av) => {
-                  if (typeof av === 'string') return av;
-                  return (
-                    av?.imageurl ||
-                    av?.imageUrl ||
-                    av?.image_url ||
-                    av?.url ||
-                    av?.src ||
-                    av?.link ||
-                    av?.avatar_url ||
-                    ''
-                  );
-                })
-              : [])
-          ].filter(Boolean);
+          
+          // Get background_image URLs to exclude them
+          const backgroundImageUrls = new Set();
+          if (Array.isArray(scene?.background_image)) {
+            scene.background_image.forEach((bg) => {
+              if (bg && typeof bg === 'object') {
+                const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || bg?.src || bg?.link || '';
+                if (url && typeof url === 'string') backgroundImageUrls.add(url.trim());
+              } else if (typeof bg === 'string' && bg.trim()) {
+                backgroundImageUrls.add(bg.trim());
+              }
+            });
+          }
+          
+          // Collect URLs and filter out background_image
+          const collectedUrls = collectUrls(scene).filter(url => {
+            const trimmed = typeof url === 'string' ? url.trim() : '';
+            return trimmed && !backgroundImageUrls.has(trimmed);
+          });
+          
+          // Get avatar_urls
+          const avatarUrls = Array.isArray(scene?.avatar_urls)
+            ? scene.avatar_urls.map((av) => {
+                if (typeof av === 'string') return av.trim();
+                return (
+                  av?.imageurl ||
+                  av?.imageUrl ||
+                  av?.image_url ||
+                  av?.url ||
+                  av?.src ||
+                  av?.link ||
+                  av?.avatar_url ||
+                  ''
+                );
+              }).filter(url => url && typeof url === 'string' && url.trim())
+            : [];
+          
+          // Combine, removing duplicates and background_image URLs
+          const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
           const meta = {
             description: scene?.desc || scene?.description || scene?.scene_description || '',
             narration: scene?.narration || scene?.voiceover || '',
@@ -436,12 +464,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         let sdata; try { sdata = JSON.parse(stext); } catch (_) { sdata = stext; }
         if (!sresp.ok) throw new Error(`user-session/data failed: ${sresp.status} ${stext}`);
         
-        // For VEO3: Check scripts data for background_image / avatar_urls (for scenes that may not yet have image arrays)
+        // For VEO3: Check scripts data for avatar_urls (for scenes that may not yet have image arrays)
         const sessionData = sdata?.session_data || sdata?.session || {};
         const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
         const currentScript = scripts[0] || null;
         const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
-        // Index VEO3 script scenes by scene number so we can use background_image/avatar_urls for scenes missing image arrays
+        // Index VEO3 script scenes by scene number so we can use avatar_urls for scenes missing image arrays
         const veo3ScriptScenesByNumber = {};
         airesponse.forEach((scene, index) => {
           if (!scene || typeof scene !== 'object') return;
@@ -521,7 +549,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 });
                 const st = await sr.text();
                 let sd; try { sd = JSON.parse(st); } catch(_) { sd = {}; }
-                    // Extract VEO3 script scenes (background_image / avatar_urls) from scripts
+                    // Extract VEO3 script scenes (avatar_urls) from scripts
                     const sessionData = sd?.session_data || sd?.session || {};
                     const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
                     const currentScript = scripts[0] || null;
@@ -623,13 +651,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       let sdata; try { sdata = JSON.parse(stext); } catch (_) { sdata = stext; }
       if (!sresp.ok) throw new Error(`user-session/data failed: ${sresp.status} ${stext}`);
       
-      // For VEO3: Check scripts data for background_image / avatar_urls (for scenes that may not yet have image arrays)
+      // For VEO3: Check scripts data for avatar_urls (for scenes that may not yet have image arrays)
       const sessionData = sdata?.session_data || sdata?.session || {};
       const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
       const currentScript = scripts[0] || null;
       const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
       
-      // Index VEO3 script scenes by scene number so we can use background_image/avatar_urls for scenes missing image arrays
+      // Index VEO3 script scenes by scene number so we can use avatar_urls for scenes missing image arrays
       const veo3ScriptScenesByNumber = {};
       airesponse.forEach((scene, index) => {
         if (!scene || typeof scene !== 'object') return;
@@ -693,8 +721,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           gatherFromArray(node?.images?.v1?.images);
           gatherFromArray(node?.images);
           gatherFromArray(node?.image);
-          gatherFromArray(node?.background_image);
-          gatherFromArray(node?.backgroundImages);
+          // Only gather from avatar_urls (not background_image)
           gatherFromArray(node?.avatar_urls);
           gatherFromArray(node?.avatars);
           const base = node?.base_image || node?.baseImage;
@@ -778,7 +805,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           }
         } else if (Array.isArray(imagesRoot)) {
           imagesRoot.forEach((it, idx) => {
-            // For VEO3: Use background_image/avatar_urls from scripts if available
+            // For VEO3: Use avatar_urls from scripts if available
+            // Only use avatar_urls, exclude background_image
             const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
             const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
             const sceneNumber = it?.scene_number || idx + 1;
@@ -786,37 +814,51 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             let refs = collectUrls(it);
             if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
               const scene = veo3ScriptScenesByNumber[sceneNumber];
-              const extraRefs = [
-                ...collectUrls(scene),
-                ...(Array.isArray(scene?.background_image)
-                  ? scene.background_image.map(
-                      (bg) =>
-                        bg?.imageurl ||
-                        bg?.imageUrl ||
-                        bg?.image_url ||
-                        bg?.url ||
-                        bg?.src ||
-                        bg?.link
-                    )
-                  : []),
-                ...(Array.isArray(scene?.avatar_urls)
-                  ? scene.avatar_urls.map((av) => {
-                      if (typeof av === 'string') return av;
-                      return (
-                        av?.imageurl ||
-                        av?.imageUrl ||
-                        av?.image_url ||
-                        av?.url ||
-                        av?.src ||
-                        av?.link ||
-                        av?.avatar_url ||
-                        ''
-                      );
-                    })
-                  : [])
-              ].filter(Boolean);
-              if (extraRefs.length > 0) {
-                refs = extraRefs;
+              
+              // Get background_image URLs to exclude them
+              const backgroundImageUrls = new Set();
+              if (Array.isArray(scene?.background_image)) {
+                scene.background_image.forEach((bg) => {
+                  if (bg && typeof bg === 'object') {
+                    const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || bg?.src || bg?.link || '';
+                    if (url && typeof url === 'string') backgroundImageUrls.add(url.trim());
+                  } else if (typeof bg === 'string' && bg.trim()) {
+                    backgroundImageUrls.add(bg.trim());
+                  }
+                });
+              }
+              
+              // Filter out background_image URLs from collected refs
+              const filteredRefs = refs.filter(url => {
+                const trimmed = typeof url === 'string' ? url.trim() : '';
+                return trimmed && !backgroundImageUrls.has(trimmed);
+              });
+              
+              // Get avatar_urls
+              const avatarUrls = Array.isArray(scene?.avatar_urls)
+                ? scene.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim())
+                : [];
+              
+              // Combine filtered refs with avatar_urls, removing duplicates
+              const combinedRefs = [...new Set([...filteredRefs, ...avatarUrls])].filter(Boolean);
+              
+              if (combinedRefs.length > 0) {
+                refs = combinedRefs;
+              } else if (avatarUrls.length > 0) {
+                // If no filtered refs, use only avatar_urls
+                refs = avatarUrls;
               }
             }
             
@@ -848,7 +890,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           });
         }
 
-        // Add any remaining VEO3 script scenes (with background_image/avatar_urls) that don't have image arrays yet
+        // Add any remaining VEO3 script scenes (with avatar_urls) that don't have image arrays yet
+        // Only use avatar_urls, exclude background_image
         if (veo3ScriptScenesByNumber && typeof veo3ScriptScenesByNumber === 'object') {
           Object.entries(veo3ScriptScenesByNumber).forEach(([key, scene]) => {
             if (!scene || typeof scene !== 'object') return;
@@ -859,35 +902,45 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               scene?.scene ||
               (Number.isFinite(Number(key)) ? Number(key) : undefined);
             if (num == null || usedSceneNumbers.has(num)) return;
-            const refs = [
-              ...collectUrls(scene),
-              ...(Array.isArray(scene?.background_image)
-                ? scene.background_image.map(
-                    (bg) =>
-                      bg?.imageurl ||
-                      bg?.imageUrl ||
-                      bg?.image_url ||
-                      bg?.url ||
-                      bg?.src ||
-                      bg?.link
-                  )
-                : []),
-              ...(Array.isArray(scene?.avatar_urls)
-                ? scene.avatar_urls.map((av) => {
-                    if (typeof av === 'string') return av;
-                    return (
-                      av?.imageurl ||
-                      av?.imageUrl ||
-                      av?.image_url ||
-                      av?.url ||
-                      av?.src ||
-                      av?.link ||
-                      av?.avatar_url ||
-                      ''
-                    );
-                  })
-                : [])
-            ].filter(Boolean);
+            
+            // Get background_image URLs to exclude them
+            const backgroundImageUrls = new Set();
+            if (Array.isArray(scene?.background_image)) {
+              scene.background_image.forEach((bg) => {
+                if (bg && typeof bg === 'object') {
+                  const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || bg?.src || bg?.link || '';
+                  if (url && typeof url === 'string') backgroundImageUrls.add(url.trim());
+                } else if (typeof bg === 'string' && bg.trim()) {
+                  backgroundImageUrls.add(bg.trim());
+                }
+              });
+            }
+            
+            // Collect URLs and filter out background_image
+            const collectedUrls = collectUrls(scene).filter(url => {
+              const trimmed = typeof url === 'string' ? url.trim() : '';
+              return trimmed && !backgroundImageUrls.has(trimmed);
+            });
+            
+            // Get avatar_urls
+            const avatarUrls = Array.isArray(scene?.avatar_urls)
+              ? scene.avatar_urls.map((av) => {
+                  if (typeof av === 'string') return av.trim();
+                  return (
+                    av?.imageurl ||
+                    av?.imageUrl ||
+                    av?.image_url ||
+                    av?.url ||
+                    av?.src ||
+                    av?.link ||
+                    av?.avatar_url ||
+                    ''
+                  );
+                }).filter(url => url && typeof url === 'string' && url.trim())
+              : [];
+            
+            // Combine, removing duplicates and background_image URLs
+            const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
             const meta = {
               description: scene?.description || scene?.scene_description || '',
               narration: scene?.narration || '',
@@ -939,8 +992,125 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
   }, []);
 
+  // Handle regenerate image with popup
+  const handleRegenerateClick = (sceneNumber) => {
+    setRegeneratingSceneNumber(sceneNumber);
+    setRegenerateUserQuery('');
+    setError(''); // Clear any previous errors
+    setShowRegeneratePopup(true);
+  };
+
+  // Get aspect ratio from script data
+  const getAspectRatio = React.useCallback(async () => {
+    try {
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      if (!session_id || !user_id) return '16:9';
+      
+      const sresp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id, session_id })
+      });
+      const stext = await sresp.text();
+      let sdata;
+      try {
+        sdata = JSON.parse(stext);
+      } catch (_) {
+        sdata = stext;
+      }
+      
+      const sessionData = sdata?.session_data || sdata?.session || {};
+      const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+      const currentScript = scripts[0] || null;
+      
+      // Get aspect ratio from script
+      const aspectRatio = currentScript?.aspect_ratio || 
+                         currentScript?.aspectRatio || 
+                         sessionData?.aspect_ratio || 
+                         sessionData?.aspectRatio || 
+                         '16:9';
+      
+      return aspectRatio;
+    } catch (_) {
+      return '16:9';
+    }
+  }, []);
+
+  // Handle regenerate API call
+  const handleGenerateImage = React.useCallback(async () => {
+    try {
+      setIsRegenerating(true);
+      setError('');
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      
+      if (!session_id || !user_id) {
+        setError('Missing session or user');
+        setIsRegenerating(false);
+        return;
+      }
+
+      if (!regeneratingSceneNumber) {
+        setError('Missing scene number');
+        setIsRegenerating(false);
+        return;
+      }
+
+      const aspectRatio = await getAspectRatio();
+
+      // Call regenerate API endpoint
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'regenerate',
+          aspect_ratio: aspectRatio,
+          frames_to_regenerate: ['opening', 'closing'],
+          model: 'SORA',
+          save_as_new_version: false,
+          scene_number: regeneratingSceneNumber,
+          session_id: session_id,
+          user_id: user_id,
+          user_query: regenerateUserQuery.trim()
+        })
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Regenerate failed: ${response.status} ${text}`);
+      }
+
+      // Close popup and refresh the image list after regeneration
+      setShowRegeneratePopup(false);
+      setRegenerateUserQuery('');
+      setRegeneratingSceneNumber(null);
+      await refreshLoad();
+    } catch (e) {
+      setError(e?.message || 'Failed to regenerate image');
+    } finally {
+      setIsRegenerating(false);
+    }
+  }, [regenerateUserQuery, regeneratingSceneNumber, refreshLoad]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative">
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+          animation: spin 1.5s linear infinite;
+        }
+      `}</style>
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-[#13008B]">Scenes • Images</h3>
         <div className="flex items-center gap-2">
@@ -1030,32 +1200,51 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       )}
 
       <div className="p-4 space-y-4 overflow-y-auto overflow-x-hidden">
+      
         {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)}
 
         {/* Only show selected image details when not polling */}
         {selected?.imageUrl && (!isPolling || rows.length > 0) && (
           <div className="bg-white border rounded-xl p-4 h-[600px] overflow-y-auto scrollbar-hide">
-            {/* Top Section: Two Images Side by Side */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              {/* Image 1 */}
-              <div
-                className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
-                style={{
-                  aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
-                    ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
-                    : '16 / 9',
-                  minHeight: '200px'
-                }}
-              >
-                  {(() => {
-                    const img1 = (Array.isArray(selected.images) && selected.images[0]) ? selected.images[0] : selected.imageUrl;
-                    if (!img1) {
-                      return (
-                        <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-                          No Image
-                        </div>
-                      );
-                    }
+
+          <div className='flex justify-end items-center mb-2'>
+          {selected?.isEditable && (
+            <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const sceneNum = selected?.sceneNumber || selected?.scene_number || 1;
+                              handleRegenerateClick(sceneNum);
+                            }}
+                            className=" bg-[#13008B] hover:bg-blue-800 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 "
+                            title="Regenerate Image"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                            <span className="text-sm font-medium">Regenerate</span>
+                          </button> 
+          )}
+          </div>
+            {/* Top Section: Images - Show only avatar if second image is missing */}
+            {(() => {
+              const img1 = (Array.isArray(selected.images) && selected.images[0]) ? selected.images[0] : selected.imageUrl;
+              const img2 = Array.isArray(selected.images) ? selected.images[1] : '';
+              const hasSecondImage = img2 && img2.trim();
+              const gridCols = hasSecondImage ? 'grid-cols-2' : 'grid-cols-1';
+              
+              return (
+                <div className={`grid ${gridCols} gap-4 mb-4`}>
+                  {/* Image 1 */}
+                  {img1 && (
+                    <div
+                      className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
+                      style={{
+                        aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
+                          ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
+                          : '16 / 9',
+                        minHeight: '200px'
+                      }}
+                    >
+                      {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
                     // Find the frame that matches img1 URL
                     const frameForImg1 = frames.find((frame) => {
@@ -1085,6 +1274,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     ) : [];
                     return (
                       <>
+                        {/* Regenerate button - top right above image */}
+                        {selected?.isEditable && (
+                         <></>
+                        )}
                         <img
                           src={img1}
                           alt={`scene-${selected.sceneNumber}-1`}
@@ -1188,28 +1381,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         )}
                       </>
                     );
-                  })()}
-              </div>
+                      })()}
+                    </div>
+                  )}
 
-              {/* Image 2 */}
-              <div
-                className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
-                style={{
-                  aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
-                    ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
-                    : '16 / 9',
-                  minHeight: '200px'
-                }}
-              >
-                  {(() => {
-                    const img2 = Array.isArray(selected.images) ? selected.images[1] : '';
-                    if (!img2) {
-                      return (
-                        <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-                          No Image
-                        </div>
-                      );
-                    }
+                  {/* Image 2 - Only show if it exists */}
+                  {hasSecondImage && (
+                    <div
+                      className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
+                      style={{
+                        aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
+                          ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
+                          : '16 / 9',
+                        minHeight: '200px'
+                      }}
+                    >
+                      {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
                     // Find the frame that matches img2 URL
                     const frameForImg2 = frames.find((frame) => {
@@ -1239,6 +1426,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     ) : [];
                     return (
                       <>
+                        {/* Regenerate button - top right above image */}
+                        {selected?.isEditable && (
+                         <></>
+                        )}
                         <img
                           src={img2}
                           alt={`scene-${selected.sceneNumber}-2`}
@@ -1342,9 +1533,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         )}
                       </>
                     );
-                  })()}
-              </div>
-            </div>
+                      })()}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Bottom Section: Two Columns - Left: Scene Title/Text/Size/Additional Info, Right: Description/Narration */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1493,31 +1687,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       <div
                         className="w-full bg-black flex items-center justify-center aspect-[16/9]"
                       >
-                        {first ? (
+                        {first && (
                           <img src={first} alt={`scene-${r.scene_number}-1`} className="max-h-full max-w-full object-contain" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
                         )}
                       </div>
                     ) : (
-                      <div
-                        className="grid grid-cols-2 gap-0 w-full bg-black aspect-[16/9]"
-                      >
-                        <div className="w-full h-full bg-black flex items-center justify-center">
-                          {first ? (
-                            <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
-                          )}
-                        </div>
-                        <div className="w-full h-full bg-black flex items-center justify-center">
-                          {second ? (
-                            <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">No Image</div>
-                          )}
-                        </div>
-                      </div>
+                      (() => {
+                        const hasSecond = second && second.trim();
+                        const gridCols = hasSecond ? 'grid-cols-2' : 'grid-cols-1';
+                        return (
+                          <div className={`grid ${gridCols} gap-0 w-full bg-black aspect-[16/9]`}>
+                            {first && (
+                              <div className="w-full h-full bg-black flex items-center justify-center">
+                                <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" />
+                              </div>
+                            )}
+                            {hasSecond && (
+                              <div className="w-full h-full bg-black flex items-center justify-center">
+                                <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
                   <div className="mt-2 text-sm font-semibold">Scene {r.scene_number} • {r.scene_title || 'Untitled'}</div>
@@ -1556,6 +1748,119 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           sceneNumber={editingSceneNumber}
           imageIndex={editingImageIndex}
         />
+      )}
+
+      {/* Regenerate Image Popup */}
+      {showRegeneratePopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative">
+            {/* Close Button - Circle at top right */}
+            <button
+              onClick={() => {
+                if (!isRegenerating) {
+                  setShowRegeneratePopup(false);
+                  setRegenerateUserQuery('');
+                  setRegeneratingSceneNumber(null);
+                }
+              }}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Close"
+              disabled={isRegenerating}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+
+            {/* Popup Content */}
+            <div className="p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Regenerate Image</h3>
+              
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Describe how you want the image to be regenerated
+                </label>
+                <textarea
+                  value={regenerateUserQuery}
+                  onChange={(e) => setRegenerateUserQuery(e.target.value)}
+                  placeholder="e.g., Make it more cinematic with dramatic sunset lighting..."
+                  className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
+                  disabled={isRegenerating}
+                />
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                  {error}
+                </div>
+              )}
+
+              {/* Loading Overlay */}
+              {isRegenerating && (
+                <div className="absolute inset-0 bg-white bg-opacity-90 rounded-lg flex items-center justify-center z-20">
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="relative w-16 h-16">
+                      <svg className="w-16 h-16" viewBox="0 0 100 100">
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          stroke="#E5E7EB"
+                          strokeWidth="8"
+                          fill="none"
+                        />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          stroke="#13008B"
+                          strokeWidth="8"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeDasharray="283"
+                          strokeDashoffset="70"
+                          className="animate-spin"
+                          style={{
+                            transformOrigin: '50% 50%',
+                            animation: 'spin 1.5s linear infinite'
+                          }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+                      </div>
+                    </div>
+                    <p className="text-lg font-semibold text-[#13008B]">Regenerating Image...</p>
+                    <p className="text-sm text-gray-600">Please wait while we create your new image...</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Generate Button - Bottom Right */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleGenerateImage}
+                  disabled={isRegenerating || !regenerateUserQuery.trim()}
+                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isRegenerating ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Generating...
+                    </>
+                  ) : (
+                    'Generate Image'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

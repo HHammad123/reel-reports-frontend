@@ -117,6 +117,26 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [selectedShape, setSelectedShape] = useState(null)
   const [isDraggingShape, setIsDraggingShape] = useState(false)
   const [isResizingShape, setIsResizingShape] = useState(false)
+  const [isToolbarOpen, setIsToolbarOpen] = useState(false)
+  const [hoveredTextLayerId, setHoveredTextLayerId] = useState(null)
+  const [hoverToolbarPosition, setHoverToolbarPosition] = useState({ x: 0, y: 0 })
+  const [isHoveringToolbar, setIsHoveringToolbar] = useState(false)
+  const hoverTimeoutRef = useRef(null)
+  const isHoveringToolbarRef = useRef(false)
+
+  // Sync ref with state
+  useEffect(() => {
+    isHoveringToolbarRef.current = isHoveringToolbar
+  }, [isHoveringToolbar])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Image editing state
   const [imageFilters, setImageFilters] = useState({
@@ -705,7 +725,10 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         textAlign: 'left',
         textShadow: 'none',
         textGlow: 'none',
-        wordArt: 'none'
+        wordArt: 'none',
+        backgroundColor: '',
+        fontStyle: 'normal',
+        textDecoration: 'none'
       }
       
       const newLayers = [...textLayers, newLayer]
@@ -727,6 +750,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const handleLayerClick = (layer) => {
     setSelectedLayer(layer)
     setSelectedShape(null)
+    // Don't auto-open text panel on click - only show hover toolbar
+    // User can click "More Options" in hover toolbar to open main panel
   }
 
   const handleStyleChange = (property, value) => {
@@ -1868,7 +1893,6 @@ const handleTemplateJsonLoad = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="relative max-w-9xl h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col">
         <div className="flex flex-col h-full overflow-hidden">
-    <div className="container">
       {/* Header */}
       <div className="header">
         <div className="flex items-center w-full justify-between">
@@ -1879,7 +1903,14 @@ const handleTemplateJsonLoad = () => {
             
           </div>
           <div className="header-right flex items-center gap-4">
-          
+            <button
+              onClick={() => setIsToolbarOpen(!isToolbarOpen)}
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-all border border-gray-300 flex items-center gap-2"
+              title="Open Tool"
+            >
+              <Icon name="edit" size={16} />
+              Open Tool
+            </button>
             <button
               onClick={handleSaveChanges}
               disabled={isSaving}
@@ -1914,93 +1945,726 @@ const handleTemplateJsonLoad = () => {
         </div>
       </div>
 
+      {/* Top Toolbar */}
+      {isToolbarOpen && imageLoaded && (
+        <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-wrap">
+          {/* Undo/Redo Controls */}
+          <div className="flex gap-1">
+            <button 
+              className={`w-8 h-8 flex items-center justify-center rounded-md transition-all ${historyIndex < 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-purple-600 hover:text-white text-gray-600'}`}
+              onClick={undo}
+              disabled={historyIndex < 0}
+              title="Undo (Ctrl+Z)"
+            >
+              <Icon name="undo" size={16} />
+            </button>
+            <button 
+              className={`w-8 h-8 flex items-center justify-center rounded-md transition-all ${historyIndex >= history.length - 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-purple-600 hover:text-white text-gray-600'}`}
+              onClick={redo}
+              disabled={historyIndex >= history.length - 1}
+              title="Redo (Ctrl+Y)"
+            >
+              <Icon name="redo" size={16} />
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
+          {/* Text Tools Panel */}
+          <button
+            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'text' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+            onClick={() => togglePanel('text')}
+            title="Text Tools"
+          >
+            <Icon name="edit" size={18} />
+          </button>
+
+          {/* Shapes Panel */}
+          <button
+            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'shapes' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+            onClick={() => togglePanel('shapes')}
+            title="Shapes"
+          >
+            <Icon name="shape" size={18} />
+          </button>
+
+          {/* Overlay Images Panel */}
+          <button
+            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'overlay' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+            onClick={() => togglePanel('overlay')}
+            title="Overlay Images"
+          >
+            <Icon name="image" size={18} />
+          </button>
+
+          {/* Image Editor Panel */}
+          <button
+            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'image-editor' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+            onClick={() => togglePanel('image-editor')}
+            title="Image Editor"
+          >
+            <Icon name="crop" size={18} />
+          </button>
+
+          {/* Export & Actions Panel */}
+          <button
+            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'export' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+            onClick={() => togglePanel('export')}
+            title="Export"
+          >
+            <Icon name="save" size={18} />
+          </button>
+        </div>
+      )}
+
       {/* Main App Container */}
-      <div className="app-container">
+      <div className="flex flex-1 overflow-hidden relative">
         {/* Main Workspace */}
-        <div className="main-workspace">
-          {/* Right Sidebar (Main Navigation for Flyouts) */}
-          <div className="sidebar">
-            <div className="sidebar-content">
-              {/* Undo/Redo Controls */}
-              <div className="control-panel undo-redo-panel">
-                <div className="undo-redo-buttons">
-                  <button 
-                    className={`btn btn-icon ${historyIndex < 0 ? 'disabled' : ''}`}
-                    onClick={undo}
-                    disabled={historyIndex < 0}
-                    title="Undo (Ctrl+Z)"
-                  >
-                    <Icon name="undo" size={16} />
-                  </button>
-                  <button 
-                    className={`btn btn-icon ${historyIndex >= history.length - 1 ? 'disabled' : ''}`}
-                    onClick={redo}
-                    disabled={historyIndex >= history.length - 1}
-                    title="Redo (Ctrl+Y)"
-                  >
-                    <Icon name="redo" size={16} />
-                  </button>
-                </div>
-              </div>
+        <div className="flex flex-1 overflow-hidden">
 
-              {/* Import Panel - Disabled, images auto-load from frameData */}
+          {/* Editor Section */}
+          <div className="flex-1 overflow-auto flex flex-col overflow-y-auto">
+            <div className="flex-1 bg-white m-4 rounded-lg p-6 shadow-lg relative overflow-hidden flex items-center justify-center">
+              {imageLoaded ? (
+                <div className="relative inline-block border-2 border-gray-200 bg-gray-50 cursor-crosshair rounded-md overflow-hidden">
+                  <img
+                    ref={imageRef}
+                    src={imageUrl}
+                    alt="Loaded"
+                    style={{ 
+                      maxWidth: '100%', 
+                      height: 'auto',
+                      filter: applyFiltersToImage()
+                    }}
+                    onLoad={() => setImageLoaded(true)}
+                  />
+                  {isCropping && (
+                    <div
+                      className="absolute border-2 border-dashed border-purple-600 bg-purple-100 cursor-move z-[1001]"
+                      style={{ 
+                        left: cropArea.x, 
+                        top: cropArea.y, 
+                        width: cropArea.width, 
+                        height: cropArea.height 
+                      }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const x = e.clientX - rect.left
+                        const y = e.clientY - rect.top
+                        const edge = 8
+                        let mode = 'move'
+                        if (y < edge && x < edge) mode = 'nw'
+                        else if (y < edge && x > rect.width - edge) mode = 'ne'
+                        else if (y > rect.height - edge && x < edge) mode = 'sw'
+                        else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
+                        else if (y < edge) mode = 'n'
+                        else if (y > rect.height - edge) mode = 's'
+                        else if (x < edge) mode = 'w'
+                        else if (x > rect.width - edge) mode = 'e'
+                        setCropDragMode(mode)
+                        setDragStart({ x: e.clientX, y: e.clientY })
+                        setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                      }}
+                    />
+                  )}
+                  <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+                    {shapeLayers.map((shape) => {
+                      const { scaleX, scaleY } = getImageScale()
+                      const widthPx = Math.max(shape.width * scaleX, 1)
+                      const baseHeight = shape.type === 'line' ? Math.max(shape.borderWidth || 1, shape.height || 1) : shape.height
+                      const heightPx = Math.max(baseHeight * scaleY, 1)
 
-              {/* Text Tools Panel */}
-              <div className="control-panel">
-                <div className={`panel-header ${activePanel === 'text' ? 'active' : ''}`} onClick={() => togglePanel('text')}>
-                  <div className="panel-icon-only">
-                    <Icon name="edit" />
+                      const wrapperStyle = {
+                        position: 'absolute',
+                        left: shape.x * scaleX,
+                        top: shape.y * scaleY,
+                        width: widthPx,
+                        height: heightPx,
+                        cursor: 'move',
+                        border: selectedShape?.id === shape.id ? '2px solid #7c3aed' : '2px solid transparent',
+                        boxSizing: 'border-box',
+                        transform: `rotate(${shape.rotation || 0}deg)`,
+                        transformOrigin: 'center center',
+                        opacity: shape.opacity ?? 1,
+                        zIndex: 50,
+                        pointerEvents: 'auto'
+                      }
+
+                      const innerStyle = {
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: 'none'
+                      }
+
+                      if (shape.type === 'rectangle') {
+                        innerStyle.backgroundColor = shape.fill
+                        innerStyle.border = `${shape.borderWidth || 0}px ${shape.borderStyle || 'solid'} ${shape.borderColor || 'transparent'}`
+                        innerStyle.borderRadius = `${shape.borderRadius || 0}px`
+                      } else if (shape.type === 'circle') {
+                        innerStyle.backgroundColor = shape.fill
+                        innerStyle.border = `${shape.borderWidth || 0}px ${shape.borderStyle || 'solid'} ${shape.borderColor || 'transparent'}`
+                        innerStyle.borderRadius = '50%'
+                      } else if (shape.type === 'triangle') {
+                        innerStyle.backgroundColor = shape.fill
+                        innerStyle.border = 'none'
+                        innerStyle.clipPath = 'polygon(50% 0%, 0% 100%, 100% 100%)'
+                        innerStyle.backgroundImage = `linear-gradient(${shape.fill}, ${shape.fill})`
+                        if (shape.borderWidth) {
+                          innerStyle.boxShadow = `0 0 0 ${shape.borderWidth}px ${shape.borderColor || 'transparent'}`
+                        }
+                      } else if (shape.type === 'line') {
+                        wrapperStyle.height = Math.max((shape.borderWidth || baseHeight) * scaleY, 1)
+                        innerStyle.height = '100%'
+                        innerStyle.backgroundColor = shape.borderColor || shape.fill || '#000000'
+                        innerStyle.border = 'none'
+                      }
+
+                      return (
+                        <div
+                          key={shape.id}
+                          className={`${selectedShape?.id === shape.id ? 'selected' : ''}`}
+                          style={wrapperStyle}
+                          onClick={() => handleShapeClick(shape)}
+                          onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'drag')}
+                        >
+                          <div style={innerStyle} />
+                          {selectedShape?.id === shape.id && (
+                            <div
+                              className="absolute -bottom-1 -right-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize z-10 shadow-sm"
+                              onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'resize')}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                    {textLayers.map((layer) => {
+                      return (
+                        <div
+                          key={layer.id}
+                          className={`absolute cursor-move p-1 ${selectedLayer?.id === layer.id ? 'border-2 border-purple-600 bg-purple-100' : 'border-2 border-transparent'}`}
+                          style={{
+                            left: layer.x * getImageScale().scaleX,
+                            top: layer.y * getImageScale().scaleY,
+                            width: layer.width * getImageScale().scaleX,
+                            height: layer.height * getImageScale().scaleY,
+                            pointerEvents: 'auto'
+                          }}
+                          onClick={() => handleLayerClick(layer)}
+                          onMouseDown={(e) => handleMouseDown(e, layer.id, 'drag')}
+                          onMouseEnter={(e) => {
+                            // Clear any pending hide timeout
+                            if (hoverTimeoutRef.current) {
+                              clearTimeout(hoverTimeoutRef.current)
+                              hoverTimeoutRef.current = null
+                            }
+                            setHoveredTextLayerId(layer.id)
+                            setIsHoveringToolbar(false)
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            const editorSection = e.currentTarget.closest('.editor-section')
+                            if (editorSection) {
+                              const containerRect = editorSection.getBoundingClientRect()
+                              setHoverToolbarPosition({
+                                x: rect.left - containerRect.left + rect.width / 2,
+                                y: rect.top - containerRect.top - 10
+                              })
+                            } else {
+                              // Fallback positioning
+                              setHoverToolbarPosition({
+                                x: layer.x * getImageScale().scaleX + (layer.width * getImageScale().scaleX) / 2,
+                                y: layer.y * getImageScale().scaleY - 10
+                              })
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            // Only hide if not hovering over toolbar
+                            if (!isHoveringToolbarRef.current) {
+                              hoverTimeoutRef.current = setTimeout(() => {
+                                // Double check that we're still not hovering
+                                if (!isHoveringToolbarRef.current) {
+                                  setHoveredTextLayerId(null)
+                                }
+                                hoverTimeoutRef.current = null
+                              }, 300) // 300ms delay before hiding
+                            }
+                          }}
+                        >
+                          {layer.overlayImage?.enabled && layer.overlayImage?.imageUrl ? (
+                            <img
+                              src={layer.overlayImage.imageUrl}
+                              alt="Overlay"
+                              className="w-full h-full pointer-events-none"
+                              style={{
+                                objectFit: layer.overlayImage.fitMode || 'contain',
+                                objectPosition: 'center'
+                              }}
+                              onError={(e) => {
+                                console.error('Failed to load overlay image:', layer.overlayImage.imageUrl)
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                fontSize: layer.fontSize,
+                                fontFamily: layer.fontFamily,
+                                color: layer.color,
+                                fontWeight: layer.fontWeight,
+                                fontStyle: layer.fontStyle || 'normal',
+                                textDecoration: layer.textDecoration || 'none',
+                                textAlign: layer.textAlign,
+                                backgroundColor: layer.backgroundColor || 'transparent',
+                                padding: layer.backgroundColor ? '2px 4px' : '0',
+                                borderRadius: layer.backgroundColor ? '2px' : '0',
+                                ...getTextEffectStyles(layer),
+                                ...getWordArtStyles(layer)
+                              }}
+                            >
+                              {layer.text}
+                            </div>
+                          )}
+                          {selectedLayer?.id === layer.id && (
+                            <div
+                              className="absolute -bottom-1 -right-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize z-10 shadow-sm"
+                              onMouseDown={(e) => handleMouseDown(e, layer.id, 'resize')}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
-                </div>
-              </div>
-
-              {/* Shapes Panel */}
-              <div className="control-panel">
-                <div className={`panel-header ${activePanel === 'shapes' ? 'active' : ''}`} onClick={() => togglePanel('shapes')}>
-                  <div className="panel-icon-only">
-                    <Icon name="shape" />
-                  </div>
-                </div>
-              </div>
-
-
-              {/* Overlay Images Panel */}
-              <div className="control-panel">
-                <div className={`panel-header ${activePanel === 'overlay' ? 'active' : ''}`} onClick={() => togglePanel('overlay')}>
-                  <div className="panel-icon-only">
-                    <Icon name="image" />
+                  
+                  {/* Overlay Image */}
+                  {overlayVisible && overlayImage && (
+                    <div
+                      className="absolute z-[1000] cursor-move"
+                      style={{
+                        left: overlayPosition.x,
+                        top: overlayPosition.y,
+                        transform: `scale(${overlayScale})`,
+                        transformOrigin: 'top left'
+                      }}
+                      onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
+                    >
+                      <img
+                        src={overlayImageUrl}
+                        alt="Overlay"
+                        draggable="false"
+                        style={{
+                          width: overlayImage.width,
+                          height: overlayImage.height,
+                          display: 'block',
+                        }}
+                      />
+                      <div
+                        className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
+                        onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
+                      />
+                      {isCropping && croppingTarget === 'overlay' && (
+                        <div
+                          className="absolute border-2 border-dashed border-purple-600 bg-purple-100"
+                          style={{ 
+                            left: cropArea.x - overlayPosition.x, 
+                            top: cropArea.y - overlayPosition.y, 
+                            width: cropArea.width, 
+                            height: cropArea.height 
+                          }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation()
+                            const rect = e.currentTarget.getBoundingClientRect()
+                            const x = e.clientX - rect.left
+                            const y = e.clientY - rect.top
+                            const edge = 8
+                            let mode = 'move'
+                            if (y < edge && x < edge) mode = 'nw'
+                            else if (y < edge && x > rect.width - edge) mode = 'ne'
+                            else if (y > rect.height - edge && x < edge) mode = 'sw'
+                            else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
+                            else if (y < edge) mode = 'n'
+                            else if (y > rect.height - edge) mode = 's'
+                            else if (x < edge) mode = 'w'
+                            else if (x > rect.width - edge) mode = 'e'
+                            setCropDragMode(mode)
+                            setDragStart({ x: e.clientX, y: e.clientY })
+                            setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                          }}
+                        />
+                      )}
                     </div>
-                </div>
-              </div>
+                  )}
 
-              {/* Image Editor Panel */}
-              <div className="control-panel">
-                <div className={`panel-header ${activePanel === 'image-editor' ? 'active' : ''}`} onClick={() => togglePanel('image-editor')}>
-                  <div className="panel-icon-only">
-                    <Icon name="crop" />
-                    </div>
-                </div>
-              </div>
+                  {/* Hover Text Toolbar */}
+                  {hoveredTextLayerId && (() => {
+                    const hoveredLayer = textLayers.find(layer => layer.id === hoveredTextLayerId)
+                    if (!hoveredLayer) return null
+                    
+                    return (
+                      <div
+                        className="absolute z-50 bg-white rounded-lg shadow-2xl border border-gray-200 p-2 flex items-center gap-2"
+                        style={{
+                          left: hoverToolbarPosition.x,
+                          top: hoverToolbarPosition.y,
+                          transform: 'translate(-50%, -100%)',
+                          pointerEvents: 'auto'
+                        }}
+                        onMouseEnter={() => {
+                          // Clear any pending hide timeout
+                          if (hoverTimeoutRef.current) {
+                            clearTimeout(hoverTimeoutRef.current)
+                            hoverTimeoutRef.current = null
+                          }
+                          setIsHoveringToolbar(true)
+                          setHoveredTextLayerId(hoveredTextLayerId)
+                        }}
+                        onMouseLeave={() => {
+                          setIsHoveringToolbar(false)
+                          // Delay hiding to allow moving back to text
+                          hoverTimeoutRef.current = setTimeout(() => {
+                            // Double check that we're still not hovering
+                            if (!isHoveringToolbarRef.current) {
+                              setHoveredTextLayerId(null)
+                            }
+                            hoverTimeoutRef.current = null
+                          }, 300) // 300ms delay before hiding
+                        }}
+                      >
+                        {/* Font Family */}
+                        <div className="relative">
+                          <select
+                            value={hoveredLayer.fontFamily}
+                            onChange={(e) => {
+                              // Update the hovered layer directly
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, fontFamily: e.target.value } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, fontFamily: e.target.value })
+                              }
+                            }}
+                            className="px-3 py-1.5 pr-8 text-sm border border-gray-300 rounded-md bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 appearance-none cursor-pointer min-w-[140px]"
+                            style={{ fontFamily: hoveredLayer.fontFamily }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {fonts.map(font => (
+                              <option key={font} value={font} style={{ fontFamily: font, backgroundColor: '#ffffff', color: '#111827' }}>
+                                {font}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </div>
+                        </div>
 
-              {/* Export & Actions Panel */}
-              <div className="control-panel">
-                <div className={`panel-header ${activePanel === 'export' ? 'active' : ''}`} onClick={() => togglePanel('export')}>
-                  <div className="panel-icon-only">
-                    <Icon name="save" />
-                    </div>
+                        {/* Font Size */}
+                        <div className="relative">
+                          <select
+                            value={hoveredLayer.fontSize}
+                            onChange={(e) => {
+                              // Update the hovered layer directly
+                              const size = parseInt(e.target.value) || 8
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, fontSize: size } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, fontSize: size })
+                              }
+                            }}
+                            className="px-3 py-1.5 pr-8 text-sm border border-gray-300 rounded-md bg-gray-100 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 appearance-none cursor-pointer min-w-[70px]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {Array.from({ length: 20 }, (_, i) => (i + 8) * 2).map(size => (
+                              <option key={size} value={size} style={{ backgroundColor: '#ffffff', color: '#111827' }}>{size}</option>
+                            ))}
+                          </select>
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </div>
+                        </div>
+
+                        {/* Text Style Buttons */}
+                        <div className="flex gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const isBold = hoveredLayer.fontWeight === '700' || hoveredLayer.fontWeight === 700 || hoveredLayer.fontWeight === 'bold'
+                              const newWeight = isBold ? '400' : '700'
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, fontWeight: newWeight } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, fontWeight: newWeight })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded text-sm font-bold transition-all ${
+                              (hoveredLayer.fontWeight === '700' || hoveredLayer.fontWeight === 700 || hoveredLayer.fontWeight === 'bold')
+                                ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                            title="Bold"
+                          >
+                            B
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const newStyle = hoveredLayer.fontStyle === 'italic' ? 'normal' : 'italic'
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, fontStyle: newStyle } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, fontStyle: newStyle })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded text-sm italic transition-all ${
+                              hoveredLayer.fontStyle === 'italic' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                            title="Italic"
+                          >
+                            I
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const newDecoration = hoveredLayer.textDecoration === 'underline' ? 'none' : 'underline'
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, textDecoration: newDecoration } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, textDecoration: newDecoration })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded text-sm underline transition-all ${
+                              hoveredLayer.textDecoration === 'underline' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                            title="Underline"
+                          >
+                            U
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const newDecoration = hoveredLayer.textDecoration === 'line-through' ? 'none' : 'line-through'
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, textDecoration: newDecoration } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, textDecoration: newDecoration })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded text-sm line-through transition-all ${
+                              hoveredLayer.textDecoration === 'line-through' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                            title="Strikethrough"
+                          >
+                            S
+                          </button>
+                        </div>
+
+                        {/* Divider */}
+                        <div className="w-px h-6 bg-gray-300"></div>
+
+                        {/* Text Alignment Buttons */}
+                        <div className="flex gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, textAlign: 'left' } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, textAlign: 'left' })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded transition-all ${
+                              hoveredLayer.textAlign === 'left'
+                                ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
+                            }`}
+                            title="Align Left"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={hoveredLayer.textAlign === 'left' ? 'text-white' : 'text-gray-700'}>
+                              <line x1="3" y1="6" x2="21" y2="6"/>
+                              <line x1="3" y1="12" x2="15" y2="12"/>
+                              <line x1="3" y1="18" x2="21" y2="18"/>
+                            </svg>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, textAlign: 'center' } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, textAlign: 'center' })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded transition-all ${
+                              hoveredLayer.textAlign === 'center'
+                                ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
+                            }`}
+                            title="Align Center"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={hoveredLayer.textAlign === 'center' ? 'text-white' : 'text-gray-700'}>
+                              <line x1="3" y1="6" x2="21" y2="6"/>
+                              <line x1="9" y1="12" x2="15" y2="12"/>
+                              <line x1="3" y1="18" x2="21" y2="18"/>
+                            </svg>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // Update the hovered layer directly
+                              const updatedLayers = textLayers.map(layer =>
+                                layer.id === hoveredLayer.id ? { ...layer, textAlign: 'right' } : layer
+                              )
+                              setTextLayers(updatedLayers)
+                              if (selectedLayer?.id === hoveredLayer.id) {
+                                setSelectedLayer({ ...selectedLayer, textAlign: 'right' })
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded transition-all ${
+                              hoveredLayer.textAlign === 'right'
+                                ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
+                            }`}
+                            title="Align Right"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={hoveredLayer.textAlign === 'right' ? 'text-white' : 'text-gray-700'}>
+                              <line x1="3" y1="6" x2="21" y2="6"/>
+                              <line x1="9" y1="12" x2="21" y2="12"/>
+                              <line x1="3" y1="18" x2="21" y2="18"/>
+                            </svg>
+                          </button>
+                        </div>
+
+                    
+
+                        
+
+                        {/* Text Color */}
+                        <div className="w-px h-6 bg-gray-300"></div>
+                        <input
+                          type="color"
+                          value={hoveredLayer.color}
+                          onChange={(e) => {
+                            // Update the hovered layer directly
+                            const updatedLayers = textLayers.map(layer =>
+                              layer.id === hoveredLayer.id ? { ...layer, color: e.target.value } : layer
+                            )
+                            setTextLayers(updatedLayers)
+                            if (selectedLayer?.id === hoveredLayer.id) {
+                              setSelectedLayer({ ...selectedLayer, color: e.target.value })
+                            }
+                          }}
+                          className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            WebkitAppearance: 'none',
+                            MozAppearance: 'none',
+                            appearance: 'none',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px'
+                          }}
+                          title="Text Color"
+                        />
+
+                        {/* Divider */}
+                        <div className="w-px h-6 bg-gray-300"></div>
+
+                        {/* More Options Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            // Select the hovered layer and open the main text editor panel
+                            setSelectedLayer(hoveredLayer)
+                            setActivePanel('text')
+                            setHoveredTextLayerId(null)
+                          }}
+                          className="px-2.5 py-1.5 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded transition-colors flex items-center gap-1"
+                          title="More Options"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="12" cy="12" r="1"/>
+                            <circle cx="19" cy="12" r="1"/>
+                            <circle cx="5" cy="12" r="1"/>
+                          </svg>
+                          More
+                        </button>
+
+                        {/* Divider */}
+                        <div className="w-px h-6 bg-gray-300"></div>
+
+                        {/* Delete Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const previousLayers = [...textLayers]
+                            const previousSelected = selectedLayer
+                            
+                            const updatedLayers = textLayers.filter(layer => layer.id !== hoveredTextLayerId)
+                            setTextLayers(updatedLayers)
+                            setSelectedLayer(null)
+                            setHoveredTextLayerId(null)
+                            
+                            saveToHistory('text_delete', {
+                              previousLayers,
+                              previousSelected,
+                              newLayers: updatedLayers,
+                              newSelected: null
+                            })
+                          }}
+                          className="px-2 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-1"
+                          title="Delete Text"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M3 6h18"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                          </svg>
+                        </button>
+                      </div>
+                    )
+                  })()}
                 </div>
+              ) : (
+                <div className="text-center py-10 text-gray-500">
+                  <Icon name="image" size={48} />
+                  <h3 className="mt-4 mb-2 text-purple-600 text-xl">Load an Image to Get Started</h3>
+                  <p className="text-sm">Enter an image URL above and click 'Load Image'</p>
+                </div>
+              )}
             </div>
           </div>
-        </div>
 
           {/* Flyout Panel */}
           {activePanel && (
-            <div className={`flyout-panel ${activePanel ? 'active' : ''}`}>
-              <div className="flyout-header">
-                <h3>{activePanel.charAt(0).toUpperCase() + activePanel.slice(1)}</h3>
-                <button className="close-btn" onClick={() => setActivePanel(null)}><FaTimes size={16} className="text-gray-600 hover:text-red-600"/></button>
+            <div className={`absolute top-0 right-0 w-96 h-full bg-gradient-to-b from-white to-gray-50 shadow-2xl z-10 flex flex-col transform transition-transform duration-400 ease-out border-l border-gray-200 ${activePanel ? 'translate-x-0' : 'translate-x-full'}`}>
+              <div className="px-8 pt-8 pb-6 border-b border-gray-200 flex justify-between items-center bg-gradient-to-br from-white to-gray-50 relative">
+                <h3 className="m-0 text-xl font-extrabold text-gray-800 uppercase tracking-wide">{activePanel.charAt(0).toUpperCase() + activePanel.slice(1)}</h3>
+                <button 
+                  className="absolute top-6 right-6 w-8 h-8 border-none bg-gray-200 text-gray-600 rounded-full cursor-pointer flex items-center justify-center transition-all text-base hover:bg-red-500 hover:text-white hover:scale-110" 
+                  onClick={() => setActivePanel(null)}
+                >
+                  <FaTimes size={16} />
+                </button>
               </div>
-              <div className="flyout-content">
+              <div className="flex-1 px-8 py-8 overflow-y-auto flex flex-col gap-6">
                 {activePanel === 'text' && (
                   <>
           <div className="control-group">
@@ -2035,7 +2699,7 @@ const handleTemplateJsonLoad = () => {
                 <select
                   value={selectedLayer.fontFamily}
                   onChange={(e) => handleStyleChange('fontFamily', e.target.value)}
-                  className="text-input font-dropdown"
+                  className="text-input "
                   style={{ fontFamily: selectedLayer.fontFamily }}
                 >
                   {fonts.map(font => (
@@ -2072,14 +2736,37 @@ const handleTemplateJsonLoad = () => {
                 <label>Font Weight</label>
                 <div className="font-weight-buttons">
                   <button
-                    className={`weight-btn ${selectedLayer.fontWeight === 'normal' ? 'active' : ''}`}
-                    onClick={() => handleStyleChange('fontWeight', 'normal')}
+                    className={`weight-btn ${(selectedLayer.fontWeight === '100' || selectedLayer.fontWeight === 100 || selectedLayer.fontWeight === 'thin') ? 'active' : ''}`}
+                    onClick={() => handleStyleChange('fontWeight', '100')}
+                    style={{ fontWeight: 100 }}
+                  >
+                    Thin
+                  </button>
+                  <button
+                    className={`weight-btn ${(selectedLayer.fontWeight === '500' || selectedLayer.fontWeight === 500 || selectedLayer.fontWeight === 'medium') ? 'active' : ''}`}
+                    onClick={() => handleStyleChange('fontWeight', '500')}
+                    style={{ fontWeight: 500 }}
+                  >
+                    Medium
+                  </button>
+                  <button
+                    className={`weight-btn ${(selectedLayer.fontWeight === '400' || selectedLayer.fontWeight === 400 || selectedLayer.fontWeight === 'normal') ? 'active' : ''}`}
+                    onClick={() => handleStyleChange('fontWeight', '400')}
+                    style={{ fontWeight: 400 }}
                   >
                     Normal
                   </button>
                   <button
-                    className={`weight-btn ${selectedLayer.fontWeight === 'bold' ? 'active' : ''}`}
-                    onClick={() => handleStyleChange('fontWeight', 'bold')}
+                    className={`weight-btn ${(selectedLayer.fontWeight === '800' || selectedLayer.fontWeight === 800 || selectedLayer.fontWeight === 'extrabold') ? 'active' : ''}`}
+                    onClick={() => handleStyleChange('fontWeight', '800')}
+                    style={{ fontWeight: 800 }}
+                  >
+                    Extrabold
+                  </button>
+                  <button
+                    className={`weight-btn ${(selectedLayer.fontWeight === '700' || selectedLayer.fontWeight === 700 || selectedLayer.fontWeight === 'bold') ? 'active' : ''}`}
+                    onClick={() => handleStyleChange('fontWeight', '700')}
+                    style={{ fontWeight: 700 }}
                   >
                     Bold
                   </button>
@@ -2155,7 +2842,10 @@ const handleTemplateJsonLoad = () => {
                         textAlign: 'left',
                         textShadow: 'none',
                         textGlow: 'none',
-                        wordArt: 'none'
+                        wordArt: 'none',
+                        backgroundColor: '',
+                        fontStyle: 'normal',
+                        textDecoration: 'none'
                       }
                       setTextLayers([...textLayers, newLayer])
                       setSelectedLayer(newLayer)
@@ -2183,7 +2873,10 @@ const handleTemplateJsonLoad = () => {
                         textAlign: 'left',
                         textShadow: 'none',
                         textGlow: 'none',
-                        wordArt: 'none'
+                        wordArt: 'none',
+                        backgroundColor: '',
+                        fontStyle: 'normal',
+                        textDecoration: 'none'
                       }
                       setTextLayers([...textLayers, newLayer])
                       setSelectedLayer(newLayer)
@@ -2211,7 +2904,10 @@ const handleTemplateJsonLoad = () => {
                         textAlign: 'left',
                         textShadow: 'none',
                         textGlow: 'none',
-                        wordArt: 'none'
+                        wordArt: 'none',
+                        backgroundColor: '',
+                        fontStyle: 'normal',
+                        textDecoration: 'none'
                       }
                       setTextLayers([...textLayers, newLayer])
                       setSelectedLayer(newLayer)
@@ -2738,264 +3434,10 @@ const handleTemplateJsonLoad = () => {
             </div>
           )}
           </div>
-
-        {/* Editor Section */}
-        <div className="editor-section">
-          <div className="canvas-container">
-            {imageLoaded ? (
-              <div className="canvas-wrapper">
-                <img
-                  ref={imageRef}
-                  src={imageUrl}
-                  alt="Loaded"
-                  style={{ 
-                    maxWidth: '100%', 
-                    height: 'auto',
-                    filter: applyFiltersToImage()
-                  }}
-                  onLoad={() => setImageLoaded(true)}
-                />
-                {isCropping && (
-                  <div
-                    className="crop-overlay"
-                    style={{ left: cropArea.x, top: cropArea.y, width: cropArea.width, height: cropArea.height }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation()
-                      const rect = e.currentTarget.getBoundingClientRect()
-                      const x = e.clientX - rect.left
-                      const y = e.clientY - rect.top
-                      const edge = 8
-                      let mode = 'move'
-                      if (y < edge && x < edge) mode = 'nw'
-                      else if (y < edge && x > rect.width - edge) mode = 'ne'
-                      else if (y > rect.height - edge && x < edge) mode = 'sw'
-                      else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
-                      else if (y < edge) mode = 'n'
-                      else if (y > rect.height - edge) mode = 's'
-                      else if (x < edge) mode = 'w'
-                      else if (x > rect.width - edge) mode = 'e'
-                      setCropDragMode(mode)
-                      setDragStart({ x: e.clientX, y: e.clientY })
-                      setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
-                    }}
-                  />
-                )}
-                <div className="text-layers">
-                  {shapeLayers.map((shape) => {
-                    const { scaleX, scaleY } = getImageScale()
-                    const widthPx = Math.max(shape.width * scaleX, 1)
-                    const baseHeight = shape.type === 'line' ? Math.max(shape.borderWidth || 1, shape.height || 1) : shape.height
-                    const heightPx = Math.max(baseHeight * scaleY, 1)
-
-                    const wrapperStyle = {
-                      position: 'absolute',
-                      left: shape.x * scaleX,
-                      top: shape.y * scaleY,
-                      width: widthPx,
-                      height: heightPx,
-                      cursor: 'move',
-                      border: selectedShape?.id === shape.id ? '2px solid #7c3aed' : '2px solid transparent',
-                      boxSizing: 'border-box',
-                      transform: `rotate(${shape.rotation || 0}deg)`,
-                      transformOrigin: 'center center',
-                      opacity: shape.opacity ?? 1,
-                      zIndex: 50
-                    }
-
-                    const innerStyle = {
-                      width: '100%',
-                      height: '100%',
-                      pointerEvents: 'none'
-                    }
-
-                    if (shape.type === 'rectangle') {
-                      innerStyle.backgroundColor = shape.fill
-                      innerStyle.border = `${shape.borderWidth || 0}px ${shape.borderStyle || 'solid'} ${shape.borderColor || 'transparent'}`
-                      innerStyle.borderRadius = `${shape.borderRadius || 0}px`
-                    } else if (shape.type === 'circle') {
-                      innerStyle.backgroundColor = shape.fill
-                      innerStyle.border = `${shape.borderWidth || 0}px ${shape.borderStyle || 'solid'} ${shape.borderColor || 'transparent'}`
-                      innerStyle.borderRadius = '50%'
-                    } else if (shape.type === 'triangle') {
-                      innerStyle.backgroundColor = shape.fill
-                      innerStyle.border = 'none'
-                      innerStyle.clipPath = 'polygon(50% 0%, 0% 100%, 100% 100%)'
-                      innerStyle.backgroundImage = `linear-gradient(${shape.fill}, ${shape.fill})`
-                      if (shape.borderWidth) {
-                        innerStyle.boxShadow = `0 0 0 ${shape.borderWidth}px ${shape.borderColor || 'transparent'}`
-                      }
-                    } else if (shape.type === 'line') {
-                      wrapperStyle.height = Math.max((shape.borderWidth || baseHeight) * scaleY, 1)
-                      innerStyle.height = '100%'
-                      innerStyle.backgroundColor = shape.borderColor || shape.fill || '#000000'
-                      innerStyle.border = 'none'
-                    }
-
-                    return (
-                      <div
-                        key={shape.id}
-                        className={`shape-layer ${selectedShape?.id === shape.id ? 'selected' : ''}`}
-                        style={wrapperStyle}
-                        onClick={() => handleShapeClick(shape)}
-                        onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'drag')}
-                      >
-                        <div className="shape-inner" style={innerStyle} />
-                        {selectedShape?.id === shape.id && (
-                          <div
-                            className="resize-handle"
-                            onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'resize')}
-                          />
-                        )}
-                      </div>
-                    )
-                  })}
-                  {textLayers.map((layer) => {
-                    return (
-                      <div
-  key={layer.id}
-  className={`text-layer ${selectedLayer?.id === layer.id ? 'selected' : ''}`}
-  style={{
-    position: 'absolute',
-    left: layer.x * getImageScale().scaleX,
-    top: layer.y * getImageScale().scaleY,
-    width: layer.width * getImageScale().scaleX,
-    height: layer.height * getImageScale().scaleY,
-    cursor: 'move',
-    border: selectedLayer?.id === layer.id ? '2px solid #7c3aed' : '2px solid transparent',
-    padding: '4px',
-    backgroundColor: selectedLayer?.id === layer.id ? 'rgba(124, 58, 237, 0.1)' : 'transparent',
-  }}
-  onClick={() => handleLayerClick(layer)}
-  onMouseDown={(e) => handleMouseDown(e, layer.id, 'drag')}
->
-  {layer.overlayImage?.enabled && layer.overlayImage?.imageUrl ? (
-    <img
-      src={layer.overlayImage.imageUrl}
-      alt="Overlay"
-      style={{
-        width: '100%',
-        height: '100%',
-        objectFit: layer.overlayImage.fitMode || 'contain',
-        objectPosition: 'center',
-        pointerEvents: 'none'
-      }}
-      onError={(e) => {
-        console.error('Failed to load overlay image:', layer.overlayImage.imageUrl)
-      }}
-    />
-  ) : (
-    <div
-      style={{
-        fontSize: layer.fontSize,
-        fontFamily: layer.fontFamily,
-        color: layer.color,
-        fontWeight: layer.fontWeight,
-        textAlign: layer.textAlign,
-        ...getTextEffectStyles(layer),
-        ...getWordArtStyles(layer)
-      }}
-    >
-      {layer.text}
-    </div>
-  )}
-  {selectedLayer?.id === layer.id && (
-    <div
-      className="resize-handle"
-      onMouseDown={(e) => handleMouseDown(e, layer.id, 'resize')}
-    />
-  )}
-</div>
-                    )
-                  })}
-      </div>
-                
-                {/* Overlay Image */}
-                {overlayVisible && overlayImage && (
-                  <div
-                    className="overlay-image"
-                    style={{
-                      position: 'absolute',
-                      left: overlayPosition.x,
-                      top: overlayPosition.y,
-                      transform: `scale(${overlayScale})`,
-                      transformOrigin: 'top left',
-                      zIndex: 1000,
-                      cursor: 'move'
-                    }}
-                    onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
-                  >
-                    <img
-                      src={overlayImageUrl}
-                      alt="Overlay"
-                      draggable="false"
-                      style={{
-                        width: overlayImage.width,
-                        height: overlayImage.height,
-                        display: 'block',
-                        }}
-                    />
-                    <div
-                      className="resize-handle"
-                      style={{
-                        position: 'absolute',
-                        bottom: '0',
-                        right: '0',
-                        width: '20px',
-                        height: '20px',
-                        background: '#7c3aed',
-                        cursor: 'nwse-resize',
-                        borderRadius: '0 0 0 10px'
-                      }}
-                      onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
-                    />
-                    {isCropping && croppingTarget === 'overlay' && (
-                      <div
-                        className="crop-overlay"
-                        style={{ 
-                          left: cropArea.x - overlayPosition.x, 
-                          top: cropArea.y - overlayPosition.y, 
-                          width: cropArea.width, 
-                          height: cropArea.height 
-                        }}
-                        onMouseDown={(e) => {
-                          e.stopPropagation()
-                          const rect = e.currentTarget.getBoundingClientRect()
-                          const x = e.clientX - rect.left
-                          const y = e.clientY - rect.top
-                          const edge = 8
-                          let mode = 'move'
-                          if (y < edge && x < edge) mode = 'nw'
-                          else if (y < edge && x > rect.width - edge) mode = 'ne'
-                          else if (y > rect.height - edge && x < edge) mode = 'sw'
-                          else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
-                          else if (y < edge) mode = 'n'
-                          else if (y > rect.height - edge) mode = 's'
-                          else if (x < edge) mode = 'w'
-                          else if (x > rect.width - edge) mode = 'e'
-                          setCropDragMode(mode)
-                          setDragStart({ x: e.clientX, y: e.clientY })
-                          setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
-                        }}
-                      />
-                    )}
-      </div>
-                )}
-                
-              </div>
-            ) : (
-              <div className="empty-state">
-                <Icon name="image" size={48} />
-                <h3>Load an Image to Get Started</h3>
-                <p>Enter an image URL above and click 'Load Image'</p>
-              </div>
-            )}
-          </div>
         </div>
-      </div>
 
       {/* Hidden canvas for export */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
-    </div>
         </div>
       </div>
     </div>
