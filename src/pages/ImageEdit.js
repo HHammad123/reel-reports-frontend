@@ -1839,6 +1839,15 @@ const handleTemplateJsonLoad = () => {
         throw new Error(`API request failed: ${response.status} ${responseText}`);
       }
       
+      // ✅ NEW: Save edited image to temp folder
+      try {
+        console.log('💾 Saving edited image to temp folder...');
+        await saveImageToTempFolder();
+      } catch (tempSaveError) {
+        console.warn('⚠️ Failed to save to temp folder (continuing with API save):', tempSaveError);
+        // Don't block the main save flow if temp save fails
+      }
+      
       // Show success popup with updating message
       setShowSuccessPopup(true);
       setIsRefreshing(true);
@@ -1854,6 +1863,63 @@ const handleTemplateJsonLoad = () => {
       alert('Failed to save changes: ' + (error?.message || 'Unknown error'));
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // ✅ NEW: Function to save the edited image (with overlays and text) to temp folder
+  const saveImageToTempFolder = async () => {
+    try {
+      // Find the container with the edited image (includes image + text layers + overlays)
+      const imageContainer = document.querySelector('[data-image-editor-canvas]');
+      
+      if (!imageContainer) {
+        console.warn('⚠️ Image editor canvas not found for temp save');
+        return;
+      }
+
+      console.log('📸 Capturing edited image from editor canvas...');
+      
+      // Dynamically import html2canvas (since it might not be in this component's imports)
+      const html2canvas = (await import('html2canvas')).default;
+      
+      // Capture the container with html2canvas
+      const canvas = await html2canvas(imageContainer, {
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: null,
+        scale: 2
+      });
+
+      // Convert to blob
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      
+      // Generate filename
+      const fileName = `scene-${sceneNumber}-image-${Number(imageIndex) + 1}.png`;
+      
+      console.log(`📝 Uploading to temp folder: ${fileName}`);
+      
+      // Create FormData
+      const formData = new FormData();
+      formData.append('image', new File([blob], fileName, { type: 'image/png' }));
+      formData.append('fileName', fileName);
+      formData.append('sceneNumber', sceneNumber);
+      formData.append('imageIndex', imageIndex);
+      
+      // Upload to backend
+      const saveResponse = await fetch('/api/save-temp-image', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (saveResponse.ok) {
+        const result = await saveResponse.json();
+        console.log(`✅ Saved to temp folder: ${result.path || fileName}`);
+      } else {
+        console.warn(`⚠️ Temp save failed with status ${saveResponse.status}`);
+      }
+    } catch (error) {
+      console.error('❌ Error saving to temp folder:', error);
+      throw error;
     }
   };
 
@@ -2027,7 +2093,10 @@ const handleTemplateJsonLoad = () => {
           <div className="flex-1 overflow-auto flex flex-col overflow-y-auto">
             <div className="flex-1 bg-white m-4 rounded-lg p-6 shadow-lg relative overflow-hidden flex items-center justify-center">
               {imageLoaded ? (
-                <div className="relative inline-block border-2 border-gray-200 bg-gray-50 cursor-crosshair rounded-md overflow-hidden">
+                <div 
+                  className="relative inline-block border-2 border-gray-200 bg-gray-50 cursor-crosshair rounded-md overflow-hidden"
+                  data-image-editor-canvas
+                >
                   <img
                     ref={imageRef}
                     src={imageUrl}

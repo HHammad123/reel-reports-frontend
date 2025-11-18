@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ChevronDown, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
+import html2canvas from 'html2canvas';
 
 const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoToVideos }) => {
   const [rows, setRows] = useState([]);
@@ -21,6 +22,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     imageFrames: [],
     isEditable: false
   });
+  const [isPreparingDownloads, setIsPreparingDownloads] = useState(false);
 	  const [isLoading, setIsLoading] = useState(false);
 	  const [isPolling, setIsPolling] = useState(false); // Track if we're polling job-status
 	  const [error, setError] = useState('');
@@ -35,6 +37,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 	  const [regenerateUserQuery, setRegenerateUserQuery] = useState('');
 	  const [isRegenerating, setIsRegenerating] = useState(false);
 	  const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
+  const [imageNaturalDims, setImageNaturalDims] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -197,13 +200,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   : Array.isArray(primary?.textElements)
                   ? primary.textElements
                   : [];
-              // For VEO3 model, swap refs with avatar_urls from scripts if available
+              // For VEO3/SORA models, swap refs with avatar_urls from scripts if available
               // Only use avatar_urls, exclude background_image
               const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
               const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+              const isSora = modelUpper === 'SORA';
               const sceneNumber = it?.scene_number || idx + 1;
+              
+              console.log('🎬 IMAGE SOURCE DEBUG - Scene:', sceneNumber);
+              console.log('  Model:', modelUpper);
+              console.log('  Initial refs (from images):', refs);
+              
                 let finalRefs = refs;
-                if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                if ((isVEO3 || isSora) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
                   const scene = veo3ScriptScenesByNumber[sceneNumber];
                   
                   // Get background_image URLs to exclude them
@@ -236,11 +245,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       }).filter(url => url && typeof url === 'string' && url.trim())
                     : [];
                   
+                  console.log('  Background image URLs (to exclude):', Array.from(backgroundImageUrls));
+                  console.log('  Avatar URLs (from scripts):', avatarUrls);
+                  
                   // Filter out any background_image URLs from collected refs and only keep avatar_urls
                   const filteredRefs = refs.filter(url => {
                     const trimmed = typeof url === 'string' ? url.trim() : '';
                     return trimmed && !backgroundImageUrls.has(trimmed);
                   });
+                  
+                  console.log('  Filtered refs (images without background_image):', filteredRefs);
                   
                   // Combine filtered refs with avatar_urls, removing duplicates
                   const combinedRefs = [...new Set([...filteredRefs, ...avatarUrls])].filter(Boolean);
@@ -251,6 +265,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     // If no filtered refs, use only avatar_urls
                     finalRefs = avatarUrls;
                   }
+                  
+                  console.log('  ✅ FINAL refs used:', finalRefs);
+                  console.log('  Source: ' + (filteredRefs.length > 0 ? 'images.base_image (background excluded)' : avatarUrls.length > 0 ? 'avatar_urls only' : 'original refs'));
                 }
                 
                 const meta = {
@@ -308,15 +325,30 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 pushRow(sc?.scene_number ?? (j + 1), sc?.scene_title || sc?.title, refs, meta);
               });
             } else {
-              const refs = [
-                ...collectUrls(it)
-              ];
+              // For SORA: check if images object exists and extract from base_image
+              const modelCheck = String(it?.model || it?.mode || '').toUpperCase();
+              const isSoraFallback = modelCheck === 'SORA';
+              
+              let refs = [];
+              if (isSoraFallback && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
+                console.log('🔄 SORA FALLBACK: Extracting from images object');
+                const versionKey = it.images.current_version || it.images.currentVersion || 'v1';
+                const verObj = it.images[versionKey] || it.images.v1 || {};
+                const arr = Array.isArray(verObj?.images) ? verObj.images : [];
+                refs = arr
+                  .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
+                  .filter(Boolean);
+                console.log('  Extracted SORA refs from images.base_image:', refs);
+              } else {
+                refs = [...collectUrls(it)];
               if (it?.image_url) refs.push(it.image_url);
               if (it?.image_1_url) refs.push(it.image_1_url);
               if (it?.image_2_url) refs.push(it.image_2_url);
               if (Array.isArray(it?.refs)) refs.push(...it.refs);
               if (Array.isArray(it?.urls)) refs.push(...it.urls);
               if (typeof it === 'string') refs.push(it);
+              }
+              
               const meta = {
                 description: it?.desc || it?.description || it?.scene_description || '',
                 narration: it?.narration || it?.voiceover || '',
@@ -772,9 +804,21 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             const vObj = imagesRoot[version] || imagesRoot.v1 || {};
             const arr = Array.isArray(vObj?.images) ? vObj.images : [];
             if (arr.length > 0) {
+                const modelUpper = String(imagesRoot?.model || imagesRoot?.mode || '').toUpperCase();
+                const isSora = modelUpper === 'SORA';
+                console.log('📦 EXTRACTING IMAGES FROM images.v1.images array');
+                console.log('  Model:', modelUpper);
+                console.log('  Images array:', arr);
               const refs = arr
-                .map((it) => (it?.base_image?.image_url || it?.base_image?.imageUrl || it?.image_url || it?.url || ''))
+                  .map((it) => {
+                    const url = isSora
+                      ? (it?.base_image?.image_url || it?.base_image?.imageUrl || '')
+                      : (it?.base_image?.image_url || it?.base_image?.imageUrl || it?.image_url || it?.url || '');
+                    console.log('    Extracted URL from base_image:', url);
+                    return url;
+                  })
                 .filter(Boolean);
+                console.log('  Extracted refs:', refs);
               const primary = arr[0] || {};
               const baseImage = primary?.base_image || primary?.baseImage || {};
               const imageDimensions =
@@ -797,6 +841,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 imageVersionData: imagesRoot,
                 imageFrames: arr,
                 isEditable: true,
+                model: modelUpper,
                 prompts: normalizePromptFields(imagesRoot?.prompts || {})
               });
             }
@@ -810,6 +855,45 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
             const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
             const sceneNumber = it?.scene_number || idx + 1;
+
+            // For SORA: strictly use images array -> base_image.image_url with associated text/overlay
+            if (modelUpper === 'SORA' && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
+              const imagesContainer = it.images;
+              const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || 'v1';
+              const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+              const arr = Array.isArray(verObj?.images) ? verObj.images : [];
+              if (arr.length > 0) {
+                const soraRefs = arr
+                  .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
+                  .filter(Boolean);
+                const primary = arr[0] || {};
+                const baseImage = primary?.base_image || primary?.baseImage || {};
+                const imageDimensions =
+                  baseImage?.image_dimensions ||
+                  baseImage?.imageDimensions ||
+                  primary?.image_dimensions ||
+                  primary?.imageDimensions ||
+                  null;
+                const textElements = Array.isArray(primary?.text_elements)
+                  ? primary.text_elements
+                  : Array.isArray(primary?.textElements)
+                  ? primary.textElements
+                  : [];
+                pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, soraRefs, {
+                  description: it?.description || it?.scene_description || '',
+                  narration: it?.narration || '',
+                  textToBeIncluded: it?.text_to_be_included || '',
+                  imageDimensions,
+                  textElements,
+                  imageVersionData: imagesContainer,
+                  imageFrames: arr,
+                  isEditable: true,
+                  model: modelUpper,
+                  prompts: normalizePromptFields(verObj?.prompts || it?.prompts || {})
+                });
+                return;
+              }
+            }
             
             let refs = collectUrls(it);
             if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
@@ -1100,6 +1184,624 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
   }, [regenerateUserQuery, regeneratingSceneNumber, refreshLoad]);
 
+  const loadImageElement = (src) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+      img.src = src;
+    });
+  };
+
+  const drawTextElementsOnCanvas = (ctx, textElements = [], width = 0, height = 0, baseWidth = width, baseHeight = height) => {
+    textElements.forEach((el) => {
+      if (!el || typeof el !== 'object') return;
+      const bb = el.bounding_box || {};
+      const maxVal = Math.max(
+        Math.abs(bb.x || 0),
+        Math.abs(bb.y || 0),
+        Math.abs(bb.width || 0),
+        Math.abs(bb.height || 0)
+      );
+      const isNormalized = maxVal <= 2; // values are in 0-1 range
+      const scaleX = baseWidth ? width / baseWidth : 1;
+      const scaleY = baseHeight ? height / baseHeight : 1;
+      const toX = (v) => {
+        if (!Number.isFinite(v)) return 0;
+        return isNormalized ? v * width : v * scaleX;
+      };
+      const toY = (v) => {
+        if (!Number.isFinite(v)) return 0;
+        return isNormalized ? v * height : v * scaleY;
+      };
+      const toL = (v, total, scale) => {
+        if (!Number.isFinite(v)) return undefined;
+        return isNormalized ? v * total : v * scale;
+      };
+      const x = toX(bb.x);
+      const y = toY(bb.y);
+      const boxW = toL(bb.width, width, scaleX);
+      const boxH = toL(bb.height, height, scaleY);
+
+      let fontSize = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+      // If font size is normalized (0-2 range), scale it by canvas height to match on-screen sizing
+      if (fontSize > 0 && fontSize <= 2) {
+        fontSize = fontSize * height;
+      }
+      if (!isNormalized) {
+        // Scale pixel font sizes to the render size if coordinates were pixel-based
+        fontSize = fontSize * scaleY;
+      }
+      const fontFamily = el.fontFamily || 'sans-serif';
+      const fontWeight = el.fontWeight || 'normal';
+      const lineHeight = Number.isFinite(el.lineHeight) ? el.lineHeight : 1.2;
+      const opacity = typeof el.textOpacity === 'number' ? el.textOpacity : 1;
+      const color = el.fill || '#ffffff';
+      const align = el.textAlign || el.align || el?.layout?.text_align || 'left';
+      const anchor = el?.layout?.anchor_point || 'top_left';
+      const shadow = el.effects?.textShadow || {};
+
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+      ctx.fillStyle = color;
+      ctx.textBaseline = 'top';
+      if (['center', 'right', 'left', 'start', 'end'].includes(align)) {
+        ctx.textAlign = align;
+      } else {
+        ctx.textAlign = 'left';
+      }
+      if (shadow && shadow.enabled) {
+        ctx.shadowColor = shadow.color || 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = shadow.blur || 0;
+        ctx.shadowOffsetX = shadow.offsetX || 0;
+        ctx.shadowOffsetY = shadow.offsetY || 0;
+      } else {
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+      }
+
+      const lines = String(el.text || '').split('\n');
+      const measured = lines.map((line) => ctx.measureText(line).width);
+      const maxLineWidth = measured.length ? Math.max(...measured) : 0;
+      const blockHeight = (lines.length || 1) * fontSize * lineHeight;
+      let drawX = x;
+      let drawY = y;
+      if (anchor === 'center') {
+        const refW = boxW || maxLineWidth;
+        const refH = boxH || blockHeight;
+        drawX = x - refW / 2;
+        drawY = y - refH / 2;
+      }
+      lines.forEach((line, idx) => {
+        const offsetY = drawY + idx * fontSize * lineHeight;
+        ctx.fillText(line, drawX, offsetY, boxW || undefined);
+      });
+      ctx.restore();
+    });
+  };
+
+  const drawOverlayElementsOnCanvas = async (ctx, overlayElements = [], width = 0, height = 0, baseWidth = width, baseHeight = height) => {
+    for (const overlay of overlayElements) {
+      if (!overlay || typeof overlay !== 'object') continue;
+      const bb = overlay.bounding_box || {};
+      const overlayUrl =
+        overlay?.image_url ||
+        overlay?.imageUrl ||
+        overlay?.url ||
+        overlay?.src ||
+        overlay?.link ||
+        '';
+      if (!overlayUrl) continue;
+      try {
+        const overlayImg = await loadImageElement(overlayUrl);
+        const asAbsolute = Math.max(
+          Math.abs(bb.x || 0),
+          Math.abs(bb.y || 0),
+          Math.abs(bb.width || 0),
+          Math.abs(bb.height || 0)
+        ) > 2;
+        const scaleX = baseWidth ? width / baseWidth : 1;
+        const scaleY = baseHeight ? height / baseHeight : 1;
+        const ow = Number.isFinite(bb.width)
+          ? (asAbsolute ? bb.width * scaleX : bb.width * width)
+          : (overlayImg.naturalWidth || overlayImg.width);
+        const oh = Number.isFinite(bb.height)
+          ? (asAbsolute ? bb.height * scaleY : bb.height * height)
+          : (overlayImg.naturalHeight || overlayImg.height);
+        const ox = Number.isFinite(bb.x) ? (asAbsolute ? bb.x * scaleX : bb.x * width) : 0;
+        const oy = Number.isFinite(bb.y) ? (asAbsolute ? bb.y * scaleY : bb.y * height) : 0;
+        ctx.drawImage(overlayImg, ox, oy, ow, oh);
+      } catch (_) {
+        // Skip overlay on failure, continue with the rest
+      }
+    }
+  };
+
+  const mergeFrameToDataUrl = React.useCallback(
+    async (frame, fallbackDimensions = null) => {
+      if (!frame) return null;
+      const base = frame?.base_image || frame?.baseImage || {};
+      const imgUrl =
+        base?.image_url ||
+        base?.imageUrl ||
+        base?.url ||
+        frame?.image_url ||
+        frame?.imageUrl ||
+        frame?.url ||
+        (typeof frame === 'string' ? frame : '');
+      if (!imgUrl) return null;
+
+      const imgEl = await loadImageElement(imgUrl);
+      const baseDims = base?.image_dimensions || base?.imageDimensions || fallbackDimensions || {};
+      const baseWidth = Number(baseDims?.width) ? Number(baseDims.width) : (imgEl.naturalWidth || imgEl.width || 0);
+      const baseHeight = Number(baseDims?.height) ? Number(baseDims.height) : (imgEl.naturalHeight || imgEl.height || 0);
+      const width = imgEl.naturalWidth || imgEl.width || baseWidth || 1280;
+      const height = imgEl.naturalHeight || imgEl.height || baseHeight || 720;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(imgEl, 0, 0, width, height);
+
+      const textEls = Array.isArray(frame?.text_elements)
+        ? frame.text_elements
+        : Array.isArray(frame?.textElements)
+        ? frame.textElements
+        : [];
+      const overlayEls = Array.isArray(frame?.overlay_elements)
+        ? frame.overlay_elements
+        : Array.isArray(frame?.overlayElements)
+        ? frame.overlayElements
+        : [];
+
+      if (textEls.length > 0) {
+        drawTextElementsOnCanvas(ctx, textEls, width, height, baseWidth || width, baseHeight || height);
+      }
+      if (overlayEls.length > 0) {
+        await drawOverlayElementsOnCanvas(ctx, overlayEls, width, height, baseWidth || width, baseHeight || height);
+      }
+
+      return canvas.toDataURL('image/png');
+    },
+    []
+  );
+
+  const dataUrlToBlob = React.useCallback(async (dataUrl) => {
+    const res = await fetch(dataUrl);
+    return await res.blob();
+  }, []);
+
+  const mergeAndDownloadAllImages = React.useCallback(async () => {
+    let failed = 0;
+    let saved = 0;
+  
+    try {
+      console.log('🎬 Starting image save process using html2canvas...');
+      console.log(`📊 Total scenes: ${rows.length}`);
+      
+      if (rows.length === 0) {
+        console.warn('⚠️ No scenes found - nothing to save');
+        return failed;
+      }
+
+      // Iterate through ALL rows (scenes)
+      for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
+        const row = rows[sceneIndex];
+        const sceneNumber = row?.scene_number || (sceneIndex + 1);
+        const modelUpper = String(row?.model || '').toUpperCase();
+        const refs = row?.refs || [];
+        const images = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+
+        console.log(`\n🎬 Processing Scene ${sceneNumber} (${images.length} images)...`);
+
+        // First, select this scene to render it in the Reel Reports Image Editor section
+        console.log(`📍 Selecting scene ${sceneNumber} for rendering...`);
+        const imgs = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        setSelected({
+          index: sceneIndex,
+          imageUrl: refs[0] || '',
+          images: imgs,
+          title: row.scene_title || 'Untitled',
+          sceneNumber: row.scene_number,
+          description: row?.description || '',
+          narration: row?.narration || '',
+          textToBeIncluded: row?.textToBeIncluded || '',
+          model: modelUpper,
+          prompts: row?.prompts || { opening_frame: {}, closing_frame: {} },
+          imageDimensions: row?.imageDimensions || null,
+          textElements: Array.isArray(row?.textElements) ? row.textElements : [],
+          imageVersionData: row?.imageVersionData || null,
+          imageFrames: Array.isArray(row?.imageFrames) ? row.imageFrames : [],
+          isEditable: !!row?.isEditable
+        });
+        
+        // Wait for DOM to update and images to render with text/overlays
+        console.log(`⏳ Waiting for DOM to render scene ${sceneNumber}...`);
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        // Process each image in this scene by capturing from DOM
+        for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
+          const imageUrl = images[imageIndex];
+          
+          if (!imageUrl) {
+            console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No URL, skipping`);
+            continue;
+          }
+          
+          try {
+            console.log(`📷 Scene ${sceneNumber}, Image ${imageIndex + 1}: Capturing from DOM...`);
+            
+            // Find the image container in the Reel Reports Image Editor section
+            // Use data-scene-number and data-image-index attributes to target the correct container
+            const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
+            const container = document.querySelector(selector);
+            
+            if (!container) {
+              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Container not found in DOM (${selector})`);
+              console.log('🔍 Available containers:', document.querySelectorAll('[data-image-container]').length);
+            failed += 1;
+            continue;
+          }
+            
+            console.log(`📸 Scene ${sceneNumber}, Image ${imageIndex + 1}: Capturing with html2canvas...`);
+            
+            // Capture the container with html2canvas (includes image + text + overlays with exact positioning)
+            const canvas = await html2canvas(container, {
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: null,
+              scale: 2,  // High quality (2x resolution)
+              logging: false,  // Disable html2canvas internal logging
+              windowWidth: container.scrollWidth,
+              windowHeight: container.scrollHeight
+            });
+            
+            // Convert canvas to blob
+            const blob = await new Promise((resolve) => {
+              canvas.toBlob((blob) => {
+                resolve(blob);
+              }, 'image/png', 1.0);
+            });
+            
+            if (!blob) {
+              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create blob`);
+          failed += 1;
+              continue;
+            }
+            
+            // Generate filename
+            const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
+            
+            // Save to temp folder via backend API (NO browser download)
+            const file = new File([blob], fileName, { type: 'image/png' });
+            const formData = new FormData();
+            formData.append('image', file);
+            formData.append('fileName', fileName);
+            formData.append('sceneNumber', sceneNumber);
+            formData.append('imageIndex', imageIndex);
+
+            console.log(`📤 Scene ${sceneNumber}, Image ${imageIndex + 1}: Uploading to temp folder...`);
+            const saveResponse = await fetch('/api/save-temp-image', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (saveResponse.ok) {
+              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Saved successfully with html2canvas`);
+              saved += 1;
+            } else {
+              const errorText = await saveResponse.text();
+              console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Save failed (${saveResponse.status}): ${errorText}`);
+              failed += 1;
+            }
+            
+            // Small delay between images
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+          } catch (error) {
+            console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Error -`, error);
+            failed += 1;
+          }
+        }
+      }
+
+      console.log(`\n✅ Save process complete! Saved: ${saved}, Failed: ${failed}`);
+      
+      // No alerts - just console logs for background processing
+      if (saved > 0) {
+        console.log(`✅ Successfully saved ${saved} image(s) to temp folder`);
+      } else if (failed > 0) {
+        console.warn(`⚠️ Failed to save ${failed} image(s). Check console for details.`);
+      }
+    } catch (error) {
+      console.error('❌ Fatal error in mergeAndDownloadAllImages:', error);
+      // No alert - error will be handled by parent function
+      throw error;
+    }
+  
+    return failed;
+  }, [rows, setSelected]);
+
+  // Function to call save-all-frames API with temp folder images
+  const callSaveAllFramesAPI = React.useCallback(async () => {
+    try {
+      console.log('📡 Step 2: Preparing API call to save-all-frames...');
+      
+      const userId = localStorage.getItem('token');
+      const sessionId = localStorage.getItem('session_id');
+      
+      if (!userId || !sessionId) {
+        throw new Error('Missing user_id or session_id');
+      }
+      
+      // Build frame metadata based on rows
+      const frameMetadata = [];
+      let fileIndex = 0;
+      const fileMap = {}; // Map scene-image to file index
+      
+      for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
+        const row = rows[sceneIndex];
+        const sceneNumber = row?.scene_number || (sceneIndex + 1);
+        const model = row?.model || 'VEO3';
+        const modelUpper = String(model).toUpperCase();
+        const refs = row?.refs || [];
+        const images = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        
+        const sceneMetadata = {
+          scene_number: sceneNumber,
+          model: modelUpper
+        };
+        
+        // Map images to file indices
+        for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
+          const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
+          const fileKey = `file_${fileIndex}`;
+          fileMap[fileName] = fileKey;
+          
+          if (images.length === 1) {
+            // Single image scene - use background_frame
+            sceneMetadata.background_frame = fileKey;
+          } else {
+            // Multiple images - use opening_frame and closing_frame
+            if (imageIndex === 0) {
+              sceneMetadata.opening_frame = fileKey;
+            }
+            if (imageIndex === 1) {
+              sceneMetadata.closing_frame = fileKey;
+            }
+          }
+          
+          fileIndex++;
+        }
+        
+        frameMetadata.push(sceneMetadata);
+      }
+      
+      console.log('📋 Frame metadata:', JSON.stringify(frameMetadata, null, 2));
+      console.log('🗺️ File map:', fileMap);
+      
+      // Create FormData
+      const formData = new FormData();
+      formData.append('user_id', userId);
+      formData.append('session_id', sessionId);
+      formData.append('frame_metadata', JSON.stringify(frameMetadata));
+      
+      // Read all images from temp folder and add to FormData
+      console.log('📂 Reading images from temp folder...');
+      const imageFiles = [];
+      
+      for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
+        const row = rows[sceneIndex];
+        const sceneNumber = row?.scene_number || (sceneIndex + 1);
+        const modelUpper = String(row?.model || '').toUpperCase();
+        const refs = row?.refs || [];
+        const images = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        
+        for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
+          const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
+          const fileKey = fileMap[fileName];
+          
+          // Fetch image from temp folder
+          try {
+            const imageUrl = `/temp/edited-images/${fileName}`;
+            const response = await fetch(imageUrl);
+            
+            if (!response.ok) {
+              console.warn(`⚠️ Could not fetch ${fileName} from temp folder`);
+              continue;
+            }
+            
+            const blob = await response.blob();
+            const file = new File([blob], fileName, { type: 'image/png' });
+            
+            // Add to FormData with file key
+            formData.append('frames', file);
+            imageFiles.push(fileName);
+            
+            console.log(`✅ Added ${fileName} as ${fileKey}`);
+          } catch (error) {
+            console.error(`❌ Error reading ${fileName}:`, error);
+          }
+        }
+      }
+      
+      if (imageFiles.length === 0) {
+        throw new Error('No images found in temp folder');
+      }
+      
+      console.log(`📤 Uploading ${imageFiles.length} images to API...`);
+      
+      // Call API
+      const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/save-all-frames';
+      const apiResponse = await fetch(apiUrl, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const responseText = await apiResponse.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        responseData = responseText;
+      }
+      
+      if (!apiResponse.ok) {
+        throw new Error(`API request failed: ${apiResponse.status} ${JSON.stringify(responseData)}`);
+      }
+      
+      console.log('✅ API call successful:', responseData);
+      
+      // Delete all images from temp folder
+      console.log('🗑️ Deleting images from temp folder...');
+      for (const fileName of imageFiles) {
+        try {
+          const deleteResponse = await fetch(`/api/delete-temp-image?fileName=${encodeURIComponent(fileName)}`, {
+            method: 'DELETE',
+          });
+          
+          if (deleteResponse.ok) {
+            console.log(`✅ Deleted ${fileName}`);
+          } else {
+            console.warn(`⚠️ Could not delete ${fileName}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Error deleting ${fileName}:`, error);
+        }
+      }
+      
+      console.log('✅ All temp images deleted');
+      return { success: true, response: responseData };
+      
+    } catch (error) {
+      console.error('❌ Error in callSaveAllFramesAPI:', error);
+      throw error;
+    }
+  }, [rows]);
+
+  const handleGenerateVideosClick = React.useCallback(async (e) => {
+    // Prevent any default behavior and navigation
+    if (e) {
+      if (typeof e.preventDefault === 'function') {
+        e.preventDefault();
+      }
+      if (typeof e.stopPropagation === 'function') {
+        e.stopPropagation();
+      }
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+    }
+    
+    // Prevent any form submission or navigation
+    if (e && e.target && e.target.form) {
+      e.target.form.onsubmit = (formE) => {
+        if (formE && typeof formE.preventDefault === 'function') {
+          formE.preventDefault();
+        }
+        return false;
+      };
+    }
+    
+    if (isPreparingDownloads) {
+      console.log('⚠️ Already processing, please wait...');
+      return false;
+    }
+    
+    console.log('🎬 Generate Videos button clicked - Starting background process...');
+    
+    setIsPreparingDownloads(true);
+    
+    // Run everything in background - no alerts, no interruptions
+    (async () => {
+      try {
+        console.log('📦 Step 1: Saving all images to temp folder...');
+        const failedDownloads = await mergeAndDownloadAllImages();
+        
+        if (failedDownloads > 0) {
+          console.warn(`⚠️ Some images failed to save: ${failedDownloads}`);
+          setError('Some images could not be saved to temp folder.');
+        } else {
+          console.log('✅ All images saved successfully');
+        }
+        
+        // Wait a bit to ensure all saves are complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Step 2: Call save-all-frames API
+        console.log('📦 Step 2: Calling save-all-frames API...');
+        try {
+          await callSaveAllFramesAPI();
+          console.log('✅ save-all-frames API completed successfully');
+          console.log('✅ All temp images deleted');
+          console.log('✅ Process completed successfully - all images saved and uploaded');
+          // No alert - just console log
+        } catch (apiError) {
+          console.error('❌ Error in save-all-frames API:', apiError);
+          setError('API upload failed: ' + apiError.message);
+          // No alert - just set error state
+        }
+        
+      } catch (e) {
+        console.error('❌ Error in handleGenerateVideosClick:', e);
+        setError(e?.message || 'Failed to save images');
+        // No alert - just set error state
+      } finally {
+        console.log('🏁 Process complete, re-enabling button');
+        setIsPreparingDownloads(false);
+      }
+    })();
+    
+    // Prevent any navigation or reload
+    return false;
+  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, rows]);
+
+  // Track natural dimensions of loaded images to align overlays more precisely
+  const handleNaturalSize = React.useCallback((url, imgEl) => {
+    if (!url || !imgEl) return;
+    setImageNaturalDims((prev) => {
+      if (prev[url]) return prev;
+      const w = imgEl.naturalWidth || imgEl.width;
+      const h = imgEl.naturalHeight || imgEl.height;
+      if (!w || !h) return prev;
+      return { ...prev, [url]: { width: w, height: h } };
+    });
+  }, []);
+
+  // Convert bounding_box values to percentages for on-screen overlay rendering
+  const computeBoxPercents = (bb = {}, dims = {}) => {
+    const baseW = Number(dims?.width) || 1;
+    const baseH = Number(dims?.height) || 1;
+    const vals = [
+      Math.abs(Number(bb.x) || 0),
+      Math.abs(Number(bb.y) || 0),
+      Math.abs(Number(bb.width) || 0),
+      Math.abs(Number(bb.height) || 0)
+    ];
+    const maxVal = Math.max(...vals);
+    const isNormalized = maxVal > 0 && maxVal <= 1.05;
+    const toPctX = (v) => {
+      const num = Number(v);
+      if (!Number.isFinite(num)) return 0;
+      return isNormalized ? num * 100 : (num / baseW) * 100;
+    };
+    const toPctY = (v) => {
+      const num = Number(v);
+      if (!Number.isFinite(num)) return 0;
+      return isNormalized ? num * 100 : (num / baseH) * 100;
+    };
+    const leftPct = toPctX(bb.x);
+    const topPct = toPctY(bb.y);
+    const widthPct = Number.isFinite(bb.width) ? toPctX(bb.width) : null;
+    const heightPct = Number.isFinite(bb.height) ? toPctY(bb.height) : null;
+    return { leftPct, topPct, widthPct, heightPct, mode: isNormalized ? 'normalized' : 'absolute' };
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative">
       <style>{`
@@ -1123,17 +1825,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             </button>
           ) : (
             <button
-              onClick={() => {
-                try {
-                  if (typeof onGenerateVideos === 'function') {
-                    const images = rows.flatMap(r => Array.isArray(r?.refs) ? r.refs : []);
-                    onGenerateVideos(images);
-                  }
-                } catch (_) { /* noop */ }
+              type="button"
+              onClick={async (e) => {
+                if (e) {
+                  if (typeof e.preventDefault === 'function') e.preventDefault();
+                  if (typeof e.stopPropagation === 'function') e.stopPropagation();
+                  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+                }
+                await handleGenerateVideosClick(e);
+                return false;
               }}
-              className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800"
+              onMouseDown={(e) => {
+                if (e && typeof e.preventDefault === 'function') {
+                  e.preventDefault();
+                }
+              }}
+              disabled={isPreparingDownloads}
+              className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Generate Videos
+              {isPreparingDownloads ? 'Saving images to temp folder…' : 'Generate Videos'}
             </button>
           )}
           {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back to Chat</button>)}
@@ -1229,14 +1939,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const img1 = (Array.isArray(selected.images) && selected.images[0]) ? selected.images[0] : selected.imageUrl;
               const img2 = Array.isArray(selected.images) ? selected.images[1] : '';
               const hasSecondImage = img2 && img2.trim();
-              const gridCols = hasSecondImage ? 'grid-cols-2' : 'grid-cols-1';
               
               return (
-                <div className={`grid ${gridCols} gap-4 mb-4`}>
+                  <div className="grid grid-cols-1 gap-4 mb-4">
                   {/* Image 1 */}
                   {img1 && (
                     <div
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
+                      data-image-container
+                      data-scene-number={selected?.sceneNumber || selected?.scene_number || 1}
+                      data-image-index="0"
                       style={{
                         aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
                           ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
@@ -1264,14 +1976,36 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       };
                       return frameUrl && normalizeUrl(frameUrl) === normalizeUrl(img1);
                     }) || (frames.length > 0 ? frames[0] : null);
-                    // Get text elements from the matched frame, not from selected.textElements
-                    const textElsForImg1 = frameForImg1 ? (
-                      Array.isArray(frameForImg1?.text_elements)
-                        ? frameForImg1.text_elements
-                        : Array.isArray(frameForImg1?.textElements)
-                        ? frameForImg1.textElements
+                    const fallbackFrame1 = frameForImg1 || (frames.length > 0 ? frames[0] : null);
+                    // Get text elements from the matched frame, fallback to selected.textElements
+                    const textElsFromFrame1 = fallbackFrame1 ? (
+                      Array.isArray(fallbackFrame1?.text_elements)
+                        ? fallbackFrame1.text_elements
+                        : Array.isArray(fallbackFrame1?.textElements)
+                        ? fallbackFrame1.textElements
                         : []
                     ) : [];
+                    // Fallback to selected level text elements
+                    const fallbackText1 = Array.isArray(selected?.textElements) 
+                      ? selected.textElements 
+                      : Array.isArray(selected?.text_elements)
+                      ? selected.text_elements
+                      : [];
+                    const effectiveTextEls1 = textElsFromFrame1.length > 0 ? textElsFromFrame1 : fallbackText1;
+                    const overlayEls1 = fallbackFrame1 ? (
+                      Array.isArray(fallbackFrame1?.overlay_elements)
+                        ? fallbackFrame1.overlay_elements
+                        : Array.isArray(fallbackFrame1?.overlayElements)
+                        ? fallbackFrame1.overlayElements
+                        : []
+                    ) : [];
+                    const frameDims1 =
+                      selected?.imageDimensions ||
+                      fallbackFrame1?.base_image?.image_dimensions ||
+                      fallbackFrame1?.base_image?.imageDimensions ||
+                      imageNaturalDims[img1] ||
+                      (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
+                      { width: 1280, height: 720 };
                     return (
                       <>
                         {/* Regenerate button - top right above image */}
@@ -1282,6 +2016,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           src={img1}
                           alt={`scene-${selected.sceneNumber}-1`}
                           className="w-full h-full object-contain"
+                          crossOrigin="anonymous"
+                          onLoad={(e) => handleNaturalSize(img1, e.target)}
                         />
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
@@ -1332,49 +2068,77 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             </button>
                           );
                         })()}
-                        {Array.isArray(textElsForImg1) && textElsForImg1.length > 0 && (
+                        {Array.isArray(effectiveTextEls1) && effectiveTextEls1.length > 0 && (
                           <div className="absolute inset-0 pointer-events-none">
-                            {textElsForImg1.map((el, idx) => {
+                            {effectiveTextEls1.map((el, idx) => {
                               if (!el || typeof el !== 'object') return null;
-                              const bb = el.bounding_box || {};
-                              const x = typeof bb.x === 'number' ? bb.x : 0;
-                              const y = typeof bb.y === 'number' ? bb.y : 0;
-                              const width = typeof bb.width === 'number' ? bb.width : 0;
-                              const height = typeof bb.height === 'number' ? bb.height : 0;
-                              const fontSize = Number.isFinite(el.fontSize) ? el.fontSize : 16;
+                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(el.bounding_box || {}, frameDims1 || selected?.imageDimensions || {});
+                              const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+                              const fontSize =
+                                fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
+                                  ? fontSizeBase * (Number((frameDims1 || selected?.imageDimensions)?.height) || 1)
+                                  : fontSizeBase;
                               const color = el.fill || '#ffffff';
                               const fontFamily = el.fontFamily || 'sans-serif';
                               const fontWeight = el.fontWeight || 'normal';
                               const lineHeight = el.lineHeight || 1.2;
-                              const opacity = typeof el.textOpacity === 'number' ? el.textOpacity : 1;
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
-                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${
-                                      shadow.color || 'rgba(0,0,0,0.5)'
-                                    }`
+                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
                               const style = {
                                 position: 'absolute',
-                                left: `${x * 100}%`,
-                                top: `${y * 100}%`,
-                                width: width ? `${width * 100}%` : 'auto',
-                                height: height ? `${height * 100}%` : 'auto',
+                                left: `${leftPct}%`,
+                                top: `${topPct}%`,
+                                width: widthPct != null ? `${widthPct}%` : 'auto',
+                                height: heightPct != null ? `${heightPct}%` : 'auto',
                                 transform: anchor === 'center' ? 'translate(-50%, -50%)' : 'none',
                                 color,
                                 fontFamily,
                                 fontWeight,
                                 fontSize,
                                 lineHeight,
-                                opacity,
                                 textShadow,
                                 whiteSpace: 'pre-wrap'
                               };
-                              return (
-                                <div key={idx} style={style}>
-                                  {el.text || ''}
+                              return <div key={idx} style={style}>{el.text || ''}</div>;
+                            })}
                                 </div>
+                        )}
+                        {Array.isArray(overlayEls1) && overlayEls1.length > 0 && (
+                          <div className="absolute inset-0 pointer-events-none">
+                            {overlayEls1.map((ov, idx) => {
+                              if (!ov || typeof ov !== 'object') return null;
+                              const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(ov.bounding_box || {}, frameDims1 || selected?.imageDimensions || {});
+                              const overlayUrl =
+                                ov?.overlay_image?.image_url ||
+                                ov?.overlay_image?.imageUrl ||
+                                ov?.image_url ||
+                                ov?.imageUrl ||
+                                ov?.url ||
+                                ov?.src ||
+                                ov?.link ||
+                                '';
+                              if (!overlayUrl) return null;
+                              const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
+                              return (
+                                <img
+                                  key={idx}
+                                  src={overlayUrl}
+                                  alt="overlay"
+                                  className="absolute"
+                                  crossOrigin="anonymous"
+                                  style={{
+                                    left: `${leftPct}%`,
+                                    top: `${topPct}%`,
+                                    width: widthPct != null ? `${widthPct}%` : 'auto',
+                                    height: heightPct != null ? `${heightPct}%` : 'auto',
+                                    opacity,
+                                    transform: ov?.layout?.anchor_point === 'center' ? 'translate(-50%, -50%)' : 'none'
+                                  }}
+                                />
                               );
                             })}
                           </div>
@@ -1389,6 +2153,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   {hasSecondImage && (
                     <div
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
+                      data-image-container
+                      data-scene-number={selected?.sceneNumber || selected?.scene_number || 1}
+                      data-image-index="1"
                       style={{
                         aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
                           ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
@@ -1416,14 +2183,36 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       };
                       return frameUrl && normalizeUrl(frameUrl) === normalizeUrl(img2);
                     }) || null;
-                    // Get text elements from the matched frame only
-                    const textElsForImg2 = frameForImg2 ? (
-                      Array.isArray(frameForImg2?.text_elements)
-                        ? frameForImg2.text_elements
-                        : Array.isArray(frameForImg2?.textElements)
-                        ? frameForImg2.textElements
+                    const fallbackFrame2 = frameForImg2 || (frames.length > 1 ? frames[1] : frames.length > 0 ? frames[0] : null);
+                    // Get text elements from the matched frame, fallback to selected.textElements
+                    const textElsFromFrame2 = fallbackFrame2 ? (
+                      Array.isArray(fallbackFrame2?.text_elements)
+                        ? fallbackFrame2.text_elements
+                        : Array.isArray(fallbackFrame2?.textElements)
+                        ? fallbackFrame2.textElements
                         : []
                     ) : [];
+                    // Fallback to selected level text elements
+                    const fallbackText2 = Array.isArray(selected?.textElements) 
+                      ? selected.textElements 
+                      : Array.isArray(selected?.text_elements)
+                      ? selected.text_elements
+                      : [];
+                    const effectiveTextEls2 = textElsFromFrame2.length > 0 ? textElsFromFrame2 : fallbackText2;
+                    const overlayEls2 = fallbackFrame2 ? (
+                      Array.isArray(fallbackFrame2?.overlay_elements)
+                        ? fallbackFrame2.overlay_elements
+                        : Array.isArray(fallbackFrame2?.overlayElements)
+                        ? fallbackFrame2.overlayElements
+                        : []
+                    ) : [];
+                    const frameDims2 =
+                      selected?.imageDimensions ||
+                      fallbackFrame2?.base_image?.image_dimensions ||
+                      fallbackFrame2?.base_image?.imageDimensions ||
+                      imageNaturalDims[img2] ||
+                      (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
+                      { width: 1280, height: 720 };
                     return (
                       <>
                         {/* Regenerate button - top right above image */}
@@ -1434,6 +2223,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           src={img2}
                           alt={`scene-${selected.sceneNumber}-2`}
                           className="w-full h-full object-contain"
+                          crossOrigin="anonymous"
+                          onLoad={(e) => handleNaturalSize(img2, e.target)}
                         />
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
@@ -1484,42 +2275,38 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             </button>
                           );
                         })()}
-                        {Array.isArray(textElsForImg2) && textElsForImg2.length > 0 && (
+                        {Array.isArray(effectiveTextEls2) && effectiveTextEls2.length > 0 && (
                           <div className="absolute inset-0 pointer-events-none">
-                            {textElsForImg2.map((el, idx) => {
+                            {effectiveTextEls2.map((el, idx) => {
                               if (!el || typeof el !== 'object') return null;
-                              const bb = el.bounding_box || {};
-                              const x = typeof bb.x === 'number' ? bb.x : 0;
-                              const y = typeof bb.y === 'number' ? bb.y : 0;
-                              const width = typeof bb.width === 'number' ? bb.width : 0;
-                              const height = typeof bb.height === 'number' ? bb.height : 0;
-                              const fontSize = Number.isFinite(el.fontSize) ? el.fontSize : 16;
+                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(el.bounding_box || {}, frameDims2 || selected?.imageDimensions || {});
+                              const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+                              const fontSize =
+                                fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
+                                  ? fontSizeBase * (Number((frameDims2 || selected?.imageDimensions)?.height) || 1)
+                                  : fontSizeBase;
                               const color = el.fill || '#ffffff';
                               const fontFamily = el.fontFamily || 'sans-serif';
                               const fontWeight = el.fontWeight || 'normal';
                               const lineHeight = el.lineHeight || 1.2;
-                              const opacity = typeof el.textOpacity === 'number' ? el.textOpacity : 1;
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
-                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${
-                                      shadow.color || 'rgba(0,0,0,0.5)'
-                                    }`
+                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
                               const style = {
                                 position: 'absolute',
-                                left: `${x * 100}%`,
-                                top: `${y * 100}%`,
-                                width: width ? `${width * 100}%` : 'auto',
-                                height: height ? `${height * 100}%` : 'auto',
+                                left: `${leftPct}%`,
+                                top: `${topPct}%`,
+                                width: widthPct != null ? `${widthPct}%` : 'auto',
+                                height: heightPct != null ? `${heightPct}%` : 'auto',
                                 transform: anchor === 'center' ? 'translate(-50%, -50%)' : 'none',
                                 color,
                                 fontFamily,
                                 fontWeight,
                                 fontSize,
                                 lineHeight,
-                                opacity,
                                 textShadow,
                                 whiteSpace: 'pre-wrap'
                               };
@@ -1527,6 +2314,42 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 <div key={idx} style={style}>
                                   {el.text || ''}
                                 </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {Array.isArray(overlayEls2) && overlayEls2.length > 0 && (
+                          <div className="absolute inset-0 pointer-events-none">
+                            {overlayEls2.map((ov, idx) => {
+                              if (!ov || typeof ov !== 'object') return null;
+                              const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(ov.bounding_box || {}, frameDims2 || selected?.imageDimensions || {});
+                              const overlayUrl =
+                                ov?.overlay_image?.image_url ||
+                                ov?.overlay_image?.imageUrl ||
+                                ov?.image_url ||
+                                ov?.imageUrl ||
+                                ov?.url ||
+                                ov?.src ||
+                                ov?.link ||
+                                '';
+                              if (!overlayUrl) return null;
+                              const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
+                              return (
+                                <img
+                                  key={idx}
+                                  src={overlayUrl}
+                                  alt="overlay"
+                                  className="absolute"
+                                  crossOrigin="anonymous"
+                                  style={{
+                                    left: `${leftPct}%`,
+                                    top: `${topPct}%`,
+                                    width: widthPct != null ? `${widthPct}%` : 'auto',
+                                    height: heightPct != null ? `${heightPct}%` : 'auto',
+                                    opacity,
+                                    transform: ov?.layout?.anchor_point === 'center' ? 'translate(-50%, -50%)' : 'none'
+                                  }}
+                                />
                               );
                             })}
                           </div>

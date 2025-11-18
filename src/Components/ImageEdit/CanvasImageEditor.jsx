@@ -324,37 +324,49 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     })
   }, [isOpen, imageLoaded, image, centerImage, hasPositionedInitial, computeFitScale, saveToHistory])
 
-  const drawCanvas = () => {
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    
-    if (!canvas || !ctx || !image) return
+  const drawCanvas = (options = {}) => {
+    const {
+      targetCanvas = canvasRef.current,
+      targetWidth = canvasSize.width,
+      targetHeight = canvasSize.height,
+      includeGuides = true
+    } = options
 
-    canvas.width = canvasSize.width
-    canvas.height = canvasSize.height
+    if (!targetCanvas || !image) return
+
+    const ctx = targetCanvas.getContext('2d')
+    if (!ctx) return
+
+    const previewWidth = canvasSize.width || 1
+    const previewHeight = canvasSize.height || 1
+    const ratioX = targetWidth / previewWidth
+    const ratioY = targetHeight / previewHeight
+
+    targetCanvas.width = targetWidth
+    targetCanvas.height = targetHeight
 
     // Fill with white background
     ctx.fillStyle = '#FFFFFF'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillRect(0, 0, targetCanvas.width, targetCanvas.height)
     
     ctx.save()
     
-    const displayWidth = image.width * scale * stretchX
-    const displayHeight = image.height * scale * stretchY
-    const centerX = position.x + displayWidth / 2
-    const centerY = position.y + displayHeight / 2
+    const displayWidth = image.width * scale * stretchX * ratioX
+    const displayHeight = image.height * scale * stretchY * ratioY
+    const centerX = position.x * ratioX + displayWidth / 2
+    const centerY = position.y * ratioY + displayHeight / 2
     
     ctx.translate(centerX, centerY)
     ctx.rotate((rotation * Math.PI) / 180)
     
-    const scaleX = (flipHorizontal ? -1 : 1) * scale * stretchX
-    const scaleY = (flipVertical ? -1 : 1) * scale * stretchY
+    const scaleX = (flipHorizontal ? -1 : 1) * scale * stretchX * ratioX
+    const scaleY = (flipVertical ? -1 : 1) * scale * stretchY * ratioY
     ctx.scale(scaleX, scaleY)
     
     ctx.translate(-image.width / 2, -image.height / 2)
     ctx.drawImage(image, 0, 0, image.width, image.height)
     
-    if (!isCropping && isDragging) {
+    if (includeGuides && !isCropping && isDragging) {
       ctx.strokeStyle = 'rgba(99, 102, 241, 0.9)'
       ctx.lineWidth = 2
       ctx.setLineDash([10, 6])
@@ -364,34 +376,57 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     
     ctx.restore()
     
-    if (isCropping) {
-      drawCropOverlay(ctx)
+    if (includeGuides && isCropping) {
+      drawCropOverlay(ctx, ratioX, ratioY)
     }
   }
 
-  const drawCropOverlay = (ctx) => {
-    const canvas = canvasRef.current
+  const drawCropOverlay = (ctx, ratioX = 1, ratioY = 1) => {
+    if (!ctx || !isCropping) return
+    const canvas = ctx.canvas || canvasRef.current
     if (!canvas) return
 
+    const fillWidth = canvas.width
+    const fillHeight = canvas.height
+
     // Darken area outside crop
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'
-    ctx.fillRect(0, 0, canvas.width, cropArea.y)
-    ctx.fillRect(0, cropArea.y + cropArea.height, canvas.width, canvas.height - (cropArea.y + cropArea.height))
-    ctx.fillRect(0, cropArea.y, cropArea.x, cropArea.height)
-    ctx.fillRect(cropArea.x + cropArea.width, cropArea.y, canvas.width - (cropArea.x + cropArea.width), cropArea.height)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'
+    ctx.fillRect(0, 0, fillWidth, fillHeight)
+    
+    const cropX = cropArea.x * ratioX
+    const cropY = cropArea.y * ratioY
+    const cropW = cropArea.width * ratioX
+    const cropH = cropArea.height * ratioY
+
+    ctx.clearRect(cropX, cropY, cropW, cropH)
     
     // Draw crop box border
     ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = 2
-    ctx.strokeRect(cropArea.x, cropArea.y, cropArea.width, cropArea.height)
+    ctx.strokeRect(cropX, cropY, cropW, cropH)
+    
+    // Grid lines (rule of thirds)
+    const thirdWidth = cropW / 3
+    const thirdHeight = cropH / 3
+    for (let i = 1; i < 3; i++) {
+      ctx.beginPath()
+      ctx.moveTo(cropX + i * thirdWidth, cropY)
+      ctx.lineTo(cropX + i * thirdWidth, cropY + cropH)
+      ctx.stroke()
+      
+      ctx.beginPath()
+      ctx.moveTo(cropX, cropY + i * thirdHeight)
+      ctx.lineTo(cropX + cropW, cropY + i * thirdHeight)
+      ctx.stroke()
+    }
     
     // Draw corner handles
     const handleSize = 10
     const handles = [
-      { x: cropArea.x, y: cropArea.y },
-      { x: cropArea.x + cropArea.width, y: cropArea.y },
-      { x: cropArea.x, y: cropArea.y + cropArea.height },
-      { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height },
+      { x: cropX, y: cropY },
+      { x: cropX + cropW, y: cropY },
+      { x: cropX, y: cropY + cropH },
+      { x: cropX + cropW, y: cropY + cropH },
     ]
     
     ctx.fillStyle = '#3b82f6'
@@ -683,9 +718,20 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     if (!canvasRef.current || !image) return
     try {
       setIsSaving(true)
-      const canvas = canvasRef.current
+      const exportCanvas = document.createElement('canvas')
+      const naturalWidth = image.naturalWidth || image.width || canvasSize.width
+      const naturalHeight = image.naturalHeight || image.height || canvasSize.height
+
+      // Re-render at the image's native resolution so text and placement stay true
+      drawCanvas({
+        targetCanvas: exportCanvas,
+        targetWidth: naturalWidth,
+        targetHeight: naturalHeight,
+        includeGuides: false
+      })
+
       const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob((result) => {
+        exportCanvas.toBlob((result) => {
           if (result) {
             resolve(result)
           } else {
@@ -693,7 +739,7 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
           }
         }, 'image/png', 0.95)
       })
-      const dataUrl = canvas.toDataURL('image/png', 0.95)
+      const dataUrl = exportCanvas.toDataURL('image/png', 0.95)
       const baseName = templateName
         ? templateName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
         : 'edited-image'
@@ -715,8 +761,8 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
           file: fileForUpload,
           dataUrl,
           blob,
-          width: canvas.width,
-          height: canvas.height,
+          width: exportCanvas.width,
+          height: exportCanvas.height,
           fileName
         })
       }
@@ -727,7 +773,7 @@ const CanvasImageEditor = ({ imageUrl, isOpen, onClose, onSave, templateName, te
     } finally {
       setIsSaving(false)
     }
-  }, [image, onSave, templateName])
+  }, [drawCanvas, image, onSave, templateName, canvasSize.width, canvasSize.height])
 
   const handleClose = () => {
     setImage(null)
