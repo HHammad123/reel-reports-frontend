@@ -6467,8 +6467,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       const index = start + idxLocal;
                       const rawTitle = String(scene?.scene_title || scene?.sceneTitle || '').trim();
                       const isSummaryTab = rawTitle.toLowerCase() === 'summary';
-                      const tabLabel = isSummaryTab ? 'Scene Summary' : `Scene ${index + 1}`;
-                      const tabTitle = isSummaryTab ? 'Summary scene' : `Drag to reorder. Currently Scene ${index + 1}`;
+                      const tabLabel = isSummaryTab ? 'Summary' : `Scene ${index + 1}`;
+                      const tabTitle = isSummaryTab ? 'Summary ' : `Drag to reorder. Currently Scene ${index + 1}`;
                       return (
                     <div
                       key={index}

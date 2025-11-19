@@ -38,6 +38,107 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 	  const [isRegenerating, setIsRegenerating] = useState(false);
 	  const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
   const [imageNaturalDims, setImageNaturalDims] = useState({});
+  // State for session assets (logo and voiceover)
+  const [sessionAssets, setSessionAssets] = useState({ logo_url: '', voice_urls: {} });
+  // State for transition presets
+  const [transitionPresets, setTransitionPresets] = useState([]);
+  // State for scene-specific advanced options
+  const [sceneAdvancedOptions, setSceneAdvancedOptions] = useState({}); // { sceneNumber: { logoNeeded: false, voiceUrl: '', voiceOption: '', transitionPreset: null, transitionCustom: null, transitionCustomPreset: null, customDescription: '', customPreservationNotes: {}, subtitleSceneOnly: false, rememberCustomPreset: false, customPresetName: '' } }
+  // Global subtitles toggle (applies to all scenes)
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
+  // State for accordion visibility
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState({}); // { sceneNumber: { assets: false, transitions: false } }
+  // State for "Design your own" tabs
+  const [designYourOwnTab, setDesignYourOwnTab] = useState({}); // { sceneNumber: 'describe' | 'fill' }
+  // State for video generation progress overlay
+  const [videoGenProgress, setVideoGenProgress] = useState({
+    visible: false,
+    percent: 0,
+    status: '',
+    step: '',
+    jobId: null,
+    message: ''
+  });
+  const [showVideoRedirectPopup, setShowVideoRedirectPopup] = useState(false);
+  const [videoRedirectCountdown, setVideoRedirectCountdown] = useState(5);
+  const [pendingVideoJobId, setPendingVideoJobId] = useState(null);
+  const redirectIntervalRef = React.useRef(null);
+
+  const startVideoRedirectFlow = React.useCallback(
+    (jobId) => {
+      if (!jobId) return;
+      try {
+        localStorage.setItem('current_video_job_id', jobId);
+      } catch (err) {
+        console.warn('Unable to persist video job id:', err);
+      }
+      setPendingVideoJobId(jobId);
+      setVideoRedirectCountdown(5);
+      setShowVideoRedirectPopup(true);
+      setVideoGenProgress({
+        visible: false,
+        percent: 0,
+        status: '',
+        step: '',
+        jobId,
+        message: ''
+      });
+      if (redirectIntervalRef.current) {
+        clearInterval(redirectIntervalRef.current);
+      }
+      redirectIntervalRef.current = setInterval(() => {
+        setVideoRedirectCountdown((prev) => {
+          if (prev <= 1) {
+            if (redirectIntervalRef.current) {
+              clearInterval(redirectIntervalRef.current);
+              redirectIntervalRef.current = null;
+            }
+            setShowVideoRedirectPopup(false);
+            setVideoGenProgress({
+              visible: false,
+              percent: 0,
+              status: '',
+              step: '',
+              jobId: null,
+              message: ''
+            });
+            if (typeof onGoToVideos === 'function') {
+              onGoToVideos(jobId);
+            } else if (typeof onGenerateVideos === 'function') {
+              onGenerateVideos(jobId);
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    },
+    [onGoToVideos, onGenerateVideos]
+  );
+
+  const getVideoProgressLabel = React.useCallback(() => {
+    if (!videoGenProgress.visible && !isPreparingDownloads) return 'Generate Videos';
+    switch (videoGenProgress.step) {
+      case 'saving_images':
+        return 'Saving images...';
+      case 'uploading_frames':
+        return 'Uploading frames...';
+      case 'queueing':
+        return 'Submitting job...';
+      case 'queued':
+        return 'Queued...';
+      case 'regenerating_videos':
+        return `Generating videos... ${Math.min(100, Math.max(0, Math.round(videoGenProgress.percent)))}%`;
+      case 'completed':
+        return 'Finalizing...';
+      case 'error':
+        return 'Generation failed';
+      default:
+        return videoGenProgress.percent > 0
+          ? `Generating videos... ${Math.min(100, Math.max(0, Math.round(videoGenProgress.percent)))}%`
+          : 'Processing...';
+    }
+  }, [videoGenProgress, isPreparingDownloads]);
 
   useEffect(() => {
     let cancelled = false;
@@ -200,8 +301,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   : Array.isArray(primary?.textElements)
                   ? primary.textElements
                   : [];
-              // For VEO3/SORA models, swap refs with avatar_urls from scripts if available
-              // Only use avatar_urls, exclude background_image
+              // For VEO3/SORA models, prioritize base_image URLs from image arrays
+              // Only use avatar_urls as fallback when no image arrays exist
               const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
               const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
               const isSora = modelUpper === 'SORA';
@@ -209,9 +310,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               
               console.log('🎬 IMAGE SOURCE DEBUG - Scene:', sceneNumber);
               console.log('  Model:', modelUpper);
-              console.log('  Initial refs (from images):', refs);
+              console.log('  Initial refs (from images.base_image):', refs);
               
                 let finalRefs = refs;
+                // Only use avatar_urls if we have no valid refs from image arrays
                 if ((isVEO3 || isSora) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
                   const scene = veo3ScriptScenesByNumber[sceneNumber];
                   
@@ -228,27 +330,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     });
                   }
                   
-                  // Only use avatar_urls (exclude background_image URLs)
-                  const avatarUrls = Array.isArray(scene?.avatar_urls)
-                    ? scene.avatar_urls.map((av) => {
-                        if (typeof av === 'string') return av.trim();
-                        return (
-                          av?.imageurl ||
-                          av?.imageUrl ||
-                          av?.image_url ||
-                          av?.url ||
-                          av?.src ||
-                          av?.link ||
-                          av?.avatar_url ||
-                          ''
-                        );
-                      }).filter(url => url && typeof url === 'string' && url.trim())
-                    : [];
-                  
-                  console.log('  Background image URLs (to exclude):', Array.from(backgroundImageUrls));
-                  console.log('  Avatar URLs (from scripts):', avatarUrls);
-                  
-                  // Filter out any background_image URLs from collected refs and only keep avatar_urls
+                  // Filter out any background_image URLs from collected refs
                   const filteredRefs = refs.filter(url => {
                     const trimmed = typeof url === 'string' ? url.trim() : '';
                     return trimmed && !backgroundImageUrls.has(trimmed);
@@ -256,18 +338,40 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   
                   console.log('  Filtered refs (images without background_image):', filteredRefs);
                   
-                  // Combine filtered refs with avatar_urls, removing duplicates
-                  const combinedRefs = [...new Set([...filteredRefs, ...avatarUrls])].filter(Boolean);
-                  
-                  if (combinedRefs.length > 0) {
-                    finalRefs = combinedRefs;
-                  } else if (avatarUrls.length > 0) {
-                    // If no filtered refs, use only avatar_urls
-                    finalRefs = avatarUrls;
+                  // PRIORITY: Use base_image URLs from image arrays if available
+                  if (filteredRefs.length > 0) {
+                    finalRefs = filteredRefs;
+                    console.log('  ✅ FINAL refs used (from images.base_image):', finalRefs);
+                    console.log('  Source: images.base_image (prioritized)');
+                  } else {
+                    // FALLBACK: Only use avatar_urls if no image arrays exist
+                    const avatarUrls = Array.isArray(scene?.avatar_urls)
+                      ? scene.avatar_urls.map((av) => {
+                          if (typeof av === 'string') return av.trim();
+                          return (
+                            av?.imageurl ||
+                            av?.imageUrl ||
+                            av?.image_url ||
+                            av?.url ||
+                            av?.src ||
+                            av?.link ||
+                            av?.avatar_url ||
+                            ''
+                          );
+                        }).filter(url => url && typeof url === 'string' && url.trim())
+                      : [];
+                    
+                    console.log('  Avatar URLs (from scripts - fallback only):', avatarUrls);
+                    
+                    if (avatarUrls.length > 0) {
+                      finalRefs = avatarUrls;
+                      console.log('  ✅ FINAL refs used (from avatar_urls - fallback):', finalRefs);
+                      console.log('  Source: avatar_urls (fallback)');
+                    } else {
+                      console.log('  ✅ FINAL refs used (original):', finalRefs);
+                      console.log('  Source: original refs');
+                    }
                   }
-                  
-                  console.log('  ✅ FINAL refs used:', finalRefs);
-                  console.log('  Source: ' + (filteredRefs.length > 0 ? 'images.base_image (background excluded)' : avatarUrls.length > 0 ? 'avatar_urls only' : 'original refs'));
                 }
                 
                 const meta = {
@@ -542,6 +646,74 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
             isEditable: !!sessionImages[0]?.isEditable
           });
+          
+          // Call APIs for VEO3/SORA/ANCHOR models if images exist
+          if (!cancelled) {
+            try {
+              const hasRelevantModel = sessionImages.some(row => {
+                const model = String(row?.model || '').toUpperCase();
+                return model === 'VEO3' || model === 'SORA' || model === 'ANCHOR';
+              });
+              
+              if (hasRelevantModel) {
+                // Call session assets API
+                const assetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`);
+                const assetsText = await assetsResp.text();
+                let assetsData;
+                try {
+                  assetsData = JSON.parse(assetsText);
+                } catch (_) {
+                  assetsData = { logo_url: '', voice_urls: {} };
+                }
+                if (assetsResp.ok && assetsData) {
+                  setSessionAssets({
+                    logo_url: assetsData.logo_url || '',
+                    voice_urls: assetsData.voice_urls || {}
+                  });
+                  console.log('✅ Session assets loaded:', assetsData);
+                }
+                
+                // Call transition presets API
+                const presetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/transition-presets/${encodeURIComponent(user_id)}`);
+                const presetsText = await presetsResp.text();
+                let presetsData;
+                try {
+                  presetsData = JSON.parse(presetsText);
+                } catch (_) {
+                  presetsData = [];
+                }
+                // Normalise possible API shapes to an array of presets.
+                // Examples:
+                // - [{ name: "...", preservation_notes: {...} }, ...]
+                // - { presets: [...] }
+                // - { data: [...] }
+                // - { transition_presets: { presets: [...], custom: [...] } }
+                const presetsRoot = (presetsData && presetsData.transition_presets) || presetsData || [];
+                let presetsArray = [];
+                if (Array.isArray(presetsRoot)) {
+                  presetsArray = presetsRoot;
+                } else if (presetsRoot && Array.isArray(presetsRoot.presets)) {
+                  presetsArray = presetsRoot.presets;
+                } else if (presetsRoot && Array.isArray(presetsRoot.data)) {
+                  presetsArray = presetsRoot.data;
+                }
+                
+                // Filter to ensure each preset has a name property
+                const validPresets = presetsArray.filter(preset => preset && (preset.name || preset.preset_name));
+                
+                if (presetsResp.ok && validPresets.length > 0) {
+                  setTransitionPresets(validPresets);
+                  console.log('✅ Transition presets loaded:', validPresets.length, 'presets');
+                  console.log('📋 Presets names:', validPresets.map(p => p.name || p.preset_name));
+                } else {
+                  console.warn('⚠️ No valid presets found. Response:', presetsData);
+                  console.warn('⚠️ Presets array:', presetsArray);
+                }
+              }
+            } catch (apiError) {
+              console.error('❌ Error loading session assets or presets:', apiError);
+            }
+          }
         }
         // If we have a jobId and either no session images yet or we expect generation, poll job API until done
         const pendingFlag = localStorage.getItem('images_generate_pending') === 'true';
@@ -633,6 +805,70 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   }
                 }
               } catch(_) { /* ignore */ }
+              
+              // Call APIs for VEO3/SORA/ANCHOR models after successful image creation
+              if (!cancelled) {
+                try {
+                  // Check if any scene uses VEO3, SORA, or ANCHOR
+                  const hasRelevantModel = sessionImages?.some(row => {
+                    const model = String(row?.model || '').toUpperCase();
+                    return model === 'VEO3' || model === 'SORA' || model === 'ANCHOR';
+                  });
+                  
+                  if (hasRelevantModel) {
+                    // Call session assets API
+                    const assetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`);
+                    const assetsText = await assetsResp.text();
+                    let assetsData;
+                    try {
+                      assetsData = JSON.parse(assetsText);
+                    } catch (_) {
+                      assetsData = { logo_url: '', voice_urls: {} };
+                    }
+                    if (assetsResp.ok && assetsData) {
+                      setSessionAssets({
+                        logo_url: assetsData.logo_url || '',
+                        voice_urls: assetsData.voice_urls || {}
+                      });
+                      console.log('✅ Session assets loaded:', assetsData);
+                    }
+                    
+                    // Call transition presets API
+                    const presetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/transition-presets/${encodeURIComponent(user_id)}`);
+                    const presetsText = await presetsResp.text();
+                    let presetsData;
+                    try {
+                      presetsData = JSON.parse(presetsText);
+                    } catch (_) {
+                      presetsData = [];
+                    }
+                    // Normalise possible API shapes to an array of presets.
+                    const presetsRoot = (presetsData && presetsData.transition_presets) || presetsData || [];
+                    let presetsArray = [];
+                    if (Array.isArray(presetsRoot)) {
+                      presetsArray = presetsRoot;
+                    } else if (presetsRoot && Array.isArray(presetsRoot.presets)) {
+                      presetsArray = presetsRoot.presets;
+                    } else if (presetsRoot && Array.isArray(presetsRoot.data)) {
+                      presetsArray = presetsRoot.data;
+                    }
+                    
+                    // Filter to ensure each preset has a name property
+                    const validPresets = presetsArray.filter(preset => preset && (preset.name || preset.preset_name));
+                    
+                    if (presetsResp.ok && validPresets.length > 0) {
+                      setTransitionPresets(validPresets);
+                      console.log('✅ Transition presets loaded:', validPresets.length, 'presets');
+                      console.log('📋 Presets names:', validPresets.map(p => p.name || p.preset_name));
+                    } else {
+                      console.warn('⚠️ No valid presets found. Response:', presetsData);
+                      console.warn('⚠️ Presets array:', presetsArray);
+                    }
+                  }
+                } catch (apiError) {
+                  console.error('❌ Error loading session assets or presets:', apiError);
+                }
+              }
               // Job completed successfully, hide loader
               if (!cancelled) {
                 setIsLoading(false);
@@ -665,6 +901,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     load();
     return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
   }, [jobId]);
+
+  useEffect(() => {
+    return () => {
+      if (redirectIntervalRef.current) {
+        clearInterval(redirectIntervalRef.current);
+        redirectIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   // Expose load function for refresh - recreate the load logic without cancellation
   const refreshLoad = React.useCallback(async () => {
@@ -918,31 +1163,31 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 return trimmed && !backgroundImageUrls.has(trimmed);
               });
               
-              // Get avatar_urls
-              const avatarUrls = Array.isArray(scene?.avatar_urls)
-                ? scene.avatar_urls.map((av) => {
-                    if (typeof av === 'string') return av.trim();
-                    return (
-                      av?.imageurl ||
-                      av?.imageUrl ||
-                      av?.image_url ||
-                      av?.url ||
-                      av?.src ||
-                      av?.link ||
-                      av?.avatar_url ||
-                      ''
-                    );
-                  }).filter(url => url && typeof url === 'string' && url.trim())
-                : [];
-              
-              // Combine filtered refs with avatar_urls, removing duplicates
-              const combinedRefs = [...new Set([...filteredRefs, ...avatarUrls])].filter(Boolean);
-              
-              if (combinedRefs.length > 0) {
-                refs = combinedRefs;
-              } else if (avatarUrls.length > 0) {
-                // If no filtered refs, use only avatar_urls
-                refs = avatarUrls;
+              // PRIORITY: Use base_image URLs from image arrays if available
+              if (filteredRefs.length > 0) {
+                refs = filteredRefs;
+              } else {
+                // FALLBACK: Only use avatar_urls if no image arrays exist
+                const avatarUrls = Array.isArray(scene?.avatar_urls)
+                  ? scene.avatar_urls.map((av) => {
+                      if (typeof av === 'string') return av.trim();
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    }).filter(url => url && typeof url === 'string' && url.trim())
+                  : [];
+                
+                if (avatarUrls.length > 0) {
+                  // If no filtered refs, use only avatar_urls
+                  refs = avatarUrls;
+                }
               }
             }
             
@@ -1684,6 +1929,279 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
   }, [rows]);
 
+  
+  // Function to call /v1/videos/regenerate after save-all-frames succeeds
+  const callVideosRegenerateAPI = React.useCallback(async () => {
+    try {
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+
+      if (!session_id || !user_id) {
+        console.warn('⚠️ Missing session or user for videos/regenerate');
+        return;
+      }
+
+      const aspectRatio = await getAspectRatio();
+      const subtitlesFlag = !!subtitlesEnabled;
+
+      // Determine if any scene has logo enabled
+      const anyLogoNeeded =
+        !!sessionAssets.logo_url &&
+        Object.values(sceneAdvancedOptions || {}).some(
+          (opts) => opts && opts.logoNeeded
+        );
+
+      const scenesPayload = rows.map((row, index) => {
+        const sceneNumber = row?.scene_number || index + 1;
+        const modelUpper = String(row?.model || '').toUpperCase() || 'VEO3';
+
+        const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
+          logoNeeded: false,
+          voiceUrl: '',
+          voiceOption: '',
+          transitionPreset: null,
+          transitionCustom: null,
+          transitionCustomPreset: null,
+          customDescription: '',
+          customPreservationNotes: {
+            lighting: '',
+            style_mood: '',
+            transition_type: '',
+            scene_description: '',
+            subject_description: '',
+            action_specification: '',
+            content_modification: '',
+            camera_specifications: '',
+            geometric_preservation: '',
+          },
+          subtitleSceneOnly: false,
+          rememberCustomPreset: false,
+          customPresetName: '',
+        };
+
+      const logoUrl =
+        sceneOptions.logoNeeded && sessionAssets.logo_url
+          ? sessionAssets.logo_url
+          : '';
+
+        // Build voiceover object - should be object with name, type, url, created_at or null
+        let voiceover = null;
+        const voiceoverUrl = sceneOptions.voiceUrl || null;
+        if (voiceoverUrl) {
+          // Find the voice entry from sessionAssets.voice_urls
+          const voiceEntries = Object.entries(sessionAssets.voice_urls || {});
+          const matched = voiceEntries.find(([, url]) => url === voiceoverUrl);
+          if (matched) {
+            const [name, url] = matched;
+            voiceover = {
+              name: name || '',
+              type: 'audio',
+              url: url || voiceoverUrl,
+              created_at: new Date().toISOString() // Use current timestamp if not available
+            };
+          } else {
+            // Fallback: create object from URL
+            voiceover = {
+              name: sceneOptions.voiceOption || '',
+              type: 'audio',
+              url: voiceoverUrl,
+              created_at: new Date().toISOString()
+            };
+          }
+        }
+
+        // Voice option string only when no explicit voice URL is selected
+        const voiceOption = sceneOptions.voiceUrl ? '' : (sceneOptions.voiceOption || '');
+
+        // Default prompt template (mainly relevant for VEO3)
+        const veo3PromptTemplate =
+          (row && typeof row.veo3_prompt_template === 'object'
+            ? row.veo3_prompt_template
+            : {
+                style: '',
+                action: '',
+                camera: '',
+                subject: '',
+                ambiance: '',
+                background: '',
+                composition: '',
+                focus_and_lens: '',
+              }) || {};
+
+        // Build transitions (mainly for SORA/ANCHOR/PLOTLY)
+        // transitions must always be an array
+        let transitions = [];
+        const isSoraAnchorPlotly =
+          modelUpper === 'SORA' ||
+          modelUpper === 'ANCHOR' ||
+          modelUpper === 'PLOTLY';
+
+        if (isSoraAnchorPlotly) {
+          const hasPreset = !!sceneOptions.transitionPreset;
+          // is_preset: true if preset is selected (not custom), false if custom/design your own
+          const isPreset = hasPreset && sceneOptions.transitionCustom !== 'custom';
+
+          // Check if custom/design your own is selected
+          const useCustom =
+            !isPreset &&
+            (sceneOptions.transitionCustom === 'custom' ||
+              (sceneOptions.customDescription || '').trim().length > 0 ||
+              Object.values(sceneOptions.customPreservationNotes || {}).some(
+                (v) => (v || '').trim().length > 0
+              ));
+
+          if (isPreset) {
+            // Use preset object as-is
+            const preset = sceneOptions.transitionPreset;
+            transitions.push({
+              is_preset: true,
+              parameters: {
+                name: preset?.name || '',
+                preservation_notes: preset?.preservation_notes || {},
+                prompt_description: preset?.prompt_description || preset?.promptDescription || ''
+              }
+            });
+          } else if (useCustom) {
+            // Custom/Design your own or library custom template
+            const selectedCustomPreset = sceneOptions.transitionCustomPreset || null;
+            const customNotes = selectedCustomPreset?.preservation_notes || sceneOptions.customPreservationNotes || {};
+            const notes = {
+              camera_specifications: customNotes.camera_specifications || customNotes.cameraSpecifications || '',
+              subject_description: customNotes.subject_description || '',
+              action_specification: customNotes.action_specification || '',
+              scene_description: customNotes.scene_description || '',
+              lighting: customNotes.lighting || '',
+              style_mood: customNotes.style_mood || '',
+              geometric_preservation: customNotes.geometric_preservation || '',
+              transition_type: customNotes.transition_type || '',
+              content_modification: customNotes.content_modification || '',
+            };
+
+            const userQuery = selectedCustomPreset ? '' : (sceneOptions.customDescription || '');
+            const savecustom = !selectedCustomPreset && !!sceneOptions.rememberCustomPreset;
+            const customName = savecustom ? (sceneOptions.customPresetName || '') : '';
+            const name = selectedCustomPreset?.name || sceneOptions.customPresetName || 'Custom Transition';
+            const promptDescription =
+              selectedCustomPreset?.prompt_description ||
+              selectedCustomPreset?.promptDescription ||
+              userQuery;
+
+            transitions.push({
+              is_preset: false,
+              userQuery,
+              parameters: {
+                name,
+                preservation_notes: notes,
+                prompt_description: promptDescription,
+              },
+              savecustom,
+              custom_name: customName,
+            });
+          }
+        }
+
+        // Ensure transitions is always an array (required field)
+        const scenePayload = {
+          scene_number: sceneNumber,
+          model: modelUpper,
+          logo_url: logoUrl,
+          voiceover: voiceover, // Object with name, type, url, created_at or null
+          voiceoption: voiceOption, // String like "male" or "female"
+          transitions: transitions, // Always an array (can be empty)
+        };
+        
+        return scenePayload;
+      });
+
+      const body = {
+        session_id,
+        user_id,
+        aspect_ratio: aspectRatio,
+        subtitles: subtitlesFlag,
+        scenes: scenesPayload,
+      };
+
+      setVideoGenProgress((prev) => ({
+        ...prev,
+        visible: true,
+        step: 'queueing',
+        status: 'queueing',
+        percent: Math.max(prev.percent, 50),
+        message: ''
+      }));
+
+      console.log('📡 Calling /v1/generate-videos-queue with body:', JSON.stringify(body, null, 2));
+
+      const resp = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+
+      const text = await resp.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!resp.ok) {
+        console.error(
+          '❌ /v1/generate-videos-queue failed:',
+          resp.status,
+          text
+        );
+        throw new Error(`generate-videos-queue API failed: ${resp.status} ${text}`);
+      }
+
+      console.log('✅ /v1/generate-videos-queue success:', data);
+      console.log('📋 Full queue response:', JSON.stringify(data, null, 2));
+      
+      // Extract job_id from response - check multiple possible fields
+      const jobId = data?.job_id || data?.jobId || data?.id || data?.data?.job_id || null;
+      
+      if (!jobId) {
+        console.error('❌ No job_id in generate-videos-queue response. Full response:', JSON.stringify(data, null, 2));
+        throw new Error('No job_id received from generate-videos-queue API');
+      }
+      
+      // Ensure jobId is a string
+      const jobIdString = String(jobId).trim();
+      if (!jobIdString || jobIdString === 'null' || jobIdString === 'undefined') {
+        console.error('❌ Invalid job_id:', jobId);
+        throw new Error('Invalid job_id received from regenerate API');
+      }
+      
+      console.log('📋 Job ID received (validated):', jobIdString);
+
+      setVideoGenProgress((prev) => ({
+        ...prev,
+        step: 'queued',
+        status: 'queued',
+        percent: Math.max(prev.percent, 60),
+        jobId: jobIdString,
+        message: 'Video job queued successfully'
+      }));
+
+      return jobIdString;
+    } catch (error) {
+      setVideoGenProgress((prev) => ({
+        ...prev,
+        visible: true,
+        status: 'error',
+        step: 'error',
+        message: error?.message || 'Failed to queue video generation',
+      }));
+      console.error('❌ Error in callVideosRegenerateAPI:', error);
+      throw error;
+    }
+  }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getAspectRatio]);
+  
+
   const handleGenerateVideosClick = React.useCallback(async (e) => {
     // Prevent any default behavior and navigation
     if (e) {
@@ -1716,10 +2234,27 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     console.log('🎬 Generate Videos button clicked - Starting background process...');
     
     setIsPreparingDownloads(true);
+    setVideoGenProgress({
+      visible: true,
+      percent: 5,
+      status: 'saving',
+      step: 'saving_images',
+      jobId: null,
+      message: ''
+    });
     
     // Run everything in background - no alerts, no interruptions
     (async () => {
       try {
+        // Step 1: Save images to temp folder
+        setVideoGenProgress((prev) => ({
+          ...prev,
+          visible: true,
+          percent: 10,
+          status: 'saving',
+          step: 'saving_images',
+          message: ''
+        }));
         console.log('📦 Step 1: Saving all images to temp folder...');
         const failedDownloads = await mergeAndDownloadAllImages();
         
@@ -1739,10 +2274,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           await callSaveAllFramesAPI();
           console.log('✅ save-all-frames API completed successfully');
           console.log('✅ All temp images deleted');
-          console.log('✅ Process completed successfully - all images saved and uploaded');
+          setVideoGenProgress((prev) => ({
+            ...prev,
+            visible: true,
+            percent: Math.max(prev.percent, 40),
+            status: 'uploading',
+            step: 'uploading_frames',
+            message: ''
+          }));
+
+          // Step 3: Call videos/regenerate API with updated frames
+          console.log('📡 Step 3: Calling /v1/videos/regenerate...');
+          const newJobId = await callVideosRegenerateAPI();
+          if (newJobId) {
+            startVideoRedirectFlow(newJobId);
+          }
+
+          console.log(
+            '✅ Process completed successfully - all images saved, uploaded, and regeneration triggered'
+          );
           // No alert - just console log
         } catch (apiError) {
-          console.error('❌ Error in save-all-frames API:', apiError);
+          console.error('❌ Error in save-all-frames or regenerate API:', apiError);
           setError('API upload failed: ' + apiError.message);
           // No alert - just set error state
         }
@@ -1750,16 +2303,35 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       } catch (e) {
         console.error('❌ Error in handleGenerateVideosClick:', e);
         setError(e?.message || 'Failed to save images');
+        setVideoGenProgress((prev) => ({
+          ...prev,
+          visible: true,
+          percent: prev.percent || 0,
+          status: 'error',
+          step: 'error',
+          message: e?.message || 'Failed to save images'
+        }));
         // No alert - just set error state
       } finally {
         console.log('🏁 Process complete, re-enabling button');
+        // Reset progress after a short delay
+        setTimeout(() => {
+          setVideoGenProgress({
+            visible: false,
+            percent: 0,
+            status: '',
+            step: '',
+            jobId: null,
+            message: ''
+          });
+        }, 1000);
         setIsPreparingDownloads(false);
       }
     })();
     
     // Prevent any navigation or reload
     return false;
-  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, rows]);
+  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, callVideosRegenerateAPI, rows, startVideoRedirectFlow]);
 
   // Track natural dimensions of loaded images to align overlays more precisely
   const handleNaturalSize = React.useCallback((url, imgEl) => {
@@ -1840,15 +2412,81 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   e.preventDefault();
                 }
               }}
-              disabled={isPreparingDownloads}
+              disabled={isPreparingDownloads || videoGenProgress.visible}
               className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {isPreparingDownloads ? 'Saving images to temp folder…' : 'Generate Videos'}
+              {getVideoProgressLabel()}
             </button>
           )}
           {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back to Chat</button>)}
         </div>
       </div>
+
+      {videoGenProgress.visible && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-10 max-w-md w-full text-center">
+            <div className="flex flex-col items-center space-y-4">
+              <div className="relative w-20 h-20">
+                <svg className="w-20 h-20" viewBox="0 0 100 100">
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="45"
+                    stroke="#E5E7EB"
+                    strokeWidth="8"
+                    fill="none"
+                  />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="45"
+                    stroke="#13008B"
+                    strokeWidth="8"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeDasharray="283"
+                    strokeDashoffset={`${283 - (283 * Math.min(videoGenProgress.percent, 100)) / 100}`}
+                    style={{ transformOrigin: '50% 50%', transform: 'rotate(-90deg)' }}
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center text-xl font-semibold text-[#13008B]">
+                  {Math.min(100, Math.max(0, Math.round(videoGenProgress.percent)))}%
+                </div>
+              </div>
+              <div>
+                <p className="text-lg font-semibold text-gray-900">
+                  {videoGenProgress.step === 'saving_images' && 'Saving images to workspace'}
+                  {videoGenProgress.step === 'uploading_frames' && 'Uploading frames'}
+                  {videoGenProgress.step === 'queueing' && 'Submitting video job'}
+                  {videoGenProgress.step === 'queued' && 'Waiting for job to start'}
+                  {videoGenProgress.step === 'regenerating_videos' && 'Generating videos'}
+                  {videoGenProgress.step === 'completed' && 'Finalizing'}
+                  {(!videoGenProgress.step || videoGenProgress.step === '') && 'Processing'}
+                </p>
+                {videoGenProgress.message ? (
+                  <p className="text-sm text-gray-600 mt-2">{videoGenProgress.message}</p>
+                ) : (
+                  <p className="text-sm text-gray-600 mt-2">This may take a moment. Please keep this tab open.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVideoRedirectPopup && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/40">
+          <div className="bg-white shadow-2xl rounded-2xl px-6 py-8 max-w-md w-full text-center">
+            <h4 className="text-lg font-semibold text-[#13008B]">Video generation started</h4>
+            <p className="text-sm text-gray-600 mt-2">
+              Redirecting to Video List in {Math.max(0, videoRedirectCountdown)}s…
+            </p>
+            {pendingVideoJobId && (
+              <p className="text-xs text-gray-500 mt-3">Job ID: {pendingVideoJobId}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {isLoading && isPolling && (
         <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-white backdrop-blur-sm">
@@ -1936,14 +2574,92 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           </div>
             {/* Top Section: Images - Show only avatar if second image is missing */}
             {(() => {
-              const img1 = (Array.isArray(selected.images) && selected.images[0]) ? selected.images[0] : selected.imageUrl;
-              const img2 = Array.isArray(selected.images) ? selected.images[1] : '';
+              // Helper function to validate URL
+              const isValidImageUrl = (url) => {
+                if (!url || typeof url !== 'string') return false;
+                const trimmed = url.trim();
+                if (!trimmed) return false;
+                // Check if it's a valid URL format (http/https/data/blob)
+                try {
+                  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return true;
+                  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+                    new URL(trimmed); // Will throw if invalid
+                    return true;
+                  }
+                  // Relative URLs are also valid
+                  if (trimmed.startsWith('/') || trimmed.startsWith('./')) return true;
+                  return false;
+                } catch {
+                  return false;
+                }
+              };
+              
+              // Get images from selected.images array, fallback to imageUrl, then to refs if available
+              const getImg1 = () => {
+                // Priority 1: selected.images array
+                if (Array.isArray(selected.images) && selected.images[0] && typeof selected.images[0] === 'string') {
+                  const url = selected.images[0].trim();
+                  if (isValidImageUrl(url)) return url;
+                }
+                // Priority 2: selected.imageUrl
+                if (selected.imageUrl && typeof selected.imageUrl === 'string') {
+                  const url = selected.imageUrl.trim();
+                  if (isValidImageUrl(url)) return url;
+                }
+                // Priority 3: Get from rows data (where avatar_urls are stored)
+                const currentRow = rows[selected.index];
+                if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs[0]) {
+                  const url = typeof currentRow.refs[0] === 'string' ? currentRow.refs[0].trim() : '';
+                  if (isValidImageUrl(url)) return url;
+                }
+                // Priority 4: Try to get from any row if index doesn't match
+                if (rows.length > 0) {
+                  const firstRow = rows[0];
+                  if (firstRow && Array.isArray(firstRow.refs) && firstRow.refs[0]) {
+                    const url = typeof firstRow.refs[0] === 'string' ? firstRow.refs[0].trim() : '';
+                    if (isValidImageUrl(url)) return url;
+                  }
+                }
+                return '';
+              };
+              const getImg2 = () => {
+                // Priority 1: selected.images array
+                if (Array.isArray(selected.images) && selected.images[1] && typeof selected.images[1] === 'string') {
+                  const url = selected.images[1].trim();
+                  if (isValidImageUrl(url)) return url;
+                }
+                // Priority 2: Get from rows data (where avatar_urls are stored)
+                const currentRow = rows[selected.index];
+                if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs[1]) {
+                  const url = typeof currentRow.refs[1] === 'string' ? currentRow.refs[1].trim() : '';
+                  if (isValidImageUrl(url)) return url;
+                }
+                return '';
+              };
+              const img1 = getImg1();
+              const img2 = getImg2();
               const hasSecondImage = img2 && img2.trim();
+              
+              // Debug log to see what images are being used
+              console.log('🖼️ Displaying Images:', {
+                sceneNumber: selected?.sceneNumber,
+                selectedIndex: selected.index,
+                img1: img1 || '(empty)',
+                img1Valid: img1 ? isValidImageUrl(img1) : false,
+                img2: img2 || '(empty)',
+                img2Valid: img2 ? isValidImageUrl(img2) : false,
+                selectedImages: selected.images,
+                selectedImageUrl: selected.imageUrl,
+                hasSecondImage,
+                currentRowRefs: rows[selected.index]?.refs || 'N/A',
+                allRowsCount: rows.length,
+                warning: !img1 ? '⚠️ No valid image URL found for Image 1' : (img1 && !isValidImageUrl(img1) ? '⚠️ Image 1 URL format is invalid' : '✅ Image 1 URL is valid')
+              });
               
               return (
                   <div className="grid grid-cols-1 gap-4 mb-4">
                   {/* Image 1 */}
-                  {img1 && (
+                  {(img1 && typeof img1 === 'string' && img1.trim()) ? (
                     <div
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
                       data-image-container
@@ -2012,13 +2728,78 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         {selected?.isEditable && (
                          <></>
                         )}
-                        <img
-                          src={img1}
-                          alt={`scene-${selected.sceneNumber}-1`}
-                          className="w-full h-full object-contain"
-                          crossOrigin="anonymous"
-                          onLoad={(e) => handleNaturalSize(img1, e.target)}
-                        />
+                        {img1 && typeof img1 === 'string' && img1.trim() ? (
+                          <img
+                            src={img1}
+                            alt={`scene-${selected.sceneNumber}-1`}
+                            className="w-full h-full object-contain"
+                            crossOrigin={img1.startsWith('http') && !img1.includes(window.location.hostname) ? "anonymous" : undefined}
+                            onLoad={(e) => {
+                              handleNaturalSize(img1, e.target);
+                              console.log('✅ Image 1 loaded successfully:', img1);
+                            }}
+                            onError={(e) => {
+                              const errorImg = e.target;
+                              const failedUrl = errorImg.src;
+                              console.error('❌ Image 1 failed to load:', {
+                                attemptedUrl: failedUrl,
+                                originalImg1: img1,
+                                errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
+                                naturalWidth: errorImg.naturalWidth,
+                                naturalHeight: errorImg.naturalHeight,
+                                complete: errorImg.complete,
+                                currentSrc: errorImg.currentSrc
+                              });
+                              
+                              // Try multiple fallback strategies
+                              const currentRow = rows[selected.index];
+                              const fallbackUrls = [];
+                              
+                              // Strategy 1: Try other refs from current row
+                              if (currentRow && Array.isArray(currentRow.refs)) {
+                                currentRow.refs.forEach((ref, idx) => {
+                                  if (ref && typeof ref === 'string' && ref.trim() && ref !== failedUrl) {
+                                    fallbackUrls.push(ref.trim());
+                                  }
+                                });
+                              }
+                              
+                              // Strategy 2: Try selected.images
+                              if (Array.isArray(selected.images)) {
+                                selected.images.forEach((img) => {
+                                  if (img && typeof img === 'string' && img.trim() && img !== failedUrl && !fallbackUrls.includes(img.trim())) {
+                                    fallbackUrls.push(img.trim());
+                                  }
+                                });
+                              }
+                              
+                              // Strategy 3: Try selected.imageUrl
+                              if (selected.imageUrl && typeof selected.imageUrl === 'string' && selected.imageUrl.trim() && selected.imageUrl !== failedUrl && !fallbackUrls.includes(selected.imageUrl.trim())) {
+                                fallbackUrls.push(selected.imageUrl.trim());
+                              }
+                              
+                              // Try the first available fallback
+                              if (fallbackUrls.length > 0) {
+                                const nextUrl = fallbackUrls[0];
+                                console.log('🔄 Trying fallback URL:', nextUrl);
+                                // Remove crossOrigin to avoid CORS issues on retry
+                                errorImg.crossOrigin = null;
+                                errorImg.src = nextUrl;
+                              } else {
+                                console.error('❌ No fallback URLs available. All image sources exhausted.');
+                                // Show error state
+                                errorImg.style.display = 'none';
+                              }
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white text-sm">
+                            <div className="text-center">
+                              <p>No image available</p>
+                              <p className="text-xs mt-2 opacity-75">Scene {selected?.sceneNumber || selected?.scene_number || 1}</p>
+                            </div>
+                          </div>
+                        )}
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
                           // If this scene is not editable (e.g., fallback background/avatar image only), hide edit
@@ -2147,10 +2928,18 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     );
                       })()}
                     </div>
+                  ) : (
+                    <div className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center" style={{ aspectRatio: '16 / 9', minHeight: '200px' }}>
+                      <div className="text-center text-white text-sm">
+                        <p>No image available</p>
+                        <p className="text-xs mt-2 opacity-75">Scene {selected?.sceneNumber || selected?.scene_number || 1}</p>
+                        <p className="text-xs mt-1 opacity-50">Check console for details</p>
+                      </div>
+                    </div>
                   )}
 
                   {/* Image 2 - Only show if it exists */}
-                  {hasSecondImage && (
+                  {(hasSecondImage && img2 && typeof img2 === 'string' && img2.trim()) ? (
                     <div
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
                       data-image-container
@@ -2219,13 +3008,73 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         {selected?.isEditable && (
                          <></>
                         )}
-                        <img
-                          src={img2}
-                          alt={`scene-${selected.sceneNumber}-2`}
-                          className="w-full h-full object-contain"
-                          crossOrigin="anonymous"
-                          onLoad={(e) => handleNaturalSize(img2, e.target)}
-                        />
+                        {img2 && typeof img2 === 'string' && img2.trim() ? (
+                          <img
+                            src={img2}
+                            alt={`scene-${selected.sceneNumber}-2`}
+                            className="w-full h-full object-contain"
+                            crossOrigin={img2.startsWith('http') && !img2.includes(window.location.hostname) ? "anonymous" : undefined}
+                            onLoad={(e) => {
+                              handleNaturalSize(img2, e.target);
+                              console.log('✅ Image 2 loaded successfully:', img2);
+                            }}
+                            onError={(e) => {
+                              const errorImg = e.target;
+                              const failedUrl = errorImg.src;
+                              console.error('❌ Image 2 failed to load:', {
+                                attemptedUrl: failedUrl,
+                                originalImg2: img2,
+                                errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
+                                naturalWidth: errorImg.naturalWidth,
+                                naturalHeight: errorImg.naturalHeight,
+                                complete: errorImg.complete,
+                                currentSrc: errorImg.currentSrc
+                              });
+                              
+                              // Try multiple fallback strategies
+                              const currentRow = rows[selected.index];
+                              const fallbackUrls = [];
+                              
+                              // Strategy 1: Try other refs from current row (especially index 1)
+                              if (currentRow && Array.isArray(currentRow.refs)) {
+                                currentRow.refs.forEach((ref, idx) => {
+                                  if (ref && typeof ref === 'string' && ref.trim() && ref !== failedUrl) {
+                                    fallbackUrls.push(ref.trim());
+                                  }
+                                });
+                              }
+                              
+                              // Strategy 2: Try selected.images[1] or other indices
+                              if (Array.isArray(selected.images)) {
+                                selected.images.forEach((img) => {
+                                  if (img && typeof img === 'string' && img.trim() && img !== failedUrl && !fallbackUrls.includes(img.trim())) {
+                                    fallbackUrls.push(img.trim());
+                                  }
+                                });
+                              }
+                              
+                              // Try the first available fallback
+                              if (fallbackUrls.length > 0) {
+                                const nextUrl = fallbackUrls[0];
+                                console.log('🔄 Trying fallback URL for Image 2:', nextUrl);
+                                // Remove crossOrigin to avoid CORS issues on retry
+                                errorImg.crossOrigin = null;
+                                errorImg.src = nextUrl;
+                              } else {
+                                console.error('❌ No fallback URLs available for Image 2. All image sources exhausted.');
+                                // Show error state
+                                errorImg.style.display = 'none';
+                              }
+                            }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white text-sm">
+                            <div className="text-center">
+                              <p>No image available</p>
+                              <p className="text-xs mt-2 opacity-75">Scene {selected?.sceneNumber || selected?.scene_number || 1} - Image 2</p>
+                            </div>
+                          </div>
+                        )}
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
                           // If this scene is not editable (e.g., fallback background/avatar image only), hide edit
@@ -2358,47 +3207,39 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     );
                       })()}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               );
             })()}
 
-            {/* Bottom Section: Two Columns - Left: Scene Title/Text/Size/Additional Info, Right: Description/Narration */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Left Column */}
-              <div className="space-y-3">
-                <div>
-                  <label className="text-sm text-gray-600">Scene Title</label>
-                  <input type="text" readOnly className="w-full border rounded-lg px-3 py-2 text-sm" value={selected?.title || (selected?.sceneNumber ? `Scene ${selected.sceneNumber}` : '')} />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-600">Text to be Included</label>
-                  <textarea className="w-full h-32 border rounded-lg px-3 py-2 text-sm" readOnly value={selected?.textToBeIncluded || ''} />
-                </div>
-                {selected?.imageDimensions?.width && selected?.imageDimensions?.height ? (
-                  <div>
-                    <label className="text-sm text-gray-600">Image Size</label>
-                    <input type="text" readOnly className="w-full border rounded-lg px-3 py-2 text-sm" value={`${selected.imageDimensions.width} x ${selected.imageDimensions.height}`} />
-                  </div>
-                ) : null}
-                
-                {/* Additional Information Accordion */}
-               
+            {/* Title, Description, Narration stacked vertically */}
+            <div className="space-y-3">
+              <div>
+                <input
+                  type="text"
+                  readOnly
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  value={selected?.title || (selected?.sceneNumber ? `Scene ${selected.sceneNumber}` : '')}
+                />
               </div>
-
-              {/* Right Column */}
-              <div className="space-y-3">
-                <div>
-                  <label className="text-sm text-gray-600">Description</label>
-                  <textarea className="w-full h-32 border rounded-lg px-3 py-2 text-sm" readOnly value={selected?.description || ''} />
-                </div>
-                <div>
-                  <label className="text-sm text-gray-600">Narration</label>
-                  <textarea className="w-full h-32 border rounded-lg px-3 py-2 text-sm" readOnly value={selected?.narration || ''} />
-                </div>
+              <div>
+                <label className="text-sm text-gray-600">Description</label>
+                <textarea
+                  className="w-full h-32 border rounded-lg px-3 py-2 text-sm"
+                  readOnly
+                  value={selected?.description || ''}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Narration</label>
+                <textarea
+                  className="w-full h-32 border rounded-lg px-3 py-2 text-sm"
+                  readOnly
+                  value={selected?.narration || ''}
+                />
               </div>
             </div>
-             {(() => {
+             {/* {(() => {
               const prompts = selected?.prompts || {};
               const opening = prompts.opening_frame || {};
               const closing = prompts.closing_frame || {};
@@ -2464,6 +3305,600 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   )}
                 </div>
               );
+            })()} */}
+            
+            {/* Advanced Options Accordion - For VEO3/SORA/ANCHOR models */}
+            {(() => {
+              const modelUpper = String(selected?.model || '').toUpperCase();
+              const isRelevantModel = modelUpper === 'VEO3' || modelUpper === 'SORA' || modelUpper === 'ANCHOR';
+              const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+              
+              if (!isRelevantModel) return null;
+              
+              const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
+                logoNeeded: false,
+                voiceUrl: '',
+                voiceOption: '',
+                transitionPreset: null,
+                transitionCustom: null,
+                customDescription: '',
+                customPreservationNotes: {
+                  lighting: '',
+                  style_mood: '',
+                  transition_type: '',
+                  scene_description: '',
+                  subject_description: '',
+                  action_specification: '',
+                  content_modification: '',
+                  camera_specifications: '',
+                  geometric_preservation: ''
+                },
+                subtitleSceneOnly: false,
+                rememberCustomPreset: false,
+                customPresetName: ''
+              };
+
+              const hasLogoAsset = !!sessionAssets.logo_url;
+              const hasVoiceAssets = Object.keys(sessionAssets.voice_urls || {}).length > 0;
+              const customTransitionOptions = (transitionPresets || []).filter((preset) => {
+                if (!preset) return false;
+                const type = String(preset.type || preset.category || preset.kind || '').toLowerCase();
+                return (
+                  preset.is_custom === true ||
+                  preset.custom === true ||
+                  type === 'custom' ||
+                  preset.source === 'custom'
+                );
+              });
+              const selectedCustomOption = sceneOptions.transitionCustomPreset;
+
+              const customNotes = sceneOptions.customPreservationNotes || {};
+              const hasCustomDesignInput =
+                (sceneOptions.customDescription || '').trim().length > 0 ||
+                Object.values(customNotes).some(v => (v || '').trim().length > 0);
+
+              const isCustomPresetMode = !!sceneOptions.rememberCustomPreset;
+              
+              const toggleAdvancedOptions = (section) => {
+                setShowAdvancedOptions(prev => ({
+                  ...prev,
+                  [sceneNumber]: {
+                    ...prev[sceneNumber],
+                    [section]: !prev[sceneNumber]?.[section]
+                  }
+                }));
+              };
+              
+              const updateSceneOption = (key, value) => {
+                setSceneAdvancedOptions(prev => ({
+                  ...prev,
+                  [sceneNumber]: {
+                    ...prev[sceneNumber],
+                    [key]: value
+                  }
+                }));
+              };
+              
+              const isAssetsOpen = showAdvancedOptions[sceneNumber]?.assets || false;
+              const isTransitionsOpen = showAdvancedOptions[sceneNumber]?.transitions || false;
+              
+              return (
+                <div className="mt-4 space-y-3">
+                  {/* Main Advanced Options Accordion */}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => toggleAdvancedOptions('main')}
+                      className="flex w-full items-center justify-between rounded-lg border border-[#D8D3FF] bg-white px-4 py-3 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#F6F4FF]"
+                    >
+                      <span>Advanced Options</span>
+                      <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.main ? 'rotate-180' : ''}`} />
+                    </button>
+                    
+                    {showAdvancedOptions[sceneNumber]?.main && (
+                      <div className="mt-3 space-y-3">
+                        {/* Logo and Voiceover Section */}
+                        <div className="border rounded-lg p-4 bg-white">
+                          <button
+                            type="button"
+                            onClick={() => toggleAdvancedOptions('assets')}
+                            className="flex w-full items-center justify-between text-base font-medium text-gray-800 mb-2"
+                          >
+                            <span>Logo & Voiceover</span>
+                            <ChevronDown className={`h-4 w-4 transition-transform ${isAssetsOpen ? 'rotate-180' : ''}`} />
+                          </button>
+                          
+                          {isAssetsOpen && (
+                            <div className="space-y-4 mt-3">
+                              {/* Logo Needed Radio */}
+                              <div>
+                                <label className="text-sm font-medium text-gray-700 mb-2 block">Logo Needed</label>
+                                <div className="flex gap-4">
+                                  <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name={`logo-${sceneNumber}`}
+                                      checked={hasLogoAsset && sceneOptions.logoNeeded === true}
+                                      onChange={() => updateSceneOption('logoNeeded', true)}
+                                      disabled={!hasLogoAsset}
+                                      className="w-4 h-4 text-[#13008B]"
+                                    />
+                                    <span className="text-sm text-gray-700">Yes</span>
+                                  </label>
+                                  <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name={`logo-${sceneNumber}`}
+                                      checked={!hasLogoAsset || sceneOptions.logoNeeded === false}
+                                      onChange={() => updateSceneOption('logoNeeded', false)}
+                                      className="w-4 h-4 text-[#13008B]"
+                                    />
+                                    <span className="text-sm text-gray-700">No</span>
+                                  </label>
+                                </div>
+                                {sceneOptions.logoNeeded && sessionAssets.logo_url && (
+                                  <div className="mt-2 text-xs text-gray-500">
+                                    Logo URL: {sessionAssets.logo_url}
+                                  </div>
+                                )}
+                              </div>
+                              
+                              {/* Voice URL Selection */}
+                              <div>
+                                <label className="text-sm font-medium text-gray-700 mb-2 block">Voice URL</label>
+                                <div className="space-y-2">
+                                  {Object.keys(sessionAssets.voice_urls || {}).length > 0 ? (
+                                    Object.entries(sessionAssets.voice_urls).map(([key, url]) => (
+                                      <label key={key} className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                          type="radio"
+                                          name={`voice-${sceneNumber}`}
+                                          checked={sceneOptions.voiceUrl === url}
+                                          onChange={() => {
+                                            updateSceneOption('voiceUrl', url);
+                                            // Keep voiceOption as the key (could be "male", "female", etc.)
+                                            updateSceneOption('voiceOption', key);
+                                          }}
+                                          disabled={!hasVoiceAssets}
+                                          className="w-4 h-4 text-[#13008B]"
+                                        />
+                                        <span className="text-sm text-gray-700">{key}: {url}</span>
+                                      </label>
+                                    ))
+                                  ) : (
+                                    <p className="text-xs text-gray-500">No voice URLs available</p>
+                                  )}
+                                  <label className="flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name={`voice-${sceneNumber}`}
+                                      checked={!hasVoiceAssets || sceneOptions.voiceUrl === ''}
+                                      onChange={() => {
+                                        updateSceneOption('voiceUrl', '');
+                                        updateSceneOption('voiceOption', '');
+                                      }}
+                                      className="w-4 h-4 text-[#13008B]"
+                                    />
+                                    <span className="text-sm text-gray-700">None</span>
+                                  </label>
+                                </div>
+                              </div>
+                              
+                              {/* Voice Option (Female / Male) - only when no specific voice URL selected */}
+                              {!sceneOptions.voiceUrl && (
+                                <div>
+                                  <label className="text-sm font-medium text-gray-700 mb-2 block">Voice Option</label>
+                                  <div className="flex gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                      <input
+                                        type="radio"
+                                        name={`voiceOption-${sceneNumber}`}
+                                        checked={sceneOptions.voiceOption === 'female'}
+                                        onChange={() => updateSceneOption('voiceOption', 'female')}
+                                        className="w-4 h-4 text-[#13008B]"
+                                      />
+                                      <span className="text-sm text-gray-700">Female</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                      <input
+                                        type="radio"
+                                        name={`voiceOption-${sceneNumber}`}
+                                        checked={sceneOptions.voiceOption === 'male'}
+                                        onChange={() => updateSceneOption('voiceOption', 'male')}
+                                        className="w-4 h-4 text-[#13008B]"
+                                      />
+                                      <span className="text-sm text-gray-700">Male</span>
+                                    </label>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Subtitles Section (global toggle) */}
+                        <div className="border rounded-lg p-4 bg-white">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={subtitlesEnabled}
+                              onChange={(e) => setSubtitlesEnabled(e.target.checked)}
+                              className="w-4 h-4 text-[#13008B]"
+                            />
+                            <span className="text-sm font-medium text-gray-800">
+                              Include subtitles for all scenes
+                            </span>
+                          </label>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Toggling this in any scene will turn subtitles on or off for every scene.
+                          </p>
+                        </div>
+                        
+                        {/* Transitions Section */}
+                        {(modelUpper === 'SORA' || modelUpper === 'ANCHOR') && (
+                          <div className="border rounded-lg p-4 bg-white">
+                            <button
+                              type="button"
+                              onClick={() => toggleAdvancedOptions('transitions')}
+                              className="flex w-full items-center justify-between text-base font-medium text-gray-800 mb-2"
+                            >
+                              <span>Transitions</span>
+                              <ChevronDown className={`h-4 w-4 transition-transform ${isTransitionsOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            
+                            {isTransitionsOpen && (
+                              <div className="mt-3 space-y-3">
+                                {/* Custom Accordion */}
+                                <div className={`border rounded-lg p-3 bg-gray-50 ${isCustomPresetMode ? 'opacity-50 pointer-events-none' : ''}`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleAdvancedOptions('custom')}
+                                    className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
+                                  >
+                                    <span>Custom</span>
+                                    <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.custom ? 'rotate-180' : ''}`} />
+                                  </button>
+                                  {showAdvancedOptions[sceneNumber]?.custom && (
+                                    <div className="mt-2 space-y-3">
+                                      <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                          type="radio"
+                                          name={`transition-${sceneNumber}`}
+                                          checked={sceneOptions.transitionPreset === null && sceneOptions.transitionCustom === 'custom'}
+                                          onChange={() => {
+                                            updateSceneOption('transitionPreset', null);
+                                            updateSceneOption('transitionCustom', 'custom');
+                                          }}
+                                          className="w-4 h-4 text-[#13008B]"
+                                        />
+                                        <span className="text-sm text-gray-700">Use Custom Transition</span>
+                                      </label>
+                                      {sceneOptions.transitionCustom === 'custom' && customTransitionOptions.length > 0 && (
+                                        <div className="space-y-2">
+                                          <label className="text-sm font-medium text-gray-700">Select Custom Template</label>
+                                          <select
+                                            value={sceneOptions.transitionCustomPreset?.name || ''}
+                                            onChange={(e) => {
+                                              const selectedName = e.target.value;
+                                              if (!selectedName) {
+                                                updateSceneOption('transitionCustomPreset', null);
+                                                return;
+                                              }
+                                              const found = customTransitionOptions.find((preset) => preset?.name === selectedName);
+                                              if (found) {
+                                                updateSceneOption('transitionCustomPreset', found);
+                                                updateSceneOption('transitionCustom', 'custom');
+                                              }
+                                            }}
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                          >
+                                            <option value="">-- Select a custom template --</option>
+                                            {customTransitionOptions.map((preset, idx) => (
+                                              <option key={idx} value={preset?.name || `custom-${idx}`}>
+                                                {preset?.name || `Custom ${idx + 1}`}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          {sceneOptions.transitionCustomPreset?.preservation_notes && (
+                                            <div className="mt-3 p-3 bg-white rounded border text-xs space-y-2">
+                                              <div className="font-semibold text-gray-800 mb-2">Preservation Notes:</div>
+                                              <div><strong>Lighting:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.lighting || 'N/A'}</span></div>
+                                              <div><strong>Style/Mood:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.style_mood || 'N/A'}</span></div>
+                                              <div><strong>Transition Type:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.transition_type || 'N/A'}</span></div>
+                                              <div><strong>Scene Description:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.scene_description || 'N/A'}</span></div>
+                                              <div><strong>Subject Description:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.subject_description || 'N/A'}</span></div>
+                                              <div><strong>Action Specification:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.action_specification || 'N/A'}</span></div>
+                                              <div><strong>Content Modification:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.content_modification || 'N/A'}</span></div>
+                                              <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.camera_specifications || 'N/A'}</span></div>
+                                              <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {/* Preset Accordion */}
+                                <div className={`border rounded-lg p-3 bg-gray-50 ${isCustomPresetMode ? 'opacity-50 pointer-events-none' : ''}`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleAdvancedOptions('preset')}
+                                    className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
+                                  >
+                                    <span>Preset</span>
+                                    <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.preset ? 'rotate-180' : ''}`} />
+                                  </button>
+                                  {showAdvancedOptions[sceneNumber]?.preset && (
+                                    <div className="mt-2 space-y-3">
+                                      {/* Preset Dropdown */}
+                                      <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-2 block">Select Preset</label>
+                                        {transitionPresets.length > 0 ? (
+                                          <select
+                                            value={sceneOptions.transitionPreset?.name || ''}
+                                            onChange={(e) => {
+                                              const selectedPreset = transitionPresets.find(p => p.name === e.target.value);
+                                              if (selectedPreset) {
+                                                updateSceneOption('transitionPreset', selectedPreset);
+                                                updateSceneOption('transitionCustom', null);
+                                              } else {
+                                                updateSceneOption('transitionPreset', null);
+                                              }
+                                            }}
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                          >
+                                            <option value="">-- Select a preset --</option>
+                                            {transitionPresets.map((preset, idx) => {
+                                              // Each preset object has a 'name' property
+                                              const presetName = preset?.name || '';
+                                              if (!presetName) {
+                                                console.warn('⚠️ Preset missing name:', preset);
+                                                return null;
+                                              }
+                                              return (
+                                                <option key={idx} value={presetName}>
+                                                  {presetName}
+                                                </option>
+                                              );
+                                            }).filter(Boolean)}
+                                          </select>
+                                        ) : (
+                                          <div className="text-sm text-gray-500 p-2 border rounded-lg bg-gray-50">
+                                            No presets available. Loading...
+                                          </div>
+                                        )}
+                                      </div>
+                                      
+                                      {/* Show preservation_notes when preset is selected */}
+                                      {sceneOptions.transitionPreset && sceneOptions.transitionPreset.preservation_notes && (
+                                        <div className="mt-3 p-3 bg-white rounded border text-xs space-y-2">
+                                          <div className="font-semibold text-gray-800 mb-2">Preservation Notes:</div>
+                                          <div><strong>Lighting:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.lighting || 'N/A'}</span></div>
+                                          <div><strong>Style/Mood:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.style_mood || 'N/A'}</span></div>
+                                          <div><strong>Transition Type:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.transition_type || 'N/A'}</span></div>
+                                          <div><strong>Scene Description:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.scene_description || 'N/A'}</span></div>
+                                          <div><strong>Subject Description:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.subject_description || 'N/A'}</span></div>
+                                          <div><strong>Action Specification:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.action_specification || 'N/A'}</span></div>
+                                          <div><strong>Content Modification:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.content_modification || 'N/A'}</span></div>
+                                          <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.camera_specifications || 'N/A'}</span></div>
+                                          <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                
+                                {/* Design Your Own Accordion */}
+                                <div className="border rounded-lg p-3 bg-gray-50">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleAdvancedOptions('designYourOwn')}
+                                    className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
+                                  >
+                                    <span>Design Your Own</span>
+                                    <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.designYourOwn ? 'rotate-180' : ''}`} />
+                                  </button>
+                                  {showAdvancedOptions[sceneNumber]?.designYourOwn && (
+                                    <div className="mt-3 space-y-3">
+                                      {/* Tabs */}
+                                      <div className="flex border-b border-gray-200">
+                                        <button
+                                          type="button"
+                                          onClick={() => setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'describe' }))}
+                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                            (designYourOwnTab[sceneNumber] || 'describe') === 'describe'
+                                              ? 'border-[#13008B] text-[#13008B]'
+                                              : 'border-transparent text-gray-500 hover:text-gray-700'
+                                          }`}
+                                        >
+                                          Describe it
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'fill' }))}
+                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                            designYourOwnTab[sceneNumber] === 'fill'
+                                              ? 'border-[#13008B] text-[#13008B]'
+                                              : 'border-transparent text-gray-500 hover:text-gray-700'
+                                          }`}
+                                        >
+                                          Fill the points
+                                        </button>
+                                      </div>
+                                      
+                                      {/* Tab Content */}
+                                      <div className="mt-3">
+                                        {/* Describe it Tab */}
+                                        {(designYourOwnTab[sceneNumber] || 'describe') === 'describe' && (
+                                          <div>
+                                            <label className="text-sm font-medium text-gray-700 mb-2 block">Describe Your Transition</label>
+                                            <textarea
+                                              value={sceneOptions.customDescription || ''}
+                                              onChange={(e) => updateSceneOption('customDescription', e.target.value)}
+                                              placeholder="Describe how you want the transition to work..."
+                                              className="w-full h-32 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                            />
+                                          </div>
+                                        )}
+                                        
+                                        {/* Fill the points Tab */}
+                                        {designYourOwnTab[sceneNumber] === 'fill' && (
+                                          <div className="space-y-3">
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Lighting</label>
+                                              <input
+                                                type="text"
+                                                value={sceneOptions.customPreservationNotes?.lighting || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  lighting: e.target.value
+                                                })}
+                                                placeholder="e.g., Clean minimal lighting, flat graphic style"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Style/Mood</label>
+                                              <input
+                                                type="text"
+                                                value={sceneOptions.customPreservationNotes?.style_mood || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  style_mood: e.target.value
+                                                })}
+                                                placeholder="e.g., Professional presentation mood"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
+                                              <input
+                                                type="text"
+                                                value={sceneOptions.customPreservationNotes?.transition_type || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  transition_type: e.target.value
+                                                })}
+                                                placeholder="e.g., Whole-frame instant cut"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
+                                              <textarea
+                                                value={sceneOptions.customPreservationNotes?.scene_description || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  scene_description: e.target.value
+                                                })}
+                                                placeholder="e.g., Flat graphic layouts displayed in sequence"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
+                                              <textarea
+                                                value={sceneOptions.customPreservationNotes?.subject_description || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  subject_description: e.target.value
+                                                })}
+                                                placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
+                                              <textarea
+                                                value={sceneOptions.customPreservationNotes?.action_specification || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  action_specification: e.target.value
+                                                })}
+                                                placeholder="e.g., Instant cut transition between static compositions"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
+                                              <textarea
+                                                value={sceneOptions.customPreservationNotes?.content_modification || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  content_modification: e.target.value
+                                                })}
+                                                placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Camera Specifications</label>
+                                              <input
+                                                type="text"
+                                                value={sceneOptions.customPreservationNotes?.camera_specifications || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  camera_specifications: e.target.value
+                                                })}
+                                                placeholder="e.g., Static camera with subtle slow push-in"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Geometric Preservation</label>
+                                              <textarea
+                                                value={sceneOptions.customPreservationNotes?.geometric_preservation || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  geometric_preservation: e.target.value
+                                                })}
+                                                placeholder="e.g., All elements locked, frozen, preserved in exact positions"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Remember custom design as preset */}
+                                        {hasCustomDesignInput && (
+                                          <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
+                                            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                                              <input
+                                                type="checkbox"
+                                                checked={sceneOptions.rememberCustomPreset || false}
+                                                onChange={(e) => updateSceneOption('rememberCustomPreset', e.target.checked)}
+                                                className="w-4 h-4 text-[#13008B]"
+                                              />
+                                              <span>Remember this design as a preset</span>
+                                            </label>
+                                            {sceneOptions.rememberCustomPreset && (
+                                              <div className="mt-1">
+                                                <label className="text-xs font-medium text-gray-700 mb-1 block">Preset Name</label>
+                                                <input
+                                                  type="text"
+                                                  value={sceneOptions.customPresetName || ''}
+                                                  onChange={(e) => updateSceneOption('customPresetName', e.target.value)}
+                                                  placeholder="Enter a name for this preset"
+                                                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
             })()}
           </div>
         )}
@@ -2485,11 +3920,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   key={i}
                   className={`min-w-[300px] w-[300px] max-w-full cursor-pointer`}
                   onClick={() => {
-                    const imgs = modelUpper === 'PLOTLY' ? [first] : (r.refs || []).slice(0, 2);
+                    const refsArray = r.refs || [];
+                    const imgs = modelUpper === 'PLOTLY' ? [first] : refsArray.slice(0, 2);
+                    console.log('🎯 Scene Selected:', {
+                      sceneNumber: r.scene_number,
+                      refs: refsArray,
+                      first,
+                      second: refsArray[1],
+                      imgs,
+                      model: modelUpper
+                    });
                     setSelected({
                       index: i,
                       imageUrl: first || '',
-                      images: imgs,
+                      images: imgs.filter(Boolean), // Filter out any empty values
                       title: r.scene_title || 'Untitled',
                       sceneNumber: r.scene_number,
                       description: r?.description || '',
