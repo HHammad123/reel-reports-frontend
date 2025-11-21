@@ -83,20 +83,6 @@ const Guidlines = () => {
     } catch (_) { /* noop */ }
   }, [brandLogos, selectedFonts, selectedColors])
 
-  const uniqueBrandVoiceOptions = useMemo(() => {
-    const source = Array.isArray(brandVoices) ? brandVoices : []
-    const seen = new Map()
-    return source.reduce((acc, voice, index) => {
-      const name = extractBrandVoiceName(voice, index)
-      const key = name.trim().toLowerCase()
-      if (!seen.has(key)) {
-        seen.set(key, true)
-        acc.push({ name, index })
-      }
-      return acc
-    }, [])
-  }, [brandVoices, extractBrandVoiceName])
-
   // Presenter options (for Avatar/Hybrid video types)
   const PRESENTER_OPTIONS = [
     { option: 'Confident Entrance (Walk-in)', user_description: 'The [Presenter] enters confidently from the side, walks to the center, and pauses, ready to address the audience against a [background].', prompt_template: 'Generate a cinematic 4K Veo 3 shot of [Presenter] in professional attire walking confidently from the left, stopping center-frame against a [background]. The presenter should make natural eye contact with the camera, have a controlled, authoritative pace, and be lit by soft, professional studio lighting. Ensure realistic motion and a balanced composition.', prompt_sample: 'Generate a cinematic 4K Veo 3 shot of a woman with dark hair in a sharp navy blue suit walking confidently from the left, stopping center-frame against a bright, minimalist office lobby with a large window and green plants. She makes natural eye contact with the camera, her pace controlled and authoritative. The scene is lit by soft, diffused studio lighting that creates a professional, flattering look. Realistic motion physics and a perfectly balanced medium shot composition.', sample_video: 'https://example.com/sample_confident_entry.mp4' },
@@ -397,7 +383,7 @@ const Guidlines = () => {
     }
   }
 
-  const [selectedGoal, setSelectedGoal] = useState("educate"); // Default to "Inform"
+  const [selectedGoal, setSelectedGoal] = useState("Pitch development"); // Default to first option
   const [selectedVideoType, setSelectedVideoType] = useState("tourism"); 
   const [otherText, setOtherText] = useState("");
   const videoType= [
@@ -407,10 +393,13 @@ const Guidlines = () => {
     { id: "marketing", label: "Marketing Pitch / Proposal" }
   ];
   const goals = [
-    { id: "inform", label: "Internal communication" },
-    { id: "promote", label: "Public relations" },
-    { id: "summarize", label: "Financial reporting" },
-    { id: "other", label: "Other (please specify)" }
+    { id: "Pitch development", label: "Pitch development" },
+    { id: "Marketing videos", label: "Marketing videos" },
+    { id: "Internal communications", label: "Internal communications" },
+    { id: "Report summaries", label: "Report summaries" },
+    { id: "Training materials", label: "Training materials" },
+    { id: "Knowledge management", label: "Knowledge management" },
+    { id: "Financial summary", label: "Financial summary" },
   ];
   const handleSelect = (goalId) => {
     setSelectedGoal(goalId);
@@ -467,9 +456,9 @@ const Guidlines = () => {
     { id: "professional", label: "Professional" },
     { id: "casual", label: "Casual" },
     { id: "humorous", label: "Humorous" },
-    { id: "inspiring", label: "Inspiring" },
-    { id: "formal", label: "Formal" },
-    { id: "other", label: "Other (please specify)" },
+    { id: "storytelling", label: "Storytelling" },
+
+
   ];
 
   const handleSelecttone = (id) => {
@@ -721,6 +710,32 @@ const Guidlines = () => {
   const [voiceFilesForUpload, setVoiceFilesForUpload] = useState([]);
   const [voiceSaveMsg, setVoiceSaveMsg] = useState('');
   const [isSavingBrandVoices, setIsSavingBrandVoices] = useState(false);
+
+  // Filter voiceovers by selected tone when Audio and Voice is "yes"
+  const uniqueBrandVoiceOptions = useMemo(() => {
+    // Filter by selected tone when Audio and Voice is "yes"
+    let source = Array.isArray(brandVoices) ? brandVoices : []
+    
+    // If Audio and Voice is selected as "yes", filter by tone type
+    if (selectedVoice2 === 'yes' && selectedTone) {
+      source = source.filter(voice => {
+        // Check if voice has a type field that matches selectedTone
+        const voiceType = voice?.type || voice?.tone || voice?.voice_type || ''
+        return voiceType.toLowerCase() === selectedTone.toLowerCase()
+      })
+    }
+    
+    const seen = new Map()
+    return source.reduce((acc, voice, index) => {
+      const name = extractBrandVoiceName(voice, index)
+      const key = name.trim().toLowerCase()
+      if (!seen.has(key)) {
+        seen.set(key, true)
+        acc.push({ name, index, originalVoice: voice })
+      }
+      return acc
+    }, [])
+  }, [brandVoices, extractBrandVoiceName, selectedVoice2, selectedTone])
 
   const optionsVoice = [
     { id: "yes", label: "Yes" },
@@ -1041,15 +1056,7 @@ const Guidlines = () => {
                       >
                         {aud.label}
                       </label>
-                      {aud.id === "other" && selectedTone === "other" && (
-                        <input
-                          type="text"
-                          value={otherTexttone}
-                          onChange={(e) => setOtherTexttone(e.target.value)}
-                          placeholder="Please specify"
-                          className="border-b border-gray-400 outline-none ml-2"
-                        />
-                      )}
+                      
                     </div>
                   ))}
                 </div>
@@ -1685,21 +1692,28 @@ const Guidlines = () => {
                         uniqueBrandVoiceOptions.map(({ name, index }) => {
                           const active = selectedVoiceFromLibrary === index
                           return (
-                            <button
-                              key={`${name}-${index}`}
-                              onClick={() => setSelectedVoiceFromLibrary(index)}
-                              className={`px-4 py-2 rounded-full border text-sm font-medium transition-all ${
-                                active
-                                  ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
-                                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                              }`}
-                            >
-                              {name}
-                            </button>
+                            <div key={`${name}-${index}`} className="flex flex-col items-center gap-1">
+                              <button
+                                onClick={() => setSelectedVoiceFromLibrary(index)}
+                                className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${
+                                  active
+                                    ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50'
+                                    : 'border-gray-300 bg-white hover:bg-gray-50'
+                                }`}
+                                title={name}
+                              >
+                                <span className={`text-xs font-medium px-2 text-center truncate max-w-full ${
+                                  active ? 'text-blue-700' : 'text-gray-600'
+                                }`}>
+                                  {name.length > 10 ? name.substring(0, 8) + '...' : name}
+                                </span>
+                              </button>
+                              <span className="text-xs text-gray-600 text-center max-w-[80px] truncate">{name}</span>
+                            </div>
                           )
                         })
                       ) : (
-                        <span className="text-xs text-gray-500">No saved voices found.</span>
+                        <span className="text-xs text-gray-500">No saved voices found for {selectedTone} tone.</span>
                       )}
                       <div className="flex flex-col items-center gap-1">
                          <button onClick={() => setIsVoiceModalOpen(true)} className="w-20 h-20 rounded-full flex items-center justify-center border border-dashed border-gray-400 text-gray-500 hover:bg-gray-50" title="Add voice">

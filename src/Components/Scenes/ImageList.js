@@ -1,8 +1,31 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { ChevronDown, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
+import ChartEditorModal from './ChartEditorModal';
+
+const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
+  if (!ratio || typeof ratio !== 'string') return fallback;
+  const cleaned = ratio.replace(/\s+/g, '');
+  const match = cleaned.match(/(\d+(?:\.\d+)?)[:/xX](\d+(?:\.\d+)?)/);
+  if (match) {
+    const w = Number(match[1]);
+    const h = Number(match[2]);
+    if (w > 0 && h > 0) return `${w}:${h}`;
+  }
+  const lower = cleaned.toLowerCase();
+  if (lower === '9:16' || lower === '9x16') return '9:16';
+  if (lower === '16:9' || lower === '16x9') return '16:9';
+  return fallback;
+};
+
+const aspectRatioToCss = (ratio) => {
+  const normalized = normalizeAspectRatioValue(ratio);
+  const [w, h] = normalized.split(':').map(Number);
+  if (w > 0 && h > 0) return `${w} / ${h}`;
+  return '16 / 9';
+};
 
 const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoToVideos }) => {
   const [rows, setRows] = useState([]);
@@ -29,15 +52,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 	  const [showEditor, setShowEditor] = useState(false);
 	  const [editorData, setEditorData] = useState(null);
 	  const [showPromptsAccordion, setShowPromptsAccordion] = useState(false);
-	  const [showImageEdit, setShowImageEdit] = useState(false);
-	  const [editingImageFrame, setEditingImageFrame] = useState(null); // Store the frame being edited
-	  const [editingSceneNumber, setEditingSceneNumber] = useState(null); // Store scene number for the image being edited
-	  const [editingImageIndex, setEditingImageIndex] = useState(null); // Store image index (0 for Image 1, 1 for Image 2)
-	  const [showRegeneratePopup, setShowRegeneratePopup] = useState(false);
-	  const [regenerateUserQuery, setRegenerateUserQuery] = useState('');
-	  const [isRegenerating, setIsRegenerating] = useState(false);
-	  const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
+  const [showImageEdit, setShowImageEdit] = useState(false);
+  const [editingImageFrame, setEditingImageFrame] = useState(null); // Store the frame being edited
+  const [editingSceneNumber, setEditingSceneNumber] = useState(null); // Store scene number for the image being edited
+  const [editingImageIndex, setEditingImageIndex] = useState(null); // Store image index (0 for Image 1, 1 for Image 2)
+  const [showRegeneratePopup, setShowRegeneratePopup] = useState(false);
+  const [regenerateUserQuery, setRegenerateUserQuery] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
   const [imageNaturalDims, setImageNaturalDims] = useState({});
+  const [showChartEditor, setShowChartEditor] = useState(false);
+  const [chartEditorData, setChartEditorData] = useState(null);
+  const [chartEditorLoading, setChartEditorLoading] = useState(false);
+  const [chartEditorError, setChartEditorError] = useState('');
   // State for session assets (logo and voiceover)
   const [sessionAssets, setSessionAssets] = useState({ logo_url: '', voice_urls: {} });
   // State for transition presets
@@ -64,6 +91,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [showVideoRedirectPopup, setShowVideoRedirectPopup] = useState(false);
   const [videoRedirectCountdown, setVideoRedirectCountdown] = useState(5);
   const [pendingVideoJobId, setPendingVideoJobId] = useState(null);
+  const [questionnaireAspectRatio, setQuestionnaireAspectRatio] = useState('16:9');
+  const cssAspectRatio = React.useMemo(
+    () => aspectRatioToCss(questionnaireAspectRatio),
+    [questionnaireAspectRatio]
+  );
+  const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+  const selectedModel = String(selected?.model || selected?.mode || '').toUpperCase();
   const redirectIntervalRef = React.useRef(null);
 
   const startVideoRedirectFlow = React.useCallback(
@@ -141,6 +175,117 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           : 'Processing...';
     }
   }, [videoGenProgress, isPreparingDownloads]);
+
+  const handleInlineEditorClose = React.useCallback(() => {
+    setShowImageEdit(false);
+    setEditingImageFrame(null);
+    setEditingSceneNumber(null);
+    setEditingImageIndex(null);
+  }, []);
+
+  const normalizeImageUrl = useCallback((url) => {
+    if (!url || typeof url !== 'string') return ''
+    return url.trim().split('?')[0].replace(/\/$/, '')
+  }, [])
+
+  const getOrderedRefs = useCallback((row) => {
+    const baseRefs = Array.isArray(row?.refs) ? row.refs.filter(Boolean) : []
+    const modelUpper = String(row?.model || '').toUpperCase()
+    if (modelUpper !== 'PLOTLY') return baseRefs
+    const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
+    if (!frames.length) return baseRefs
+    const frameEntries = frames
+      .map((frame) => {
+        const base = frame?.base_image || frame?.baseImage || {}
+        const url =
+          base?.image_url ||
+          base?.imageUrl ||
+          base?.imageurl ||
+          base?.url ||
+          base?.src ||
+          frame?.image_url ||
+          frame?.imageUrl ||
+          frame?.url ||
+          ''
+        const normalizedUrl = normalizeImageUrl(url)
+        if (!normalizedUrl) return null
+        const textEls = Array.isArray(frame?.text_elements)
+          ? frame.text_elements
+          : Array.isArray(frame?.textElements)
+          ? frame.textElements
+          : []
+        const hasText = textEls.some((el) => {
+          const txt = typeof el?.text === 'string' ? el.text.trim() : ''
+          return txt.length > 0
+        })
+        return { url, normalizedUrl, hasText }
+      })
+      .filter(Boolean)
+    if (!frameEntries.length) return baseRefs
+    const noText = []
+    const withText = []
+    frameEntries.forEach(({ url, hasText }) => {
+      if (hasText) {
+        withText.push(url)
+      } else {
+        noText.push(url)
+      }
+    })
+    const frameNormals = frameEntries.map((entry) => entry.normalizedUrl)
+    const fallbackRefs = baseRefs.filter((ref) => {
+      const normalizedRef = normalizeImageUrl(ref)
+      return !frameNormals.includes(normalizedRef)
+    })
+    const ordered = [...noText, ...withText, ...fallbackRefs]
+    return ordered.length > 0 ? ordered : baseRefs
+  }, [normalizeImageUrl])
+
+  const getSceneImages = useCallback(
+    (row) => {
+      const ordered = getOrderedRefs(row)
+      if (ordered.length > 0) {
+        return ordered.slice(0, 2)
+      }
+      const refs = Array.isArray(row?.refs) ? row.refs.filter(Boolean) : []
+      return refs.slice(0, 2)
+    },
+    [getOrderedRefs]
+  )
+
+  const getPrimaryImage = useCallback((row) => {
+    const ordered = getOrderedRefs(row)
+    return ordered[0] || ''
+  }, [getOrderedRefs])
+
+  const findFrameForImage = useCallback(
+    (frames = [], imageUrl, imageIndex = 0) => {
+      if (Array.isArray(frames) && frames[imageIndex]) {
+        return frames[imageIndex]
+      }
+      const target = normalizeImageUrl(imageUrl)
+      if (!target) return frames[0] || null
+      return (
+        frames.find((frame) => {
+          const base = frame?.base_image || frame?.baseImage || {}
+          const candidates = [
+            base?.image_url,
+            base?.imageUrl,
+            base?.imageurl,
+            base?.url,
+            base?.src,
+            frame?.image_url,
+            frame?.imageUrl,
+            frame?.imageurl,
+            frame?.url,
+            frame?.src
+          ]
+          return candidates.some((candidate) => normalizeImageUrl(candidate) === target)
+        }) || frames[0] || null
+      )
+    },
+    [normalizeImageUrl]
+  )
+
 
   useEffect(() => {
     let cancelled = false;
@@ -630,17 +775,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber);
         if (!cancelled && sessionImages.length > 0) {
           setRows(sessionImages);
-          const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
-          const first = refs0[0] || '';
+          const initialImages = getSceneImages(sessionImages[0]);
+          const first = getPrimaryImage(sessionImages[0]);
+          const model0 = String(sessionImages[0]?.model || sessionImages[0]?.mode || '').toUpperCase();
           setSelected({
             index: 0,
             imageUrl: first,
-            images: refs0.slice(0, 2),
+            images: initialImages,
             title: sessionImages[0]?.scene_title || 'Untitled',
             sceneNumber: sessionImages[0]?.scene_number ?? '',
             description: sessionImages[0]?.description || '',
             narration: sessionImages[0]?.narration || '',
             textToBeIncluded: sessionImages[0]?.textToBeIncluded || '',
+            model: model0,
             prompts: sessionImages[0]?.prompts || { opening_frame: {}, closing_frame: {} },
             imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
             textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
@@ -783,10 +930,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     if (!cancelled) {
                       setRows(sessionImages);
                       if (sessionImages.length > 0) {
-                        const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
-                        const first = refs0[0] || '';
+                        const imgs = getSceneImages(sessionImages[0]);
+                        const first = imgs[0] || '';
                         const model0 = String(sessionImages[0]?.model || '').toUpperCase();
-                        const imgs = model0 === 'PLOTLY' ? [first] : refs0.slice(0,2);
                         setSelected({
                           index: 0,
                           imageUrl: first,
@@ -1292,10 +1438,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber);
       if (sessionImages.length > 0) {
         setRows(sessionImages);
-        const refs0 = Array.isArray(sessionImages[0]?.refs) ? sessionImages[0].refs : [];
-        const first = refs0[0] || '';
+        const initialImages = getSceneImages(sessionImages[0]);
+        const first = initialImages[0] || '';
         const model0 = String(sessionImages[0]?.model || '').toUpperCase();
-        const imgs = model0 === 'PLOTLY' ? [first] : refs0.slice(0,2);
+        const imgs = initialImages;
         setSelected({
           index: 0,
           imageUrl: first,
@@ -1331,12 +1477,66 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     setShowRegeneratePopup(true);
   };
 
+  const handleEditChartsClick = React.useCallback(async () => {
+    if (!selected) return;
+    const sceneNumber = selected?.sceneNumber || selected?.scene_number;
+    const sessionId = localStorage.getItem('session_id');
+    const userId = localStorage.getItem('token');
+    if (!sessionId || !sceneNumber || !userId) {
+      setChartEditorError('Missing session, scene number, or user id.');
+      return;
+    }
+    setChartEditorError('');
+    setChartEditorLoading(true);
+    try {
+      const resp = await fetch(
+        `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/${encodeURIComponent(
+          sessionId
+        )}/${encodeURIComponent(sceneNumber)}?user_id=${encodeURIComponent(userId)}`
+      );
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || 'Failed to load chart config');
+      }
+      const payload = await resp.json();
+      const presetPayload = payload?.chart_preset || payload;
+      const normalizedScene = Array.isArray(presetPayload) ? presetPayload[0] : presetPayload;
+      if (!normalizedScene) {
+        throw new Error('Chart preset response was empty');
+      }
+      const chartType = normalizedScene.chart_type || normalizedScene.chartType || selected?.chart_type;
+      let chartData =
+        normalizedScene.chart_data || normalizedScene.chartData || selected?.chart_data || {};
+      if (typeof chartData === 'string') {
+        try {
+          chartData = JSON.parse(chartData);
+        } catch {
+          chartData = {};
+        }
+      }
+      const enrichedScene = {
+        ...normalizedScene,
+        scene_number: normalizedScene.scene_number ?? sceneNumber,
+        chart_title:
+          normalizedScene.chart_title || normalizedScene.scene_title || selected?.scene_title,
+        chart_type: chartType,
+        chart_data: chartData
+      };
+      setChartEditorData(enrichedScene);
+      setShowChartEditor(true);
+    } catch (err) {
+      setChartEditorError(err?.message || 'Unable to open chart editor');
+    } finally {
+      setChartEditorLoading(false);
+    }
+  }, [selected]);
+
   // Get aspect ratio from script data
   const getAspectRatio = React.useCallback(async () => {
     try {
       const session_id = localStorage.getItem('session_id');
       const user_id = localStorage.getItem('token');
-      if (!session_id || !user_id) return '16:9';
+      if (!session_id || !user_id) return normalizeAspectRatioValue('16:9');
       
       const sresp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST',
@@ -1362,11 +1562,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                          sessionData?.aspectRatio || 
                          '16:9';
       
-      return aspectRatio;
+      return normalizeAspectRatioValue(aspectRatio);
     } catch (_) {
-      return '16:9';
+      return normalizeAspectRatioValue('16:9');
     }
   }, []);
+
+  // Cache aspect ratio from questionnaire for consistent rendering
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const ratio = await getAspectRatio();
+      if (active) {
+        setQuestionnaireAspectRatio(normalizeAspectRatioValue(ratio));
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [getAspectRatio]);
 
   // Handle regenerate API call
   const handleGenerateImage = React.useCallback(async () => {
@@ -1641,17 +1855,17 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
-        const refs = row?.refs || [];
-        const images = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        const sceneImages = getSceneImages(row);
+        const images = sceneImages;
 
         console.log(`\n🎬 Processing Scene ${sceneNumber} (${images.length} images)...`);
 
         // First, select this scene to render it in the Reel Reports Image Editor section
         console.log(`📍 Selecting scene ${sceneNumber} for rendering...`);
-        const imgs = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        const imgs = sceneImages;
         setSelected({
           index: sceneIndex,
-          imageUrl: refs[0] || '',
+          imageUrl: imgs[0] || '',
           images: imgs,
           title: row.scene_title || 'Untitled',
           sceneNumber: row.scene_number,
@@ -1796,8 +2010,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const model = row?.model || 'VEO3';
         const modelUpper = String(model).toUpperCase();
-        const refs = row?.refs || [];
-        const images = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        const images = getSceneImages(row);
         
         const sceneMetadata = {
           scene_number: sceneNumber,
@@ -1846,8 +2059,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
-        const refs = row?.refs || [];
-        const images = modelUpper === 'PLOTLY' ? [refs[0]] : refs.slice(0, 2);
+        const images = getSceneImages(row);
         
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
@@ -2491,62 +2703,48 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       )}
 
       {isLoading && isPolling && (
-        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-white backdrop-blur-sm">
+        <>
+          <div className="absolute inset-0 z-30 bg-white" />
           <style>{`
             @keyframes spin-svg {
-              from {
-                transform: rotate(0deg);
-              }
-              to {
-                transform: rotate(360deg);
-              }
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
             }
             .spinner-circle {
               animation: spin-svg 1.5s linear infinite;
             }
           `}</style>
-          <div className="flex flex-col items-center justify-center space-y-4">
-            {/* Circle Loader */}
-            <div className="relative w-20 h-20">
-              <svg className="w-20 h-20" viewBox="0 0 100 100">
-                {/* Background circle */}
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="45"
-                  stroke="#E5E7EB"
-                  strokeWidth="8"
-                  fill="none"
-                />
-                {/* Animated circle */}
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="45"
-                  stroke="#13008B"
-                  strokeWidth="8"
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeDasharray="283"
-                  strokeDashoffset="70"
-                  className="spinner-circle"
-                  style={{
-                    transformOrigin: '50% 50%',
-                  }}
-                />
-              </svg>
-              {/* Inner dot */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
+              <div className="relative w-20 h-20">
+                <svg className="w-20 h-20" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="45" stroke="#E5E7EB" strokeWidth="8" fill="none" />
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="45"
+                    stroke="#13008B"
+                    strokeWidth="8"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeDasharray="283"
+                    strokeDashoffset="70"
+                    className="spinner-circle"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-3 h-3 bg-[#13008B] rounded-full animate-bounce" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-lg font-semibold text-[#13008B]">Generating your images…</p>
+                <p className="text-sm text-gray-600">
+                  This may take a few moments. Please keep this tab open while we finish.
+                </p>
               </div>
             </div>
-            {/* Loading Text */}
-            <div className="text-center space-y-1">
-              <p className="text-lg font-semibold text-[#13008B]">Generating Images</p>
-              <p className="text-sm text-gray-600">Please wait while we create your storyboard...</p>
-            </div>
           </div>
-        </div>
+        </>
       )}
 
       <div className="p-4 space-y-4 overflow-y-auto overflow-x-hidden">
@@ -2555,25 +2753,52 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
         {/* Only show selected image details when not polling */}
         {selected?.imageUrl && (!isPolling || rows.length > 0) && (
-          <div className="bg-white border rounded-xl p-4 h-[600px] overflow-y-auto scrollbar-hide">
+          <div className="bg-white border rounded-xl p-4 h-[520px] overflow-y-auto scrollbar-hide">
+          
 
-          <div className='flex justify-end items-center mb-2'>
-          {selected?.isEditable && (
-            <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const sceneNum = selected?.sceneNumber || selected?.scene_number || 1;
-                              handleRegenerateClick(sceneNum);
-                            }}
-                            className=" bg-[#13008B] hover:bg-blue-800 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 "
-                            title="Regenerate Image"
-                          >
-                            <RefreshCw className="w-4 h-4" />
-                            <span className="text-sm font-medium">Regenerate</span>
-                          </button> 
-          )}
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              {selectedModel === 'PLOTLY' && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleEditChartsClick();
+                  }}
+                  disabled={chartEditorLoading}
+                  className={`px-3 py-1.5 rounded-lg border border-[#13008B] text-[#13008B] bg-white hover:bg-blue-50 transition-colors flex items-center gap-2 ${
+                    chartEditorLoading ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
+                  title="Edit Charts"
+                >
+                  <Pencil className="w-4 h-4" />
+                  <span className="text-sm font-medium">
+                    {chartEditorLoading ? 'Loading…' : 'Edit Charts'}
+                  </span>
+                </button>
+              )}
+            </div>
+            <div>
+              {selected?.isEditable && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const sceneNum = selected?.sceneNumber || selected?.scene_number || 1;
+                    handleRegenerateClick(sceneNum);
+                  }}
+                  className="bg-[#13008B] hover:bg-blue-800 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2"
+                  title="Regenerate Image"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span className="text-sm font-medium">Regenerate</span>
+                </button>
+              )}
+            </div>
           </div>
+          {chartEditorError && selectedModel === 'PLOTLY' && (
+            <p className="text-xs text-red-600 mb-2">{chartEditorError}</p>
+          )}
             {/* Top Section: Images - Show only avatar if second image is missing */}
             {(() => {
               // Helper function to validate URL
@@ -2665,35 +2890,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     <div
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
                       data-image-container
-                      data-scene-number={selected?.sceneNumber || selected?.scene_number || 1}
+                      data-scene-number={activeSceneNumber}
                       data-image-index="0"
                       style={{
-                        aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
-                          ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
-                          : '16 / 9',
+                        aspectRatio: cssAspectRatio,
                         minHeight: '200px'
                       }}
                     >
                       {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
-                    // Find the frame that matches img1 URL
-                    const frameForImg1 = frames.find((frame) => {
-                      const base = frame?.base_image || frame?.baseImage || {};
-                      const frameUrl =
-                        base.image_url ||
-                        base.imageUrl ||
-                        base.url ||
-                        frame.image_url ||
-                        frame.imageUrl ||
-                        frame.url ||
-                        '';
-                      // Normalize URLs for comparison (remove trailing slashes, query params, etc.)
-                      const normalizeUrl = (url) => {
-                        if (!url || typeof url !== 'string') return '';
-                        return url.trim().split('?')[0].replace(/\/$/, '');
-                      };
-                      return frameUrl && normalizeUrl(frameUrl) === normalizeUrl(img1);
-                    }) || (frames.length > 0 ? frames[0] : null);
+                    const frameForImg1 = findFrameForImage(frames, img1, 0);
                     const fallbackFrame1 = frameForImg1 || (frames.length > 0 ? frames[0] : null);
                     // Get text elements from the matched frame, fallback to selected.textElements
                     const textElsFromFrame1 = fallbackFrame1 ? (
@@ -2718,10 +2924,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         : []
                     ) : [];
                     const frameDims1 =
-                      selected?.imageDimensions ||
                       fallbackFrame1?.base_image?.image_dimensions ||
                       fallbackFrame1?.base_image?.imageDimensions ||
                       imageNaturalDims[img1] ||
+                      selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
                       { width: 1280, height: 720 };
                     return (
@@ -2855,7 +3061,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           <div className="absolute inset-0 pointer-events-none">
                             {effectiveTextEls1.map((el, idx) => {
                               if (!el || typeof el !== 'object') return null;
-                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(el.bounding_box || {}, frameDims1 || selected?.imageDimensions || {});
+                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
+                                el.bounding_box || {},
+                                frameDims1 || selected?.imageDimensions || {}
+                              );
                               const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
                               const fontSize =
                                 fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
@@ -2868,16 +3077,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
-                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
+                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${
+                                      shadow.color || 'rgba(0,0,0,0.5)'
+                                    }`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
-                              const style = {
+                              const boxStyle = {
                                 position: 'absolute',
                                 left: `${leftPct}%`,
                                 top: `${topPct}%`,
                                 width: widthPct != null ? `${widthPct}%` : 'auto',
                                 height: heightPct != null ? `${heightPct}%` : 'auto',
-                                transform: anchor === 'center' ? 'translate(-50%, -50%)' : 'none',
+                                pointerEvents: 'none'
+                              };
+                              const textStyle = {
                                 color,
                                 fontFamily,
                                 fontWeight,
@@ -2886,7 +3099,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 textShadow,
                                 whiteSpace: 'pre-wrap'
                               };
-                              return <div key={idx} style={style}>{el.text || ''}</div>;
+                              return (
+                                <div key={idx} style={boxStyle} className="pointer-events-none">
+                                  <div style={textStyle}>{el.text || ''}</div>
+                                </div>
+                              );
                             })}
                                 </div>
                         )}
@@ -2918,8 +3135,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                     top: `${topPct}%`,
                                     width: widthPct != null ? `${widthPct}%` : 'auto',
                                     height: heightPct != null ? `${heightPct}%` : 'auto',
-                                    opacity,
-                                    transform: ov?.layout?.anchor_point === 'center' ? 'translate(-50%, -50%)' : 'none'
+                                    opacity
                                   }}
                                 />
                               );
@@ -2931,7 +3147,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       })()}
                     </div>
                   ) : (
-                    <div className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center" style={{ aspectRatio: '16 / 9', minHeight: '200px' }}>
+                    <div
+                      className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center"
+                      style={{
+                        aspectRatio: cssAspectRatio,
+                        minHeight: '200px'
+                      }}
+                    >
                       <div className="text-center text-white text-sm">
                         <p>No image available</p>
                         <p className="text-xs mt-2 opacity-75">Scene {selected?.sceneNumber || selected?.scene_number || 1}</p>
@@ -2945,36 +3167,18 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     <div
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
                       data-image-container
-                      data-scene-number={selected?.sceneNumber || selected?.scene_number || 1}
+                      data-scene-number={activeSceneNumber}
                       data-image-index="1"
                       style={{
-                        aspectRatio: selected?.imageDimensions?.width && selected?.imageDimensions?.height
-                          ? `${selected.imageDimensions.width} / ${selected.imageDimensions.height}`
-                          : '16 / 9',
+                        aspectRatio: cssAspectRatio,
                         minHeight: '200px'
                       }}
                     >
                       {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
-                    // Find the frame that matches img2 URL
-                    const frameForImg2 = frames.find((frame) => {
-                      const base = frame?.base_image || frame?.baseImage || {};
-                      const frameUrl =
-                        base.image_url ||
-                        base.imageUrl ||
-                        base.url ||
-                        frame.image_url ||
-                        frame.imageUrl ||
-                        frame.url ||
-                        '';
-                      // Normalize URLs for comparison (remove trailing slashes, query params, etc.)
-                      const normalizeUrl = (url) => {
-                        if (!url || typeof url !== 'string') return '';
-                        return url.trim().split('?')[0].replace(/\/$/, '');
-                      };
-                      return frameUrl && normalizeUrl(frameUrl) === normalizeUrl(img2);
-                    }) || null;
-                    const fallbackFrame2 = frameForImg2 || (frames.length > 1 ? frames[1] : frames.length > 0 ? frames[0] : null);
+                    const frameForImg2 = findFrameForImage(frames, img2, 1);
+                    const fallbackFrame2 =
+                      frameForImg2 || (frames.length > 1 ? frames[1] : frames.length > 0 ? frames[0] : null);
                     // Get text elements from the matched frame, fallback to selected.textElements
                     const textElsFromFrame2 = fallbackFrame2 ? (
                       Array.isArray(fallbackFrame2?.text_elements)
@@ -2998,10 +3202,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         : []
                     ) : [];
                     const frameDims2 =
-                      selected?.imageDimensions ||
                       fallbackFrame2?.base_image?.image_dimensions ||
                       fallbackFrame2?.base_image?.imageDimensions ||
                       imageNaturalDims[img2] ||
+                      selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
                       { width: 1280, height: 720 };
                     return (
@@ -3130,7 +3334,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           <div className="absolute inset-0 pointer-events-none">
                             {effectiveTextEls2.map((el, idx) => {
                               if (!el || typeof el !== 'object') return null;
-                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(el.bounding_box || {}, frameDims2 || selected?.imageDimensions || {});
+                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
+                                el.bounding_box || {},
+                                frameDims2 || selected?.imageDimensions || {}
+                              );
                               const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
                               const fontSize =
                                 fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
@@ -3143,16 +3350,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
-                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
+                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${
+                                      shadow.color || 'rgba(0,0,0,0.5)'
+                                    }`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
-                              const style = {
+                              const boxStyle = {
                                 position: 'absolute',
                                 left: `${leftPct}%`,
                                 top: `${topPct}%`,
                                 width: widthPct != null ? `${widthPct}%` : 'auto',
                                 height: heightPct != null ? `${heightPct}%` : 'auto',
-                                transform: anchor === 'center' ? 'translate(-50%, -50%)' : 'none',
+                                pointerEvents: 'none'
+                              };
+                              const textStyle = {
                                 color,
                                 fontFamily,
                                 fontWeight,
@@ -3162,8 +3373,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 whiteSpace: 'pre-wrap'
                               };
                               return (
-                                <div key={idx} style={style}>
-                                  {el.text || ''}
+                                <div key={idx} style={boxStyle} className="pointer-events-none">
+                                  <div style={textStyle}>{el.text || ''}</div>
                                 </div>
                               );
                             })}
@@ -3197,8 +3408,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                     top: `${topPct}%`,
                                     width: widthPct != null ? `${widthPct}%` : 'auto',
                                     height: heightPct != null ? `${heightPct}%` : 'auto',
-                                    opacity,
-                                    transform: ov?.layout?.anchor_point === 'center' ? 'translate(-50%, -50%)' : 'none'
+                                    opacity
                                   }}
                                 />
                               );
@@ -3850,21 +4060,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               )}
               {rows.map((r, i) => {
               const modelUpper = String(r?.model || '').toUpperCase();
-              const first = (r.refs || [])[0];
-              const second = (r.refs || [])[1];
+              const orderedSceneImages = getSceneImages(r);
+              const first = orderedSceneImages[0];
+              const second = orderedSceneImages[1];
               return (
                 <div
                   key={i}
                   className={`min-w-[300px] w-[300px] max-w-full cursor-pointer`}
                   onClick={() => {
                     const refsArray = r.refs || [];
-                    const imgs = modelUpper === 'PLOTLY' ? [first] : refsArray.slice(0, 2);
+                    const imgs = orderedSceneImages;
                     console.log('🎯 Scene Selected:', {
                       sceneNumber: r.scene_number,
                       refs: refsArray,
                       first,
-                      second: refsArray[1],
-                      imgs,
+                      second: orderedSceneImages[1],
+                      imgs, 
                       model: modelUpper
                     });
                     setSelected({
@@ -3887,34 +4098,27 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   }}
                 >
                   <div className={`rounded-xl border overflow-hidden ${selected.index === i ? 'ring-2 ring-[#13008B]' : ''}`}>
-                    {modelUpper === 'PLOTLY' ? (
-                      <div
-                        className="w-full bg-black flex items-center justify-center aspect-[16/9]"
-                      >
-                        {first && (
-                          <img src={first} alt={`scene-${r.scene_number}-1`} className="max-h-full max-w-full object-contain" />
-                        )}
-                      </div>
-                    ) : (
-                      (() => {
-                        const hasSecond = second && second.trim();
-                        const gridCols = hasSecond ? 'grid-cols-2' : 'grid-cols-1';
-                        return (
-                          <div className={`grid ${gridCols} gap-0 w-full bg-black aspect-[16/9]`}>
-                            {first && (
-                              <div className="w-full h-full bg-black flex items-center justify-center">
-                                <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" />
-                              </div>
-                            )}
-                            {hasSecond && (
-                              <div className="w-full h-full bg-black flex items-center justify-center">
-                                <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()
-                    )}
+                    {(() => {
+                      const hasSecond = second && second.trim();
+                      const gridCols = hasSecond ? 'grid-cols-2' : 'grid-cols-1';
+                      return (
+                        <div
+                          className={`grid ${gridCols} gap-0 w-full bg-black`}
+                          style={{ aspectRatio: cssAspectRatio }}
+                        >
+                          {first && (
+                            <div className="w-full h-full bg-black flex items-center justify-center">
+                              <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" />
+                            </div>
+                          )}
+                          {hasSecond && (
+                            <div className="w-full h-full bg-black flex items-center justify-center">
+                              <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="mt-2 text-sm font-semibold">Scene {r.scene_number} • {r.scene_title || 'Untitled'}</div>
                   {r?.description ? (
@@ -3941,23 +4145,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       {showImageEdit && (
         <ImageEdit
           isOpen={showImageEdit}
-          onClose={() => {
-            setShowImageEdit(false);
-            setEditingImageFrame(null);
-            setEditingSceneNumber(null);
-            setEditingImageIndex(null);
-          }}
+          onClose={handleInlineEditorClose}
           onRefresh={refreshLoad}
           frameData={editingImageFrame}
           sceneNumber={editingSceneNumber}
           imageIndex={editingImageIndex}
+          aspectRatioCss={cssAspectRatio}
+        />
+      )}
+      {showChartEditor && chartEditorData && (
+        <ChartEditorModal
+          isOpen={showChartEditor}
+          sceneData={chartEditorData}
+          onClose={() => {
+            setShowChartEditor(false);
+            setChartEditorData(null);
+          }}
         />
       )}
 
       {/* Regenerate Image Popup */}
       {showRegeneratePopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
             {/* Close Button - Circle at top right */}
             <button
               onClick={() => {
@@ -3978,7 +4188,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             </button>
 
             {/* Popup Content */}
-            <div className="p-6">
+            <div className="flex-1 p-6 overflow-y-auto relative">
               <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Regenerate Image</h3>
               
               <div className="mb-6">
@@ -4003,8 +4213,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
               {/* Loading Overlay */}
               {isRegenerating && (
-                <div className="absolute inset-0 bg-white bg-opacity-90 rounded-lg flex items-center justify-center z-20">
-                  <div className="flex flex-col items-center gap-4">
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
                     <div className="relative w-16 h-16">
                       <svg className="w-16 h-16" viewBox="0 0 100 100">
                         <circle

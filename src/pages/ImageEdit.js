@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { FaTimes } from 'react-icons/fa'
 
 // Minimal icon set (inline SVG) for consistent, clean UI
@@ -87,7 +87,35 @@ const Icon = ({ name, size = 18 }) => {
   }
 }
 
-function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = null, imageIndex = null, onRefresh = null }) {
+const BOUNDING_BOX_NORMALIZED_THRESHOLD = 1.05
+
+const ensureNumber = (value) => {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : 0
+}
+
+const clampPercentValue = (value) => Math.max(0, Math.min(100, ensureNumber(value)))
+
+const convertBoundingBoxToPercent = (bb = {}, dims = {}) => {
+  const baseWidth = Math.max(1, Number(dims?.width) || 0)
+  const baseHeight = Math.max(1, Number(dims?.height) || 0)
+  const values = ['x', 'y', 'width', 'height'].map((key) => Math.abs(ensureNumber(bb?.[key])))
+  const maxVal = values.length > 0 ? Math.max(...values) : 0
+  const isNormalized = maxVal > 0 && maxVal <= BOUNDING_BOX_NORMALIZED_THRESHOLD
+  const toPercentX = (val) =>
+    isNormalized ? ensureNumber(val) * 100 : (ensureNumber(val) / baseWidth) * 100
+  const toPercentY = (val) =>
+    isNormalized ? ensureNumber(val) * 100 : (ensureNumber(val) / baseHeight) * 100
+  return {
+    x: toPercentX(bb?.x),
+    y: toPercentY(bb?.y),
+    width: toPercentX(bb?.width),
+    height: toPercentY(bb?.height),
+    isNormalized
+  }
+}
+
+function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = null, imageIndex = null, onRefresh = null, aspectRatioCss = '16 / 9' }) {
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -127,6 +155,17 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const isHoveringToolbarRef = useRef(false)
   const shapeHoverTimeoutRef = useRef(null)
   const overlayHoverTimeoutRef = useRef(null)
+  const normalizedAspectRatio = useMemo(
+    () => (aspectRatioCss && typeof aspectRatioCss === 'string' ? aspectRatioCss : '16 / 9'),
+    [aspectRatioCss]
+  )
+  const editorCanvasStyle = useMemo(() => ({
+    aspectRatio: normalizedAspectRatio,
+    width: 'min(100%, 860px)',
+    maxWidth: '860px',
+    maxHeight: '72vh',
+    minHeight: '200px'
+  }), [normalizedAspectRatio])
 
   // Sync ref with state
   useEffect(() => {
@@ -201,6 +240,24 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   // Refs
   const canvasRef = useRef(null)
   const imageRef = useRef(null)
+  const getDisplayDimensions = useCallback(() => {
+    const img = imageRef.current
+    if (!img) return { width: 1, height: 1 }
+    const width = img.clientWidth || img.width || img.naturalWidth || 1
+    const height = img.clientHeight || img.height || img.naturalHeight || 1
+    return { width, height }
+  }, [])
+  const percentToDisplayPx = useCallback((value, axis = 'x') => {
+    const { width, height } = getDisplayDimensions()
+    const size = axis === 'y' ? height : width
+    return (clampPercentValue(value) / 100) * size
+  }, [getDisplayDimensions])
+  const pxDeltaToPercent = useCallback((deltaPx, axis = 'x') => {
+    const { width, height } = getDisplayDimensions()
+    const size = axis === 'y' ? height : width
+    if (!size) return 0
+    return (deltaPx / size) * 100
+  }, [getDisplayDimensions])
   // Helper to get current image scale (display px per natural px)
   const getImageScale = useCallback(() => {
     const img = imageRef.current
@@ -724,10 +781,10 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       const newLayer = {
         id: Date.now(),
         text: newText,
-        x: 100,
-        y: 100,
-        width: 200,
-        height: 50,
+        x: 10,
+        y: 10,
+        width: 30,
+        height: 10,
         fontSize: 24,
         fontFamily: 'Arial',
         color: '#000000',
@@ -806,6 +863,107 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
 
   const applyTextEffect = (property, value) => {
     handleStyleChange(property, value)
+  }
+
+  const renderOverlayImage = () => {
+    if (!overlayVisible || !overlayImage) return null
+    const overlayLeftPct = clampPercentValue(pxDeltaToPercent(overlayPosition.x, 'x'))
+    const overlayTopPct = clampPercentValue(pxDeltaToPercent(overlayPosition.y, 'y'))
+    const overlayWidthPct = clampPercentValue(pxDeltaToPercent((overlayImage.width || 0) * overlayScale, 'x'))
+    const overlayHeightPct = clampPercentValue(pxDeltaToPercent((overlayImage.height || 0) * overlayScale, 'y'))
+    return (
+      <div
+        className="absolute z-[1000] cursor-move"
+        style={{
+          left: `${overlayLeftPct}%`,
+          top: `${overlayTopPct}%`,
+          width: `${overlayWidthPct}%`,
+          height: `${overlayHeightPct}%`,
+          transformOrigin: 'top left'
+        }}
+        onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
+        onMouseEnter={() => {
+          if (overlayHoverTimeoutRef.current) {
+            clearTimeout(overlayHoverTimeoutRef.current)
+          }
+          setHoveredOverlay(true)
+        }}
+        onMouseLeave={() => {
+          overlayHoverTimeoutRef.current = setTimeout(() => {
+            setHoveredOverlay(false)
+            overlayHoverTimeoutRef.current = null
+          }, 200)
+        }}
+      >
+        <img
+          src={overlayImageUrl}
+          alt="Overlay"
+          draggable="false"
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'block',
+          }}
+        />
+        {hoveredOverlay && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              handleOverlayRemove()
+              setHoveredOverlay(false)
+            }}
+            className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-20 transition-all"
+            title="Delete Overlay"
+            onMouseEnter={() => {
+              if (overlayHoverTimeoutRef.current) {
+                clearTimeout(overlayHoverTimeoutRef.current)
+                overlayHoverTimeoutRef.current = null
+              }
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M3 6h18"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </button>
+        )}
+        <div
+          className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
+          onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
+        />
+        {isCropping && croppingTarget === 'overlay' && (
+          <div
+            className="absolute border-2 border-dashed border-purple-600 bg-purple-100"
+            style={{ 
+              left: cropArea.x - overlayPosition.x, 
+              top: cropArea.y - overlayPosition.y, 
+              width: cropArea.width, 
+              height: cropArea.height 
+            }}
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              const rect = e.currentTarget.getBoundingClientRect()
+              const x = e.clientX - rect.left
+              const y = e.clientY - rect.top
+              const edge = 8
+              let mode = 'move'
+              if (y < edge && x < edge) mode = 'nw'
+              else if (y < edge && x > rect.width - edge) mode = 'ne'
+              else if (y > rect.height - edge && x < edge) mode = 'sw'
+              else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
+              else if (y < edge) mode = 'n'
+              else if (y > rect.height - edge) mode = 's'
+              else if (x < edge) mode = 'w'
+              else if (x > rect.width - edge) mode = 'e'
+              setCropDragMode(mode)
+              setDragStart({ x: e.clientX, y: e.clientY })
+              setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+            }}
+          />
+        )}
+      </div>
+    )
   }
 
   const handleAddShape = (type) => {
@@ -1053,7 +1211,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     } else if (action === 'resize') {
       setIsResizing(true)
       setDragStart({ x: e.clientX, y: e.clientY })
-      setLayerStart({ x: layer.x, y: layer.y, width: layer.width * getImageScale().scaleX, height: layer.height })
+      setLayerStart({ x: layer.x, y: layer.y, width: layer.width, height: layer.height })
     }
   }
 
@@ -1064,20 +1222,26 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     const deltaX = e.clientX - currentDragStart.x
     const deltaY = e.clientY - currentDragStart.y
     const { scaleX, scaleY } = getImageScale()
+    const deltaXPct = pxDeltaToPercent(deltaX, 'x')
+    const deltaYPct = pxDeltaToPercent(deltaY, 'y')
 
     if (isDragging && selectedLayer) {
-      const newX = layerStart.x + (deltaX / (getImageScale().scaleX || 1))
-      const newY = layerStart.y + (deltaY / (getImageScale().scaleY || 1))
-      
+      const tentativeX = layerStart.x + deltaXPct
+      const tentativeY = layerStart.y + deltaYPct
+      const newX = clampPercentValue(Math.max(0, Math.min(100 - selectedLayer.width, tentativeX)))
+      const newY = clampPercentValue(Math.max(0, Math.min(100 - selectedLayer.height, tentativeY)))
       const updatedLayers = textLayers.map(layer =>
         layer.id === selectedLayer.id ? { ...layer, x: newX, y: newY } : layer
       )
       setTextLayers(updatedLayers)
       setSelectedLayer({ ...selectedLayer, x: newX, y: newY })
     } else if (isResizing && selectedLayer) {
-      const newWidth = Math.max(50, layerStart.width + (deltaX / (getImageScale().scaleX || 1)))
-      const newHeight = Math.max(20, layerStart.height + (deltaY / (getImageScale().scaleY || 1)))
-      
+      const minWidthPct = Math.max(pxDeltaToPercent(50, 'x'), 1)
+      const minHeightPct = Math.max(pxDeltaToPercent(20, 'y'), 1)
+      const tentativeWidth = layerStart.width + deltaXPct
+      const tentativeHeight = layerStart.height + deltaYPct
+      const newWidth = clampPercentValue(Math.max(minWidthPct, Math.min(100 - layerStart.x, tentativeWidth)))
+      const newHeight = clampPercentValue(Math.max(minHeightPct, Math.min(100 - layerStart.y, tentativeHeight)))
       const updatedLayers = textLayers.map(layer =>
         layer.id === selectedLayer.id ? { ...layer, width: newWidth, height: newHeight } : layer
       )
@@ -1125,7 +1289,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     }
-  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlayDragStart, isDraggingShape, isResizingShape, selectedShape, shapeLayers])
+  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlayDragStart, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent])
 
   const handleOverlayMouseDown = (e, action) => {
     e.preventDefault()
@@ -1229,11 +1393,11 @@ const handleTemplateJsonLoad = () => {
     console.log('Display:', displayWidth, 'x', displayHeight)
     
     const convertedLayers = data.text_elements.map((element, index) => {
-      // Convert 0-1 normalized coords to NATURAL image pixels
-      const x = element.bounding_box.x * originalWidth
-      const y = element.bounding_box.y * originalHeight
-      const width = element.bounding_box.width * originalWidth
-      const height = element.bounding_box.height * originalHeight
+      const bbPercent = convertBoundingBoxToPercent(element.bounding_box || {}, {
+        width: originalWidth,
+        height: originalHeight
+      })
+      const { x, y, width, height } = bbPercent
       
       return {
         id: Date.now() + index,
@@ -1266,13 +1430,14 @@ const handleTemplateJsonLoad = () => {
     // Handle overlay_elements
     if (data.overlay_elements && Array.isArray(data.overlay_elements) && data.overlay_elements.length > 0) {
       const ov = data.overlay_elements[0]
-      const bb = ov?.bounding_box || {}
-      
-      // Convert bounding box decimals to NATURAL pixels
-      const posXNat = (bb.x || 0) * originalWidth
-      const posYNat = (bb.y || 0) * originalHeight
-      const targetWNat = (bb.width || 0) * originalWidth
-      const targetHNat = (bb.height || 0) * originalHeight
+      const bbPercent = convertBoundingBoxToPercent(ov?.bounding_box || {}, {
+        width: originalWidth,
+        height: originalHeight
+      })
+      const posXNat = (bbPercent.x / 100) * originalWidth
+      const posYNat = (bbPercent.y / 100) * originalHeight
+      const targetWNat = (bbPercent.width / 100) * originalWidth
+      const targetHNat = (bbPercent.height / 100) * originalHeight
       
       const ovUrl = ov?.overlay_image?.image_url
       if (ovUrl) {
@@ -1593,16 +1758,18 @@ const handleTemplateJsonLoad = () => {
               
               const originalWidth = data.base_image?.image_dimensions?.width || img.naturalWidth;
               const originalHeight = data.base_image?.image_dimensions?.height || img.naturalHeight;
+              const naturalDims = {
+                width: originalWidth || imgEl?.naturalWidth || imgEl?.width || 1,
+                height: originalHeight || imgEl?.naturalHeight || imgEl?.height || 1
+              };
               
               // Convert text_elements to textLayers
               const textElements = Array.isArray(data.text_elements) ? data.text_elements : [];
               
               if (textElements.length > 0) {
                 const convertedLayers = textElements.map((element, index) => {
-                  const x = (element.bounding_box?.x || 0) * originalWidth;
-                  const y = (element.bounding_box?.y || 0) * originalHeight;
-                  const width = (element.bounding_box?.width || 0) * originalWidth;
-                  const height = (element.bounding_box?.height || 0) * originalHeight;
+                  const bbPercent = convertBoundingBoxToPercent(element.bounding_box || {}, naturalDims);
+                  const { x, y, width, height } = bbPercent;
                   
                   const shadow = element.effects?.textShadow;
                   let textShadowValue = 'none';
@@ -1639,12 +1806,11 @@ const handleTemplateJsonLoad = () => {
               // Handle overlay_elements
               if (data.overlay_elements && Array.isArray(data.overlay_elements) && data.overlay_elements.length > 0) {
                 const ov = data.overlay_elements[0];
-                const bb = ov?.bounding_box || {};
-                
-                const posXNat = (bb.x || 0) * originalWidth;
-                const posYNat = (bb.y || 0) * originalHeight;
-                const targetWNat = (bb.width || 0) * originalWidth;
-                const targetHNat = (bb.height || 0) * originalHeight;
+                const bbPercent = convertBoundingBoxToPercent(ov?.bounding_box || {}, naturalDims);
+                const posXNat = (bbPercent.x / 100) * originalWidth;
+                const posYNat = (bbPercent.y / 100) * originalHeight;
+                const targetWNat = (bbPercent.width / 100) * originalWidth;
+                const targetHNat = (bbPercent.height / 100) * originalHeight;
                 
                 const ovUrl = ov?.overlay_image?.image_url;
                 if (ovUrl) {
@@ -1699,16 +1865,12 @@ const handleTemplateJsonLoad = () => {
   const convertTextLayersToElements = () => {
     if (!imageRef.current || textLayers.length === 0) return [];
     
-    const imgEl = imageRef.current;
-    const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl.naturalWidth;
-    const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl.naturalHeight;
-    
     return textLayers.map((layer) => {
-      // Convert pixel coordinates back to normalized (0-1) coordinates
-      const x = originalWidth > 0 ? layer.x / originalWidth : 0;
-      const y = originalHeight > 0 ? layer.y / originalHeight : 0;
-      const width = originalWidth > 0 ? layer.width / originalWidth : 0;
-      const height = originalHeight > 0 ? layer.height / originalHeight : 0;
+      const toNormalized = (value) => Math.max(0, Math.min(1, ensureNumber(value) / 100))
+      const x = toNormalized(layer.x)
+      const y = toNormalized(layer.y)
+      const width = toNormalized(layer.width)
+      const height = toNormalized(layer.height)
       
       // Reconstruct text element structure
       const textElement = {
@@ -1748,10 +1910,10 @@ const handleTemplateJsonLoad = () => {
           image_path: ''
         },
         bounding_box: {
-          x: x,
-          y: y,
-          width: width,
-          height: height
+          x,
+          y,
+          width,
+          height
         },
         textGradient: {
           type: 'linear',
@@ -1964,6 +2126,19 @@ const handleTemplateJsonLoad = () => {
 
   if (!isOpen) return null;
 
+  const outerClasses = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
+  const innerClasses = 'relative max-w-9xl h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col';
+  const workspaceBaseClasses = 'flex-1 relative overflow-hidden flex items-center justify-center transition-all duration-300';
+  const workspaceChromeClasses = `bg-white m-4 rounded-lg p-6 shadow-lg ${isToolbarOpen ? 'mt-2' : 'mt-4'}`;
+  const workspaceContainerClasses = `${workspaceBaseClasses} ${workspaceChromeClasses}`.trim();
+  const canvasWrapperBase = 'relative cursor-crosshair overflow-hidden';
+  const canvasWrapperClasses = `${canvasWrapperBase} inline-block border-2 border-gray-200 bg-gray-50 rounded-md`;
+  const bodyWrapperClasses = 'flex flex-col flex-1 min-h-0 overflow-hidden';
+  const headerContainerClasses = 'header flex-shrink-0 w-full';
+  const headerPanelClasses = '';
+  const toolbarContainerClasses = 'bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-wrap flex-shrink-0';
+  const mainContainerClasses = 'flex flex-1 overflow-hidden relative min-h-0';
+
   return (
     <>
       {/* Success Popup */}
@@ -1994,12 +2169,13 @@ const handleTemplateJsonLoad = () => {
           </div>
         </div>
       )}
-      
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="relative max-w-9xl h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col">
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+
+    <div className={outerClasses}>
+      <div className={innerClasses}>
+        <div className={bodyWrapperClasses}>
       {/* Header */}
-      <div className="header flex-shrink-0">
+      <div className={headerContainerClasses}>
+        <div className={headerPanelClasses}>
         <div className="flex items-center w-full justify-between">
           <div className="header-left flex items-center gap-3">
             <h1 className="header-title">Storyboard Editor</h1>
@@ -2047,138 +2223,141 @@ const handleTemplateJsonLoad = () => {
             )}
           </div>
         </div>
+        </div>
       </div>
 
       {/* Top Toolbar */}
       {isToolbarOpen && imageLoaded && (
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-wrap flex-shrink-0">
-          {/* Undo/Redo Controls */}
-          <div className="flex gap-1">
-            <button 
-              className={`w-8 h-8 flex items-center justify-center rounded-md transition-all ${historyIndex < 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-purple-600 hover:text-white text-gray-600'}`}
-              onClick={undo}
-              disabled={historyIndex < 0}
-              title="Undo (Ctrl+Z)"
-            >
-              <Icon name="undo" size={16} />
-            </button>
-            <button 
-              className={`w-8 h-8 flex items-center justify-center rounded-md transition-all ${historyIndex >= history.length - 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-purple-600 hover:text-white text-gray-600'}`}
-              onClick={redo}
-              disabled={historyIndex >= history.length - 1}
-              title="Redo (Ctrl+Y)"
-            >
-              <Icon name="redo" size={16} />
-            </button>
-          </div>
-
-          {/* Divider */}
-          <div className="w-px h-6 bg-gray-300 mx-1"></div>
-
-          {/* Text Tools Panel */}
-          <button
-            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'text' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-            onClick={() => togglePanel('text')}
-            title="Text Tools"
-          >
-            <Icon name="edit" size={18} />
-          </button>
-
-          {/* Shapes Panel */}
-          <div className="relative group">
-            <button
-              className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'shapes' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-              onClick={() => togglePanel('shapes')}
-              title="Shapes"
-            >
-              <Icon name="shape" size={18} />
-            </button>
-            {/* Hover preview with basic shapes (clickable) */}
-            <div className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50">
-              <div className="pointer-events-auto bg-white border border-gray-200 rounded-md shadow-lg p-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleAddShape('rectangle')}
-                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
-                  title="Add Rectangle"
+          <div className={toolbarContainerClasses}>
+              {/* Undo/Redo Controls */}
+              <div className="flex gap-1">
+                <button 
+                  className={`w-8 h-8 flex items-center justify-center rounded-md transition-all ${historyIndex < 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-purple-600 hover:text-white text-gray-600'}`}
+                  onClick={undo}
+                  disabled={historyIndex < 0}
+                  title="Undo (Ctrl+Z)"
                 >
-                  <div className="w-5 h-3 bg-purple-500 rounded-sm" />
+                  <Icon name="undo" size={16} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddShape('circle')}
-                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
-                  title="Add Circle"
+                <button 
+                  className={`w-8 h-8 flex items-center justify-center rounded-md transition-all ${historyIndex >= history.length - 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-purple-600 hover:text-white text-gray-600'}`}
+                  onClick={redo}
+                  disabled={historyIndex >= history.length - 1}
+                  title="Redo (Ctrl+Y)"
                 >
-                  <div className="w-5 h-5 bg-purple-500 rounded-full" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAddShape('curve')}
-                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
-                  title="Add Curve Line"
-                >
-                  <div
-                    className="w-5 h-3"
-                    style={{
-                      borderBottom: '3px solid #7c3aed',
-                      borderRadius: '9999px'
-                    }}
-                  />
+                  <Icon name="redo" size={16} />
                 </button>
               </div>
-            </div>
+
+              {/* Divider */}
+              <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
+              {/* Text Tools Panel */}
+              <button
+                className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'text' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+                onClick={() => togglePanel('text')}
+                title="Text Tools"
+              >
+                <Icon name="edit" size={18} />
+              </button>
+
+              {/* Shapes Panel */}
+              <div className="relative group">
+                <button
+                  className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'shapes' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+                  onClick={() => togglePanel('shapes')}
+                  title="Shapes"
+                >
+                  <Icon name="shape" size={18} />
+                </button>
+                {/* Hover preview with basic shapes (clickable) */}
+                <div className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                  <div className="pointer-events-auto bg-white border border-gray-200 rounded-md shadow-lg p-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAddShape('rectangle')}
+                      className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
+                      title="Add Rectangle"
+                    >
+                      <div className="w-5 h-3 bg-purple-500 rounded-sm" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddShape('circle')}
+                      className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
+                      title="Add Circle"
+                    >
+                      <div className="w-5 h-5 bg-purple-500 rounded-full" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddShape('curve')}
+                      className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
+                      title="Add Curve Line"
+                    >
+                      <div
+                        className="w-5 h-3"
+                        style={{
+                          borderBottom: '3px solid #7c3aed',
+                          borderRadius: '9999px'
+                        }}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Overlay Images Panel */}
+              <button
+                className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'overlay' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+                onClick={() => togglePanel('overlay')}
+                title="Overlay Images"
+              >
+                <Icon name="image" size={18} />
+              </button>
+
+              {/* Image Editor Panel */}
+              <button
+                className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'image-editor' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+                onClick={() => togglePanel('image-editor')}
+                title="Image Editor"
+              >
+                <Icon name="crop" size={18} />
+              </button>
+
+              {/* Export & Actions Panel */}
+              <button
+                className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'export' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+                onClick={() => togglePanel('export')}
+                title="Export"
+              >
+                <Icon name="save" size={18} />
+              </button>
           </div>
-
-          {/* Overlay Images Panel */}
-          <button
-            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'overlay' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-            onClick={() => togglePanel('overlay')}
-            title="Overlay Images"
-          >
-            <Icon name="image" size={18} />
-          </button>
-
-          {/* Image Editor Panel */}
-          <button
-            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'image-editor' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-            onClick={() => togglePanel('image-editor')}
-            title="Image Editor"
-          >
-            <Icon name="crop" size={18} />
-          </button>
-
-          {/* Export & Actions Panel */}
-          <button
-            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'export' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-            onClick={() => togglePanel('export')}
-            title="Export"
-          >
-            <Icon name="save" size={18} />
-          </button>
-        </div>
       )}
 
       {/* Main App Container */}
-      <div className="flex flex-1 overflow-hidden relative min-h-0">
+      <div className={mainContainerClasses}>
         {/* Main Workspace */}
         <div className="flex flex-1 overflow-y-auto min-h-0">
 
           {/* Editor Section */}
           <div className="flex-1 overflow-auto flex flex-col overflow-y-auto min-h-0">
-            <div className={`flex-1 bg-white m-4 rounded-lg p-6 shadow-lg relative overflow-hidden flex items-center justify-center transition-all duration-300 ${isToolbarOpen ? 'mt-2' : 'mt-4'}`}>
+            <div className={workspaceContainerClasses}>
               {imageLoaded ? (
                 <div 
-                  className="relative inline-block border-2 border-gray-200 bg-gray-50 cursor-crosshair rounded-md overflow-hidden"
+                  className={canvasWrapperClasses}
                   data-image-editor-canvas
+                  style={editorCanvasStyle}
                 >
                   <img
                     ref={imageRef}
                     src={imageUrl}
                     alt="Loaded"
                     style={{ 
-                      maxWidth: '100%', 
-                      height: 'auto',
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
                       filter: applyFiltersToImage()
                     }}
                     onLoad={() => setImageLoaded(true)}
@@ -2336,15 +2515,19 @@ const handleTemplateJsonLoad = () => {
                       )
                     })}
                     {textLayers.map((layer) => {
+                      const leftPx = percentToDisplayPx(layer.x, 'x')
+                      const topPx = percentToDisplayPx(layer.y, 'y')
+                      const widthPx = percentToDisplayPx(layer.width, 'x')
+                      const heightPx = percentToDisplayPx(layer.height, 'y')
                       return (
                         <div
                           key={layer.id}
                           className={`absolute cursor-move p-1 ${selectedLayer?.id === layer.id ? 'border-2 border-purple-600 bg-purple-100' : 'border-2 border-transparent'}`}
                           style={{
-                            left: layer.x * getImageScale().scaleX,
-                            top: layer.y * getImageScale().scaleY,
-                            width: layer.width * getImageScale().scaleX,
-                            height: layer.height * getImageScale().scaleY,
+                            left: `${clampPercentValue(layer.x)}%`,
+                            top: `${clampPercentValue(layer.y)}%`,
+                            width: `${clampPercentValue(layer.width)}%`,
+                            height: `${clampPercentValue(layer.height)}%`,
                             pointerEvents: 'auto'
                           }}
                           onClick={() => handleLayerClick(layer)}
@@ -2371,15 +2554,10 @@ const handleTemplateJsonLoad = () => {
                                   : relativeTop - 10
                               })
                             } else {
-                              // Fallback positioning relative to image space
-                              const { scaleX, scaleY } = getImageScale()
-                              const topPx = layer.y * scaleY
                               const isNearTop = topPx < toolbarHeight + 8
                               setHoverToolbarPosition({
-                                x: layer.x * scaleX + (layer.width * scaleX) / 2,
-                                y: isNearTop
-                                  ? topPx + layer.height * scaleY + 10
-                                  : topPx - 10
+                                x: leftPx + widthPx / 2,
+                                y: isNearTop ? topPx + heightPx + 10 : topPx - 10
                               })
                             }
                           }}
@@ -2441,98 +2619,7 @@ const handleTemplateJsonLoad = () => {
                   </div>
                   
                   {/* Overlay Image */}
-                  {overlayVisible && overlayImage && (
-                    <div
-                      className="absolute z-[1000] cursor-move"
-                      style={{
-                        left: overlayPosition.x,
-                        top: overlayPosition.y,
-                        transform: `scale(${overlayScale})`,
-                        transformOrigin: 'top left'
-                      }}
-                      onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
-                      onMouseEnter={() => {
-                        if (overlayHoverTimeoutRef.current) {
-                          clearTimeout(overlayHoverTimeoutRef.current)
-                        }
-                        setHoveredOverlay(true)
-                      }}
-                      onMouseLeave={() => {
-                        overlayHoverTimeoutRef.current = setTimeout(() => {
-                          setHoveredOverlay(false)
-                          overlayHoverTimeoutRef.current = null
-                        }, 200)
-                      }}
-                    >
-                      <img
-                        src={overlayImageUrl}
-                        alt="Overlay"
-                        draggable="false"
-                        style={{
-                          width: overlayImage.width,
-                          height: overlayImage.height,
-                          display: 'block',
-                        }}
-                      />
-                      {hoveredOverlay && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleOverlayRemove()
-                            setHoveredOverlay(false)
-                          }}
-                          className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-20 transition-all"
-                          title="Delete Overlay"
-                          onMouseEnter={() => {
-                            if (overlayHoverTimeoutRef.current) {
-                              clearTimeout(overlayHoverTimeoutRef.current)
-                              overlayHoverTimeoutRef.current = null
-                            }
-                          }}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <path d="M3 6h18"/>
-                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                          </svg>
-                        </button>
-                      )}
-                      <div
-                        className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
-                        onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
-                      />
-                      {isCropping && croppingTarget === 'overlay' && (
-                        <div
-                          className="absolute border-2 border-dashed border-purple-600 bg-purple-100"
-                          style={{ 
-                            left: cropArea.x - overlayPosition.x, 
-                            top: cropArea.y - overlayPosition.y, 
-                            width: cropArea.width, 
-                            height: cropArea.height 
-                          }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation()
-                            const rect = e.currentTarget.getBoundingClientRect()
-                            const x = e.clientX - rect.left
-                            const y = e.clientY - rect.top
-                            const edge = 8
-                            let mode = 'move'
-                            if (y < edge && x < edge) mode = 'nw'
-                            else if (y < edge && x > rect.width - edge) mode = 'ne'
-                            else if (y > rect.height - edge && x < edge) mode = 'sw'
-                            else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
-                            else if (y < edge) mode = 'n'
-                            else if (y > rect.height - edge) mode = 's'
-                            else if (x < edge) mode = 'w'
-                            else if (x > rect.width - edge) mode = 'e'
-                            setCropDragMode(mode)
-                            setDragStart({ x: e.clientX, y: e.clientY })
-                            setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
-                          }}
-                        />
-                      )}
-                    </div>
-                  )}
+                  {renderOverlayImage()}
 
                   {/* Hover Text Toolbar */}
                   {hoveredTextLayerId && (() => {
@@ -3710,5 +3797,3 @@ const handleTemplateJsonLoad = () => {
 }
 
 export default ImageEdit
-
-

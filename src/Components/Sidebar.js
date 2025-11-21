@@ -192,7 +192,7 @@ const Sidebar = () => {
     <>
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex h-full min-h-screen w-72 transform flex-col justify-between text-white transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-30 flex h-full w-72 transform flex-col text-white transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{
@@ -204,110 +204,112 @@ const Sidebar = () => {
           )`
         }}
       >
-        {/* Logo */}
-        <div>
-          <div className="p-6">
-            <Link to="/" className="block">
-              <img src={LogoImage} alt="Logo" />
-            </Link>
-          </div>
+        {/* Scrollable container for entire sidebar content */}
+        <div className="flex h-full flex-col overflow-hidden">
+          {/* Scrollable content area */}
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {/* Logo */}
+            <div className="p-6">
+              <Link to="/" className="block">
+                <img src={LogoImage} alt="Logo" />
+              </Link>
+            </div>
 
-          {/* Main Navigation */}
-          <div className="mb-2 px-6">
-            <button
-              onClick={createSessionAndNavigate}
-              className={splitLocation[1] === 'chat' ? activeClass : inactiveClass}
-            >
-              <FaPlay className="h-5 w-5" />
-              <span>Generate Reel</span>
-            </button>
-            <button
-              onClick={createSessionAndGoBuildReel}
-              className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
-            >
-              <FaThLarge className="h-5 w-5" />
-              <span>Build Reel</span>
-            </button>
-            <button
-              onClick={() => navigate('/media')}
-              className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
-            >
-              <FaImage className="h-5 w-5" />
-              <span>My Media</span>
-            </button>
-            <button
-              onClick={() => navigate('/price-guidelines')}
-              className={splitLocation[1] === 'price-guidelines' ? activeClass : inactiveClass}
-            >
-              <FaDollarSign className="h-5 w-5" />
-              <span>Price Guidelines</span>
-            </button>
+            {/* Main Navigation */}
+            <div className="mb-2 px-6">
+              <button
+                onClick={createSessionAndNavigate}
+                className={splitLocation[1] === 'chat' ? activeClass : inactiveClass}
+              >
+                <FaPlay className="h-5 w-5" />
+                <span>Generate Reel</span>
+              </button>
+              <button
+                onClick={createSessionAndGoBuildReel}
+                className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
+              >
+                <FaThLarge className="h-5 w-5" />
+                <span>Build Reel</span>
+              </button>
+              <button
+                onClick={() => navigate('/media')}
+                className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
+              >
+                <FaImage className="h-5 w-5" />
+                <span>My Media</span>
+              </button>
+              <button
+                onClick={() => navigate('/price-guidelines')}
+                className={splitLocation[1] === 'price-guidelines' ? activeClass : inactiveClass}
+              >
+                <FaDollarSign className="h-5 w-5" />
+                <span>Price Guidelines</span>
+              </button>
 
-            {isAdmin && (
-              <div className="mt-8">
-                <p className="mb-3 text-xs uppercase tracking-wide text-white/70">Admin</p>
-                <button
-                  onClick={() => navigate('/admin/users')}
-                  className={
-                    pathname.startsWith('/admin/users') && !pathname.includes('/create')
-                      ? activeClass
-                      : inactiveClass
-                  }
-                >
-                  <FaUsers className="h-5 w-5" />
-                  <span>All Users</span>
-                </button>
-                <button
-                  onClick={() => navigate('/admin/users/create')}
-                  className={pathname === '/admin/users/create' ? activeClass : inactiveClass}
-                >
-                  <FaUserPlus className="h-5 w-5" />
-                  <span>Create User</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+              {isAdmin && (
+                <div className="mt-8">
+                  <p className="mb-3 text-xs uppercase tracking-wide text-white/70">Admin</p>
+                  <button
+                    onClick={() => navigate('/admin/users')}
+                    className={
+                      pathname.startsWith('/admin/users') && !pathname.includes('/create')
+                        ? activeClass
+                        : inactiveClass
+                    }
+                  >
+                    <FaUsers className="h-5 w-5" />
+                    <span>All Users</span>
+                  </button>
+                  <button
+                    onClick={() => navigate('/admin/users/create')}
+                    className={pathname === '/admin/users/create' ? activeClass : inactiveClass}
+                  >
+                    <FaUserPlus className="h-5 w-5" />
+                    <span>Create User</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
-        {/* Chat History */}
-        <div className="flex min-h-0 flex-col">
-          <div className="scroll-y-invisible min-h-0 flex-1 px-6">
-            <div className="mb-5">
-              <h2 className="mb-3 text-sm uppercase tracking-wide text-white/70">Chats History</h2>
-              <div className="space-y-2">
-                {isLoadingSessions && <div className="text-xs text-purple-100/80">Loading…</div>}
-                {!isLoadingSessions && sessionsError && sessions.length === 0 && (
-                  <div className="text-xs text-red-100">{sessionsError}</div>
-                )}
-                {!isLoadingSessions && sessions.length === 0 && !sessionsError && (
-                  <div className="text-xs text-purple-100/80">No sessions yet</div>
-                )}
-                {sessions.map((s, index) => {
-                  const id = s?.id || s?.session_id || '';
-                  const label = s?.title || 'New Chat';
-                  return (
-                    <button
-                      key={id || index}
-                      type="button"
-                      className="w-full truncate rounded-lg bg-white/10 px-3 py-2 text-left text-sm text-white transition hover:bg-white/20"
-                      onClick={() => {
-                        if (!id) return;
-                        try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
-                        navigate(`/chat/${id}`);
-                        setSidebarOpen(false);
-                      }}
-                      title={label}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+            {/* Chat History */}
+            <div className="px-6 pb-4">
+              <div className="mb-5">
+                <h2 className="mb-3 text-sm uppercase tracking-wide text-white/70">Chats History</h2>
+                <div className="space-y-2">
+                  {isLoadingSessions && <div className="text-xs text-purple-100/80">Loading…</div>}
+                  {!isLoadingSessions && sessionsError && sessions.length === 0 && (
+                    <div className="text-xs text-red-100">{sessionsError}</div>
+                  )}
+                  {!isLoadingSessions && sessions.length === 0 && !sessionsError && (
+                    <div className="text-xs text-purple-100/80">No sessions yet</div>
+                  )}
+                  {sessions.map((s, index) => {
+                    const id = s?.id || s?.session_id || '';
+                    const label = s?.title || 'New Chat';
+                    return (
+                      <button
+                        key={id || index}
+                        type="button"
+                        className="w-full truncate rounded-lg bg-white/10 px-3 py-2 text-left text-sm text-white transition hover:bg-white/20"
+                        onClick={() => {
+                          if (!id) return;
+                          try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
+                          navigate(`/chat/${id}`);
+                          setSidebarOpen(false);
+                        }}
+                        title={label}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Logout */}
-          <div className="mt-auto p-6">
+          {/* Bottom section - Logout (fixed at bottom, outside scroll) */}
+          <div className="flex-shrink-0 border-t border-white/10 p-6">
             <button
               onClick={handleLogout}
               className="flex w-full items-center gap-3 rounded-xl bg-white/15 px-4 py-3 text-left text-sm font-medium transition hover:bg-white/25"
