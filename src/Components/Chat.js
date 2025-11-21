@@ -3,6 +3,29 @@ import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
 
+const GOOGLE_FONT_OPTIONS = [
+  'Roboto',
+  'Open Sans',
+  'Lato',
+  'Montserrat',
+  'Poppins',
+  'Source Sans Pro',
+  'Inter',
+  'Nunito',
+  'Raleway',
+  'Playfair Display',
+  'Merriweather',
+  'PT Sans',
+  'Oswald',
+  'Rubik',
+  'Work Sans',
+  'Fira Sans',
+  'Cabin',
+  'Karla',
+  'Libre Baskerville',
+  'Josefin Sans'
+];
+
 const resolveTemplateAssetUrl = (entry) => {  
   if (!entry) return '';
   if (typeof entry === 'string') return entry.trim();
@@ -493,6 +516,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isSuggestingScenes, setIsSuggestingScenes] = useState(false);
   const [newSceneDescription, setNewSceneDescription] = useState('');
   const [newSceneVideoType, setNewSceneVideoType] = useState('Avatar Based');
+  const [newSceneAvatarType, setNewSceneAvatarType] = useState('Presenter'); // 'Presenter' | 'Anchor'
   const [isAddingScene, setIsAddingScene] = useState(false);
   const [addSceneStep, setAddSceneStep] = useState(1); // 1: pick model, 2+: flow-specific steps
   const [newSceneChartType, setNewSceneChartType] = useState('');
@@ -517,7 +541,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Regenerate modal state
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [regenQuery, setRegenQuery] = useState('');
-  const [regenModel, setRegenModel] = useState('VEO3'); // 'VEO3' | 'SORA' | 'PLOTLY'
+  const [regenModel, setRegenModel] = useState('VEO3'); // 'VEO3' | 'ANCHOR' | 'SORA' | 'PLOTLY'
   const [regenStep, setRegenStep] = useState(1); // 1: pick model, 2: suggestions
   const [regenChartType, setRegenChartType] = useState('');
   const [regenChartData, setRegenChartData] = useState('');
@@ -546,6 +570,8 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       if (isEditingScene && Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
         const snap = JSON.parse(JSON.stringify(scriptRows[currentSceneIndex]));
         setEditSnapshot(snap);
+        setIsEditingAnchorOptions(false);
+        setIsEditingAnchorPrompt(false);
       }
     } catch (_) { /* noop */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -553,13 +579,52 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   useEffect(() => {
     setAdvancedOptionsOpen(false);
   }, [currentSceneIndex]);
+useEffect(() => {
+  setIsEditingAdvancedStyles(false);
+  setIsEditingSceneData(false);
+  setIsEditingAnchorPrompt(false);
+  advancedStylesBackupRef.current = null;
+  sceneDataBackupRef.current = null;
+  anchorPromptBackupRef.current = null;
+}, [currentSceneIndex]);
   // Chart type confirm (PLOTLY) state
   const [showChartTypeConfirm, setShowChartTypeConfirm] = useState(false);
   const [pendingChartType, setPendingChartType] = useState('');
   const [isUpdatingChartType, setIsUpdatingChartType] = useState(false);
   const [isApplyingChartType, setIsApplyingChartType] = useState(false);
+const [isEditingAnchorOptions, setIsEditingAnchorOptions] = useState(false);
+const [isEditingAnchorPrompt, setIsEditingAnchorPrompt] = useState(false);
+const [isEditingAdvancedStyles, setIsEditingAdvancedStyles] = useState(false);
+const [isEditingSceneData, setIsEditingSceneData] = useState(false);
+const [isSavingAdvancedStyles, setIsSavingAdvancedStyles] = useState(false);
+const [isSavingSceneData, setIsSavingSceneData] = useState(false);
+const [isSavingAnchorPrompt, setIsSavingAnchorPrompt] = useState(false);
   // Brand fonts from user brand identity (for font_style dropdown)
-  const [brandFonts, setBrandFonts] = useState([]);
+const [brandFonts, setBrandFonts] = useState([]);
+const combinedFontOptions = useMemo(() => {
+  const set = new Set(GOOGLE_FONT_OPTIONS);
+  if (Array.isArray(brandFonts)) {
+    brandFonts.filter(Boolean).forEach((font) => set.add(font));
+  }
+  return Array.from(set);
+}, [brandFonts]);
+const advancedStylesBackupRef = useRef(null);
+const sceneDataBackupRef = useRef(null);
+const anchorPromptBackupRef = useRef(null);
+// Rich text editor state
+const [showRichTextEditor, setShowRichTextEditor] = useState(false);
+const [selectedShape, setSelectedShape] = useState(null);
+const [textEditorContent, setTextEditorContent] = useState('');
+const [textEditorFormat, setTextEditorFormat] = useState({
+  fontFamily: 'Arial',
+  fontSize: 16,
+  bold: false,
+  italic: false,
+  underline: false,
+  strikethrough: false,
+  align: 'left',
+  color: '#000000'
+});
 
   useEffect(() => {
     try {
@@ -897,10 +962,16 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                 item.sampleVideo ||
                 item.sample_video_url ||
                 item.sampleVideoUrl ||
-                item.preview_url ||
-                item.previewUrl ||
+                item.sample_url ||
+                item.sampleUrl ||
+                item.sample_img ||
+                item.sampleImg ||
                 item.sample_image ||
                 item.sampleImage ||
+                item.sample_image_url ||
+                item.sampleImageUrl ||
+                item.preview_url ||
+                item.previewUrl ||
                 item.thumbnail ||
                 item.thumbnail_url ||
                 item.thumbnailUrl ||
@@ -929,9 +1000,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                 rawPreviewType && typeof rawPreviewType === 'string'
                   ? rawPreviewType.toLowerCase()
                   : inferPreviewType(rawPreviewUrl);
+              const anchorId = item.anchor_id || item.anchorId || '';
               return {
                 option,
                 preset_id: String(presetId),
+                anchor_id: anchorId ? String(anchorId) : undefined,
                 sample_video: rawPreviewUrl || '',
                 sample_video_type: sampleVideoType
               };
@@ -1031,11 +1104,22 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           ? scriptRows[currentSceneIndex]
           : null;
       const sceneNumber = scene?.scene_number ?? currentSceneIndex + 1;
+      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+      const selectedPreset =
+        list.find(
+          (item) =>
+            String(item?.preset_id || item?.option || '') === String(pendingPresenterPresetId)
+        ) || {};
+      // For ANCHOR models, use anchor_id as preset_id in the request body
+      const presetIdForRequest = modelUpper === 'ANCHOR' && selectedPreset?.anchor_id
+        ? String(selectedPreset.anchor_id)
+        : String(pendingPresenterPresetId || '');
       const payload = {
         user: normalizedUser,
         session: sanitizedSession,
         scene_number: sceneNumber,
-        preset_id: String(pendingPresenterPresetId || '')
+        preset_id: presetIdForRequest
       };
       const resp = await fetch(
         'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-preset',
@@ -1055,23 +1139,22 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       if (!resp.ok) {
         throw new Error(`scripts/update-preset failed: ${resp.status} ${text}`);
       }
-      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
-      const savedPreset =
-        list.find(
-          (item) =>
-            String(item?.preset_id || item?.option || '') === String(pendingPresenterPresetId)
-        ) || {};
+      const savedPreset = selectedPreset;
       const savedLabel = pendingPresenterPresetLabel || savedPreset.option || '';
       if (scene) {
         const rows = [...(scriptRows || [])];
+        const presenterOpts = {
+          ...(scene.presenter_options || {}),
+          option: savedLabel,
+          preset_id: pendingPresenterPresetId
+        };
+        // For ANCHOR models, include anchor_id from the preset
+        if (modelUpper === 'ANCHOR' && savedPreset?.anchor_id) {
+          presenterOpts.anchor_id = String(savedPreset.anchor_id);
+        }
         const updated = {
           ...scene,
-          presenter_options: {
-            ...(scene.presenter_options || {}),
-            option: savedLabel,
-            preset_id: pendingPresenterPresetId
-          }
+          presenter_options: presenterOpts
         };
         rows[currentSceneIndex] = updated;
         setScriptRows(rows);
@@ -1125,7 +1208,28 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     } catch (_) { /* noop */ }
   }, [assetsTab, normalizedTemplateAssets, filteredTemplateAssets, effectiveTemplateAspect]);
   // Kebab menu inline component for header actions
-  const KebabMenu = ({ canUndo, canRedo, onUndo, onRedo, onDelete, onRegenerate, onEdit, onGenerateSummary, onSwitchAvatar, onSwitchInfographic, onSwitchFinancial, isDeleting, hasScenes, isSwitching, isGeneratingSummary, showSwitchAvatar = true, showSwitchInfographic = true, showSwitchFinancial = true }) => {
+  const KebabMenu = ({
+    canUndo,
+    canRedo,
+    onUndo,
+    onRedo,
+    onDelete,
+    onRegenerate,
+    onEdit,
+    onGenerateSummary,
+    onSwitchAnchor,
+    onSwitchAvatar,
+    onSwitchInfographic,
+    onSwitchFinancial,
+    isDeleting,
+    hasScenes,
+    isSwitching,
+    isGeneratingSummary,
+    showSwitchAnchor = true,
+    showSwitchAvatar = true,
+    showSwitchInfographic = true,
+    showSwitchFinancial = true
+  }) => {
     const [open, setOpen] = React.useState(false);
     const ref = React.useRef(null);
     React.useEffect(() => {
@@ -1165,9 +1269,23 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                 <span>Edit Scenes</span>
               </button>
               <div className="my-1 h-px bg-gray-100" />
-              {(showSwitchAvatar || showSwitchInfographic || showSwitchFinancial) && (
+              {(showSwitchAnchor || showSwitchAvatar || showSwitchInfographic || showSwitchFinancial) && (
                 <>
                   <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-gray-500">Switch Model</div>
+                  {showSwitchAnchor && (
+                    <button
+                      onClick={() => {
+                        setOpen(false);
+                        onSwitchAnchor && onSwitchAnchor();
+                      }}
+                      disabled={isSwitching || !hasScenes}
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${
+                        !hasScenes || isSwitching ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <span>Anchor</span>
+                    </button>
+                  )}
                   {showSwitchAvatar && (
                     <button onClick={() => { setOpen(false); onSwitchAvatar && onSwitchAvatar(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
                       <span>Avatar Based</span>
@@ -1337,6 +1455,18 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
   const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
   const avatarUploadFileInputRef = useRef(null);
+  const presetAvatars = useMemo(
+    () => [
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png'
+    ],
+    []
+  );
 
   // Helpers for session-scoped localStorage keys
   const getSid = () => {
@@ -2768,6 +2898,80 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     await regenerateSceneViaAPI(content);
   };
 
+
+  const normalizeRegenModel = React.useCallback((rawModel) => {
+    const upper = String(rawModel || '').toUpperCase();
+    if (!upper) return 'SORA';
+    if (upper === 'ANCHOR') return 'ANCHOR';
+    if (upper === 'PLOTLY') return 'PLOTLY';
+    if (upper === 'VEO3' || upper === 'AVATAR' || upper === 'AVATAR BASED') return 'VEO3';
+    return upper;
+  }, []);
+
+  const continueRegenerateFlow = React.useCallback(
+    async (modelOverride) => {
+      try {
+        if (isRegenerating || isLoadingRegenPresenter || isSuggestingRegen) return;
+        const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+        const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
+        const normalizedModel = normalizeRegenModel(modelOverride || regenModel || 'SORA');
+        const isAvatarModel = normalizedModel === 'VEO3' || normalizedModel === 'ANCHOR';
+
+        setRegenPresenterError('');
+        setRegenSelectedIdx(-1);
+        setRegenSceneContent('');
+
+        if (enablePresenterOptions && isAvatarModel) {
+          let shouldPauseForPresenter = false;
+          setRegenPresenterPresetId('');
+          setRegenPresenterPresetLabel('');
+          setIsLoadingRegenPresenter(true);
+          try {
+            const list = await fetchPresenterPresetsForModel(normalizedModel);
+            const normalizedList = Array.isArray(list) ? list : [];
+            if (normalizedList.length > 0) {
+              setRequiresRegenPresenterSelection(true);
+              if (normalizedList.length === 1) {
+                setRegenPresenterPresetId(String(normalizedList[0].preset_id));
+                setRegenPresenterPresetLabel(normalizedList[0].option || '');
+              }
+              setRegenStep(2);
+              shouldPauseForPresenter = true;
+            } else {
+              setRequiresRegenPresenterSelection(false);
+            }
+          } catch (err) {
+            console.error('Failed to load presenter options for regenerate flow:', err);
+            setRequiresRegenPresenterSelection(false);
+            setRegenPresenterError(err?.message || 'Failed to load presenter options.');
+          } finally {
+            setIsLoadingRegenPresenter(false);
+          }
+          if (shouldPauseForPresenter) return;
+        } else {
+          setRequiresRegenPresenterSelection(false);
+        }
+
+        await fetchSceneSuggestions(normalizedModel || 'SORA', idx, 'regen');
+        setRegenStep(2);
+      } catch (err) {
+        console.error('Failed to continue regenerate flow:', err);
+        setRegenPresenterError(err?.message || 'Failed to continue regenerate flow.');
+      }
+    },
+    [
+      currentSceneIndex,
+      enablePresenterOptions,
+      fetchSceneSuggestions,
+      isLoadingRegenPresenter,
+      isRegenerating,
+      isSuggestingRegen,
+      normalizeRegenModel,
+      regenModel,
+      scriptRows
+    ]
+  );
+
   // Open Regenerate modal first; suggestions load based on selected model
   const openRegenerateWithSuggestions = async () => {
     try {
@@ -2786,9 +2990,13 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       setRegenPresenterError('');
       setIsLoadingRegenPresenter(false);
       setRequiresRegenPresenterSelection(false);
-      const sceneModel = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
-      setRegenModel(sceneModel || 'SORA');
+      const rawSceneModel = String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || '').toUpperCase();
+      const normalizedModel = normalizeRegenModel(rawSceneModel || 'SORA');
+      setRegenModel(normalizedModel || 'SORA');
       setShowRegenModal(true);
+      if (normalizedModel !== 'PLOTLY') {
+        continueRegenerateFlow(normalizedModel);
+      }
     } catch(_) { setShowRegenModal(true); }
   };
 
@@ -2853,8 +3061,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         model: modelUpper,
         action: 'regenerate'
       };
-      if (modelUpper === 'VEO3') {
-        const list = Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : [];
+      if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+        const presetBucket = presenterPresets[modelUpper] || [];
+        const list = Array.isArray(presetBucket) ? presetBucket : [];
         const selectedPreset = list.find(
           (preset) => String(preset?.preset_id) === String(regenPresenterPresetId || '')
         );
@@ -3256,15 +3465,57 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                 item.option_id ||
                 item.optionId ||
                 option;
+              // Normalize preview URL and type (image or video)
+              const rawPreviewUrl =
+                item.sample_video ||
+                item.sampleVideo ||
+                item.sample_video_url ||
+                item.sampleVideoUrl ||
+                item.sample_url ||
+                item.sampleUrl ||
+                item.sample_img ||
+                item.sampleImg ||
+                item.sample_image ||
+                item.sampleImage ||
+                item.sample_image_url ||
+                item.sampleImageUrl ||
+                item.preview_url ||
+                item.previewUrl ||
+                item.thumbnail ||
+                item.thumbnail_url ||
+                item.thumbnailUrl ||
+                item.image ||
+                item.image_url ||
+                item.imageUrl ||
+                '';
+              const rawPreviewType =
+                item.sample_video_type ||
+                item.sampleVideoType ||
+                item.sample_type ||
+                item.sampleType ||
+                item.preview_type ||
+                item.previewType ||
+                '';
+              const inferPreviewType = (url) => {
+                if (!url || typeof url !== 'string') return '';
+                const clean = url.split('?')[0].toLowerCase();
+                const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                return '';
+              };
+              const sampleVideoType =
+                rawPreviewType && typeof rawPreviewType === 'string'
+                  ? rawPreviewType.toLowerCase()
+                  : inferPreviewType(rawPreviewUrl);
+              const anchorId = item.anchor_id || item.anchorId || '';
               return {
                 option,
                 preset_id: String(presetId),
-                sample_video:
-                  item.sample_video ||
-                  item.sampleVideo ||
-                  item.preview_url ||
-                  item.previewUrl ||
-                  ''
+                anchor_id: anchorId ? String(anchorId) : undefined,
+                sample_video: rawPreviewUrl || '',
+                sample_video_type: sampleVideoType
               };
             }
             return null;
@@ -3299,10 +3550,13 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       // Always add at the last position
       const idx = total;
       const desiredModel =
-        newSceneVideoType === 'Avatar Based' ? 'VEO3'
-        : newSceneVideoType === 'Infographic' ? 'SORA'
-        : newSceneVideoType === 'Financial' ? 'PLOTLY'
-        : String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || 'SORA');
+        newSceneVideoType === 'Avatar Based'
+          ? (newSceneAvatarType === 'Anchor' ? 'ANCHOR' : 'VEO3')
+          : newSceneVideoType === 'Infographic'
+            ? 'SORA'
+            : newSceneVideoType === 'Financial'
+              ? 'PLOTLY'
+              : String(scriptRows?.[currentSceneIndex]?.model || scriptRows?.[currentSceneIndex]?.mode || 'SORA');
       let body = {
         user,
         session,
@@ -3385,7 +3639,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       setNewSceneContent('');
       setNewSceneDescription('');
       setAddSceneStep(3);
-      await fetchSceneSuggestions('VEO3', idx, 'add');
+      const avatarModelUpperForNewScene =
+        newSceneVideoType === 'Avatar Based'
+          ? (newSceneAvatarType === 'Anchor' ? 'ANCHOR' : 'VEO3')
+          : 'SORA';
+      await fetchSceneSuggestions(avatarModelUpperForNewScene, idx, 'add');
     } catch (err) {
       console.error('Failed to continue add-scene flow for presenter selection:', err);
       setNewScenePresenterError(err?.message || 'Failed to load scene suggestions. Please try again.');
@@ -3403,11 +3661,12 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       }
       const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
       const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
+      const modelUpper = normalizeRegenModel(regenModel || 'VEO3');
       setRegenSceneContent('');
       setRegenSelectedIdx(-1);
       setRegenPresenterError('');
       setRegenStep(3);
-      await fetchSceneSuggestions('VEO3', idx, 'regen');
+      await fetchSceneSuggestions(modelUpper || 'VEO3', idx, 'regen');
     } catch (err) {
       console.error('Failed to continue regenerate flow for presenter selection:', err);
       setRegenPresenterError(err?.message || 'Failed to load scene suggestions. Please try again.');
@@ -4550,7 +4809,14 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     try {
       if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
       const scene = scriptRows[currentSceneIndex];
-      const desiredModel = (videoType === 'Avatar Based') ? 'VEO3' : (videoType === 'Financial' ? 'PLOTLY' : 'SORA');
+      const desiredModel =
+        videoType === 'Avatar Based'
+          ? 'VEO3'
+          : videoType === 'Financial'
+            ? 'PLOTLY'
+            : videoType === 'Anchor'
+              ? 'ANCHOR'
+              : 'SORA';
       const currentModel = (scene?.mode || scene?.model || '').toUpperCase();
       if (currentModel === desiredModel.toUpperCase()) return; // no-op if same
       setPendingModelType(videoType);
@@ -4592,7 +4858,14 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         return;
       }
       const scene = scriptRows[currentSceneIndex];
-      const desiredModel = (videoType === 'Avatar Based') ? 'VEO3' : (videoType === 'Financial' ? 'PLOTLY' : 'SORA');
+      const desiredModel =
+        videoType === 'Avatar Based'
+          ? 'VEO3'
+          : videoType === 'Financial'
+            ? 'PLOTLY'
+            : videoType === 'Anchor'
+              ? 'ANCHOR'
+              : 'SORA';
       const currentModel = scene?.mode || scene?.model || '';
       if ((currentModel || '').toUpperCase() === desiredModel.toUpperCase()) {
         setSelectedVideoType(videoType);
@@ -5316,14 +5589,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
         })();
         const targetSceneObj = cloned[targetIndex];
         if (targetSceneObj && typeof targetSceneObj === 'object') {
-          // Set background_image array if provided
-          if (Array.isArray(backgroundImageArray) && backgroundImageArray.length > 0) {
-            targetSceneObj.background_image = backgroundImageArray;
-          }
-          // Set avatar_urls as array of strings
-          if (Array.isArray(avatarUrlsForApiBody) && avatarUrlsForApiBody.length > 0) {
-            targetSceneObj.avatar_urls = avatarUrlsForApiBody;
-          }
+          // Always include background_image and avatar_urls arrays (empty when not selected)
+          targetSceneObj.background_image = Array.isArray(backgroundImageArray) ? backgroundImageArray : [];
+          targetSceneObj.avatar_urls = Array.isArray(avatarUrlsForApiBody) ? avatarUrlsForApiBody : [];
           // Ensure avatar field is removed
           if ('avatar' in targetSceneObj) {
             delete targetSceneObj.avatar;
@@ -5364,18 +5632,10 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
           userquery: originalUserquery,
           airesponse: airesponseWithVisuals,
           version: String(scriptVersion || 'v1')
-        }
+        },
+        // Always include background_image in request body; empty when not selected
+        background_image: Array.isArray(backgroundImageArray) ? backgroundImageArray : []
       };
-
-      // Add background_image array to request body if provided
-      if (Array.isArray(backgroundImageArray) && backgroundImageArray.length > 0) {
-        requestBody.background_image = backgroundImageArray;
-      }
-
-      // Add avatar_urls as array to request body if provided
-      if (Array.isArray(avatarUrlsForApiBody) && avatarUrlsForApiBody.length > 0) {
-        requestBody.avatar_urls = avatarUrlsForApiBody;
-      }
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
@@ -5393,6 +5653,105 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
       console.error('updateSceneGenImageFlag failed:', e);
     }
   };
+
+const beginAdvancedStylesEdit = () => {
+  const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+  if (!scene) return;
+  advancedStylesBackupRef.current = {
+    colors: Array.isArray(scene?.colors) ? [...scene.colors] : [],
+    font_size: scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16,
+    font_style: scene?.font_style ?? scene?.fontStyle ?? ''
+  };
+  setIsEditingAdvancedStyles(true);
+};
+
+const cancelAdvancedStylesEdit = () => {
+  const backup = advancedStylesBackupRef.current;
+  if (backup) {
+    handleSceneUpdate(currentSceneIndex, 'colors', Array.isArray(backup.colors) ? [...backup.colors] : []);
+    handleSceneUpdate(currentSceneIndex, 'font_size', backup.font_size ?? 16);
+    handleSceneUpdate(currentSceneIndex, 'font_style', backup.font_style ?? '');
+  }
+  advancedStylesBackupRef.current = null;
+  setIsEditingAdvancedStyles(false);
+};
+
+const saveAdvancedStyles = async () => {
+  if (isSavingAdvancedStyles) return;
+  try {
+    setIsSavingAdvancedStyles(true);
+    await updateSceneGenImageFlag(currentSceneIndex);
+    setIsEditingAdvancedStyles(false);
+    advancedStylesBackupRef.current = null;
+  } catch (err) {
+    console.error('Failed to save advanced style options:', err);
+    alert('Failed to update style options. Please try again.');
+  } finally {
+    setIsSavingAdvancedStyles(false);
+  }
+};
+
+const beginSceneDataEdit = () => {
+  const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+  if (!scene || !scene?.veo3_prompt_template) return;
+  sceneDataBackupRef.current = JSON.parse(JSON.stringify(scene.veo3_prompt_template));
+  setIsEditingSceneData(true);
+};
+
+const cancelSceneDataEdit = () => {
+  const backup = sceneDataBackupRef.current;
+  if (backup) {
+    handleSceneUpdate(currentSceneIndex, 'veo3_prompt_template', JSON.parse(JSON.stringify(backup)));
+  }
+  sceneDataBackupRef.current = null;
+  setIsEditingSceneData(false);
+};
+
+const saveSceneData = async () => {
+  if (isSavingSceneData) return;
+  try {
+    setIsSavingSceneData(true);
+    await updateSceneGenImageFlag(currentSceneIndex);
+    setIsEditingSceneData(false);
+    sceneDataBackupRef.current = null;
+  } catch (err) {
+    console.error('Failed to save scene data:', err);
+    alert('Failed to update scene data. Please try again.');
+  } finally {
+    setIsSavingSceneData(false);
+  }
+};
+
+const beginAnchorPromptEdit = () => {
+  const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+  if (!scene || !scene?.anchor_prompt_template) return;
+  anchorPromptBackupRef.current = JSON.parse(JSON.stringify(scene.anchor_prompt_template));
+  setIsEditingAnchorPrompt(true);
+};
+
+const cancelAnchorPromptEdit = () => {
+  const backup = anchorPromptBackupRef.current;
+  if (backup) {
+    handleSceneUpdate(currentSceneIndex, 'anchor_prompt_template', JSON.parse(JSON.stringify(backup)));
+  }
+  anchorPromptBackupRef.current = null;
+  setIsEditingAnchorPrompt(false);
+};
+
+const saveAnchorPromptTemplate = async () => {
+  if (isSavingAnchorPrompt) return;
+  try {
+    setIsSavingAnchorPrompt(true);
+    await updateSceneGenImageFlag(currentSceneIndex);
+    setIsEditingAnchorPrompt(false);
+    anchorPromptBackupRef.current = null;
+  } catch (err) {
+    console.error('Failed to save anchor prompt template:', err);
+    alert('Failed to update anchor prompt template. Please try again.');
+  } finally {
+    setIsSavingAnchorPrompt(false);
+  }
+};
 
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
 
@@ -5581,6 +5940,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     );
     if (!firstValid) return '';
     const upper = firstValid.trim().toUpperCase();
+    if (['ANCHOR', 'ANCHOR BASED', 'ANCHOR-BASED'].includes(upper)) return 'Anchor';
     if (['VEO3', 'AVATAR', 'AVATAR BASED', 'AVATAR-BASED'].includes(upper)) return 'Avatar Based';
     if (['PLOTLY', 'FINANCIAL', 'FINANCE'].includes(upper)) return 'Financial';
     if (['SORA', 'INFOGRAPHIC', 'INFOGRAPHICS'].includes(upper)) return 'Infographic';
@@ -5596,6 +5956,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     return title === 'summary';
   }, [activeScene]);
 
+  const isActiveAnchorModel = activeModelType === 'Anchor';
   const isActiveAvatarModel = activeModelType === 'Avatar Based';
   const isActiveInfographicModel = activeModelType === 'Infographic';
   const isActiveFinancialModel = activeModelType === 'Financial';
@@ -5609,7 +5970,20 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const isPresenterSelectionPhase =
     enablePresenterOptions && isAvatarModelSelected && requiresAvatarPresenterSelection && addSceneStep === 2;
   const regenModelUpper = String(regenModel || '').toUpperCase();
-  const isRegenAvatarModel = regenModelUpper === 'VEO3';
+  const regenModelLabel = React.useMemo(() => {
+    switch (regenModelUpper) {
+      case 'VEO3':
+        return 'Avatar • VEO3';
+      case 'ANCHOR':
+        return 'Avatar • Anchor';
+      case 'PLOTLY':
+        return 'Financial • Plotly';
+      case 'SORA':
+      default:
+        return (regenModelUpper || 'SORA') === 'SORA' ? 'Infographic • SORA' : (regenModelUpper || 'SORA');
+    }
+  }, [regenModelUpper]);
+  const isRegenAvatarModel = regenModelUpper === 'VEO3' || regenModelUpper === 'ANCHOR';
   const regenSuggestionStep =
     enablePresenterOptions && isRegenAvatarModel && requiresRegenPresenterSelection ? 3 : 2;
   const showRegenSuggestionSection = regenStep >= regenSuggestionStep;
@@ -5653,6 +6027,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         setNewScenePresenterPresetLabel('');
                         setNewScenePresenterError('');
                         setIsLoadingNewScenePresenter(false);
+                        if (type === 'Avatar Based') {
+                          setNewSceneAvatarType('Presenter');
+                        }
                       }}
                       className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
                         newSceneVideoType === type
@@ -5665,6 +6042,43 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                   ))}
                 </div>
               </div>
+              {newSceneVideoType === 'Avatar Based' && addSceneStep >= 2 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Avatar Type</label>
+                  <div className="flex gap-3 flex-wrap">
+                    {['Presenter', 'Anchor'].map((atype) => (
+                      <button
+                        key={atype}
+                        onClick={async () => {
+                          setNewSceneAvatarType(atype);
+                          // Reset presenter selection when avatar type changes
+                          setNewScenePresenterPresetId('');
+                          setNewScenePresenterPresetLabel('');
+                          setNewScenePresenterError('');
+                          if (enablePresenterOptions) {
+                            try {
+                              setIsLoadingNewScenePresenter(true);
+                              const modelUpper = atype === 'Anchor' ? 'ANCHOR' : 'VEO3';
+                              await fetchPresenterPresetsForModel(modelUpper);
+                            } catch (_) {
+                              // errors will already be handled inside fetchPresenterPresetsForModel
+                            } finally {
+                              setIsLoadingNewScenePresenter(false);
+                            }
+                          }
+                        }}
+                        className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                          newSceneAvatarType === atype
+                            ? 'bg-[#13008B] text-white'
+                            : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {atype}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {newSceneVideoType === 'Financial' && addSceneStep >= 2 && (
                 <div className="space-y-2">
                   <div>
@@ -5781,7 +6195,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                   <div className="flex items-center justify-between">
                     <label className="block text-sm font-medium text-gray-700">Presenter Options</label>
                     {newScenePresenterPresetId && (
-                      <span className="text-xs text-gray-500">Selected: {newScenePresenterPresetLabel || 'Presenter'}</span>
+                      <span className="text-xs text-gray-500">
+                        Selected: {newScenePresenterPresetLabel || 'Presenter'}
+                      </span>
                     )}
                   </div>
                   {isLoadingNewScenePresenter ? (
@@ -5790,7 +6206,11 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       Loading presenter options…
                     </div>
                   ) : (() => {
-                    const avatarPresenterOptions = Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : [];
+                    const presenterBucket =
+                      newSceneVideoType === 'Avatar Based'
+                        ? (presenterPresets[newSceneAvatarType === 'Anchor' ? 'ANCHOR' : 'VEO3'] || [])
+                        : [];
+                    const avatarPresenterOptions = Array.isArray(presenterBucket) ? presenterBucket : [];
                     if (avatarPresenterOptions.length === 0) {
                       return (
                         <div className="text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-2">
@@ -5803,6 +6223,19 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         {avatarPresenterOptions.map((preset, idx) => {
                           const id = String(preset?.preset_id ?? '');
                           const selected = String(newScenePresenterPresetId || '') === id;
+                          const previewUrl = preset?.sample_video || '';
+                          const inferPreviewType = (url) => {
+                            if (!url || typeof url !== 'string') return '';
+                            const clean = url.split('?')[0].toLowerCase();
+                            const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                            const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                            if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                            if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                            return '';
+                          };
+                          const resolvedType = inferPreviewType(previewUrl);
+                          const isVideo = resolvedType === 'video';
+                          const isImage = resolvedType === 'image';
                           return (
                             <button
                               key={id || idx}
@@ -5819,21 +6252,38 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                               }`}
                             >
                               <div className="flex items-start justify-between gap-3">
-                                <div>
+                                <div className="w-20 h-12 rounded overflow-hidden bg-black/5 flex-shrink-0">
+                                  {previewUrl ? (
+                                    isVideo ? (
+                                      <video
+                                        className="w-full h-full object-cover"
+                                        muted
+                                        playsInline
+                                        loop
+                                      >
+                                        <source src={previewUrl} type="video/mp4" />
+                                      </video>
+                                    ) : isImage ? (
+                                      <img
+                                        src={previewUrl}
+                                        alt={`${preset?.option || 'Presenter'} preview`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-500">
+                                        Preview
+                                      </div>
+                                    )
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-400">
+                                      No image
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex-1">
                                   <p className="text-sm font-semibold text-gray-800">
                                     {preset?.option || 'Presenter'}
                                   </p>
-                                  {preset?.sample_video && (
-                                    <a
-                                      href={preset.sample_video}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="mt-1 inline-flex items-center gap-1 text-xs text-[#13008B] underline"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      Preview sample
-                                    </a>
-                                  )}
                                 </div>
                                 {selected && <Check className="w-4 h-4 text-[#13008B]" />}
                               </div>
@@ -5923,19 +6373,19 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           : total;
                       const modelType =
                         newSceneVideoType === 'Avatar Based'
-                          ? 'VEO3'
+                          ? (newSceneAvatarType === 'Anchor' ? 'ANCHOR' : 'VEO3')
                           : (newSceneVideoType === 'Financial' ? 'PLOTLY' : 'SORA');
                       setSceneSuggestions([]);
                       setNewSceneSelectedIdx(-1);
                       setNewSceneContent('');
                       setNewSceneDescription('');
                       setNewScenePresenterError('');
-                      if (enablePresenterOptions && modelType === 'VEO3') {
+                      if (enablePresenterOptions && (modelType === 'VEO3' || modelType === 'ANCHOR')) {
                         setNewScenePresenterPresetId('');
                         setNewScenePresenterPresetLabel('');
                         setIsLoadingNewScenePresenter(true);
                         try {
-                          const list = await fetchPresenterPresetsForModel('VEO3');
+                          const list = await fetchPresenterPresetsForModel(modelType);
                           const normalizedList = Array.isArray(list) ? list : [];
                           if (normalizedList.length > 0) {
                             setRequiresAvatarPresenterSelection(true);
@@ -6406,6 +6856,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                     onRegenerate={openRegenerateWithSuggestions}
                     onEdit={() => setIsEditingScene(true)}
                     onGenerateSummary={openGenerateSummaryPrompt}
+                    onSwitchAnchor={() => openModelChangeConfirm('Anchor')}
                     onSwitchAvatar={() => openModelChangeConfirm('Avatar Based')}
                     onSwitchInfographic={() => openModelChangeConfirm('Infographic')}
                     onSwitchFinancial={() => openModelChangeConfirm('Financial')}
@@ -6413,6 +6864,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                     hasScenes={Array.isArray(scriptRows) && scriptRows.length > 0}
                     isSwitching={isSwitchingModel}
                     isGeneratingSummary={isGeneratingSummary}
+                    showSwitchAnchor={!isActiveAnchorModel}
                     showSwitchAvatar={!isActiveAvatarModel}
                     showSwitchInfographic={!isActiveInfographicModel}
                     showSwitchFinancial={!isActiveFinancialModel}
@@ -7275,12 +7727,15 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           return [];
                         };
                         
-                        // Combine all avatar sources
+                        // Combine all avatar sources (API + session + preset defaults)
                         const sessionAvatarUrls = getAvatarUrlsFromSession();
-                        const allAvatars = Array.from(new Set([
-                          ...brandAssetsAvatars,
-                          ...sessionAvatarUrls
-                        ]));
+                        const allAvatars = Array.from(
+                          new Set([
+                            ...presetAvatars,
+                            ...brandAssetsAvatars,
+                            ...sessionAvatarUrls
+                          ])
+                        );
                         
                         return (
                        <>
@@ -7530,13 +7985,13 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         );
                       })()}
                       {(() => {
-                        // Presenter Options for VEO3
+                        // Presenter Options for avatar models (VEO3 / ANCHOR)
                         // Only show in contexts that explicitly enable it (Script Editor)
                         if (!enablePresenterOptions) return null;
                         const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                        // Show presenter options in Script Editor for VEO3 models only
-                        if (modelUpper !== 'VEO3') return null;
+                        // Show presenter options in Script Editor for avatar models only
+                        if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return null;
                         // Resolve current selection (prefer scene, fallback to saved guideline choice)
                         let current = (scene?.presenter_options && scene.presenter_options.option) || '';
                         try {
@@ -7604,7 +8059,10 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                               ) : (
                                 <div className="grid grid-cols-5 gap-3 pb-2">
                                   {optionsList.map((po) => {
-                                    const value = String(po.preset_id || po.option || '');
+                                    const value =
+                                      po?.preset_id != null
+                                        ? String(po.preset_id)
+                                        : String(po.option || '');
                                     const isSelected = String(selectedPresenterPreset || '') === value;
                                     const previewUrl = po.sample_video || '';
                                     const previewType = String(po.sample_video_type || '').toLowerCase();
@@ -7699,37 +8157,7 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                           </div>
                         );
                       })()}
-                      {(() => {
-                       // Anchor-specific options: size and position
-                       const scene = scriptRows?.[currentSceneIndex];
-                       const modelUpper = String(scene?.model||scene?.mode||'').toUpperCase();
-                       if (modelUpper !== 'ANCHOR') return null;
-                       const opts = (scene?.anchor_options && typeof scene.anchor_options==='object') ? scene.anchor_options : {};
-                      const size = opts.size || '';
-                       const update = (patch) => {
-                         const next = { ...(scene?.anchor_options||{}), ...patch };
-                         handleSceneUpdate(currentSceneIndex, 'anchor_options', next);
-                       };
-                       return (
-                         <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                           <h4 className="text-lg font-semibold text-gray-800 mb-4">Anchor Options</h4>
-                          <div className="grid grid-cols-1 gap-4">
-                             <div>
-                               <label className="block text-sm font-medium text-gray-700 mb-2">Size</label>
-                               <input
-                                 type="text"
-                                 value={size}
-                                 onChange={(e) => update({ size: e.target.value })}
-                                 disabled={!isEditingScene}
-                                 placeholder="e.g., small, medium, large or px"
-                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100 disabled:text-gray-600"
-                               />
-                             </div>
-                           </div>
-                         </div>
-                       );
-                     })()}
-                    
+                     
                      {(() => {
                         const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                         if (!scene) return null;
@@ -7746,13 +8174,22 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                             : []);
                         const fontSizeVal = Number(scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16) || 16;
                         const fontStyleVal = scene?.font_style ?? scene?.fontStyle ?? '';
-                        const showFontControls = isSora || isAnchor || isPlotly;
+                        const showFontControls = true;
                         const fontOptions = (() => {
-                          const opts = Array.isArray(brandFonts) ? [...brandFonts] : [];
+                          const opts = Array.isArray(combinedFontOptions) ? [...combinedFontOptions] : [];
                           if (fontStyleVal && !opts.includes(fontStyleVal)) opts.unshift(fontStyleVal);
                           return opts;
                         })();
-                        const gridClass = showFontControls ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4';
+                        const gridClass = showRichTextEditor
+                          ? (showFontControls ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 gap-4')
+                          : (showFontControls ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4');
+                        const canEditStyles = isEditingAdvancedStyles;
+                        const nudgeFontSize = (delta) => {
+                          if (!canEditStyles) return;
+                          const current = Number.isFinite(Number(fontSizeVal)) ? Number(fontSizeVal) : 16;
+                          const clamped = Math.min(150, Math.max(8, current + delta));
+                          handleSceneUpdate(currentSceneIndex, 'font_size', clamped);
+                        };
                         return (
                           <div className="mt-4">
                             <button
@@ -7764,7 +8201,57 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                               <ChevronDown className={`h-4 w-4 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`} />
                             </button>
                             {advancedOptionsOpen && (
-                              <div className="mt-3 space-y-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-4">
+                              <div className={`mt-3 rounded-lg border border-gray-200 bg-gray-50 transition-all duration-300 ${
+                                showRichTextEditor ? 'flex flex-col md:flex-row gap-4' : ''
+                              }`}>
+                                <div className={`space-y-4 px-4 py-4 transition-all duration-300 ${
+                                  showRichTextEditor ? 'w-full md:w-1/2' : 'w-full'
+                                }`}>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-semibold text-gray-700">Style Controls</p>
+                                  <div className="flex items-center gap-2">
+                                    {!showRichTextEditor && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowRichTextEditor(true)}
+                                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                      >
+                                        Open Editor
+                                      </button>
+                                    )}
+                                    {isEditingAdvancedStyles ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={saveAdvancedStyles}
+                                          disabled={isSavingAdvancedStyles}
+                                          className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold text-white ${
+                                            isSavingAdvancedStyles ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                                          }`}
+                                        >
+                                          {isSavingAdvancedStyles ? 'Saving…' : 'Save'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={cancelAdvancedStylesEdit}
+                                          disabled={isSavingAdvancedStyles}
+                                          className="text-xs font-medium text-gray-600 hover:text-gray-900"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={beginAdvancedStylesEdit}
+                                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                      >
+                                        <CiPen className="w-3 h-3" />
+                                        <span>Edit</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
                                 <div className={gridClass}>
                                   <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">Colors</label>
@@ -7773,27 +8260,29 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                         <button
                                           key={`${c}-${i}`}
                                           type="button"
+                                          disabled={!canEditStyles}
                                           onClick={() => {
-                                            if (isEditingScene) {
+                                            if (canEditStyles) {
                                               const next = colors.filter((_, idx) => idx !== i);
                                               handleSceneUpdate(currentSceneIndex, 'colors', next);
                                             }
                                           }}
-                                          className="w-7 h-7 rounded border border-gray-300"
+                                          className={`w-7 h-7 rounded border ${canEditStyles ? 'border-gray-300' : 'border-gray-200 cursor-not-allowed opacity-60'}`}
                                           style={{ background: c }}
-                                          title={isEditingScene ? `Remove ${c}` : c}
+                                          title={canEditStyles ? `Remove ${c}` : c}
                                         />
                                       ))}
                                       {(!colors || colors.length === 0) && (
                                         <span className="text-sm text-gray-500">-</span>
                                       )}
                                     </div>
-                                    {isEditingScene && (
+                                    {isEditingAdvancedStyles && (
                                       <div className="flex items-center gap-2 mt-2">
                                         <input
                                           type="text"
                                           placeholder="#000000"
-                                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
+                                          disabled={!canEditStyles}
+                                          className={`flex-1 px-3 py-2 border rounded-lg ${canEditStyles ? 'border-gray-300' : 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed'}`}
                                           onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                               const val = (e.currentTarget.value || '').trim();
@@ -7813,20 +8302,57 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                     <>
                                       <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-2">Font Size</label>
-                                        <div className="flex items-center gap-3">
+                                        <div className="flex flex-wrap items-center gap-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => nudgeFontSize(-1)}
+                                            disabled={!canEditStyles}
+                                            className={`h-9 w-9 rounded-full border text-lg font-semibold ${
+                                              canEditStyles ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50' : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                          >
+                                            −
+                                          </button>
                                           <input
                                             type="range"
                                             min={8}
                                             max={72}
                                             step={1}
                                             value={fontSizeVal}
-                                            onChange={(e) =>
-                                              handleSceneUpdate(currentSceneIndex, 'font_size', Number(e.target.value))
-                                            }
-                                            className="flex-1"
-                                            disabled={!isEditingScene}
+                                          onChange={(e) =>
+                                            handleSceneUpdate(currentSceneIndex, 'font_size', Number(e.target.value))
+                                          }
+                                          className="flex-1"
+                                          disabled={!canEditStyles}
                                           />
-                                          <span className="inline-block w-12 text-right text-sm text-gray-700">{fontSizeVal}px</span>
+                                          <input
+                                            type="number"
+                                            min={8}
+                                            max={150}
+                                            step={1}
+                                            value={fontSizeVal}
+                                            onChange={(e) => {
+                                              const next = Number(e.target.value);
+                                              if (Number.isFinite(next)) {
+                                                handleSceneUpdate(currentSceneIndex, 'font_size', next);
+                                              }
+                                            }}
+                                            disabled={!canEditStyles}
+                                            className={`w-20 rounded-md border px-2 py-1 text-sm ${
+                                              canEditStyles ? 'border-gray-300' : 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed'
+                                            }`}
+                                          />
+                                          <span className="inline-block text-sm text-gray-700">px</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => nudgeFontSize(1)}
+                                            disabled={!canEditStyles}
+                                            className={`h-9 w-9 rounded-full border text-lg font-semibold ${
+                                              canEditStyles ? 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50' : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                          >
+                                            +
+                                          </button>
                                         </div>
                                       </div>
                                       <div>
@@ -7835,9 +8361,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                           value={fontStyleVal}
                                           onChange={(e) => handleSceneUpdate(currentSceneIndex, 'font_style', e.target.value)}
                                           className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${
-                                            isEditingScene ? 'border-gray-300' : 'border-gray-200 bg-white text-gray-800'
+                                            canEditStyles ? 'border-gray-300' : 'border-gray-200 bg-white text-gray-500 cursor-not-allowed'
                                           }`}
-                                          disabled={!isEditingScene}
+                                          disabled={!canEditStyles}
                                         >
                                           <option value="">Select font</option>
                                           {fontOptions.length > 0 ? (
@@ -7852,6 +8378,15 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                             </option>
                                           )}
                                         </select>
+                                        {canEditStyles && (
+                                          <input
+                                            type="text"
+                                            value={fontStyleVal}
+                                            onChange={(e) => handleSceneUpdate(currentSceneIndex, 'font_style', e.target.value)}
+                                            className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                                            placeholder="Enter custom font name"
+                                          />
+                                        )}
                                       </div>
                                     </>
                                   )}
@@ -7866,19 +8401,236 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                     <p className="mt-1 text-sm text-gray-800 break-words">{fontStyleVal || '-'}</p>
                                   </div>
                                 </div>
+                                {/* Rich Text Editor Section */}
+                                {showRichTextEditor && (
+                                  <div className={`w-full md:w-1/2 px-4 py-4 space-y-4 transition-all duration-300 ${showRichTextEditor ? 'opacity-100' : 'opacity-0 hidden'}`}>
+                                    <div className="flex items-center justify-between mb-3">
+                                      <h5 className="text-sm font-semibold text-gray-800">Shape & Text Editor</h5>
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowRichTextEditor(false)}
+                                        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                      >
+                                        Close Editor
+                                      </button>
+                                    </div>
+                                      {/* Shape Selection */}
+                                      <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-2">ADD SHAPE</label>
+                                        <div className="grid grid-cols-5 gap-2">
+                                          {['rectangle', 'circle', 'triangle', 'line', 'arrow', 'star'].map((shape) => (
+                                            <button
+                                              key={shape}
+                                              type="button"
+                                              onClick={() => setSelectedShape(shape)}
+                                              className={`h-16 rounded-lg border-2 transition-all ${
+                                                selectedShape === shape
+                                                  ? 'border-[#13008B] bg-[#13008B] text-white'
+                                                  : 'border-gray-200 bg-white hover:border-gray-300'
+                                              }`}
+                                            >
+                                              {shape === 'rectangle' && <div className="w-8 h-8 mx-auto border-2 border-current" />}
+                                              {shape === 'circle' && <div className="w-8 h-8 mx-auto rounded-full border-2 border-current" />}
+                                              {shape === 'triangle' && (
+                                                <div className="w-0 h-0 mx-auto border-l-[8px] border-r-[8px] border-b-[14px] border-l-transparent border-r-transparent border-b-current" />
+                                              )}
+                                              {shape === 'line' && <div className="w-8 h-0.5 mx-auto bg-current" />}
+                                              {shape === 'arrow' && (
+                                                <div className="mx-auto">
+                                                  <div className="w-6 h-0.5 bg-current" />
+                                                  <div className="w-2 h-2 border-t-2 border-r-2 border-current transform rotate-45 -mt-1 ml-4" />
+                                                </div>
+                                              )}
+                                              {shape === 'star' && (
+                                                <svg className="w-6 h-6 mx-auto" fill="currentColor" viewBox="0 0 24 24">
+                                                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                                                </svg>
+                                              )}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      {/* Rich Text Editor Toolbar */}
+                                      <div className="bg-white rounded-lg border border-gray-200 p-2 shadow-sm">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          {/* Font Family */}
+                                          <select
+                                            value={textEditorFormat.fontFamily}
+                                            onChange={(e) => setTextEditorFormat((prev) => ({ ...prev, fontFamily: e.target.value }))}
+                                            className="px-2 py-1 text-xs border border-gray-300 rounded"
+                                          >
+                                            {combinedFontOptions.map((font) => (
+                                              <option key={font} value={font} style={{ fontFamily: font }}>
+                                                {font}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          {/* Font Size */}
+                                          <select
+                                            value={textEditorFormat.fontSize}
+                                            onChange={(e) => setTextEditorFormat((prev) => ({ ...prev, fontSize: Number(e.target.value) }))}
+                                            className="px-2 py-1 text-xs border border-gray-300 rounded"
+                                          >
+                                            {[8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72].map((size) => (
+                                              <option key={size} value={size}>
+                                                {size}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          {/* Formatting Buttons */}
+                                          <div className="flex items-center gap-1 border-l border-gray-300 pl-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, bold: !prev.bold }))}
+                                              className={`px-2 py-1 rounded text-xs font-bold ${textEditorFormat.bold ? 'bg-gray-200' : 'hover:bg-gray-100'}`}
+                                            >
+                                              B
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, italic: !prev.italic }))}
+                                              className={`px-2 py-1 rounded text-xs italic ${textEditorFormat.italic ? 'bg-gray-200' : 'hover:bg-gray-100'}`}
+                                            >
+                                              I
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, underline: !prev.underline }))}
+                                              className={`px-2 py-1 rounded text-xs underline ${textEditorFormat.underline ? 'bg-gray-200' : 'hover:bg-gray-100'}`}
+                                            >
+                                              U
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, strikethrough: !prev.strikethrough }))}
+                                              className={`px-2 py-1 rounded text-xs line-through ${textEditorFormat.strikethrough ? 'bg-gray-200' : 'hover:bg-gray-100'}`}
+                                            >
+                                              S
+                                            </button>
+                                          </div>
+                                          {/* Alignment */}
+                                          <div className="flex items-center gap-1 border-l border-gray-300 pl-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, align: 'left' }))}
+                                              className={`px-2 py-1 rounded ${textEditorFormat.align === 'left' ? 'bg-[#13008B] text-white' : 'hover:bg-gray-100'}`}
+                                            >
+                                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M3 6h18M3 12h12M3 18h18" />
+                                              </svg>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, align: 'center' }))}
+                                              className={`px-2 py-1 rounded ${textEditorFormat.align === 'center' ? 'bg-[#13008B] text-white' : 'hover:bg-gray-100'}`}
+                                            >
+                                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M3 6h18M6 12h12M3 18h18" />
+                                              </svg>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setTextEditorFormat((prev) => ({ ...prev, align: 'right' }))}
+                                              className={`px-2 py-1 rounded ${textEditorFormat.align === 'right' ? 'bg-[#13008B] text-white' : 'hover:bg-gray-100'}`}
+                                            >
+                                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M3 6h18M9 12h12M3 18h18" />
+                                              </svg>
+                                            </button>
+                                          </div>
+                                          {/* Color Picker */}
+                                          <div className="flex items-center gap-1 border-l border-gray-300 pl-2">
+                                            <input
+                                              type="color"
+                                              value={textEditorFormat.color}
+                                              onChange={(e) => setTextEditorFormat((prev) => ({ ...prev, color: e.target.value }))}
+                                              className="w-8 h-8 rounded border border-gray-300 cursor-pointer"
+                                            />
+                                          </div>
+                                          {/* More & Delete */}
+                                          <div className="flex items-center gap-1 border-l border-gray-300 pl-2 ml-auto">
+                                            <button
+                                              type="button"
+                                              className="px-2 py-1 rounded text-xs hover:bg-gray-100"
+                                            >
+                                              More...
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="px-2 py-1 rounded text-xs bg-red-500 text-white hover:bg-red-600"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {/* Text Editor Content Area */}
+                                      <div className="bg-white rounded-lg border border-gray-200 p-4 min-h-[200px]">
+                                        <textarea
+                                          value={textEditorContent}
+                                          onChange={(e) => setTextEditorContent(e.target.value)}
+                                          placeholder="Enter your text here..."
+                                          className="w-full min-h-[150px] resize-none border-none outline-none"
+                                          style={{
+                                            fontFamily: textEditorFormat.fontFamily,
+                                            fontSize: `${textEditorFormat.fontSize}px`,
+                                            fontWeight: textEditorFormat.bold ? 'bold' : 'normal',
+                                            fontStyle: textEditorFormat.italic ? 'italic' : 'normal',
+                                            textDecoration: textEditorFormat.underline
+                                              ? 'underline'
+                                              : textEditorFormat.strikethrough
+                                              ? 'line-through'
+                                              : 'none',
+                                            textAlign: textEditorFormat.align,
+                                            color: textEditorFormat.color
+                                          }}
+                                        />
+                                      </div>
+                                  </div>
+                                )}
                                 {isVeo && scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object' && Object.keys(scene.veo3_prompt_template).length > 0 && (
                                   <div className="rounded-lg border border-gray-200 bg-white p-4">
                                     <div className="mb-3 flex items-center justify-between">
                                       <h5 className="text-sm font-semibold text-gray-800">Scene Data</h5>
-                                      <span className="text-xs text-gray-500">
-                                        {isEditingScene ? 'Editable' : 'Read only'}
-                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        {isEditingSceneData ? (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={saveSceneData}
+                                              disabled={isSavingSceneData}
+                                              className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold text-white ${
+                                                isSavingSceneData ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                                              }`}
+                                            >
+                                              {isSavingSceneData ? 'Saving…' : 'Save'}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={cancelSceneDataEdit}
+                                              disabled={isSavingSceneData}
+                                              className="text-xs font-medium text-gray-600 hover:text-gray-900"
+                                            >
+                                              Cancel
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={beginSceneDataEdit}
+                                            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                          >
+                                            <CiPen className="w-3 h-3" />
+                                            <span>Edit</span>
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                       {Object.entries(scene.veo3_prompt_template).map(([key, value]) => {
                                         const displayValue =
                                           typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
-                                        if (isEditingScene) {
+                                        if (isEditingSceneData) {
                                           const onChange = (val) => {
                                             const currentTemplate = {
                                               ...(scene.veo3_prompt_template || {})
@@ -7924,30 +8676,89 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                                     </div>
                                   </div>
                                 )}
-                                {isAnchor && scene?.anchor_prompt_template && typeof scene.anchor_prompt_template === 'object' && Object.keys(scene.anchor_prompt_template).length > 0 && (
-                                  <div className="rounded-lg border border-gray-200 bg-white p-4">
-                                    <div className="mb-3 flex items-center justify-between">
-                                      <h5 className="text-sm font-semibold text-gray-800">Anchor Prompt Template</h5>
+                                {isAnchor &&
+                                  scene?.anchor_prompt_template &&
+                                  typeof scene.anchor_prompt_template === 'object' &&
+                                  Object.keys(scene.anchor_prompt_template).length > 0 && (
+                                    <div className="rounded-lg border border-gray-200 bg-white p-4">
+                                      <div className="mb-3 flex items-center justify-between">
+                                        <h5 className="text-sm font-semibold text-gray-800">Anchor Prompt Template</h5>
+                                        <div className="flex items-center gap-2">
+                                          {isEditingAnchorPrompt ? (
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={saveAnchorPromptTemplate}
+                                                disabled={isSavingAnchorPrompt}
+                                                className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold text-white ${
+                                                  isSavingAnchorPrompt ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                                                }`}
+                                              >
+                                                {isSavingAnchorPrompt ? 'Saving…' : 'Save'}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={cancelAnchorPromptEdit}
+                                                disabled={isSavingAnchorPrompt}
+                                                className="text-xs font-medium text-gray-600 hover:text-gray-900"
+                                              >
+                                                Cancel
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={beginAnchorPromptEdit}
+                                              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                            >
+                                              <CiPen className="w-3 h-3" />
+                                              <span>Edit</span>
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                        {Object.entries(scene.anchor_prompt_template)
+                                          .filter(([key]) => key !== 'anchor_positions')
+                                          .map(([key, value]) => {
+                                            const isEditableField = true;
+                                            const displayKey = key.replace(/_/g, ' ');
+                                            const currentValue =
+                                              typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+                                            const handleChange = (nextVal) => {
+                                              const nextTemplate = {
+                                                ...(scene.anchor_prompt_template || {}),
+                                                [key]: nextVal
+                                              };
+                                              handleSceneUpdate(currentSceneIndex, 'anchor_prompt_template', nextTemplate);
+                                            };
+                                            return (
+                                              <div
+                                                key={key}
+                                                className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
+                                              >
+                                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                  {displayKey}
+                                                </p>
+                                                {isEditingAnchorPrompt && isEditableField ? (
+                                                  <textarea
+                                                    value={currentValue}
+                                                    onChange={(e) => handleChange(e.target.value)}
+                                                    className="mt-1 w-full rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-800 focus:ring-1 focus:ring-[#13008B] focus:border-[#13008B] bg-white"
+                                                    rows={3}
+                                                  />
+                                                ) : (
+                                                  <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
+                                                    {currentValue}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                      </div>
                                     </div>
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                      {Object.entries(scene.anchor_prompt_template)
-                                        .filter(([key]) => key !== 'anchor_positions')
-                                        .map(([key, value]) => (
-                                          <div
-                                            key={key}
-                                            className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
-                                          >
-                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                              {key.replace(/_/g, ' ')}
-                                            </p>
-                                            <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
-                                              {typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2)}
-                                            </p>
-                                          </div>
-                                        ))}
-                                    </div>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -8570,168 +9381,82 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Video Type</label>
-                <div className="flex items-center gap-4">
-                      <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="regen-model"
-                          checked={regenModel==='VEO3'}
-                          onChange={()=>{
-                            if (isRegenerating) return;
-                            setRegenModel('VEO3');
-                            setRegenStep(1);
-                            setRegenSuggestions([]);
-                            setRegenSelectedIdx(-1);
-                            setRegenSceneContent('');
-                            setRegenPresenterPresetId('');
-                            setRegenPresenterPresetLabel('');
-                            setRegenPresenterError('');
-                            setIsLoadingRegenPresenter(false);
-                            setRequiresRegenPresenterSelection(false);
-                          }}
-                          disabled={isRegenerating}
-                        />
-                        <span>Avatar</span>
-                      </label>
-                      <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="regen-model"
-                          checked={regenModel==='SORA'}
-                          onChange={()=>{
-                            if (isRegenerating) return;
-                            setRegenModel('SORA');
-                            setRegenStep(1);
-                            setRegenSuggestions([]);
-                            setRegenSelectedIdx(-1);
-                            setRegenSceneContent('');
-                            setRegenPresenterPresetId('');
-                            setRegenPresenterPresetLabel('');
-                            setRegenPresenterError('');
-                            setIsLoadingRegenPresenter(false);
-                            setRequiresRegenPresenterSelection(false);
-                          }}
-                          disabled={isRegenerating}
-                        />
-                        <span>Infographic</span>
-                      </label>
-                      <label className="inline-flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="regen-model"
-                          checked={regenModel==='PLOTLY'}
-                          onChange={()=>{
-                            if (isRegenerating) return;
-                            setRegenModel('PLOTLY');
-                            setRegenStep(1);
-                            setRegenSuggestions([]);
-                            setRegenSelectedIdx(-1);
-                            setRegenSceneContent('');
-                            setRegenPresenterPresetId('');
-                            setRegenPresenterPresetLabel('');
-                            setRegenPresenterError('');
-                            setIsLoadingRegenPresenter(false);
-                            setRequiresRegenPresenterSelection(false);
-                          }}
-                          disabled={isRegenerating}
-                        />
-                        <span>Financial</span>
-                      </label>
-                      {regenModel==='PLOTLY' && (
-                        <div className="ml-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
-                          <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
-                            <option value="">Select</option>
-                            <option value="bar">bar</option>
-                            <option value="grouped_bar">grouped_bar</option>
-                            <option value="stacked_bar">stacked_bar</option>
-                            <option value="waterfall">waterfall</option>
-                            <option value="line">line</option>
-                            <option value="multi_line">multi_line</option>
-                            <option value="area">area</option>
-                            <option value="pie">pie</option>
-                            <option value="donut">donut</option>
-                            <option value="treemap">treemap</option>
-                            <option value="scatter">scatter</option>
-                            <option value="bubble">bubble</option>
-                            <option value="heatmap">heatmap</option>
-                            <option value="combo_bar_line">combo_bar_line</option>
-                            <option value="funnel">funnel</option>
-                            <option value="histogram">histogram</option>
-                            <option value="box">box</option>
-                            <option value="candlestick">candlestick</option>
-                          </select>
-                          <div className="mt-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
-                            <textarea value={regenChartData} onChange={(e)=>setRegenChartData(e.target.value)} rows={4} className="w-full p-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
-                          </div>
-                          {regenDocSummary && (
-                            <div className="mt-2">
-                              <label className="block text-sm font-medium text-gray-700 mb-1">Document Summary</label>
-                              <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{regenDocSummary}</div>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Model Detected</label>
+                <div className="px-3 py-2 rounded-lg border bg-gray-50 text-sm font-medium text-gray-800">
+                  {regenModelLabel}
                 </div>
+                {regenModelUpper === 'SORA' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Suggestions load automatically for SORA scenes.
+                  </p>
+                )}
+                {regenModelUpper === 'VEO3' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Presenter presets appear first. Select one to continue.
+                  </p>
+                )}
+                {regenModelUpper === 'ANCHOR' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Anchor scenes require choosing a preset before suggestions.
+                  </p>
+                )}
+                {regenModelUpper === 'PLOTLY' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Provide chart details, then fetch suggestions.
+                  </p>
+                )}
               </div>
-              {regenStep === 1 && (
-                <div className="flex justify-end pt-1">
-                  <button
-                    disabled={isRegenerating || isLoadingRegenPresenter || isSuggestingRegen}
-                    onClick={async ()=>{
-                      try {
-                        if (isRegenerating || isLoadingRegenPresenter || isSuggestingRegen) return;
-                        setRegenPresenterError('');
-                        setRegenSelectedIdx(-1);
-                        setRegenSceneContent('');
-                        const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
-                        const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
-                        const modelUpper = (regenModel || 'SORA').toUpperCase();
-                        if (enablePresenterOptions && modelUpper === 'VEO3') {
-                          setRegenPresenterPresetId('');
-                          setRegenPresenterPresetLabel('');
-                          setIsLoadingRegenPresenter(true);
-                          try {
-                            const list = await fetchPresenterPresetsForModel('VEO3');
-                            const normalizedList = Array.isArray(list) ? list : [];
-                            if (normalizedList.length > 0) {
-                              setRequiresRegenPresenterSelection(true);
-                              if (normalizedList.length === 1) {
-                                setRegenPresenterPresetId(String(normalizedList[0].preset_id));
-                                setRegenPresenterPresetLabel(normalizedList[0].option || '');
-                              }
-                              setRegenStep(2);
-                              return;
-                            }
-                            setRequiresRegenPresenterSelection(false);
-                          } catch (err) {
-                            setRequiresRegenPresenterSelection(false);
-                            setRegenPresenterError(err?.message || 'Failed to load presenter options');
-                          } finally {
-                            setIsLoadingRegenPresenter(false);
-                          }
-                        } else {
-                          setRequiresRegenPresenterSelection(false);
-                          setRegenPresenterPresetId('');
-                          setRegenPresenterPresetLabel('');
-                        }
-                        await fetchSceneSuggestions(modelUpper || 'SORA', idx, 'regen');
-                        setRegenStep(2);
-                      } catch (err) {
-                        console.error('Failed to continue regenerate flow:', err);
-                        setRegenPresenterError(err?.message || 'Failed to continue regenerate flow.');
-                      }
-                    }}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
-                      isRegenerating || isLoadingRegenPresenter || isSuggestingRegen
-                        ? 'bg-[#9aa0d0] cursor-not-allowed'
-                        : 'bg-[#13008B] hover:bg-blue-800'
-                    }`}
-                  >
-                    Continue
-                  </button>
+              {regenModelUpper === 'PLOTLY' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                    <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
+                      <option value="">Select</option>
+                      <option value="bar">bar</option>
+                      <option value="grouped_bar">grouped_bar</option>
+                      <option value="stacked_bar">stacked_bar</option>
+                      <option value="waterfall">waterfall</option>
+                      <option value="line">line</option>
+                      <option value="multi_line">multi_line</option>
+                      <option value="area">area</option>
+                      <option value="pie">pie</option>
+                      <option value="donut">donut</option>
+                      <option value="treemap">treemap</option>
+                      <option value="scatter">scatter</option>
+                      <option value="bubble">bubble</option>
+                      <option value="heatmap">heatmap</option>
+                      <option value="combo_bar_line">combo_bar_line</option>
+                      <option value="funnel">funnel</option>
+                      <option value="histogram">histogram</option>
+                      <option value="box">box</option>
+                      <option value="candlestick">candlestick</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
+                    <textarea value={regenChartData} onChange={(e)=>setRegenChartData(e.target.value)} rows={4} className="w-full p-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
+                  </div>
+                  {regenDocSummary && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Document Summary</label>
+                      <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{regenDocSummary}</div>
+                    </div>
+                  )}
+                  {regenStep === 1 && (
+                    <div className="flex justify-end pt-1">
+                      <button
+                        disabled={isRegenerating || isLoadingRegenPresenter || isSuggestingRegen}
+                        onClick={() => continueRegenerateFlow('PLOTLY')}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                          isRegenerating || isLoadingRegenPresenter || isSuggestingRegen
+                            ? 'bg-[#9aa0d0] cursor-not-allowed'
+                            : 'bg-[#13008B] hover:bg-blue-800'
+                        }`}
+                      >
+                        Continue
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {isRegenPresenterSelectionPhase && (
@@ -8750,7 +9475,9 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                       Loading presenter options…
                     </div>
                   ) : (() => {
-                    const avatarPresenterOptions = Array.isArray(presenterPresets.VEO3) ? presenterPresets.VEO3 : [];
+                    const avatarPresenterOptions = Array.isArray(presenterPresets[regenModelUpper])
+                      ? presenterPresets[regenModelUpper]
+                      : [];
                     if (avatarPresenterOptions.length === 0) {
                       return (
                         <div className="text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg px-3 py-2">
@@ -8763,6 +9490,19 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                         {avatarPresenterOptions.map((preset, idx) => {
                           const id = String(preset?.preset_id ?? '');
                           const selected = String(regenPresenterPresetId || '') === id;
+                          const previewUrl = preset?.sample_video || '';
+                          const inferPreviewType = (url) => {
+                            if (!url || typeof url !== 'string') return '';
+                            const clean = url.split('?')[0].toLowerCase();
+                            const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                            const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                            if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                            if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                            return '';
+                          };
+                          const resolvedType = inferPreviewType(previewUrl);
+                          const isVideo = resolvedType === 'video';
+                          const isImage = resolvedType === 'image';
                           return (
                             <button
                               key={id || idx}
@@ -8779,21 +9519,38 @@ const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
                               }`}
                             >
                               <div className="flex items-start justify-between gap-3">
-                                <div>
+                                <div className="w-20 h-12 rounded overflow-hidden bg-black/5 flex-shrink-0">
+                                  {previewUrl ? (
+                                    isVideo ? (
+                                      <video
+                                        className="w-full h-full object-cover"
+                                        muted
+                                        playsInline
+                                        loop
+                                      >
+                                        <source src={previewUrl} type="video/mp4" />
+                                      </video>
+                                    ) : isImage ? (
+                                      <img
+                                        src={previewUrl}
+                                        alt={`${preset?.option || 'Presenter'} preview`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-500">
+                                        Preview
+                                      </div>
+                                    )
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-400">
+                                      No image
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex-1">
                                   <p className="text-sm font-semibold text-gray-800">
                                     {preset?.option || 'Presenter'}
                                   </p>
-                                  {preset?.sample_video && (
-                                    <a
-                                      href={preset.sample_video}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="mt-1 inline-flex items-center gap-1 text-xs text-[#13008B] underline"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      Preview sample
-                                    </a>
-                                  )}
                                 </div>
                                 {selected && <Check className="w-4 h-4 text-[#13008B]" />}
                               </div>

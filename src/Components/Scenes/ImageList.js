@@ -50,6 +50,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [showAdvancedOptions, setShowAdvancedOptions] = useState({}); // { sceneNumber: { assets: false, transitions: false } }
   // State for "Design your own" tabs
   const [designYourOwnTab, setDesignYourOwnTab] = useState({}); // { sceneNumber: 'describe' | 'fill' }
+  // State for hovered preset info button
+  const [hoveredPresetInfo, setHoveredPresetInfo] = useState({}); // { sceneNumber: presetName }
   // State for video generation progress overlay
   const [videoGenProgress, setVideoGenProgress] = useState({
     visible: false,
@@ -2386,7 +2388,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         }
       `}</style>
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-[#13008B]">Scenes • Images</h3>
+        <h3 className="text-lg font-semibold text-[#13008B]">Storyboard Images</h3>
         <div className="flex items-center gap-2">
           {hasVideos ? (
             <button
@@ -3340,17 +3342,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
               const hasLogoAsset = !!sessionAssets.logo_url;
               const hasVoiceAssets = Object.keys(sessionAssets.voice_urls || {}).length > 0;
-              const customTransitionOptions = (transitionPresets || []).filter((preset) => {
-                if (!preset) return false;
-                const type = String(preset.type || preset.category || preset.kind || '').toLowerCase();
-                return (
-                  preset.is_custom === true ||
-                  preset.custom === true ||
-                  type === 'custom' ||
-                  preset.source === 'custom'
-                );
-              });
-              const selectedCustomOption = sceneOptions.transitionCustomPreset;
 
               const customNotes = sceneOptions.customPreservationNotes || {};
               const hasCustomDesignInput =
@@ -3548,143 +3539,89 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             
                             {isTransitionsOpen && (
                               <div className="mt-3 space-y-3">
-                                {/* Custom Accordion */}
+                                {/* Preset Tabs */}
                                 <div className={`border rounded-lg p-3 bg-gray-50 ${isCustomPresetMode ? 'opacity-50 pointer-events-none' : ''}`}>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleAdvancedOptions('custom')}
-                                    className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
-                                  >
-                                    <span>Custom</span>
-                                    <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.custom ? 'rotate-180' : ''}`} />
-                                  </button>
-                                  {showAdvancedOptions[sceneNumber]?.custom && (
-                                    <div className="mt-2 space-y-3">
-                                      <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                          type="radio"
-                                          name={`transition-${sceneNumber}`}
-                                          checked={sceneOptions.transitionPreset === null && sceneOptions.transitionCustom === 'custom'}
-                                          onChange={() => {
-                                            updateSceneOption('transitionPreset', null);
-                                            updateSceneOption('transitionCustom', 'custom');
-                                          }}
-                                          className="w-4 h-4 text-[#13008B]"
-                                        />
-                                        <span className="text-sm text-gray-700">Use Custom Transition</span>
-                                      </label>
-                                      {sceneOptions.transitionCustom === 'custom' && customTransitionOptions.length > 0 && (
-                                        <div className="space-y-2">
-                                          <label className="text-sm font-medium text-gray-700">Select Custom Template</label>
-                                          <select
-                                            value={sceneOptions.transitionCustomPreset?.name || ''}
-                                            onChange={(e) => {
-                                              const selectedName = e.target.value;
-                                              if (!selectedName) {
-                                                updateSceneOption('transitionCustomPreset', null);
-                                                return;
-                                              }
-                                              const found = customTransitionOptions.find((preset) => preset?.name === selectedName);
-                                              if (found) {
-                                                updateSceneOption('transitionCustomPreset', found);
-                                                updateSceneOption('transitionCustom', 'custom');
-                                              }
-                                            }}
-                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                  <label className="text-sm font-medium text-gray-700 mb-3 block">Select Preset</label>
+                                  {transitionPresets.length > 0 ? (
+                                    <div className="flex flex-wrap gap-2">
+                                      {transitionPresets.map((preset, idx) => {
+                                        const presetName = preset?.name || '';
+                                        if (!presetName) {
+                                          console.warn('⚠️ Preset missing name:', preset);
+                                          return null;
+                                        }
+                                        const isSelected = sceneOptions.transitionPreset?.name === presetName;
+                                        const isHovered = hoveredPresetInfo[sceneNumber] === presetName;
+                                        const hasPreservationNotes = preset?.preservation_notes && typeof preset.preservation_notes === 'object';
+                                        
+                                        return (
+                                          <div
+                                            key={idx}
+                                            className="relative"
                                           >
-                                            <option value="">-- Select a custom template --</option>
-                                            {customTransitionOptions.map((preset, idx) => (
-                                              <option key={idx} value={preset?.name || `custom-${idx}`}>
-                                                {preset?.name || `Custom ${idx + 1}`}
-                                              </option>
-                                            ))}
-                                          </select>
-                                          {sceneOptions.transitionCustomPreset?.preservation_notes && (
-                                            <div className="mt-3 p-3 bg-white rounded border text-xs space-y-2">
-                                              <div className="font-semibold text-gray-800 mb-2">Preservation Notes:</div>
-                                              <div><strong>Lighting:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.lighting || 'N/A'}</span></div>
-                                              <div><strong>Style/Mood:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.style_mood || 'N/A'}</span></div>
-                                              <div><strong>Transition Type:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.transition_type || 'N/A'}</span></div>
-                                              <div><strong>Scene Description:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.scene_description || 'N/A'}</span></div>
-                                              <div><strong>Subject Description:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.subject_description || 'N/A'}</span></div>
-                                              <div><strong>Action Specification:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.action_specification || 'N/A'}</span></div>
-                                              <div><strong>Content Modification:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.content_modification || 'N/A'}</span></div>
-                                              <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.camera_specifications || 'N/A'}</span></div>
-                                              <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{sceneOptions.transitionCustomPreset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                                
-                                {/* Preset Accordion */}
-                                <div className={`border rounded-lg p-3 bg-gray-50 ${isCustomPresetMode ? 'opacity-50 pointer-events-none' : ''}`}>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleAdvancedOptions('preset')}
-                                    className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
-                                  >
-                                    <span>Preset</span>
-                                    <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.preset ? 'rotate-180' : ''}`} />
-                                  </button>
-                                  {showAdvancedOptions[sceneNumber]?.preset && (
-                                    <div className="mt-2 space-y-3">
-                                      {/* Preset Dropdown */}
-                                      <div>
-                                        <label className="text-sm font-medium text-gray-700 mb-2 block">Select Preset</label>
-                                        {transitionPresets.length > 0 ? (
-                                          <select
-                                            value={sceneOptions.transitionPreset?.name || ''}
-                                            onChange={(e) => {
-                                              const selectedPreset = transitionPresets.find(p => p.name === e.target.value);
-                                              if (selectedPreset) {
-                                                updateSceneOption('transitionPreset', selectedPreset);
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                updateSceneOption('transitionPreset', preset);
                                                 updateSceneOption('transitionCustom', null);
-                                              } else {
-                                                updateSceneOption('transitionPreset', null);
-                                              }
-                                            }}
-                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                          >
-                                            <option value="">-- Select a preset --</option>
-                                            {transitionPresets.map((preset, idx) => {
-                                              // Each preset object has a 'name' property
-                                              const presetName = preset?.name || '';
-                                              if (!presetName) {
-                                                console.warn('⚠️ Preset missing name:', preset);
-                                                return null;
-                                              }
-                                              return (
-                                                <option key={idx} value={presetName}>
-                                                  {presetName}
-                                                </option>
-                                              );
-                                            }).filter(Boolean)}
-                                          </select>
-                                        ) : (
-                                          <div className="text-sm text-gray-500 p-2 border rounded-lg bg-gray-50">
-                                            No presets available. Loading...
+                                              }}
+                                              className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                                                isSelected
+                                                  ? 'bg-[#13008B] text-white shadow-md'
+                                                  : 'bg-white text-gray-700 border border-gray-300 hover:border-[#13008B] hover:bg-[#F6F4FF]'
+                                              }`}
+                                            >
+                                              <span>{presetName}</span>
+                                              {hasPreservationNotes && (
+                                                <div
+                                                  className="relative"
+                                                  onMouseEnter={() => {
+                                                    setHoveredPresetInfo(prev => ({
+                                                      ...prev,
+                                                      [sceneNumber]: presetName
+                                                    }));
+                                                  }}
+                                                  onMouseLeave={() => {
+                                                    setHoveredPresetInfo(prev => {
+                                                      const updated = { ...prev };
+                                                      delete updated[sceneNumber];
+                                                      return updated;
+                                                    });
+                                                  }}
+                                                >
+                                                  <button
+                                                    type="button"
+                                                    className="w-5 h-5 rounded-full bg-gray-400 hover:bg-gray-500 text-white text-xs font-semibold flex items-center justify-center transition-colors"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                    }}
+                                                  >
+                                                    i
+                                                  </button>
+                                                  {isHovered && (
+                                                    <div className="absolute left-0 top-full mt-2 z-50 w-80 bg-white border border-gray-200 rounded-lg shadow-2xl p-4 text-xs text-left space-y-2">
+                                                      <div className="font-semibold text-gray-800 mb-2">Preservation Notes:</div>
+                                                      <div><strong>Lighting:</strong> <span className="text-gray-700">{preset.preservation_notes.lighting || 'N/A'}</span></div>
+                                                      <div><strong>Style/Mood:</strong> <span className="text-gray-700">{preset.preservation_notes.style_mood || 'N/A'}</span></div>
+                                                      <div><strong>Transition Type:</strong> <span className="text-gray-700">{preset.preservation_notes.transition_type || 'N/A'}</span></div>
+                                                      <div><strong>Scene Description:</strong> <span className="text-gray-700">{preset.preservation_notes.scene_description || 'N/A'}</span></div>
+                                                      <div><strong>Subject Description:</strong> <span className="text-gray-700">{preset.preservation_notes.subject_description || 'N/A'}</span></div>
+                                                      <div><strong>Action Specification:</strong> <span className="text-gray-700">{preset.preservation_notes.action_specification || 'N/A'}</span></div>
+                                                      <div><strong>Content Modification:</strong> <span className="text-gray-700">{preset.preservation_notes.content_modification || 'N/A'}</span></div>
+                                                      <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{preset.preservation_notes.camera_specifications || 'N/A'}</span></div>
+                                                      <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{preset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </button>
                                           </div>
-                                        )}
-                                      </div>
-                                      
-                                      {/* Show preservation_notes when preset is selected */}
-                                      {sceneOptions.transitionPreset && sceneOptions.transitionPreset.preservation_notes && (
-                                        <div className="mt-3 p-3 bg-white rounded border text-xs space-y-2">
-                                          <div className="font-semibold text-gray-800 mb-2">Preservation Notes:</div>
-                                          <div><strong>Lighting:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.lighting || 'N/A'}</span></div>
-                                          <div><strong>Style/Mood:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.style_mood || 'N/A'}</span></div>
-                                          <div><strong>Transition Type:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.transition_type || 'N/A'}</span></div>
-                                          <div><strong>Scene Description:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.scene_description || 'N/A'}</span></div>
-                                          <div><strong>Subject Description:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.subject_description || 'N/A'}</span></div>
-                                          <div><strong>Action Specification:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.action_specification || 'N/A'}</span></div>
-                                          <div><strong>Content Modification:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.content_modification || 'N/A'}</span></div>
-                                          <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.camera_specifications || 'N/A'}</span></div>
-                                          <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{sceneOptions.transitionPreset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
-                                        </div>
-                                      )}
+                                        );
+                                      }).filter(Boolean)}
+                                    </div>
+                                  ) : (
+                                    <div className="text-sm text-gray-500 p-2 border rounded-lg bg-gray-50">
+                                      No presets available. Loading...
                                     </div>
                                   )}
                                 </div>

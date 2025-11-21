@@ -121,8 +121,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [hoveredTextLayerId, setHoveredTextLayerId] = useState(null)
   const [hoverToolbarPosition, setHoverToolbarPosition] = useState({ x: 0, y: 0 })
   const [isHoveringToolbar, setIsHoveringToolbar] = useState(false)
+  const [hoveredShapeId, setHoveredShapeId] = useState(null)
+  const [hoveredOverlay, setHoveredOverlay] = useState(false)
   const hoverTimeoutRef = useRef(null)
   const isHoveringToolbarRef = useRef(false)
+  const shapeHoverTimeoutRef = useRef(null)
+  const overlayHoverTimeoutRef = useRef(null)
 
   // Sync ref with state
   useEffect(() => {
@@ -134,6 +138,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     return () => {
       if (hoverTimeoutRef.current) {
         clearTimeout(hoverTimeoutRef.current)
+      }
+      if (shapeHoverTimeoutRef.current) {
+        clearTimeout(shapeHoverTimeoutRef.current)
+      }
+      if (overlayHoverTimeoutRef.current) {
+        clearTimeout(overlayHoverTimeoutRef.current)
       }
     }
   }, [])
@@ -799,11 +809,23 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   }
 
   const handleAddShape = (type) => {
+    // Center new shape in the image area if possible
+    let centerX = 120
+    let centerY = 120
+    try {
+      const canvasEl = document.querySelector('[data-image-editor-canvas]')
+      if (canvasEl) {
+        const rect = canvasEl.getBoundingClientRect()
+        centerX = rect.width / 2
+        centerY = rect.height / 2
+      }
+    } catch (_) { /* noop */ }
+
     const baseShape = {
       id: Date.now(),
       type,
-      x: 120,
-      y: 120,
+      x: centerX - 100,
+      y: centerY - 100,
       width: 200,
       height: 200,
       fill: '#7c3aed',
@@ -833,6 +855,21 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         baseShape.borderColor = '#000000'
         baseShape.borderWidth = 8
         baseShape.borderStyle = 'solid'
+        baseShape.borderRadius = 0
+        break
+      case 'curve':
+        baseShape.width = 260
+        baseShape.height = 40
+        baseShape.fill = 'transparent'
+        baseShape.borderColor = '#000000'
+        baseShape.borderWidth = 4
+        baseShape.borderStyle = 'solid'
+        baseShape.borderRadius = 9999
+        baseShape.isCurve = true
+        break
+      case 'square':
+        baseShape.width = 180
+        baseShape.height = 180
         baseShape.borderRadius = 0
         break
       default:
@@ -1458,9 +1495,11 @@ const handleTemplateJsonLoad = () => {
           console.log('Overlay image loaded:', img.width, 'x', img.height)
           setOverlayImage(img)
           setOverlayVisible(true)
-          // Set initial position to top-left corner
-          setOverlayPosition({ x: 10, y: 10 })
-          setOverlayScale(1)
+          // Start smaller and near the top-left; user can drag afterwards
+          const initialPos = { x: 20, y: 20 }
+          const initialScale = 0.3
+          setOverlayPosition(initialPos)
+          setOverlayScale(initialScale)
           
           // Save to history
           saveToHistory('overlay_add', {
@@ -1472,8 +1511,8 @@ const handleTemplateJsonLoad = () => {
             newVisible: true,
             newUrl: event.target.result,
             newImage: img,
-            newPosition: { x: 10, y: 10 },
-            newScale: 1
+            newPosition: initialPos,
+            newScale: initialScale
           })
         }
         img.onerror = () => {
@@ -1493,9 +1532,9 @@ const handleTemplateJsonLoad = () => {
         console.log('Overlay image loaded from URL:', img.width, 'x', img.height)
         setOverlayImage(img)
         setOverlayVisible(true)
-        // Set initial position to top-left corner
-        setOverlayPosition({ x: 10, y: 10 })
-        setOverlayScale(1)
+        // Start smaller and near the top-left; user can drag afterwards
+        setOverlayPosition({ x: 20, y: 20 })
+        setOverlayScale(0.3)
       }
       img.onerror = () => {
         console.error('Failed to load overlay image from URL')
@@ -1958,13 +1997,12 @@ const handleTemplateJsonLoad = () => {
       
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="relative max-w-9xl h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col">
-        <div className="flex flex-col h-full overflow-hidden">
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Header */}
-      <div className="header">
+      <div className="header flex-shrink-0">
         <div className="flex items-center w-full justify-between">
           <div className="header-left flex items-center gap-3">
-            <h1 className="header-title">Reel Report Image Editor</h1>
-            <p className="header-subtitle">Image Text Editor</p>
+            <h1 className="header-title">Storyboard Editor</h1>
             {/* Close X button next to title */}
             
           </div>
@@ -2013,7 +2051,7 @@ const handleTemplateJsonLoad = () => {
 
       {/* Top Toolbar */}
       {isToolbarOpen && imageLoaded && (
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-wrap">
+        <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-wrap flex-shrink-0">
           {/* Undo/Redo Controls */}
           <div className="flex gap-1">
             <button 
@@ -2047,13 +2085,50 @@ const handleTemplateJsonLoad = () => {
           </button>
 
           {/* Shapes Panel */}
-          <button
-            className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'shapes' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-            onClick={() => togglePanel('shapes')}
-            title="Shapes"
-          >
-            <Icon name="shape" size={18} />
-          </button>
+          <div className="relative group">
+            <button
+              className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'shapes' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+              onClick={() => togglePanel('shapes')}
+              title="Shapes"
+            >
+              <Icon name="shape" size={18} />
+            </button>
+            {/* Hover preview with basic shapes (clickable) */}
+            <div className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50">
+              <div className="pointer-events-auto bg-white border border-gray-200 rounded-md shadow-lg p-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleAddShape('rectangle')}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
+                  title="Add Rectangle"
+                >
+                  <div className="w-5 h-3 bg-purple-500 rounded-sm" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddShape('circle')}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
+                  title="Add Circle"
+                >
+                  <div className="w-5 h-5 bg-purple-500 rounded-full" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAddShape('curve')}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-100"
+                  title="Add Curve Line"
+                >
+                  <div
+                    className="w-5 h-3"
+                    style={{
+                      borderBottom: '3px solid #7c3aed',
+                      borderRadius: '9999px'
+                    }}
+                  />
+                </button>
+              </div>
+            </div>
+          </div>
 
           {/* Overlay Images Panel */}
           <button
@@ -2085,13 +2160,13 @@ const handleTemplateJsonLoad = () => {
       )}
 
       {/* Main App Container */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden relative min-h-0">
         {/* Main Workspace */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 overflow-y-auto min-h-0">
 
           {/* Editor Section */}
-          <div className="flex-1 overflow-auto flex flex-col overflow-y-auto">
-            <div className="flex-1 bg-white m-4 rounded-lg p-6 shadow-lg relative overflow-hidden flex items-center justify-center">
+          <div className="flex-1 overflow-auto flex flex-col overflow-y-auto min-h-0">
+            <div className={`flex-1 bg-white m-4 rounded-lg p-6 shadow-lg relative overflow-hidden flex items-center justify-center transition-all duration-300 ${isToolbarOpen ? 'mt-2' : 'mt-4'}`}>
               {imageLoaded ? (
                 <div 
                   className="relative inline-block border-2 border-gray-200 bg-gray-50 cursor-crosshair rounded-md overflow-hidden"
@@ -2167,7 +2242,7 @@ const handleTemplateJsonLoad = () => {
                         pointerEvents: 'none'
                       }
 
-                      if (shape.type === 'rectangle') {
+                      if (shape.type === 'rectangle' || shape.type === 'square') {
                         innerStyle.backgroundColor = shape.fill
                         innerStyle.border = `${shape.borderWidth || 0}px ${shape.borderStyle || 'solid'} ${shape.borderColor || 'transparent'}`
                         innerStyle.borderRadius = `${shape.borderRadius || 0}px`
@@ -2188,6 +2263,12 @@ const handleTemplateJsonLoad = () => {
                         innerStyle.height = '100%'
                         innerStyle.backgroundColor = shape.borderColor || shape.fill || '#000000'
                         innerStyle.border = 'none'
+                      } else if (shape.type === 'curve') {
+                        wrapperStyle.height = heightPx
+                        innerStyle.height = '100%'
+                        innerStyle.backgroundColor = 'transparent'
+                        innerStyle.borderRadius = `${shape.borderRadius || 9999}px`
+                        innerStyle.border = `${shape.borderWidth || 4}px ${shape.borderStyle || 'solid'} ${shape.borderColor || '#000000'}`
                       }
 
                       return (
@@ -2197,6 +2278,18 @@ const handleTemplateJsonLoad = () => {
                           style={wrapperStyle}
                           onClick={() => handleShapeClick(shape)}
                           onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'drag')}
+                          onMouseEnter={() => {
+                            if (shapeHoverTimeoutRef.current) {
+                              clearTimeout(shapeHoverTimeoutRef.current)
+                            }
+                            setHoveredShapeId(shape.id)
+                          }}
+                          onMouseLeave={() => {
+                            shapeHoverTimeoutRef.current = setTimeout(() => {
+                              setHoveredShapeId(null)
+                              shapeHoverTimeoutRef.current = null
+                            }, 200)
+                          }}
                         >
                           <div style={innerStyle} />
                           {selectedShape?.id === shape.id && (
@@ -2204,6 +2297,40 @@ const handleTemplateJsonLoad = () => {
                               className="absolute -bottom-1 -right-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize z-10 shadow-sm"
                               onMouseDown={(e) => handleShapeMouseDown(e, shape.id, 'resize')}
                             />
+                          )}
+                          {hoveredShapeId === shape.id && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedShape(shape)
+                                const previousLayers = [...shapeLayers]
+                                const previousSelected = shape
+                                const updatedLayers = shapeLayers.filter(s => s.id !== shape.id)
+                                setShapeLayers(updatedLayers)
+                                setSelectedShape(null)
+                                setHoveredShapeId(null)
+                                saveToHistory('shape_delete', {
+                                  previousLayers,
+                                  previousSelected,
+                                  newLayers: updatedLayers,
+                                  newSelected: null
+                                })
+                              }}
+                              className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-20 transition-all"
+                              title="Delete Shape"
+                              onMouseEnter={() => {
+                                if (shapeHoverTimeoutRef.current) {
+                                  clearTimeout(shapeHoverTimeoutRef.current)
+                                  shapeHoverTimeoutRef.current = null
+                                }
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M3 6h18"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                              </svg>
+                            </button>
                           )}
                         </div>
                       )
@@ -2232,17 +2359,27 @@ const handleTemplateJsonLoad = () => {
                             setIsHoveringToolbar(false)
                             const rect = e.currentTarget.getBoundingClientRect()
                             const editorSection = e.currentTarget.closest('.editor-section')
+                            const toolbarHeight = 48 // approx toolbar height in px
                             if (editorSection) {
                               const containerRect = editorSection.getBoundingClientRect()
+                              const relativeTop = rect.top - containerRect.top
+                              const isNearTop = relativeTop < toolbarHeight + 8
                               setHoverToolbarPosition({
                                 x: rect.left - containerRect.left + rect.width / 2,
-                                y: rect.top - containerRect.top - 10
+                                y: isNearTop
+                                  ? relativeTop + rect.height + 10
+                                  : relativeTop - 10
                               })
                             } else {
-                              // Fallback positioning
+                              // Fallback positioning relative to image space
+                              const { scaleX, scaleY } = getImageScale()
+                              const topPx = layer.y * scaleY
+                              const isNearTop = topPx < toolbarHeight + 8
                               setHoverToolbarPosition({
-                                x: layer.x * getImageScale().scaleX + (layer.width * getImageScale().scaleX) / 2,
-                                y: layer.y * getImageScale().scaleY - 10
+                                x: layer.x * scaleX + (layer.width * scaleX) / 2,
+                                y: isNearTop
+                                  ? topPx + layer.height * scaleY + 10
+                                  : topPx - 10
                               })
                             }
                           }}
@@ -2314,6 +2451,18 @@ const handleTemplateJsonLoad = () => {
                         transformOrigin: 'top left'
                       }}
                       onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
+                      onMouseEnter={() => {
+                        if (overlayHoverTimeoutRef.current) {
+                          clearTimeout(overlayHoverTimeoutRef.current)
+                        }
+                        setHoveredOverlay(true)
+                      }}
+                      onMouseLeave={() => {
+                        overlayHoverTimeoutRef.current = setTimeout(() => {
+                          setHoveredOverlay(false)
+                          overlayHoverTimeoutRef.current = null
+                        }, 200)
+                      }}
                     >
                       <img
                         src={overlayImageUrl}
@@ -2325,6 +2474,29 @@ const handleTemplateJsonLoad = () => {
                           display: 'block',
                         }}
                       />
+                      {hoveredOverlay && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleOverlayRemove()
+                            setHoveredOverlay(false)
+                          }}
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-20 transition-all"
+                          title="Delete Overlay"
+                          onMouseEnter={() => {
+                            if (overlayHoverTimeoutRef.current) {
+                              clearTimeout(overlayHoverTimeoutRef.current)
+                              overlayHoverTimeoutRef.current = null
+                            }
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M3 6h18"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                          </svg>
+                        </button>
+                      )}
                       <div
                         className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
                         onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
@@ -3073,18 +3245,61 @@ const handleTemplateJsonLoad = () => {
                   <>
                     <div className="control-group">
                       <label>Add Shape</label>
-                      <div className="shape-buttons">
-                        <button className="btn btn-secondary" onClick={() => handleAddShape('rectangle')}>
-                          Rectangle
+                      <div className="shape-buttons flex flex-wrap gap-2">
+                        <button
+                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          onClick={() => handleAddShape('rectangle')}
+                          title="Rectangle"
+                        >
+                          <div className="w-6 h-4 bg-purple-500 rounded-sm" />
                         </button>
-                        <button className="btn btn-secondary" onClick={() => handleAddShape('circle')}>
-                          Circle
+                        <button
+                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          onClick={() => handleAddShape('square')}
+                          title="Square"
+                        >
+                          <div className="w-5 h-5 bg-purple-500 rounded-sm" />
                         </button>
-                        <button className="btn btn-secondary" onClick={() => handleAddShape('triangle')}>
-                          Triangle
+                        <button
+                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          onClick={() => handleAddShape('circle')}
+                          title="Circle"
+                        >
+                          <div className="w-6 h-6 bg-purple-500 rounded-full" />
                         </button>
-                        <button className="btn btn-secondary" onClick={() => handleAddShape('line')}>
-                          Line
+                        <button
+                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          onClick={() => handleAddShape('triangle')}
+                          title="Triangle"
+                        >
+                          <div
+                            className="w-0 h-0"
+                            style={{
+                              borderLeft: '8px solid transparent',
+                              borderRight: '8px solid transparent',
+                              borderBottom: '14px solid #7c3aed'
+                            }}
+                          />
+                        </button>
+                        <button
+                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          onClick={() => handleAddShape('line')}
+                          title="Line"
+                        >
+                          <div className="w-6 h-0.5 bg-purple-500" />
+                        </button>
+                        <button
+                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          onClick={() => handleAddShape('curve')}
+                          title="Curve Line"
+                        >
+                          <div
+                            className="w-6 h-4"
+                            style={{
+                              borderBottom: '3px solid #7c3aed',
+                              borderRadius: '9999px'
+                            }}
+                          />
                         </button>
                       </div>
                     </div>
@@ -3210,33 +3425,13 @@ const handleTemplateJsonLoad = () => {
                   <>
                     <div className="control-group">
                       <label>Upload Overlay Image</label>
-                    <input
+                      <input
                         type="file"
                         accept="image/*"
                         onChange={handleOverlayImageUpload}
                         className="file-input"
                       />
                     </div>
-                    <div className="control-group">
-                      <label>Or Enter Image URL</label>
-                      <input
-                        type="url"
-                        placeholder="https://example.com/overlay.png"
-                        value={overlayImageUrl}
-                        onChange={(e) => setOverlayImageUrl(e.target.value)}
-                        className="text-input"
-                      />
-                      <button className="btn btn-primary" onClick={handleOverlayImageUrlLoad}>
-                        Load Overlay
-                      </button>
-                      <button className="btn btn-secondary" onClick={() => {
-                        // Test with a simple image
-                        setOverlayImageUrl('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzAwZmYwMCIvPjx0ZXh0IHg9IjUwIiB5PSI1NSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+T1ZFUkxBWTx0ZXh0Pjwvc3ZnPg==')
-                        handleOverlayImageUrlLoad()
-                      }}>
-                        Test Overlay
-                      </button>
-                </div>
                     {overlayVisible && overlayImage && (
                       <>
               <div className="control-group">
