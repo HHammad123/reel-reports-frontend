@@ -133,9 +133,7 @@
     background: var(--canva-white);
     border-bottom: 1px solid var(--canva-gray-200);
     padding: var(--spacing-md) var(--spacing-xl);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  
     box-shadow: var(--shadow-sm);
     z-index: 100;
   }

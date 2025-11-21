@@ -134,7 +134,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [overlayImageUrl, setOverlayImageUrl] = useState('')
   const [overlayImage, setOverlayImage] = useState(null)
   const [overlayPosition, setOverlayPosition] = useState({ x: 0, y: 0 })
-  const [overlayScale, setOverlayScale] = useState(1)
+  const [overlaySize, setOverlaySize] = useState({ width: 200, height: 200 })
+  const [overlayScale, setOverlayScale] = useState(1) // Keep for backward compatibility during transition
   const [overlayVisible, setOverlayVisible] = useState(false)
   const [isDraggingOverlay, setIsDraggingOverlay] = useState(false)
   const [isResizingOverlay, setIsResizingOverlay] = useState(false)
@@ -145,6 +146,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [selectedShape, setSelectedShape] = useState(null)
   const [isDraggingShape, setIsDraggingShape] = useState(false)
   const [isResizingShape, setIsResizingShape] = useState(false)
+  const [defaultShapeColor, setDefaultShapeColor] = useState('#7c3aed')
   const [isToolbarOpen, setIsToolbarOpen] = useState(false)
   const [hoveredTextLayerId, setHoveredTextLayerId] = useState(null)
   const [hoverToolbarPosition, setHoverToolbarPosition] = useState({ x: 0, y: 0 })
@@ -155,6 +157,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const isHoveringToolbarRef = useRef(false)
   const shapeHoverTimeoutRef = useRef(null)
   const overlayHoverTimeoutRef = useRef(null)
+  const hoverToolbarRef = useRef(null)
+  const hoverToolbarPositionRef = useRef({ x: 0, y: 0 })
   const normalizedAspectRatio = useMemo(
     () => (aspectRatioCss && typeof aspectRatioCss === 'string' ? aspectRatioCss : '16 / 9'),
     [aspectRatioCss]
@@ -171,6 +175,57 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   useEffect(() => {
     isHoveringToolbarRef.current = isHoveringToolbar
   }, [isHoveringToolbar])
+
+  // Sync hover toolbar position ref
+  useEffect(() => {
+    hoverToolbarPositionRef.current = hoverToolbarPosition
+  }, [hoverToolbarPosition])
+
+  // Constrain hover toolbar position to stay within image bounds
+  useEffect(() => {
+    if (!hoveredTextLayerId || !hoverToolbarRef.current) return
+    
+    // Use requestAnimationFrame to ensure DOM is updated
+    requestAnimationFrame(() => {
+      const toolbar = hoverToolbarRef.current
+      if (!toolbar) return
+      
+      const canvasEl = toolbar.closest('[data-image-editor-canvas]')
+      if (!canvasEl) return
+      
+      const toolbarRect = toolbar.getBoundingClientRect()
+      const canvasRect = canvasEl.getBoundingClientRect()
+      const padding = 10
+      
+      // Get current position from ref to avoid dependency loop
+      let { x, y } = hoverToolbarPositionRef.current
+      let needsAdjustment = false
+      
+      // Check horizontal bounds (toolbar is centered, so check half width on each side)
+      const toolbarHalfWidth = toolbarRect.width / 2
+      if (x - toolbarHalfWidth < padding) {
+        x = toolbarHalfWidth + padding
+        needsAdjustment = true
+      } else if (x + toolbarHalfWidth > canvasRect.width - padding) {
+        x = canvasRect.width - toolbarHalfWidth - padding
+        needsAdjustment = true
+      }
+      
+      // Check vertical bounds (toolbar is above, so check full height)
+      const toolbarHeight = toolbarRect.height
+      if (y - toolbarHeight < padding) {
+        y = toolbarHeight + padding
+        needsAdjustment = true
+      } else if (y > canvasRect.height - padding) {
+        y = canvasRect.height - padding
+        needsAdjustment = true
+      }
+      
+      if (needsAdjustment) {
+        setHoverToolbarPosition({ x, y })
+      }
+    })
+  }, [hoveredTextLayerId]) // Only run when toolbar appears, not on position change
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -683,15 +738,18 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setOriginalImageUrl(imageUrl)
     
     // Initialize crop area based on target
-    if (croppingTarget === 'overlay' && overlayVisible) {
-      // Start with overlay image bounds
-      const imgWidth = overlayImage?.width || 200
-      const imgHeight = overlayImage?.height || 200
+    if (croppingTarget === 'overlay' && overlayVisible && imageRef.current) {
+      // Convert overlay position and size from natural coordinates to display coordinates
+      const imgEl = imageRef.current
+      const scaleX = imgEl.naturalWidth > 0 ? imgEl.width / imgEl.naturalWidth : 1
+      const scaleY = imgEl.naturalHeight > 0 ? imgEl.height / imgEl.naturalHeight : 1
+      const overlayWidth = overlaySize?.width || (overlayImage?.width * overlayScale || 200)
+      const overlayHeight = overlaySize?.height || (overlayImage?.height * overlayScale || 200)
       setCropArea({ 
-        x: overlayPosition.x, 
-        y: overlayPosition.y, 
-        width: Math.min(imgWidth, 200), 
-        height: Math.min(imgHeight, 200) 
+        x: overlayPosition.x * scaleX, 
+        y: overlayPosition.y * scaleY, 
+        width: Math.min(overlayWidth * scaleX, 200), 
+        height: Math.min(overlayHeight * scaleY, 200) 
       })
     } else {
       // Base image crop
@@ -701,16 +759,28 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
 
   const applyCrop = () => {
     try {
-      if (croppingTarget === 'overlay' && overlayImage) {
+      if (croppingTarget === 'overlay' && overlayImage && imageRef.current) {
         const previousUrl = overlayImageUrl
         const previousImage = overlayImage
         
+        // Convert cropArea from display coordinates to natural coordinates
+        const imgEl = imageRef.current
+        const scaleX = imgEl.width > 0 ? imgEl.naturalWidth / imgEl.width : 1
+        const scaleY = imgEl.height > 0 ? imgEl.naturalHeight / imgEl.height : 1
+        const cropXNat = cropArea.x * scaleX
+        const cropYNat = cropArea.y * scaleY
+        const cropWNat = cropArea.width * scaleX
+        const cropHNat = cropArea.height * scaleY
+        
+        // Calculate source coordinates relative to overlay image
+        const overlayWidth = overlaySize?.width || (overlayImage.width * overlayScale)
+        const overlayHeight = overlaySize?.height || (overlayImage.height * overlayScale)
+        const sx = Math.max(0, (cropXNat - overlayPosition.x))
+        const sy = Math.max(0, (cropYNat - overlayPosition.y))
+        const sw = Math.max(1, Math.min(cropWNat, overlayWidth - sx))
+        const sh = Math.max(1, Math.min(cropHNat, overlayHeight - sy))
+        
         const canvas = document.createElement('canvas')
-        const scale = overlayScale || 1
-        const sx = Math.max(0, (cropArea.x - overlayPosition.x)) / scale
-        const sy = Math.max(0, (cropArea.y - overlayPosition.y)) / scale
-        const sw = Math.max(1, cropArea.width / scale)
-        const sh = Math.max(1, cropArea.height / scale)
         canvas.width = sw
         canvas.height = sh
         const ctx = canvas.getContext('2d')
@@ -720,7 +790,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         img.onload = () => {
           setOverlayImage(img)
           setOverlayImageUrl(croppedUrl)
-          setOverlayPosition({ x: cropArea.x, y: cropArea.y })
+          setOverlayPosition({ x: cropXNat, y: cropYNat })
+          setOverlaySize({ width: sw, height: sh })
           setOverlayScale(1)
           setIsCropping(false)
           
@@ -867,18 +938,22 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
 
   const renderOverlayImage = () => {
     if (!overlayVisible || !overlayImage) return null
-    const overlayLeftPct = clampPercentValue(pxDeltaToPercent(overlayPosition.x, 'x'))
-    const overlayTopPct = clampPercentValue(pxDeltaToPercent(overlayPosition.y, 'y'))
-    const overlayWidthPct = clampPercentValue(pxDeltaToPercent((overlayImage.width || 0) * overlayScale, 'x'))
-    const overlayHeightPct = clampPercentValue(pxDeltaToPercent((overlayImage.height || 0) * overlayScale, 'y'))
+    const { scaleX, scaleY } = getImageScale()
+    // Calculate size from scale if overlaySize not set yet (backward compatibility)
+    const overlayWidth = overlaySize?.width || (overlayImage.width * overlayScale)
+    const overlayHeight = overlaySize?.height || (overlayImage.height * overlayScale)
+    const widthPx = Math.max(overlayWidth * scaleX, 1)
+    const heightPx = Math.max(overlayHeight * scaleY, 1)
+    
     return (
       <div
-        className="absolute z-[1000] cursor-move"
+        className="absolute z-5 cursor-move"
         style={{
-          left: `${overlayLeftPct}%`,
-          top: `${overlayTopPct}%`,
-          width: `${overlayWidthPct}%`,
-          height: `${overlayHeightPct}%`,
+          position: 'absolute',
+          left: overlayPosition.x * scaleX,
+          top: overlayPosition.y * scaleY,
+          width: widthPx,
+          height: heightPx,
           transformOrigin: 'top left'
         }}
         onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
@@ -912,7 +987,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               handleOverlayRemove()
               setHoveredOverlay(false)
             }}
-            className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-20 transition-all"
+            className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-5 transition-all"
             title="Delete Overlay"
             onMouseEnter={() => {
               if (overlayHoverTimeoutRef.current) {
@@ -932,15 +1007,20 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
           onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
         />
-        {isCropping && croppingTarget === 'overlay' && (
-          <div
-            className="absolute border-2 border-dashed border-purple-600 bg-purple-100"
-            style={{ 
-              left: cropArea.x - overlayPosition.x, 
-              top: cropArea.y - overlayPosition.y, 
-              width: cropArea.width, 
-              height: cropArea.height 
-            }}
+        {isCropping && croppingTarget === 'overlay' && imageRef.current && (
+          (() => {
+            const { scaleX, scaleY } = getImageScale()
+            const overlayDisplayX = overlayPosition.x * scaleX
+            const overlayDisplayY = overlayPosition.y * scaleY
+            return (
+              <div
+                className="absolute border-2 border-dashed border-purple-600 bg-purple-100"
+                style={{ 
+                  left: cropArea.x - overlayDisplayX, 
+                  top: cropArea.y - overlayDisplayY, 
+                  width: cropArea.width, 
+                  height: cropArea.height 
+                }}
             onMouseDown={(e) => {
               e.stopPropagation()
               const rect = e.currentTarget.getBoundingClientRect()
@@ -961,6 +1041,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
             }}
           />
+            )
+          })()
         )}
       </div>
     )
@@ -986,7 +1068,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       y: centerY - 100,
       width: 200,
       height: 200,
-      fill: '#7c3aed',
+      fill: defaultShapeColor,
       borderColor: '#000000',
       borderWidth: 2,
       borderStyle: 'solid',
@@ -1009,8 +1091,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       case 'line':
         baseShape.width = 260
         baseShape.height = 8
-        baseShape.fill = '#000000'
-        baseShape.borderColor = '#000000'
+        baseShape.fill = defaultShapeColor
+        baseShape.borderColor = defaultShapeColor
         baseShape.borderWidth = 8
         baseShape.borderStyle = 'solid'
         baseShape.borderRadius = 0
@@ -1019,7 +1101,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         baseShape.width = 260
         baseShape.height = 40
         baseShape.fill = 'transparent'
-        baseShape.borderColor = '#000000'
+        baseShape.borderColor = defaultShapeColor
         baseShape.borderWidth = 4
         baseShape.borderStyle = 'solid'
         baseShape.borderRadius = 9999
@@ -1266,8 +1348,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setShapeLayers(updatedShapes)
       setSelectedShape({ ...selectedShape, width: newWidth, height: newHeight })
     } else if (isDraggingOverlay) {
-      const newX = overlayPosition.x + (deltaX * 0.15)
-      const newY = overlayPosition.y + (deltaY * 0.15)
+      // Use same movement logic as shapes
+      const newX = layerStart.x + (deltaX / (scaleX || 1))
+      const newY = layerStart.y + (deltaY / (scaleY || 1))
       setOverlayPosition({ x: newX, y: newY })
       
       // Save overlay change start if not already set
@@ -1278,8 +1361,18 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     } else if (isResizingOverlay) {
-      const newScale = Math.max(0.1, overlayScale + (deltaX / 600))
-      setOverlayScale(newScale)
+      // Use same resize logic as shapes - resize by width/height instead of scale
+      const currentWidth = overlaySize?.width || (overlayImage?.width * overlayScale || 200)
+      const currentHeight = overlaySize?.height || (overlayImage?.height * overlayScale || 200)
+      const newWidth = Math.max(20, layerStart.width + (deltaX / (scaleX || 1)))
+      const newHeight = Math.max(20, layerStart.height + (deltaY / (scaleY || 1)))
+      setOverlaySize({ width: newWidth, height: newHeight })
+      // Update scale for backward compatibility
+      if (overlayImage) {
+        const newScaleX = overlayImage.width > 0 ? newWidth / overlayImage.width : overlayScale
+        const newScaleY = overlayImage.height > 0 ? newHeight / overlayImage.height : overlayScale
+        setOverlayScale(Math.min(newScaleX, newScaleY))
+      }
       
       // Save overlay change start if not already set
       if (!overlayChangeStart) {
@@ -1289,18 +1382,26 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     }
-  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlayDragStart, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent])
+  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale])
 
   const handleOverlayMouseDown = (e, action) => {
     e.preventDefault()
     e.stopPropagation()
     
+    if (!overlayImage) return
+    
+    // Calculate current size
+    const currentWidth = overlaySize?.width || (overlayImage.width * overlayScale)
+    const currentHeight = overlaySize?.height || (overlayImage.height * overlayScale)
+    
     if (action === 'drag') {
       setIsDraggingOverlay(true)
       setOverlayDragStart({ x: e.clientX, y: e.clientY })
+      setLayerStart({ x: overlayPosition.x, y: overlayPosition.y, width: currentWidth, height: currentHeight })
     } else if (action === 'resize') {
       setIsResizingOverlay(true)
       setOverlayDragStart({ x: e.clientX, y: e.clientY })
+      setLayerStart({ x: overlayPosition.x, y: overlayPosition.y, width: currentWidth, height: currentHeight })
     }
   }
 
@@ -1447,18 +1548,15 @@ const handleTemplateJsonLoad = () => {
           setOverlayImageUrl(ovUrl)
           setOverlayVisible(true)
           
-          // Convert to display coordinates
-          const displayScaleX = displayWidth / originalWidth
-          const displayScaleY = displayHeight / originalHeight
-          const posXDisp = posXNat * displayScaleX
-          const posYDisp = posYNat * displayScaleY
-          setOverlayPosition({ x: posXDisp, y: posYDisp })
+          // Store in natural pixel coordinates (like shapes)
+          setOverlayPosition({ x: posXNat, y: posYNat })
           
-          // Calculate overlay scale to fit target dimensions
-          const targetWDisp = targetWNat * displayScaleX
-          const targetHDisp = targetHNat * displayScaleY
-          const scaleX = targetWDisp > 0 ? (targetWDisp / oImg.width) : 1
-          const scaleY = targetHDisp > 0 ? (targetHDisp / oImg.height) : 1
+          // Store size in natural pixel coordinates
+          setOverlaySize({ width: targetWNat, height: targetHNat })
+          
+          // Calculate scale for backward compatibility
+          const scaleX = oImg.width > 0 ? (targetWNat / oImg.width) : 1
+          const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1
           const fitScale = Math.min(scaleX, scaleY)
           setOverlayScale(fitScale || 1)
         }
@@ -1514,15 +1612,14 @@ const handleTemplateJsonLoad = () => {
       
         // Draw overlay image if present
       if (overlayVisible && overlayImage) {
-        const scaleX = overlayScale * (imageRef.current.naturalWidth / imageRef.current.width)
-        const scaleY = overlayScale * (imageRef.current.naturalHeight / imageRef.current.height)
-        const overlayX = overlayPosition.x * (imageRef.current.naturalWidth / imageRef.current.width)
-        const overlayY = overlayPosition.y * (imageRef.current.naturalHeight / imageRef.current.height)
+        // Overlay position and size are already in natural pixel coordinates (like shapes)
+        const overlayX = overlayPosition.x
+        const overlayY = overlayPosition.y
+        const overlayWidth = overlaySize?.width || (overlayImage.width * overlayScale)
+        const overlayHeight = overlaySize?.height || (overlayImage.height * overlayScale)
         
         ctx.save()
-        ctx.translate(overlayX, overlayY)
-        ctx.scale(scaleX, scaleY)
-        ctx.drawImage(overlayImage, 0, 0)
+        ctx.drawImage(overlayImage, overlayX, overlayY, overlayWidth, overlayHeight)
         ctx.restore()
       }
       
@@ -1663,8 +1760,11 @@ const handleTemplateJsonLoad = () => {
           // Start smaller and near the top-left; user can drag afterwards
           const initialPos = { x: 20, y: 20 }
           const initialScale = 0.3
+          const initialWidth = img.width * initialScale
+          const initialHeight = img.height * initialScale
           setOverlayPosition(initialPos)
           setOverlayScale(initialScale)
+          setOverlaySize({ width: initialWidth, height: initialHeight })
           
           // Save to history
           saveToHistory('overlay_add', {
@@ -1698,8 +1798,10 @@ const handleTemplateJsonLoad = () => {
         setOverlayImage(img)
         setOverlayVisible(true)
         // Start smaller and near the top-left; user can drag afterwards
+        const initialScale = 0.3
         setOverlayPosition({ x: 20, y: 20 })
-        setOverlayScale(0.3)
+        setOverlayScale(initialScale)
+        setOverlaySize({ width: img.width * initialScale, height: img.height * initialScale })
       }
       img.onerror = () => {
         console.error('Failed to load overlay image from URL')
@@ -1714,6 +1816,7 @@ const handleTemplateJsonLoad = () => {
     setOverlayImageUrl('')
     setOverlayImageFile(null)
     setOverlayVisible(false)
+    setOverlaySize({ width: 200, height: 200 })
   }
 
   // Keyboard shortcuts
@@ -1820,18 +1923,15 @@ const handleTemplateJsonLoad = () => {
                     setOverlayImageUrl(ovUrl);
                     setOverlayVisible(true);
                     
-                    const displayWidth = imgEl.width;
-                    const displayHeight = imgEl.height;
-                    const displayScaleX = displayWidth / originalWidth;
-                    const displayScaleY = displayHeight / originalHeight;
-                    const posXDisp = posXNat * displayScaleX;
-                    const posYDisp = posYNat * displayScaleY;
-                    setOverlayPosition({ x: posXDisp, y: posYDisp });
+                    // Store in natural pixel coordinates (like shapes)
+                    setOverlayPosition({ x: posXNat, y: posYNat });
                     
-                    const targetWDisp = targetWNat * displayScaleX;
-                    const targetHDisp = targetHNat * displayScaleY;
-                    const scaleX = targetWDisp > 0 ? (targetWDisp / oImg.width) : 1;
-                    const scaleY = targetHDisp > 0 ? (targetHDisp / oImg.height) : 1;
+                    // Store size in natural pixel coordinates
+                    setOverlaySize({ width: targetWNat, height: targetHNat });
+                    
+                    // Calculate scale for backward compatibility
+                    const scaleX = oImg.width > 0 ? (targetWNat / oImg.width) : 1;
+                    const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1;
                     const fitScale = Math.min(scaleX, scaleY);
                     setOverlayScale(fitScale || 1);
                   };
@@ -1975,16 +2075,12 @@ const handleTemplateJsonLoad = () => {
         const imgEl = imageRef.current;
         const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl.naturalWidth;
         const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl.naturalHeight;
-        const displayWidth = imgEl.width;
-        const displayHeight = imgEl.height;
-        const scaleX = displayWidth / originalWidth;
-        const scaleY = displayHeight / originalHeight;
         
-        // Convert display position back to natural pixel position, then to normalized
-        const naturalX = overlayPosition.x / scaleX;
-        const naturalY = overlayPosition.y / scaleY;
-        const naturalWidth = (overlayImage.width * overlayScale) / scaleX;
-        const naturalHeight = (overlayImage.height * overlayScale) / scaleY;
+        // Overlay position and size are already in natural pixel coordinates (like shapes)
+        const naturalX = overlayPosition.x;
+        const naturalY = overlayPosition.y;
+        const naturalWidth = overlaySize?.width || (overlayImage.width * overlayScale);
+        const naturalHeight = overlaySize?.height || (overlayImage.height * overlayScale);
         
         overlayElements = [
           {
@@ -2127,7 +2223,7 @@ const handleTemplateJsonLoad = () => {
   if (!isOpen) return null;
 
   const outerClasses = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
-  const innerClasses = 'relative max-w-9xl h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col';
+  const innerClasses = 'relative max-w-[1500px] h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col';
   const workspaceBaseClasses = 'flex-1 relative overflow-hidden flex items-center justify-center transition-all duration-300';
   const workspaceChromeClasses = `bg-white m-4 rounded-lg p-6 shadow-lg ${isToolbarOpen ? 'mt-2' : 'mt-4'}`;
   const workspaceContainerClasses = `${workspaceBaseClasses} ${workspaceChromeClasses}`.trim();
@@ -2178,9 +2274,7 @@ const handleTemplateJsonLoad = () => {
         <div className={headerPanelClasses}>
         <div className="flex items-center w-full justify-between">
           <div className="header-left flex items-center gap-3">
-            <h1 className="header-title">Storyboard Editor</h1>
-            {/* Close X button next to title */}
-            
+            <h1 className="header-title text-gray-700 font-semibold">Storyboard Image</h1>
           </div>
           <div className="header-right flex items-center gap-4">
             <button
@@ -2541,20 +2635,46 @@ const handleTemplateJsonLoad = () => {
                             setHoveredTextLayerId(layer.id)
                             setIsHoveringToolbar(false)
                             const rect = e.currentTarget.getBoundingClientRect()
-                            const editorSection = e.currentTarget.closest('.editor-section')
+                            const canvasEl = e.currentTarget.closest('[data-image-editor-canvas]')
                             const toolbarHeight = 48 // approx toolbar height in px
-                            if (editorSection) {
-                              const containerRect = editorSection.getBoundingClientRect()
-                              const relativeTop = rect.top - containerRect.top
+                            const toolbarWidth = 600 // approximate toolbar width in px
+                            const toolbarHeightActual = 60 // approximate toolbar height in px
+                            
+                            if (canvasEl) {
+                              const canvasRect = canvasEl.getBoundingClientRect()
+                              const relativeLeft = rect.left - canvasRect.left + rect.width / 2
+                              const relativeTop = rect.top - canvasRect.top
                               const isNearTop = relativeTop < toolbarHeight + 8
+                              
+                              // Calculate desired position
+                              let desiredX = relativeLeft
+                              let desiredY = isNearTop
+                                ? relativeTop + rect.height + 10
+                                : relativeTop - 10
+                              
+                              // Constrain X position (toolbar is centered, so half width on each side)
+                              const minX = toolbarWidth / 2 + 10 // padding from left edge
+                              const maxX = canvasRect.width - toolbarWidth / 2 - 10 // padding from right edge
+                              desiredX = Math.max(minX, Math.min(maxX, desiredX))
+                              
+                              // Constrain Y position
+                              if (isNearTop) {
+                                // Toolbar below text - ensure it doesn't go below canvas
+                                const maxY = canvasRect.height - toolbarHeightActual - 10
+                                desiredY = Math.min(desiredY, maxY)
+                              } else {
+                                // Toolbar above text - ensure it doesn't go above canvas
+                                const minY = toolbarHeightActual + 10
+                                desiredY = Math.max(desiredY, minY)
+                              }
+                              
                               setHoverToolbarPosition({
-                                x: rect.left - containerRect.left + rect.width / 2,
-                                y: isNearTop
-                                  ? relativeTop + rect.height + 10
-                                  : relativeTop - 10
+                                x: desiredX,
+                                y: desiredY
                               })
                             } else {
                               const isNearTop = topPx < toolbarHeight + 8
+                              // Fallback to old calculation if canvas not found
                               setHoverToolbarPosition({
                                 x: leftPx + widthPx / 2,
                                 y: isNearTop ? topPx + heightPx + 10 : topPx - 10
@@ -2628,6 +2748,7 @@ const handleTemplateJsonLoad = () => {
                     
                     return (
                       <div
+                        ref={hoverToolbarRef}
                         className="absolute z-50 bg-white rounded-lg shadow-2xl border border-gray-200 p-2 flex items-center gap-2"
                         style={{
                           left: hoverToolbarPosition.x,
@@ -3331,72 +3452,151 @@ const handleTemplateJsonLoad = () => {
                 {activePanel === 'shapes' && (
                   <>
                     <div className="control-group">
-                      <label>Add Shape</label>
-                      <div className="shape-buttons flex flex-wrap gap-2">
+                      <label className="text-lg font-bold text-gray-800 mb-2 block">
+                        ADD SHAPE
+                        <span className="block w-16 h-0.5 bg-purple-600 mt-1"></span>
+                      </label>
+                      
+                      {/* Default Shape Color Picker */}
+                      {/* <div className="mb-4">
+                        <label className="text-sm font-medium text-gray-700 mb-2 block">Default Shape Color</label>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="color"
+                            value={defaultShapeColor}
+                            onChange={(e) => setDefaultShapeColor(e.target.value)}
+                            className="w-12 h-12 rounded-lg border-2 border-gray-300 cursor-pointer"
+                            title="Change default shape color"
+                          />
+                          <span className="text-sm text-gray-600">{defaultShapeColor}</span>
+                        </div>
+                      </div> */}
+                      
+                      <div className="shape-buttons grid grid-cols-5 gap-3">
                         <button
-                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          className="group relative w-14 h-14 flex items-center justify-center rounded-xl border-2 transition-all duration-200 shadow-sm hover:shadow-md"
+                          style={{
+                            borderColor: '#d1d5db',
+                            backgroundColor: '#f9fafb'
+                          }}
                           onClick={() => handleAddShape('rectangle')}
                           title="Rectangle"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = defaultShapeColor
+                            e.currentTarget.style.backgroundColor = defaultShapeColor + '20'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = '#d1d5db'
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                          }}
                         >
-                          <div className="w-6 h-4 bg-purple-500 rounded-sm" />
+                          <div 
+                            className="w-8 h-6 rounded-sm transition-colors duration-200" 
+                            style={{ backgroundColor: defaultShapeColor }}
+                          />
                         </button>
                         <button
-                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          className="group relative w-14 h-14 flex items-center justify-center rounded-xl border-2 transition-all duration-200 shadow-sm hover:shadow-md"
+                          style={{
+                            borderColor: '#d1d5db',
+                            backgroundColor: '#f9fafb'
+                          }}
                           onClick={() => handleAddShape('square')}
                           title="Square"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = defaultShapeColor
+                            e.currentTarget.style.backgroundColor = defaultShapeColor + '20'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = '#d1d5db'
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                          }}
                         >
-                          <div className="w-5 h-5 bg-purple-500 rounded-sm" />
+                          <div 
+                            className="w-6 h-6 rounded-sm transition-colors duration-200" 
+                            style={{ backgroundColor: defaultShapeColor }}
+                          />
                         </button>
                         <button
-                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          className="group relative w-14 h-14 flex items-center justify-center rounded-xl border-2 transition-all duration-200 shadow-sm hover:shadow-md"
+                          style={{
+                            borderColor: '#d1d5db',
+                            backgroundColor: '#f9fafb'
+                          }}
                           onClick={() => handleAddShape('circle')}
                           title="Circle"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = defaultShapeColor
+                            e.currentTarget.style.backgroundColor = defaultShapeColor + '20'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = '#d1d5db'
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                          }}
                         >
-                          <div className="w-6 h-6 bg-purple-500 rounded-full" />
-                        </button>
-                        <button
-                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
-                          onClick={() => handleAddShape('triangle')}
-                          title="Triangle"
-                        >
-                          <div
-                            className="w-0 h-0"
-                            style={{
-                              borderLeft: '8px solid transparent',
-                              borderRight: '8px solid transparent',
-                              borderBottom: '14px solid #7c3aed'
-                            }}
+                          <div 
+                            className="w-7 h-7 rounded-full transition-colors duration-200" 
+                            style={{ backgroundColor: defaultShapeColor }}
                           />
                         </button>
                         <button
-                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          className="group relative w-14 h-14 flex items-center justify-center rounded-xl border-2 transition-all duration-200 shadow-sm hover:shadow-md"
+                          style={{
+                            borderColor: '#d1d5db',
+                            backgroundColor: '#f9fafb'
+                          }}
                           onClick={() => handleAddShape('line')}
                           title="Line"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = defaultShapeColor
+                            e.currentTarget.style.backgroundColor = defaultShapeColor + '20'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = '#d1d5db'
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                          }}
                         >
-                          <div className="w-6 h-0.5 bg-purple-500" />
+                          <div 
+                            className="w-8 h-1 transition-colors duration-200" 
+                            style={{ backgroundColor: defaultShapeColor }}
+                          />
                         </button>
                         <button
-                          className="btn btn-secondary w-10 h-10 flex items-center justify-center rounded-md"
+                          className="group relative w-14 h-14 flex items-center justify-center rounded-xl border-2 transition-all duration-200 shadow-sm hover:shadow-md"
+                          style={{
+                            borderColor: '#d1d5db',
+                            backgroundColor: '#f9fafb'
+                          }}
                           onClick={() => handleAddShape('curve')}
-                          title="Curve Line"
+                          title="Curved Line"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = defaultShapeColor
+                            e.currentTarget.style.backgroundColor = defaultShapeColor + '20'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = '#d1d5db'
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                          }}
                         >
-                          <div
-                            className="w-6 h-4"
-                            style={{
-                              borderBottom: '3px solid #7c3aed',
-                              borderRadius: '9999px'
-                            }}
-                          />
+                          <svg width="32" height="16" viewBox="0 0 32 16" className="transition-colors duration-200">
+                            <path 
+                              d="M 4 12 Q 16 4, 28 12" 
+                              fill="none" 
+                              stroke={defaultShapeColor} 
+                              strokeWidth="3" 
+                              strokeLinecap="round"
+                            />
+                          </svg>
                         </button>
                       </div>
                     </div>
 
                     {selectedShape && (
                       <>
-                        <div className="control-group">
+                        {/* <div className="control-group">
                           <label>Shape Type</label>
                           <div className="selected-shape-type">{selectedShape.type}</div>
-                        </div>
+                        </div> */}
 
                         {selectedShape.type !== 'line' && (
                           <div className="control-group">
@@ -3529,7 +3729,17 @@ const handleTemplateJsonLoad = () => {
                 max="3"
                 step="0.1"
                 value={overlayScale}
-                onChange={(e) => setOverlayScale(parseFloat(e.target.value))}
+                onChange={(e) => {
+                  const newScale = parseFloat(e.target.value)
+                  setOverlayScale(newScale)
+                  // Update overlaySize when scale changes
+                  if (overlayImage) {
+                    setOverlaySize({ 
+                      width: overlayImage.width * newScale, 
+                      height: overlayImage.height * newScale 
+                    })
+                  }
+                }}
                 className="text-input"
               />
               <span>{Math.round(overlayScale * 100)}%</span>

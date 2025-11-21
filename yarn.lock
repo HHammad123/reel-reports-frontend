@@ -8750,7 +8750,7 @@ plotly.js-dist-min@^3.3.0:
   resolved "https://registry.npmjs.org/plotly.js-dist-min/-/plotly.js-dist-min-3.3.0.tgz"
   integrity sha512-XENvNJRiMmoMsktlO2DA635vmLU8Be0eIy2Y58is9qudNQqpvGBu4y50cBj7rl1hS3htP+1XnCUrFmyvwbtP0w==
 
-plotly.js@>1.34.0:
+plotly.js@^3.3.0, plotly.js@>1.34.0:
   version "3.3.0"
   resolved "https://registry.npmjs.org/plotly.js/-/plotly.js-3.3.0.tgz"
   integrity sha512-3PT9dW7IbIfN7JWGr4YxxFQnbN5MRaB36qIKF/eF0iC9l0/MuGSlMlgRgI7Uu8vYuGxX6AjLwsBBRYTPG7NFSA==
