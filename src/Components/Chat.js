@@ -1451,6 +1451,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const avatarFileInputRef = useRef(null);
   const [brandAssetsAvatars, setBrandAssetsAvatars] = useState([]);
   const [isLoadingAvatars, setIsLoadingAvatars] = useState(false);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [showAvatarUploadPopup, setShowAvatarUploadPopup] = useState(false);
   const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
   const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
@@ -5640,7 +5641,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
       const txt = await resp.text(); let data; try { data = JSON.parse(txt); } catch(_) { data = txt; }
-      if (!resp.ok) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+      if (!resp.ok || resp.status !== 200) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
       const container = data?.script ? { script: data.script } : data;
       const normalized = normalizeScriptToRows(container);
       const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
@@ -5651,6 +5652,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       } catch(_) {}
     } catch(e) {
       console.error('updateSceneGenImageFlag failed:', e);
+      throw e; // Re-throw to allow caller to handle the error
     }
   };
 
@@ -7745,18 +7747,31 @@ const saveAnchorPromptTemplate = async () => {
                            {!!selectedAvatar && (
                              <button
                                type="button"
-                               className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800"
+                               className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                               disabled={isSavingAvatar}
                                onClick={async () => {
                                  try {
                                    if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex] || !selectedAvatar) return;
+                                   setIsSavingAvatar(true);
                                    await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: selectedAvatar });
+                                   // Check if the API call was successful (status 200)
+                                   // The updateSceneGenImageFlag function will throw if not ok
+                                   setIsSavingAvatar(false);
                                  } catch (err) {
                                    console.error('Failed to save avatar:', err);
                                    alert('Failed to save avatar. Please try again.');
+                                   setIsSavingAvatar(false);
                                  }
                                }}
                              >
-                               Save
+                               {isSavingAvatar ? (
+                                 <>
+                                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                   <span>Saving...</span>
+                                 </>
+                               ) : (
+                                 'Save'
+                               )}
                              </button>
                            )}
                          </div>

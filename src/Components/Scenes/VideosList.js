@@ -181,7 +181,7 @@ const VideosList = ({ jobId, onClose }) => {
   const selectedVideoUrl = selectedVideo.url || selectedScenes[0]?.url || '';
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative">
+    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100vh]">
       {showVideoLoader && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
           <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3">

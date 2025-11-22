@@ -139,6 +139,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [overlayVisible, setOverlayVisible] = useState(false)
   const [isDraggingOverlay, setIsDraggingOverlay] = useState(false)
   const [isResizingOverlay, setIsResizingOverlay] = useState(false)
+  const [overlayResizeMode, setOverlayResizeMode] = useState(null) // 'nw'|'n'|'ne'|'e'|'se'|'s'|'sw'|'w'
   const [overlayDragStart, setOverlayDragStart] = useState({ x: 0, y: 0 })
   const [overlaySizeStart, setOverlaySizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 })
   const [activePanel, setActivePanel] = useState(null)
@@ -1003,9 +1004,38 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             </svg>
           </button>
         )}
+        {/* Four corner resize handles */}
         <div
-          className="absolute bottom-0 right-0 w-5 h-5 bg-purple-600 cursor-nwse-resize rounded-bl-lg"
-          onMouseDown={(e) => handleOverlayMouseDown(e, 'resize')}
+          className="absolute -top-1 -left-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize z-10 shadow-sm"
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            handleOverlayMouseDown(e, 'resize', 'nw')
+          }}
+          title="Resize from top-left"
+        />
+        <div
+          className="absolute -top-1 -right-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nesw-resize z-10 shadow-sm"
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            handleOverlayMouseDown(e, 'resize', 'ne')
+          }}
+          title="Resize from top-right"
+        />
+        <div
+          className="absolute -bottom-1 -left-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nesw-resize z-10 shadow-sm"
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            handleOverlayMouseDown(e, 'resize', 'sw')
+          }}
+          title="Resize from bottom-left"
+        />
+        <div
+          className="absolute -bottom-1 -right-1 w-3 h-3 bg-purple-600 border-2 border-white rounded-full cursor-nwse-resize z-10 shadow-sm"
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            handleOverlayMouseDown(e, 'resize', 'se')
+          }}
+          title="Resize from bottom-right"
         />
         {isCropping && croppingTarget === 'overlay' && imageRef.current && (
           (() => {
@@ -1360,13 +1390,70 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           previousScale: overlayScale
         })
       }
-    } else if (isResizingOverlay) {
-      // Use same resize logic as shapes - resize by width/height instead of scale
-      const currentWidth = overlaySize?.width || (overlayImage?.width * overlayScale || 200)
-      const currentHeight = overlaySize?.height || (overlayImage?.height * overlayScale || 200)
-      const newWidth = Math.max(20, layerStart.width + (deltaX / (scaleX || 1)))
-      const newHeight = Math.max(20, layerStart.height + (deltaY / (scaleY || 1)))
+    } else if (isResizingOverlay && overlayResizeMode) {
+      // Corner-based resize logic similar to crop
+      const { scaleX, scaleY } = getImageScale()
+      const deltaXNat = deltaX / (scaleX || 1)
+      const deltaYNat = deltaY / (scaleY || 1)
+      
+      let newX = layerStart.x
+      let newY = layerStart.y
+      let newWidth = layerStart.width
+      let newHeight = layerStart.height
+      const minSize = 20
+      
+      switch (overlayResizeMode) {
+        case 'nw': // Top-left corner
+          newX = layerStart.x + deltaXNat
+          newY = layerStart.y + deltaYNat
+          newWidth = layerStart.width - deltaXNat
+          newHeight = layerStart.height - deltaYNat
+          if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
+          if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
+          break
+        case 'ne': // Top-right corner
+          newY = layerStart.y + deltaYNat
+          newWidth = layerStart.width + deltaXNat
+          newHeight = layerStart.height - deltaYNat
+          if (newWidth < minSize) newWidth = minSize
+          if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
+          break
+        case 'sw': // Bottom-left corner
+          newX = layerStart.x + deltaXNat
+          newWidth = layerStart.width - deltaXNat
+          newHeight = layerStart.height + deltaYNat
+          if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
+          if (newHeight < minSize) newHeight = minSize
+          break
+        case 'se': // Bottom-right corner
+          newWidth = layerStart.width + deltaXNat
+          newHeight = layerStart.height + deltaYNat
+          if (newWidth < minSize) newWidth = minSize
+          if (newHeight < minSize) newHeight = minSize
+          break
+        case 'n': // Top edge
+          newY = layerStart.y + deltaYNat
+          newHeight = layerStart.height - deltaYNat
+          if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
+          break
+        case 's': // Bottom edge
+          newHeight = layerStart.height + deltaYNat
+          if (newHeight < minSize) newHeight = minSize
+          break
+        case 'w': // Left edge
+          newX = layerStart.x + deltaXNat
+          newWidth = layerStart.width - deltaXNat
+          if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
+          break
+        case 'e': // Right edge
+          newWidth = layerStart.width + deltaXNat
+          if (newWidth < minSize) newWidth = minSize
+          break
+      }
+      
+      setOverlayPosition({ x: newX, y: newY })
       setOverlaySize({ width: newWidth, height: newHeight })
+      
       // Update scale for backward compatibility
       if (overlayImage) {
         const newScaleX = overlayImage.width > 0 ? newWidth / overlayImage.width : overlayScale
@@ -1382,9 +1469,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     }
-  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale])
+  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, overlayResizeMode, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale])
 
-  const handleOverlayMouseDown = (e, action) => {
+  const handleOverlayMouseDown = (e, action, resizeMode = null) => {
     e.preventDefault()
     e.stopPropagation()
     
@@ -1400,6 +1487,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setLayerStart({ x: overlayPosition.x, y: overlayPosition.y, width: currentWidth, height: currentHeight })
     } else if (action === 'resize') {
       setIsResizingOverlay(true)
+      setOverlayResizeMode(resizeMode || 'se') // Default to bottom-right if no mode specified
       setOverlayDragStart({ x: e.clientX, y: e.clientY })
       setLayerStart({ x: overlayPosition.x, y: overlayPosition.y, width: currentWidth, height: currentHeight })
     }
@@ -1412,6 +1500,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setIsResizingShape(false)
     setIsDraggingOverlay(false)
     setIsResizingOverlay(false)
+    setOverlayResizeMode(null)
     
     // Save overlay changes to history if they occurred
     if (overlayChangeStart && (isDraggingOverlay || isResizingOverlay)) {
@@ -3721,34 +3810,51 @@ const handleTemplateJsonLoad = () => {
                     </div>
                     {overlayVisible && overlayImage && (
                       <>
-              <div className="control-group">
-              <label>Overlay Scale</label>
-                      <input
-                        type="range"
-                min="0.1"
-                max="3"
-                step="0.1"
-                value={overlayScale}
-                onChange={(e) => {
-                  const newScale = parseFloat(e.target.value)
-                  setOverlayScale(newScale)
-                  // Update overlaySize when scale changes
-                  if (overlayImage) {
-                    setOverlaySize({ 
-                      width: overlayImage.width * newScale, 
-                      height: overlayImage.height * newScale 
-                    })
-                  }
-                }}
-                className="text-input"
-              />
-              <span>{Math.round(overlayScale * 100)}%</span>
-                </div>
+                        <div className="control-group">
+                          <label>Size</label>
+                          <div className="size-inputs">
+                            <input
+                              type="number"
+                              min="10"
+                              value={Math.round(overlaySize?.width || (overlayImage.width * overlayScale) || 200)}
+                              onChange={(e) => {
+                                const newWidth = Math.max(10, parseInt(e.target.value) || 10)
+                                setOverlaySize({ 
+                                  width: newWidth, 
+                                  height: overlaySize?.height || (overlayImage.height * overlayScale) || 200 
+                                })
+                                // Update scale for backward compatibility
+                                if (overlayImage && overlayImage.width > 0) {
+                                  setOverlayScale(newWidth / overlayImage.width)
+                                }
+                              }}
+                              className="text-input"
+                            />
+                            <span>x</span>
+                            <input
+                              type="number"
+                              min="10"
+                              value={Math.round(overlaySize?.height || (overlayImage.height * overlayScale) || 200)}
+                              onChange={(e) => {
+                                const newHeight = Math.max(10, parseInt(e.target.value) || 10)
+                                setOverlaySize({ 
+                                  width: overlaySize?.width || (overlayImage.width * overlayScale) || 200,
+                                  height: newHeight 
+                                })
+                                // Update scale for backward compatibility
+                                if (overlayImage && overlayImage.height > 0) {
+                                  setOverlayScale(newHeight / overlayImage.height)
+                                }
+                              }}
+                              className="text-input"
+                            />
+                          </div>
+                        </div>
                         <div className="overlay-actions">
                           <button className="btn btn-secondary" onClick={handleOverlayRemove}>
                             Remove Overlay
                           </button>
-              </div>
+                        </div>
                       </>
                     )}
                     </>
