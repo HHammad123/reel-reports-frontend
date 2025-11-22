@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import Plot from 'react-plotly.js'
+import Plotly from 'plotly.js-dist-min'
 import { FaTimes } from 'react-icons/fa'
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value))
@@ -404,6 +405,9 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   const [chartDataState, setChartDataState] = useState(
     safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
   )
+  const [isDirty, setIsDirty] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const plotRef = useRef(null)
   const sceneNumber = sceneData?.scene_number || sceneData?.sceneNumber
   const chartTitle = sceneData?.chart_title || sceneData?.scene_title || 'Chart'
@@ -418,6 +422,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
     setSeriesColorOverrides(extractInitialColorOverrides(sceneData, targets))
     setRawChartDataInput(JSON.stringify(parsedData, null, 2))
     setRawChartError('')
+    setIsDirty(false)
+    setSaveError('')
   }, [sceneData])
 
   useEffect(() => {
@@ -451,15 +457,22 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
     return extracted
   }, [chartDataState, chartTypeState])
 
+  const markDirty = useCallback(() => {
+    setIsDirty(true)
+    setSaveError('')
+  }, [])
+
   const handleColorOverrideChange = useCallback((target, color) => {
     setSeriesColorOverrides((prev) => ({
       ...prev,
       [target]: color
     }))
-  }, [])
+    markDirty()
+  }, [markDirty])
 
   const handleChartTypeChange = (event) => {
     setChartTypeState(event.target.value)
+    markDirty()
   }
 
   const handleRawChartDataInputChange = (event) => {
@@ -485,16 +498,69 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
         })
         return next
       })
+      markDirty()
     } catch (err) {
       setRawChartError(err?.message || 'Invalid chart_data JSON')
     }
-  }, [chartTypeState, rawChartDataInput, sceneData])
+  }, [chartTypeState, rawChartDataInput, sceneData, markDirty])
 
   const handleResetEditor = useCallback(() => {
     rebuildEditorStateFromScene()
+    setIsDirty(false)
+    setSaveError('')
   }, [rebuildEditorStateFromScene])
 
   const colorControlsVisible = colorTargets.length > 0
+
+  const handleSaveChart = useCallback(async () => {
+    if (!plotRef.current) return
+    const sessionId = localStorage.getItem('session_id')
+    const userId = localStorage.getItem('token')
+    if (!sessionId || !userId || !sceneNumber) {
+      setSaveError('Missing session, user, or scene number.')
+      return
+    }
+    setIsSaving(true)
+    setSaveError('')
+    try {
+      const plotElement = plotRef.current?.el
+      if (!plotElement) {
+        throw new Error('Chart preview is not ready yet.')
+      }
+      const width = Math.max(plotElement.offsetWidth * 2, 1200)
+      const height = Math.max(plotElement.offsetHeight * 2, 800)
+      const dataUrl = await Plotly.toImage(plotElement, {
+        format: 'png',
+        width,
+        height,
+        scale: 1
+      })
+      const blob = await (await fetch(dataUrl)).blob()
+      const formData = new FormData()
+      formData.append('session_id', sessionId)
+      formData.append('user_id', userId)
+      formData.append('scene_number', sceneNumber)
+      formData.append('file', blob, `scene-${sceneNumber}-chart.png`)
+
+      const resp = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/upload_chart',
+        {
+          method: 'POST',
+          body: formData
+        }
+      )
+      if (!resp.ok) {
+        const text = await resp.text()
+        throw new Error(text || 'Failed to upload chart')
+      }
+      setIsDirty(false)
+      window.location.reload()
+    } catch (err) {
+      setSaveError(err?.message || 'Failed to save chart')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [sceneNumber])
 
   useEffect(() => {
     if (!sceneData) return
@@ -589,34 +655,32 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
               Scene {sceneNumber ?? '-'} • {chartTitle}
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition"
-            aria-label="Close chart editor"
-          >
-            <FaTimes />
-          </button>
+          <div className="flex items-center gap-3">
+            {isDirty && (
+              <button
+                type="button"
+                onClick={handleSaveChart}
+                disabled={isSaving}
+                className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition ${
+                  isSaving ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'
+                }`}
+              >
+                {isSaving ? 'Saving…' : 'Save Chart'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition"
+              aria-label="Close chart editor"
+            >
+              <FaTimes />
+            </button>
+          </div>
         </div>
 
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          <div className="lg:flex-[1.2] min-h-[320px] p-4">
-            {figure ? (
-              <Plot
-                ref={plotRef}
-                data={figure.data}
-                layout={figure.layout}
-                config={figure.config}
-                style={{ width: '100%', height: '100%' }}
-                useResizeHandler
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
-                {error || 'Chart will appear here once ready.'}
-              </div>
-            )}
-          </div>
-          <aside className="w-full lg:w-[560px] border-t lg:border-l border-gray-200 p-6 overflow-y-auto bg-gray-50 space-y-4">
+        <div className="grid grid-cols-5 overflow-hidden">
+          <aside className=" border-t lg:border-r border-gray-200 p-6 overflow-y-auto bg-gray-50 space-y-4">
             <div className="space-y-1">
               <p className="text-xs uppercase tracking-wide text-gray-500">Chart Type</p>
               <select
@@ -742,9 +806,9 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
                 {sceneData?.desc || 'No description provided for this chart.'}
               </p>
             </div>
-            {error && (
+            {(error || saveError) && (
               <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg">
-                {error}
+                {saveError || error}
               </div>
             )}
             <p className="text-xs text-gray-500">
@@ -752,6 +816,22 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
               the chart data payload.
             </p>
           </aside>
+          <div className="lg:flex-[0.4] min-h-[320px] p-4">
+            {figure ? (
+              <Plot
+                ref={plotRef}
+                data={figure.data}
+                layout={figure.layout}
+                config={figure.config}
+                style={{ width: '100%', height: '100%' }}
+                useResizeHandler
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
+                {error || 'Chart will appear here once ready.'}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

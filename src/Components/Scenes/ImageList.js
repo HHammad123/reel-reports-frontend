@@ -3519,10 +3519,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               );
             })()} */}
             
-            {/* Advanced Options Accordion - For VEO3/SORA/ANCHOR models */}
+            {/* Advanced Options Accordion - Hide only for VEO3 */}
             {(() => {
               const modelUpper = String(selected?.model || '').toUpperCase();
-              const isRelevantModel = modelUpper === 'VEO3' || modelUpper === 'SORA' || modelUpper === 'ANCHOR';
+              const isRelevantModel = modelUpper !== 'VEO3';
               const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
               
               if (!isRelevantModel) return null;
@@ -3736,7 +3736,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         </div>
                         
                         {/* Transitions Section */}
-                        {(modelUpper === 'SORA' || modelUpper === 'ANCHOR') && (
+                        {modelUpper !== 'VEO3' && (
                           <div className="border rounded-lg p-4 bg-white">
                             <button
                               type="button"
