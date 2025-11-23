@@ -5593,6 +5593,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       })();
 
       // Build background_image array if provided
+      // First check overrides, then targetRow, then fetched session data to preserve existing data
       const backgroundImageArray = (() => {
         if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
           // If backgroundImageArrayOverride is provided, use it directly (for summary templates with template_id and image_url)
@@ -5641,22 +5642,80 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             image_url: bgUrl.trim()
           }];
         }
+        // If not in targetRow, check the fetched session data for existing background_image
+        const matchedSceneFromSession = airesponseSource.find((scene) => {
+          if (!scene || typeof scene !== 'object') return false;
+          const sceneNumber =
+            scene?.scene_number ??
+            scene?.scene_no ??
+            scene?.sceneNo ??
+            scene?.scene;
+          return sceneNumber === targetSceneNumber;
+        });
+        if (matchedSceneFromSession) {
+          if (Array.isArray(matchedSceneFromSession?.background_image) && matchedSceneFromSession.background_image.length > 0) {
+            return matchedSceneFromSession.background_image.map(item => {
+              if (typeof item === 'object' && item !== null) {
+                return {
+                  template_id: item?.template_id || item?.templateId || item?.imageid || item?.imageId || '',
+                  image_url: item?.image_url || item?.imageurl || item?.imageUrl || item?.url || ''
+                };
+              }
+              return {
+                template_id: '',
+                image_url: typeof item === 'string' ? item : ''
+              };
+            });
+          }
+          // Fallback: check background field in session data
+          const sessionBg = matchedSceneFromSession?.background;
+          if (sessionBg && typeof sessionBg === 'string' && sessionBg.trim()) {
+            const templateEntry = templateLookupByUrl.get(sessionBg.trim());
+            const rawTemplate = templateEntry?.raw || {};
+            const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
+            return [{
+              template_id: templateId ? String(templateId) : '',
+              image_url: sessionBg.trim()
+            }];
+          }
+        }
         return [];
       })();
 
       // Get avatar_urls for API body as array of strings
+      // First check if avatarUrl override is provided, then check targetRow, then check fetched session data
       const avatarUrlsForApiBody = (() => {
         if (avatarUrl) {
           const url = typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
           return url ? [url] : [];
         }
         const targetRow = rows[sceneIdx] || {};
+        // Check targetRow first (UI state)
         if (Array.isArray(targetRow?.avatar_urls) && targetRow.avatar_urls.length > 0) {
           return targetRow.avatar_urls.filter(url => typeof url === 'string' && url.trim()).map(url => url.trim());
         }
         // Fallback: check avatar field and convert to array
         if (typeof targetRow?.avatar === 'string' && targetRow.avatar.trim()) {
           return [targetRow.avatar.trim()];
+        }
+        // If not in targetRow, check the fetched session data for existing avatar_urls
+        const matchedSceneFromSession = airesponseSource.find((scene) => {
+          if (!scene || typeof scene !== 'object') return false;
+          const sceneNumber =
+            scene?.scene_number ??
+            scene?.scene_no ??
+            scene?.sceneNo ??
+            scene?.scene;
+          return sceneNumber === targetSceneNumber;
+        });
+        if (matchedSceneFromSession) {
+          if (Array.isArray(matchedSceneFromSession?.avatar_urls) && matchedSceneFromSession.avatar_urls.length > 0) {
+            return matchedSceneFromSession.avatar_urls.filter(url => typeof url === 'string' && url.trim()).map(url => url.trim());
+          }
+          // Fallback: check avatar field in session data
+          if (typeof matchedSceneFromSession?.avatar === 'string' && matchedSceneFromSession.avatar.trim()) {
+            return [matchedSceneFromSession.avatar.trim()];
+          }
         }
         return [];
       })();
@@ -8021,15 +8080,27 @@ const saveAnchorPromptTemplate = async () => {
                                  <button
                                    type="button"
                                    key={index}
-                                   onClick={() => {
+                                   onClick={async () => {
                                      try {
                                        setSelectedAvatar(avatarUrl);
                                        if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
                                          const rows = [...scriptRows];
                                          const scene = { ...rows[currentSceneIndex] };
                                          scene.avatar = avatarUrl;
+                                         // Also update avatar_urls array for ANCHOR/VEO3
+                                         if (Array.isArray(scene.avatar_urls)) {
+                                           scene.avatar_urls = [avatarUrl];
+                                         } else {
+                                           scene.avatar_urls = [avatarUrl];
+                                         }
                                          rows[currentSceneIndex] = scene;
                                          setScriptRows(rows);
+                                         // Call updateSceneGenImageFlag to save to backend, preserving existing background_image
+                                         try {
+                                           await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: avatarUrl });
+                                         } catch (err) {
+                                           console.error('Failed to update avatar:', err);
+                                         }
                                        }
                                      } catch (_) { /* noop */ }
                                    }}
@@ -8063,8 +8134,8 @@ const saveAnchorPromptTemplate = async () => {
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                         const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
                         const isSummary = titleLower === 'summary';
-                        // Show for summary scripts OR for ANCHOR/VEO3/SORA models
-                        if (!isSummary && modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3' && modelUpper !== 'SORA') return null;
+                        // Show for summary scripts OR for ANCHOR/VEO3/SORA/PLOTLY models
+                        if (!isSummary && modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3' && modelUpper !== 'SORA' && modelUpper !== 'PLOTLY') return null;
                         const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
                         // In Script Editor, keep toggle fully visible even if not actively editing
                         // For summary scripts, don't show the toggle
@@ -8145,7 +8216,7 @@ const saveAnchorPromptTemplate = async () => {
                                               } catch(_) {}
                                             }
                                           } else {
-                                            // For ANCHOR/VEO3, background is a single string
+                                            // For ANCHOR/VEO3/PLOTLY, background is a single string
                                             setSelectedRefImages([url]);
                                             if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
                                               const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
