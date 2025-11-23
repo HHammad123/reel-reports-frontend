@@ -92,6 +92,23 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
+  // DELETE /v1/users/brand-assets/profiles/{user_id}/{profile_id}
+  const deleteBrandProfile = useCallback(async ({ userId, profileId }) => {
+    if (!userId || !profileId) throw new Error('userId and profileId are required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}`;
+      const resp = await fetch(url, { method: 'DELETE' });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`delete profile failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to delete profile');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
   const uploadBrandAssets = useCallback(async (params) => {
     // params: { userId, fonts, colors, caption_location, files: { logos, icons, voiceovers, templates } }
     const { userId, fonts = [], colors = [], caption_location, files = {} } = params || {};
@@ -215,6 +232,44 @@ export default function useBrandAssets() {
       setError(e?.message || 'Failed to create brand profile');
       throw e;
     } finally { setLoading(false); }
+  }, []);
+
+  // POST /v1/users/brand-assets/profiles/create-queue with FormData
+  const createBrandProfileQueue = useCallback(async ({ userId, website, profileName, setAsActive = true }) => {
+    if (!userId || !website || !profileName) throw new Error('userId, website, and profileName are required');
+    const url = /^https?:\/\//i.test(website) ? website : `https://${website}`;
+    const form = new FormData();
+    form.append('user_id', userId);
+    form.append('website_url', url);
+    form.append('profile_name', profileName);
+    form.append('set_as_active', String(!!setAsActive));
+    setLoading(true); setError('');
+    try {
+      const resp = await fetch(`${API_BASE}/users/brand-assets/profiles/create-queue`, { method: 'POST', body: form });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(`profiles/create-queue failed: ${resp.status}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to create brand profile queue');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  // GET /v1/users/brand-assets/profiles/job-status/{job_id}
+  const getJobStatus = useCallback(async ({ userId, jobId }) => {
+    if (!userId || !jobId) throw new Error('userId and jobId are required');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/job-status/${encodeURIComponent(jobId)}?user_id=${encodeURIComponent(userId)}`;
+      const resp = await fetch(url, { 
+        method: 'GET'
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(`job-status failed: ${resp.status}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to get job status');
+      throw e;
+    }
   }, []);
 
   const reset = useCallback(() => { setAssets(null); setError(''); setLoading(false); }, []);
@@ -461,5 +516,5 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
-  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, analyzeWebsite, createBrandProfile, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, reset };
+  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, reset };
 }

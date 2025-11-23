@@ -457,7 +457,7 @@ const VOICEOVER_FLOW_STEPS = [
 
 const Brandimages = () => {
   const fileInputRef = useRef(null)
-  const { getBrandProfiles, getBrandProfileById, activateBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements } = useBrandAssets()
+  const { getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements } = useBrandAssets()
   const [logos, setLogos] = useState([])
   const [icons, setIcons] = useState([])
   const [fonts, setFonts] = useState([])
@@ -497,6 +497,8 @@ const Brandimages = () => {
   const [websiteError, setWebsiteError] = useState('')
   const [profileName, setProfileName] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isPollingJob, setIsPollingJob] = useState(false)
+  const [jobStatus, setJobStatus] = useState('')
   // Profiles and selected profile
   const [profiles, setProfiles] = useState([])
   const [selectedProfileId, setSelectedProfileId] = useState('')
@@ -617,6 +619,10 @@ const Brandimages = () => {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
   const [deleteConfirmData, setDeleteConfirmData] = useState(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  // Delete profile confirmation modal state
+  const [isDeleteProfileConfirmOpen, setIsDeleteProfileConfirmOpen] = useState(false)
+  const [deleteProfileConfirmData, setDeleteProfileConfirmData] = useState(null)
+  const [isDeletingProfile, setIsDeletingProfile] = useState(false)
   // Image editor state
   const [imageEditorOpen, setImageEditorOpen] = useState(false)
   const [imageEditorSrc, setImageEditorSrc] = useState('')
@@ -2338,6 +2344,76 @@ const Brandimages = () => {
     }
   }
 
+  const confirmDeleteProfile = async () => {
+    if (!deleteProfileConfirmData) return
+    
+    const { userId, profileId } = deleteProfileConfirmData
+    
+    setIsDeletingProfile(true)
+    try {
+      // Call delete API
+      await deleteBrandProfile({ userId, profileId })
+      
+      // Refresh profiles list
+      const tokenUserId = localStorage.getItem('token') || ''
+      if (tokenUserId) {
+        const plist = await getBrandProfiles(tokenUserId)
+        plist.sort((a,b) => (b?.is_active?1:0) - (a?.is_active?1:0))
+        setProfiles(plist)
+        
+        // Select the first profile (or active one if available)
+        const newSelected = plist.find(p => p.is_active)?.profile_id || plist.find(p => p.is_active)?.id || plist[0]?.profile_id || plist[0]?.id || ''
+        if (newSelected) {
+          setSelectedProfileId(newSelected)
+          setSelectedIsActive(!!plist.find(p => (p.profile_id || p.id) === newSelected)?.is_active)
+          
+          // Load the selected profile details
+          const a = await getBrandProfileById({ userId: tokenUserId, profileId: newSelected })
+          const bi = a?.brand_identity || {}
+          setTagline(bi.tagline || '')
+          setSpacing(bi.spacing || '')
+          setCaptionLocation(a?.caption_location || a?.brand_identity?.caption_location || '')
+          setLogos(bi.logo || [])
+          setIcons(bi.icon || bi.icons || [])
+          setFonts(bi.fonts || [])
+          setColors(bi.colors || [])
+          const tv = a?.tone_and_voice || {}
+          setToneVoice(hydrateToneVoiceState(tv))
+          const lf = a?.look_and_feel || {}
+          setLookFeel(hydrateLookFeelState(lf))
+          const tpls = a?.template || a?.templates || []
+          updateTemplatesState(tpls)
+          const vos = a?.voiceover || []
+          setVoiceovers(Array.isArray(vos) ? vos : [])
+        } else {
+          // No profiles left, reset state
+          setSelectedProfileId('')
+          setSelectedIsActive(false)
+          setTagline('')
+          setSpacing('')
+          setCaptionLocation('')
+          setLogos([])
+          setIcons([])
+          setFonts([])
+          setColors([])
+          setToneVoice({ context: '', brand_personality: [], communication_style_pace: [] })
+          setLookFeel({ iconography: [], graphic_elements: [], aesthetic_consistency: [] })
+          setTemplates([])
+          setVoiceovers([])
+        }
+      }
+      
+      // Close modal
+      setIsDeleteProfileConfirmOpen(false)
+      setDeleteProfileConfirmData(null)
+    } catch (error) {
+      console.error('Failed to delete profile:', error)
+      alert(error?.message || 'Failed to delete profile')
+    } finally {
+      setIsDeletingProfile(false)
+    }
+  }
+
   const handleEditTemplate = async (templateEntry, label) => {
     if (!templateEntry || !templateEntry.template) return
     
@@ -3185,6 +3261,27 @@ const Brandimages = () => {
               </option>
             ))}
           </select>
+          {!selectedIsActive && selectedProfileId && (
+            <button
+              type="button"
+              onClick={() => {
+                const selectedProfile = profiles.find(p => (p.profile_id || p.id) === selectedProfileId);
+                if (selectedProfile) {
+                  setDeleteProfileConfirmData({
+                    profileId: selectedProfileId,
+                    profileName: selectedProfile.profile_name || selectedProfile.website_url || 'this profile',
+                    userId: localStorage.getItem('token') || ''
+                  });
+                  setIsDeleteProfileConfirmOpen(true);
+                }
+              }}
+              className="px-3 py-1.5 rounded-md bg-red-600 text-white text-sm hover:bg-red-700 flex items-center gap-1"
+              title="Delete profile"
+            >
+              <Trash2 size={14} />
+              Delete
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -5151,45 +5248,148 @@ const Brandimages = () => {
           <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-gray-900">Add Website URL</h3>
-              <button onClick={() => setIsWebsiteModalOpen(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+              <button 
+                onClick={() => {
+                  if (!isPollingJob) {
+                    setIsWebsiteModalOpen(false);
+                    setWebsiteUrl('');
+                    setProfileName('');
+                    setWebsiteError('');
+                    setJobStatus('');
+                  }
+                }} 
+                className="text-gray-500 hover:text-gray-700"
+                disabled={isPollingJob}
+              >
+                ✕
+              </button>
             </div>
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="https://example.com"
-                value={websiteUrl}
-                onChange={(e) => setWebsiteUrl(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              />
-              <input
-                type="text"
-                placeholder="Profile name (e.g., Apple Brand)"
-                value={profileName}
-                onChange={(e) => setProfileName(e.target.value)}
-                className="w-full border border-gray-300 rounded-md px-3 py-2"
-              />
-              {websiteError && <div className="text-sm text-red-600">{websiteError}</div>}
-            </div>
-            <div className="flex items-center justify-end gap-2 mt-4">
-              <button onClick={() => setIsWebsiteModalOpen(false)} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200">Cancel</button>
-              <button
-                onClick={async () => {
+            {isPollingJob ? (
+              <div className="space-y-4 py-6">
+                <div className="flex flex-col items-center gap-4">
+                  <div className="relative">
+                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-[#13008B]"></div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="h-8 w-8 rounded-full bg-[#13008B]/10"></div>
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <h4 className="text-lg font-semibold text-gray-900 mb-1">Creating Profile</h4>
+                    <p className="text-sm text-gray-600"></p>
+                    <p className="text-xs text-gray-500 mt-2">This may take a few moments. Please don't close this window.</p>
+                  </div>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div className="bg-[#13008B] h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    placeholder="https://example.com"
+                    value={websiteUrl}
+                    onChange={(e) => setWebsiteUrl(e.target.value)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                    disabled={isAnalyzing}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Profile name (e.g., Apple Brand)"
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2"
+                    disabled={isAnalyzing}
+                  />
+                  {websiteError && <div className="text-sm text-red-600">{websiteError}</div>}
+                </div>
+                <div className="flex items-center justify-end gap-2 mt-4">
+                  <button 
+                    onClick={() => {
+                      setIsWebsiteModalOpen(false);
+                      setWebsiteUrl('');
+                      setProfileName('');
+                      setWebsiteError('');
+                      setJobStatus('');
+                    }} 
+                    className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200"
+                    disabled={isAnalyzing}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
                   try {
                     setWebsiteError(''); setIsAnalyzing(true);
                     const userId = localStorage.getItem('token') || '';
                     if (!userId) { setWebsiteError('Missing user session'); return; }
                     if (!websiteUrl || !websiteUrl.trim()) { setWebsiteError('Please enter a website URL'); return; }
                     if (!profileName || !profileName.trim()) { setWebsiteError('Please enter a profile name'); return; }
-                    // 1) Create profile (backend normalizes URL)
-                    const created = await createBrandProfile({ userId, website: websiteUrl.trim(), profileName: profileName.trim(), setAsActive: true });
-                    const createdId = (created?.profile_id || created?.id || created?.profile?.id);
-                    // 2) GET all profiles, set dropdown, select the created/active one
+                    
+                    // 1) Create profile queue and get job_id
+                    const queueResponse = await createBrandProfileQueue({ 
+                      userId, 
+                      website: websiteUrl.trim(), 
+                      profileName: profileName.trim(), 
+                      setAsActive: true 
+                    });
+                    
+                    const jobId = queueResponse?.job_id || queueResponse?.jobId || queueResponse?.id;
+                    if (!jobId) {
+                      throw new Error('Failed to get job ID from queue response');
+                    }
+                    
+                    // 2) Poll job status until it's "Successfully"
+                    setIsPollingJob(true);
+                    setJobStatus('Processing...');
+                    
+                    let jobComplete = false;
+                    let pollAttempts = 0;
+                    const maxPollAttempts = 120; // 10 minutes max (5 seconds * 120)
+                    const pollInterval = 5000; // 5 seconds
+                    
+                    while (!jobComplete && pollAttempts < maxPollAttempts) {
+                      await new Promise(resolve => setTimeout(resolve, pollInterval));
+                      
+                      try {
+                        const statusResponse = await getJobStatus({ userId, jobId });
+                        const status = statusResponse?.status || statusResponse?.job_status || '';
+                        
+                        if (status.toLowerCase() === 'succeeded' || status.toLowerCase() === 'succeed' || status.toLowerCase() === 'success' || status.toLowerCase() === 'successfully') {
+                          jobComplete = true;
+                          setJobStatus('Completed!');
+                        } else if (status.toLowerCase().includes('fail') || status.toLowerCase().includes('error')) {
+                          throw new Error(statusResponse?.message || 'Job failed');
+                        } else {
+                          setJobStatus(`Processing... (${status})`);
+                        }
+                      } catch (pollError) {
+                        // If it's a 404 or similar, the job might not exist yet, continue polling
+                        if (pollAttempts < 10) {
+                          pollAttempts++;
+                          continue;
+                        }
+                        throw pollError;
+                      }
+                      
+                      pollAttempts++;
+                    }
+                    
+                    if (!jobComplete) {
+                      throw new Error('Job timed out. Please check the profile status manually.');
+                    }
+                    
+                    setIsPollingJob(false);
+                    
+                    // 3) GET all profiles, set dropdown, select the active one
                     const plist = await getBrandProfiles(userId);
                     plist.sort((a,b) => (b?.is_active?1:0) - (a?.is_active?1:0));
                     setProfiles(plist);
-                    const newSelected = createdId || (plist.find(p => p.is_active)?.profile_id || plist[0]?.profile_id || plist[0]?.id || '');
+                    const newSelected = plist.find(p => p.is_active)?.profile_id || plist.find(p => p.is_active)?.id || plist[0]?.profile_id || plist[0]?.id || '';
                     if (newSelected) setSelectedProfileId(newSelected);
-                    // 3) GET details of the selected profile and populate UI
+                    
+                    // 4) GET details of the selected profile and populate UI
                     if (newSelected) {
                       const a = await getBrandProfileById({ userId, profileId: newSelected });
                       const bi = a?.brand_identity || {};
@@ -5209,17 +5409,27 @@ const Brandimages = () => {
                       const vos = a?.voiceover || [];
                       setVoiceovers(Array.isArray(vos) ? vos : []);
                     }
+                    
                     setIsWebsiteModalOpen(false);
+                    setWebsiteUrl('');
+                    setProfileName('');
+                    setJobStatus('');
                   } catch (e) {
-                    setWebsiteError(e?.message || 'Failed to analyze website');
-                  } finally { setIsAnalyzing(false); }
+                    setWebsiteError(e?.message || 'Failed to create profile');
+                    setIsPollingJob(false);
+                    setJobStatus('');
+                  } finally { 
+                    setIsAnalyzing(false);
+                  }
                 }}
-                disabled={isAnalyzing}
-                className={`px-4 py-2 rounded-md text-white ${isAnalyzing ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+                disabled={isAnalyzing || isPollingJob}
+                className={`px-4 py-2 rounded-md text-white ${isAnalyzing || isPollingJob ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
               >
-                {isAnalyzing ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+                {isPollingJob ? 'Processing…' : isAnalyzing ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -5269,6 +5479,57 @@ const Brandimages = () => {
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
                 )}
                 {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Profile Confirmation Modal */}
+      {isDeleteProfileConfirmOpen && deleteProfileConfirmData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Delete Profile</h3>
+              <button
+                onClick={() => {
+                  setIsDeleteProfileConfirmOpen(false)
+                  setDeleteProfileConfirmData(null)
+                }}
+                className="text-gray-500 hover:text-gray-700"
+                disabled={isDeletingProfile}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Are you sure you want to delete <span className="font-semibold">"{deleteProfileConfirmData.profileName}"</span>?
+              </p>
+              <p className="text-xs text-red-600 font-medium">
+                This action cannot be undone. All brand guidelines, templates, and assets associated with this profile will be permanently deleted.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setIsDeleteProfileConfirmOpen(false)
+                  setDeleteProfileConfirmData(null)
+                }}
+                disabled={isDeletingProfile}
+                className="px-4 py-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteProfile}
+                disabled={isDeletingProfile}
+                className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isDeletingProfile && (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
+                )}
+                {isDeletingProfile ? 'Deleting...' : 'Delete Profile'}
               </button>
             </div>
           </div>
