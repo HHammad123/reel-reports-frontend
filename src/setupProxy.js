@@ -111,6 +111,7 @@ module.exports = function setupProxy(app) {
       const imageIndex = req.body.imageIndex || '0';
       
       console.log(`📝 Saving: ${fileName} (Scene ${sceneNumber}, Image ${imageIndex})`);
+      console.log(`   File size: ${(req.file.size / 1024).toFixed(2)} KB`);
 
       // Define temp directory path
       const tempDir = path.join(__dirname, '..', 'public', 'temp', 'edited-images');
@@ -127,10 +128,17 @@ module.exports = function setupProxy(app) {
       // Write file to disk (this will overwrite if file exists)
       fs.writeFileSync(filePath, req.file.buffer);
       
+      // Verify file was written
+      if (!fs.existsSync(filePath)) {
+        throw new Error('File was not written to disk');
+      }
+      
+      const stats = fs.statSync(filePath);
+      console.log(`✅ Image saved successfully: ${filePath}`);
+      console.log(`   File size on disk: ${(stats.size / 1024).toFixed(2)} KB`);
+      
       // Get relative path for frontend
       const relativePath = `/temp/edited-images/${fileName}`;
-      
-      console.log(`✅ Image saved successfully: ${filePath}`);
       
       res.json({
         success: true,
@@ -139,11 +147,13 @@ module.exports = function setupProxy(app) {
         fileName: fileName,
         fullPath: filePath,
         sceneNumber,
-        imageIndex
+        imageIndex,
+        fileSize: stats.size
       });
       
     } catch (error) {
       console.error('❌ Error saving temp image:', error);
+      console.error('   Stack:', error.stack);
       res.status(500).json({ 
         error: 'Failed to save image', 
         message: error.message 

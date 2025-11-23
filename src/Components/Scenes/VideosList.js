@@ -187,9 +187,9 @@ const VideosList = ({ jobId, onClose }) => {
           <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3">
             <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
             <div className="text-lg font-semibold text-[#13008B]">Generating Videos</div>
-            <div className="text-sm text-gray-600">
+            {/* <div className="text-sm text-gray-600">
               {jobProgress.phase ? jobProgress.phase.toUpperCase() : 'PROCESSING'} • {Math.min(100, Math.max(0, Math.round(jobProgress.percent)))}%
-            </div>
+            </div> */}
             <p className="text-xs text-gray-500">Please keep this tab open while we prepare your videos.</p>
           </div>
         </div>

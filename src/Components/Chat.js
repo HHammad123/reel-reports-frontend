@@ -508,6 +508,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [pendingModelType, setPendingModelType] = useState(null);
   // Switch-model popup inputs
   const [switchAvatarUrl, setSwitchAvatarUrl] = useState('');
+  const [switchPresenterPresetId, setSwitchPresenterPresetId] = useState('');
+  const [switchPresenterPresetLabel, setSwitchPresenterPresetLabel] = useState('');
+  const [isLoadingSwitchPresenterPresets, setIsLoadingSwitchPresenterPresets] = useState(false);
   const [switchChartType, setSwitchChartType] = useState('');
   const [switchChartData, setSwitchChartData] = useState('');
   const [showAddSceneModal, setShowAddSceneModal] = useState(false);
@@ -704,9 +707,12 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
   const [assetsTab, setAssetsTab] = useState('templates');
   const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   // Multi-select support for Templates in assets modal
   const [selectedTemplateUrls, setSelectedTemplateUrls] = useState([]);
   const [sessionTemplateAspect, setSessionTemplateAspect] = useState('');
+  const [summaryTemplates, setSummaryTemplates] = useState({});
+  const [isLoadingSummaryTemplates, setIsLoadingSummaryTemplates] = useState(false);
   const [presenterPresets, setPresenterPresets] = useState({
     VEO3: [],
     ANCHOR: []
@@ -736,15 +742,13 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     const scene = scriptRows[currentSceneIndex];
     return String(scene?.model || scene?.mode || '').toUpperCase();
   }, [scriptRows, currentSceneIndex]);
-  const shouldFilterTemplatesByAspect = currentSceneModelUpper === 'SORA' || currentSceneModelUpper === 'PLOTLY';
+  // Always filter templates by aspect ratio from script
   const effectiveTemplateAspect = useMemo(() => {
     if (sessionTemplateAspect) return sessionTemplateAspect;
-    if (shouldFilterTemplatesByAspect) {
-      const prioritized = templateAspectOptions.find(opt => opt && opt !== 'Unspecified');
-      return prioritized || templateAspectOptions[0] || '';
-    }
-    return '';
-  }, [sessionTemplateAspect, shouldFilterTemplatesByAspect, templateAspectOptions]);
+    // Always use aspect ratio from script for all models
+    const prioritized = templateAspectOptions.find(opt => opt && opt !== 'Unspecified');
+    return prioritized || templateAspectOptions[0] || '';
+  }, [sessionTemplateAspect, templateAspectOptions]);
   const matchesAspect = (aspectValue, targetAspect) => {
     if (!targetAspect) return true;
     const normalizedTarget = normalizeTemplateAspectLabel(targetAspect);
@@ -829,15 +833,23 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       console.error('update-scene-visual failed:', err);
     }
   };
+  
   useEffect(() => {
-    if (!showAssetsModal || assetsTab !== 'templates') return;
+    if (!showAssetsModal || assetsTab !== 'templates') {
+      setIsLoadingTemplates(false);
+      return;
+    }
     let cancelled = false;
+    setIsLoadingTemplates(true);
     (async () => {
       try {
         const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
         const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) || '';
         if (!token || !sessionId) {
-          if (!cancelled) setSessionTemplateAspect('');
+          if (!cancelled) {
+            setSessionTemplateAspect('');
+            setIsLoadingTemplates(false);
+          }
           return;
         }
         const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -850,25 +862,35 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         try { data = JSON.parse(text); } catch (_) { data = null; }
         if (cancelled) return;
         if (!resp.ok || !data || typeof data !== 'object') {
-          setSessionTemplateAspect('');
+          if (!cancelled) {
+            setSessionTemplateAspect('');
+            setIsLoadingTemplates(false);
+          }
           return;
         }
         const rawAspect = extractAspectRatioFromSessionPayload(data);
         const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
-        if (normalizedAspect && normalizedAspect !== 'Unspecified') {
-          setSessionTemplateAspect(normalizedAspect);
-          try { console.log('[templates] session aspect ratio detected:', normalizedAspect); } catch (_) { /* noop */ }
-        } else {
-          setSessionTemplateAspect('');
+        if (!cancelled) {
+          if (normalizedAspect && normalizedAspect !== 'Unspecified') {
+            setSessionTemplateAspect(normalizedAspect);
+            try { console.log('[templates] session aspect ratio detected:', normalizedAspect); } catch (_) { /* noop */ }
+          } else {
+            setSessionTemplateAspect('');
+          }
+          // Add a small delay to ensure templates are filtered before hiding loader
+          setTimeout(() => {
+            if (!cancelled) setIsLoadingTemplates(false);
+          }, 100);
         }
       } catch (err) {
         if (!cancelled) {
           setSessionTemplateAspect('');
+          setIsLoadingTemplates(false);
           try { console.warn('Failed to load session aspect ratio:', err); } catch (_) { /* noop */ }
         }
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; setIsLoadingTemplates(false); };
   }, [showAssetsModal, assetsTab]);
   useEffect(() => {
     if (!enablePresenterOptions) {
@@ -4824,11 +4846,26 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       // seed popup fields from current scene
       try {
         setSwitchAvatarUrl('');
+        setSwitchPresenterPresetId('');
+        setSwitchPresenterPresetLabel('');
         setSwitchChartType(scene?.chart_type || scene?.chartType || '');
         const cd = scene?.chart_data || scene?.chartData;
         setSwitchChartData(cd ? (typeof cd === 'string' ? cd : JSON.stringify(cd, null, 2)) : '');
       } catch(_) {}
       setShowModelConfirm(true);
+      
+      // Load presenter presets if switching to Avatar Based or Anchor
+      if (enablePresenterOptions && (desiredModel === 'VEO3' || desiredModel === 'ANCHOR')) {
+        setIsLoadingSwitchPresenterPresets(true);
+        fetchPresenterPresetsForModel(desiredModel)
+          .then(() => {
+            setIsLoadingSwitchPresenterPresets(false);
+          })
+          .catch((err) => {
+            console.warn('Failed to load presenter presets for switch modal:', err);
+            setIsLoadingSwitchPresenterPresets(false);
+          });
+      }
     } catch (_) { /* noop */ }
   };
 
@@ -4945,11 +4982,30 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         target_model: desiredModel,
       };
       // Optional fields per target model
-      if (desiredModel === 'VEO3') {
-        const avatarUrl = switchAvatarUrl || selectedAvatar || '';
-        // Keep presenter options empty; include avatar_url only if provided
-        requestBody.presenter_options = {};
-        if (avatarUrl) requestBody.presenter_options.avatar_url = avatarUrl;
+      if (desiredModel === 'VEO3' || desiredModel === 'ANCHOR') {
+        // Use selected presenter preset from modal
+        if (switchPresenterPresetId) {
+          const selectedPreset = (Array.isArray(presenterPresets[desiredModel]) ? presenterPresets[desiredModel] : []).find(
+            (preset) => String(preset?.preset_id) === String(switchPresenterPresetId)
+          );
+          if (selectedPreset) {
+            requestBody.presenter_options = {
+              preset_id: switchPresenterPresetId,
+              option: switchPresenterPresetLabel || selectedPreset.option || ''
+            };
+            // For ANCHOR models, include anchor_id from the preset
+            if (desiredModel === 'ANCHOR' && selectedPreset?.anchor_id) {
+              requestBody.presenter_options.anchor_id = String(selectedPreset.anchor_id);
+            }
+          } else {
+            requestBody.presenter_options = {
+              preset_id: switchPresenterPresetId,
+              option: switchPresenterPresetLabel || ''
+            };
+          }
+        } else {
+          requestBody.presenter_options = {};
+        }
       }
       if (desiredModel === 'PLOTLY') {
         const chart_type = (switchChartType || scene?.chart_type || scene?.chartType || '').toLowerCase();
@@ -4999,6 +5055,23 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       setSelectedVideoType(videoType);
       setShowModelConfirm(false);
       setPendingModelType(null);
+      setSwitchPresenterPresetId('');
+      setSwitchPresenterPresetLabel('');
+      
+      // If switching to VEO3 or ANCHOR, fetch presenter options
+      if (desiredModel === 'VEO3' || desiredModel === 'ANCHOR') {
+        try {
+          // Clear existing presets for this model to force refresh
+          setPresenterPresets((prev) => ({
+            ...prev,
+            [desiredModel]: []
+          }));
+          // Fetch presenter presets for the new model
+          await fetchPresenterPresetsForModel(desiredModel);
+        } catch (err) {
+          console.warn('Failed to load presenter options after model switch:', err);
+        }
+      }
     } catch (e) {
       console.error('Video type switch failed:', e);
       alert('Failed to switch video type. Please try again.');
@@ -5522,18 +5595,50 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       // Build background_image array if provided
       const backgroundImageArray = (() => {
         if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
-          return backgroundImageArrayOverride;
+          // If backgroundImageArrayOverride is provided, use it directly (for summary templates with template_id and image_url)
+          // Check if it's already in the correct format (has template_id and image_url)
+          return backgroundImageArrayOverride.map(item => {
+            // If it already has template_id and image_url, return as is
+            if (item?.template_id !== undefined || item?.image_url !== undefined) {
+              return {
+                template_id: item?.template_id || '',
+                image_url: item?.image_url || ''
+              };
+            }
+            // Otherwise, convert old format to new format
+            const imageUrl = item?.imageurl || item?.imageUrl || item?.url || '';
+            const templateId = item?.template_id || item?.templateId || item?.imageid || item?.imageId || '';
+            return {
+              template_id: templateId ? String(templateId) : '',
+              image_url: imageUrl ? String(imageUrl) : ''
+            };
+          });
         }
         // If we have a single background image and want to convert to array format
         const bgUrl = backgroundImageOverride || backgroundOverride || targetRow?.background_image || targetRow?.background || '';
         if (bgUrl && typeof bgUrl === 'string' && bgUrl.trim()) {
+          // Check if background_image is already an array
+          if (Array.isArray(targetRow?.background_image) && targetRow.background_image.length > 0) {
+            return targetRow.background_image.map(item => {
+              if (typeof item === 'object' && item !== null) {
+                return {
+                  template_id: item?.template_id || '',
+                  image_url: item?.image_url || item?.imageurl || ''
+                };
+              }
+              return {
+                template_id: '',
+                image_url: typeof item === 'string' ? item : ''
+              };
+            });
+          }
           // Try to get template ID from templateLookupByUrl
           const templateEntry = templateLookupByUrl.get(bgUrl.trim());
           const rawTemplate = templateEntry?.raw || {};
           const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
           return [{
-            imageurl: bgUrl.trim(),
-            imageid: templateId ? String(templateId) : ''
+            template_id: templateId ? String(templateId) : '',
+            image_url: bgUrl.trim()
           }];
         }
         return [];
@@ -5957,6 +6062,60 @@ const saveAnchorPromptTemplate = async () => {
     ).trim().toLowerCase();
     return title === 'summary';
   }, [activeScene]);
+
+  // Fetch summary templates when summary scene is active
+  useEffect(() => {
+    if (!isSummarySceneActive) {
+      setSummaryTemplates({});
+      setIsLoadingSummaryTemplates(false);
+      return;
+    }
+    
+    let cancelled = false;
+    setIsLoadingSummaryTemplates(true);
+    
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (!token) {
+          if (!cancelled) {
+            setSummaryTemplates({});
+            setIsLoadingSummaryTemplates(false);
+          }
+          return;
+        }
+        
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = null; }
+        
+        if (cancelled) return;
+        
+        if (!resp.ok || !data || typeof data !== 'object') {
+          if (!cancelled) {
+            setSummaryTemplates({});
+            setIsLoadingSummaryTemplates(false);
+          }
+          return;
+        }
+        
+        const summaryTemplatesData = data?.summary_templates || {};
+        if (!cancelled) {
+          setSummaryTemplates(summaryTemplatesData);
+          setIsLoadingSummaryTemplates(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSummaryTemplates({});
+          setIsLoadingSummaryTemplates(false);
+          try { console.warn('Failed to load summary templates:', err); } catch (_) { /* noop */ }
+        }
+      }
+    })();
+    
+    return () => { cancelled = true; setIsLoadingSummaryTemplates(false); };
+  }, [isSummarySceneActive]);
 
   const isActiveAnchorModel = activeModelType === 'Anchor';
   const isActiveAvatarModel = activeModelType === 'Avatar Based';
@@ -6633,9 +6792,15 @@ const saveAnchorPromptTemplate = async () => {
         </div>
       )}
       {/* Confirm Model Change Popup */}
-      {showModelConfirm && (
+      {showModelConfirm && (() => {
+        const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
+        const currentModel = (scene?.mode || scene?.model || '').toUpperCase();
+        const targetModel = (pendingModelType === 'Avatar Based') ? 'VEO3' : (pendingModelType === 'Anchor') ? 'ANCHOR' : (pendingModelType === 'Financial' ? 'PLOTLY' : 'SORA');
+        const isAvatarModel = targetModel === 'VEO3' || targetModel === 'ANCHOR';
+        const modalWidth = isAvatarModel && enablePresenterOptions ? 'max-w-2xl' : 'max-w-md';
+        return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
+          <div className={`bg-white w-[92%] ${modalWidth} rounded-lg shadow-xl p-5`}>
             <h3 className="text-lg font-semibold text-[#13008B]">Change Video Type?</h3>
             <div className="mt-3 text-sm text-gray-700">
               {(() => {
@@ -6648,35 +6813,100 @@ const saveAnchorPromptTemplate = async () => {
                   if (u === 'PLOTLY') return 'FINANCIAL';
                   return u || 'UNKNOWN';
                 };
-                const targetModel = (pendingModelType === 'Avatar Based') ? 'VEO3' : (pendingModelType === 'Financial' ? 'PLOTLY' : 'SORA');
+                const targetModel = (pendingModelType === 'Avatar Based') ? 'VEO3' : (pendingModelType === 'Anchor') ? 'ANCHOR' : (pendingModelType === 'Financial' ? 'PLOTLY' : 'SORA');
+                const isAvatarModel = targetModel === 'VEO3' || targetModel === 'ANCHOR';
+                const switchPresenterOptions = isAvatarModel && enablePresenterOptions ? (presenterPresets[targetModel] || []) : [];
                 return (
                   <div>
-      {/* Top loading bar for scene deletion */}
-      {isDeletingScene && (
-        <div className="fixed top-0 left-0 right-0 z-[1000]">
-          <div className="h-1 w-full bg-[#13008B] animate-pulse" />
-          <div className="absolute right-3 top-2 flex items-center gap-2 px-3 py-1 rounded-full bg-white/90 shadow">
-            <div className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs font-medium text-gray-700">Deleting scene…</span>
-          </div>
-        </div>
-      )}
-      {/* Center-screen loader while deleting scene (after confirm) */}
-      {isDeletingScene && !showDeleteConfirm && (
-        <div className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/20">
-          <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
-            <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <div className="text-sm font-medium text-gray-800">Deleting scene…</div>
-          </div>
-        </div>
-      )}
                     <p className="mb-1">Scene {scene?.scene_number || currentSceneIndex + 1}: {scene?.scene_title || '-'}</p>
                     <p className="mb-3">Current model: <span className="font-medium">{modelLabel(currentModel)}</span> → <span className="font-medium">{modelLabel(targetModel)}</span></p>
                     {/* Per-target controls */}
-                    {enablePresenterOptions && pendingModelType === 'Avatar Based' && (
-                      <div className="mb-2">
-                        <div className="text-xs text-gray-600 mb-1">Presenter Options</div>
-                        <input value={switchAvatarUrl} onChange={(e)=>setSwitchAvatarUrl(e.target.value)} placeholder="Avatar URL (optional)" className="w-full px-3 py-2 border rounded" />
+                    {enablePresenterOptions && isAvatarModel && (
+                      <div className="mb-3">
+                        <div className="text-sm font-medium text-gray-700 mb-2">Presenter Options</div>
+                        {isLoadingSwitchPresenterPresets ? (
+                          <div className="flex items-center justify-center py-4">
+                            <div className="w-6 h-6 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                            <span className="ml-2 text-sm text-gray-600">Loading presenter options...</span>
+                          </div>
+                        ) : switchPresenterOptions.length === 0 ? (
+                          <div className="text-sm text-gray-500 py-2">No presenter options available.</div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+                            {switchPresenterOptions.map((po) => {
+                              const value = po?.preset_id != null ? String(po.preset_id) : String(po.option || '');
+                              const isSelected = String(switchPresenterPresetId || '') === value;
+                              const previewUrl = po.sample_video || '';
+                              const previewType = String(po.sample_video_type || '').toLowerCase();
+                              const inferPreviewType = (url) => {
+                                if (!url || typeof url !== 'string') return '';
+                                const clean = url.split('?')[0].toLowerCase();
+                                const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                                const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                                if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                                if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                                return '';
+                              };
+                              const resolvedType = previewType || inferPreviewType(previewUrl);
+                              const isVideo = resolvedType === 'video';
+                              const isImage = resolvedType === 'image';
+                              return (
+                                <button
+                                  key={value}
+                                  type="button"
+                                  onClick={() => {
+                                    setSwitchPresenterPresetId(value);
+                                    setSwitchPresenterPresetLabel(po.option || '');
+                                  }}
+                                  className={`relative flex flex-col overflow-hidden rounded-lg border transition-shadow ${
+                                    isSelected
+                                      ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
+                                      : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
+                                  }`}
+                                >
+                                  {isSelected && (
+                                    <span className="absolute right-1 top-1 rounded-full bg-[#13008B] px-1.5 py-0.5 text-[10px] font-medium text-white z-10">
+                                      ✓
+                                    </span>
+                                  )}
+                                  <div className="flex-1 bg-black/5 aspect-video">
+                                    {previewUrl ? (
+                                      isVideo ? (
+                                        <video
+                                          className="h-full w-full object-cover"
+                                          muted
+                                          playsInline
+                                          loop
+                                        >
+                                          <source src={previewUrl} type="video/mp4" />
+                                        </video>
+                                      ) : isImage ? (
+                                        <img
+                                          src={previewUrl}
+                                          alt={`${po.option} preview`}
+                                          className="h-full w-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex h-full w-full items-center justify-center bg-gray-100 text-[10px] text-gray-500">
+                                          Preview
+                                        </div>
+                                      )
+                                    ) : (
+                                      <div className="flex h-full w-full items-center justify-center bg-gray-100 text-[10px] text-gray-500">
+                                        No preview
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="px-2 py-1.5 bg-white">
+                                    <span className="text-xs font-semibold text-gray-800 line-clamp-1">
+                                      {po.option}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                     {pendingModelType === 'Infographic' && (
@@ -6717,7 +6947,8 @@ const saveAnchorPromptTemplate = async () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
       {/* Custom Description Modal */}
       {showCustomDescModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
@@ -7831,10 +8062,12 @@ const saveAnchorPromptTemplate = async () => {
                         const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
                         const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                         const titleLower = String(scene?.scene_title || scene?.sceneTitle || '').trim().toLowerCase();
-                        if (titleLower === 'summary') return null;
-                        if (modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3' && modelUpper !== 'SORA') return null;
+                        const isSummary = titleLower === 'summary';
+                        // Show for summary scripts OR for ANCHOR/VEO3/SORA models
+                        if (!isSummary && modelUpper !== 'ANCHOR' && modelUpper !== 'VEO3' && modelUpper !== 'SORA') return null;
                         const genVal = (typeof scene?.gen_image === 'boolean') ? scene.gen_image : false;
                         // In Script Editor, keep toggle fully visible even if not actively editing
+                        // For summary scripts, don't show the toggle
                         const disabled = !isEditingScene;
                         const base = `inline-flex items-center gap-3 px-2 py-1 rounded-full transition-colors ${genVal ? 'bg-green-100' : 'bg-gray-100'}`;
                         const cls = disabled ? base : base;
@@ -7853,12 +8086,14 @@ const saveAnchorPromptTemplate = async () => {
                           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
                             <div className="flex items-center justify-between mb-4">
                               <h4 className="text-lg font-semibold text-gray-800">Select a Background Image</h4>
-                              <button type="button" onClick={onToggle} className={cls} title="Toggle Generate Image" disabled={disabled}>
-                                <span className="text-sm text-gray-800">{genVal ? 'True' : 'False'}</span>
-                                <span className={`relative inline-flex w-10 h-5 rounded-full ${genVal ? 'bg-green-500' : 'bg-gray-400'}`}>
-                                  <span className={`absolute top-0.5 ${genVal ? 'right-0.5' : 'left-0.5'} w-4 h-4 bg-white rounded-full transition-all`} />
-                                </span>
-                              </button>
+                              {!isSummary && (
+                                <button type="button" onClick={onToggle} className={cls} title="Toggle Generate Image" disabled={disabled}>
+                                  <span className="text-sm text-gray-800">{genVal ? 'True' : 'False'}</span>
+                                  <span className={`relative inline-flex w-10 h-5 rounded-full ${genVal ? 'bg-green-500' : 'bg-gray-400'}`}>
+                                    <span className={`absolute top-0.5 ${genVal ? 'right-0.5' : 'left-0.5'} w-4 h-4 bg-white rounded-full transition-all`} />
+                                  </span>
+                                </button>
+                              )}
                             </div>
                             {(() => { const bg = scene?.background || scene?.background_image || ''; if (!bg) return null; return (
                               <div className="mb-3">
@@ -7868,64 +8103,69 @@ const saveAnchorPromptTemplate = async () => {
                                 </div>
                               </div>
                             ); })()}
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
-                              {refs.length === 0 ? (
-                                <p className="text-sm text-gray-500 col-span-4">No background images yet. Add one below.</p>
-                              ) : (
-                                refs.map((url, idx) => (
-                                  <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${ (selectedRefImages || []).includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300' } overflow-visible transition-colors`} title={url} onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try {
-                                      const isSora = modelUpper === 'SORA';
-                                      const isAnchor = modelUpper === 'ANCHOR';
-                                      
-                                      if (isSora) {
-                                        // For SORA, allow up to 2 template selections
-                                        const currentSelected = selectedRefImages || [];
-                                        const exists = currentSelected.includes(url);
-                                        let newSelected;
-                                        if (exists) {
-                                          newSelected = currentSelected.filter(u => u !== url);
-                                        } else {
-                                          const next = [...currentSelected, url];
-                                          newSelected = next.length > 2 ? next.slice(-2) : next;
-                                        }
-                                        setSelectedRefImages(newSelected);
-                                        if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                          const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
-                                          s.ref_image = newSelected;
-                                          rows[currentSceneIndex] = s; setScriptRows(rows);
-                                          try { 
-                                            const backgroundImageArray = newSelected.map((u) => ({
-                                              image_url: u,
-                                              template_id: ''
-                                            }));
-                                            await updateSceneGenImageFlag(currentSceneIndex, { 
-                                              refImagesOverride: newSelected,
-                                              backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined
-                                            }); 
-                                          } catch(_) {}
-                                        }
-                                      } else {
-                                        // For ANCHOR/VEO3, background is a single string
-                                        setSelectedRefImages([url]);
-                                        if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                          const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
-                                          s.background = url; s.background_image = url;
-                                          rows[currentSceneIndex] = s; setScriptRows(rows);
-                                          try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: url, backgroundImageOverride: url }); } catch(_) {}
-                                        }
-                                      }
-                                    } catch(_) {}
-                                  }}>
-                                    <img src={url} alt={`BG ${idx+1}`} className="w-full h-full object-cover" />
-                                    <button className="pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" title="View full size" onClick={(e)=>{ e.stopPropagation(); try { openLightbox(url);} catch(_){} }}>
-                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17" /></svg>
-                                    </button>
-                                  </div>
-                                ))
-                              )}
-                            </div>
+                            {(() => {
+                              // Default behavior: show refs
+                              return (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4">
+                                  {refs.length === 0 ? (
+                                    <p className="text-sm text-gray-500 col-span-4">No background images yet. Add one below.</p>
+                                  ) : (
+                                    refs.map((url, idx) => (
+                                      <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${ (selectedRefImages || []).includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300' } overflow-visible transition-colors`} title={url} onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          const isSora = modelUpper === 'SORA';
+                                          const isAnchor = modelUpper === 'ANCHOR';
+                                          
+                                          if (isSora) {
+                                            // For SORA, allow up to 2 template selections
+                                            const currentSelected = selectedRefImages || [];
+                                            const exists = currentSelected.includes(url);
+                                            let newSelected;
+                                            if (exists) {
+                                              newSelected = currentSelected.filter(u => u !== url);
+                                            } else {
+                                              const next = [...currentSelected, url];
+                                              newSelected = next.length > 2 ? next.slice(-2) : next;
+                                            }
+                                            setSelectedRefImages(newSelected);
+                                            if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                              const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
+                                              s.ref_image = newSelected;
+                                              rows[currentSceneIndex] = s; setScriptRows(rows);
+                                              try { 
+                                                const backgroundImageArray = newSelected.map((u) => ({
+                                                  image_url: u,
+                                                  template_id: ''
+                                                }));
+                                                await updateSceneGenImageFlag(currentSceneIndex, { 
+                                                  refImagesOverride: newSelected,
+                                                  backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined
+                                                }); 
+                                              } catch(_) {}
+                                            }
+                                          } else {
+                                            // For ANCHOR/VEO3, background is a single string
+                                            setSelectedRefImages([url]);
+                                            if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+                                              const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
+                                              s.background = url; s.background_image = url;
+                                              rows[currentSceneIndex] = s; setScriptRows(rows);
+                                              try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: url, backgroundImageOverride: url }); } catch(_) {}
+                                            }
+                                          }
+                                        } catch(_) {}
+                                      }}>
+                                        <img src={url} alt={`BG ${idx+1}`} className="w-full h-full object-cover" />
+                                        <button className="pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" title="View full size" onClick={(e)=>{ e.stopPropagation(); try { openLightbox(url);} catch(_){} }}>
+                                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17" /></svg>
+                                        </button>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              );
+                            })()}
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => {
@@ -7934,6 +8174,7 @@ const saveAnchorPromptTemplate = async () => {
                                   try {
                                     setAssetsTab('templates');
                                     setShowAssetsModal(true);
+                                    setIsLoadingTemplates(true);
                                     const cacheKey = `brand_assets_images:${token}`; const cached = localStorage.getItem(cacheKey);
                                     if (cached) {
                                       const data = JSON.parse(cached);
@@ -7947,7 +8188,7 @@ const saveAnchorPromptTemplate = async () => {
                                       setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
                                     }
                                   } catch(_) { setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] }); }
-                                  finally { setIsAssetsLoading(false); }
+                                  // Note: isLoadingTemplates will be set to false by the useEffect that loads aspect ratio
                                 }}
                                 className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
                                 title="Choose from templates"
@@ -9025,9 +9266,14 @@ const saveAnchorPromptTemplate = async () => {
               }}
             />
             <div className="p-4 overflow-y-auto">
-              {isAssetsLoading ? (
+              {(isAssetsLoading || (assetsTab === 'templates' && isLoadingTemplates)) ? (
                 <div className="flex items-center justify-center py-16">
-                  <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm text-gray-600">
+                      {assetsTab === 'templates' && isLoadingTemplates ? 'Loading templates by aspect ratio...' : 'Loading assets...'}
+                    </span>
+                  </div>
                 </div>
               ) : (() => {
                 const uploadTypeMap = {
@@ -9039,16 +9285,44 @@ const saveAnchorPromptTemplate = async () => {
                 };
                 const currentUploadType = uploadTypeMap[assetsTab] || '';
                 const isTemplateTab = assetsTab === 'templates';
+                
+                // For summary scripts, show summary templates if available
+                let summaryTemplateList = [];
+                if (isTemplateTab && isSummarySceneActive && effectiveTemplateAspect) {
+                  const normalizedAspect = normalizeTemplateAspectLabel(effectiveTemplateAspect);
+                  const aspectTemplates = summaryTemplates[normalizedAspect];
+                  const presetTemplates = Array.isArray(aspectTemplates?.preset_templates) ? aspectTemplates.preset_templates : [];
+                  summaryTemplateList = presetTemplates.map((template, idx) => ({
+                    id: template?.template_id || `summary-${idx}`,
+                    imageUrl: template?.image_url || '',
+                    templateId: template?.template_id || '',
+                    aspect: normalizedAspect,
+                    label: `Summary Template ${idx + 1}`,
+                    isSummaryTemplate: true
+                  })).filter(item => item.imageUrl);
+                }
+                
                 const rawList = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
                 const templateList = isTemplateTab ? filteredTemplateAssets : [];
-                const list = isTemplateTab ? templateList : rawList;
+                // For summary scripts, prioritize summary templates, otherwise use regular templates
+                const list = isTemplateTab 
+                  ? (summaryTemplateList.length > 0 ? summaryTemplateList : templateList)
+                  : rawList;
                 const emptyMessage = isTemplateTab
-                  ? (normalizedTemplateAssets.length === 0 ? 'No templates found.' : 'No templates available for the selected aspect ratio.')
+                  ? (isSummarySceneActive && summaryTemplateList.length === 0 && normalizedTemplateAssets.length === 0
+                      ? 'No summary templates available for the selected aspect ratio.'
+                      : (normalizedTemplateAssets.length === 0 ? 'No templates found.' : 'No templates available for the selected aspect ratio.'))
                   : 'No assets found.';
                 return (
                   <>
+                    {isTemplateTab && isSummarySceneActive && isLoadingSummaryTemplates && (
+                      <div className="flex items-center justify-center py-4 mb-4">
+                        <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                        <span className="ml-3 text-sm text-gray-600">Loading summary templates...</span>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                      {currentUploadType && (
+                      {currentUploadType && !isSummarySceneActive && (
                         <button
                           type="button"
                           onClick={() => { setPendingUploadType(currentUploadType); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
@@ -9079,6 +9353,10 @@ const saveAnchorPromptTemplate = async () => {
                               const exists = prev.includes(imageUrl);
                               if (exists) {
                                 return prev.filter(u => u !== imageUrl);
+                              }
+                              // For summary scripts, only allow one template - replace previous selection
+                              if (isSummarySceneActive) {
+                                return [imageUrl];
                               }
                               // For VEO3/ANCHOR, only allow one template - replace previous selection
                               if (isVEO3) {
@@ -9152,25 +9430,61 @@ const saveAnchorPromptTemplate = async () => {
                       const isPlotly = modelUpper === 'PLOTLY';
                       
                       if (assetsTab === 'templates') {
-                        // For templates, use selected templates (up to 2 for SORA, 1 for VEO3/ANCHOR)
-                        const templatesToUse = isVEO3 && selectedTemplateUrls.length > 0 
-                          ? [selectedTemplateUrls[0]] 
-                          : (isSora && selectedTemplateUrls.length > 0 
-                            ? selectedTemplateUrls.slice(0, 2) 
-                            : (selectedTemplateUrls.length > 0 ? selectedTemplateUrls : (selectedAssetUrl ? [selectedAssetUrl] : [])));
+                        // For templates, use selected templates (up to 2 for SORA, 1 for VEO3/ANCHOR, 1 for summary)
+                        const templatesToUse = isSummarySceneActive && selectedTemplateUrls.length > 0
+                          ? [selectedTemplateUrls[0]]
+                          : (isVEO3 && selectedTemplateUrls.length > 0 
+                            ? [selectedTemplateUrls[0]] 
+                            : (isSora && selectedTemplateUrls.length > 0 
+                              ? selectedTemplateUrls.slice(0, 2) 
+                              : (selectedTemplateUrls.length > 0 ? selectedTemplateUrls : (selectedAssetUrl ? [selectedAssetUrl] : []))));
                         
                         if (templatesToUse.length === 0) return;
                         
-                        if (isAnchor || isPlotly) {
+                        // For summary scripts, find the selected template to get template_id
+                        if (isSummarySceneActive) {
+                          const selectedImageUrl = templatesToUse[0];
+                          // Find the template object from summary templates
+                          const normalizedAspect = normalizeTemplateAspectLabel(effectiveTemplateAspect);
+                          const aspectTemplates = summaryTemplates[normalizedAspect];
+                          const presetTemplates = Array.isArray(aspectTemplates?.preset_templates) ? aspectTemplates.preset_templates : [];
+                          const selectedTemplate = presetTemplates.find(t => t?.image_url === selectedImageUrl);
+                          
+                          // Store as background_image array with template_id and image_url
+                          const backgroundImageArray = selectedTemplate ? [{
+                            template_id: selectedTemplate.template_id || '',
+                            image_url: selectedTemplate.image_url || selectedImageUrl
+                          }] : [{
+                            template_id: '',
+                            image_url: selectedImageUrl
+                          }];
+                          
+                          scene.background = selectedImageUrl;
+                          scene.background_image = backgroundImageArray;
+                          
+                          rows[currentSceneIndex] = scene;
+                          setScriptRows(rows);
+                          setSelectedRefImages([selectedImageUrl]);
+                          
+                          // Update scene with background_image array format - call API only once
+                          try {
+                            await updateSceneGenImageFlag(currentSceneIndex, {
+                              backgroundImageArrayOverride: backgroundImageArray
+                            });
+                          } catch (_) {}
+                        } else if (isAnchor || isPlotly) {
                           scene.background = templatesToUse[0]; 
                           scene.background_image = templatesToUse[0];
+                          rows[currentSceneIndex] = scene;
+                          setScriptRows(rows);
+                          setSelectedRefImages(templatesToUse);
                         } else {
                           scene.ref_image = templatesToUse;
+                          rows[currentSceneIndex] = scene;
+                          setScriptRows(rows);
+                          setSelectedRefImages(templatesToUse);
+                          if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                         }
-                        rows[currentSceneIndex] = scene;
-                        setScriptRows(rows);
-                        setSelectedRefImages(templatesToUse);
-                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       } else {
                         // For non-templates, use single selected asset
                         const chosen = selectedAssetUrl;

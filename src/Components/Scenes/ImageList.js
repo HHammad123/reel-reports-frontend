@@ -71,8 +71,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [transitionPresets, setTransitionPresets] = useState([]);
   // State for scene-specific advanced options
   const [sceneAdvancedOptions, setSceneAdvancedOptions] = useState({}); // { sceneNumber: { logoNeeded: false, voiceUrl: '', voiceOption: '', transitionPreset: null, transitionCustom: null, transitionCustomPreset: null, customDescription: '', customPreservationNotes: {}, subtitleSceneOnly: false, rememberCustomPreset: false, customPresetName: '' } }
-  // Global subtitles toggle (applies to all scenes)
-  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
+  // Global subtitles toggle (applies to all scenes) - default to true
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   // State for accordion visibility
   const [showAdvancedOptions, setShowAdvancedOptions] = useState({}); // { sceneNumber: { assets: false, transitions: false } }
   // State for "Design your own" tabs
@@ -527,6 +527,27 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   }
                 }
                 
+                // Get avatar_urls for VEO3 scenes
+                let avatarUrls = [];
+                if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                  const scene = veo3ScriptScenesByNumber[sceneNumber];
+                  avatarUrls = Array.isArray(scene?.avatar_urls)
+                    ? scene.avatar_urls.map((av) => {
+                        if (typeof av === 'string') return av.trim();
+                        return (
+                          av?.imageurl ||
+                          av?.imageUrl ||
+                          av?.image_url ||
+                          av?.url ||
+                          av?.src ||
+                          av?.link ||
+                          av?.avatar_url ||
+                          ''
+                        );
+                      }).filter(url => url && typeof url === 'string' && url.trim())
+                    : [];
+                }
+                
                 const meta = {
                   description: it?.desc || it?.description || it?.scene_description || '',
                   narration: it?.narration || it?.voiceover || '',
@@ -537,6 +558,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   imageVersionData: imagesContainer,
                   imageFrames: arr,
                   isEditable: true,
+                  avatar_urls: avatarUrls, // Store avatar_urls for VEO3
                   prompts: {
                     opening_frame: normalizePromptFields(
                       verObj?.opening_frame ||
@@ -643,83 +665,84 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           pushRow(sc?.scene_number ?? (j + 1), sc?.scene_title || sc?.title, refs, meta);
         });
       }
-      // Add any remaining VEO3 script scenes (with avatar_urls) that don't have image arrays yet
-      // Only use avatar_urls, exclude background_image
-      if (veo3ScriptScenesByNumber && typeof veo3ScriptScenesByNumber === 'object') {
-        Object.entries(veo3ScriptScenesByNumber).forEach(([key, scene]) => {
-          if (!scene || typeof scene !== 'object') return;
-          const num =
-            scene?.scene_number ||
-            scene?.scene_no ||
-            scene?.sceneNo ||
-            scene?.scene ||
-            (Number.isFinite(Number(key)) ? Number(key) : undefined);
-          if (num == null || usedSceneNumbers.has(num)) return;
-          
-          // Get background_image URLs to exclude them
-          const backgroundImageUrls = new Set();
-          if (Array.isArray(scene?.background_image)) {
-            scene.background_image.forEach((bg) => {
-              if (bg && typeof bg === 'object') {
-                const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || bg?.src || bg?.link || '';
-                if (url && typeof url === 'string') backgroundImageUrls.add(url.trim());
-              } else if (typeof bg === 'string' && bg.trim()) {
-                backgroundImageUrls.add(bg.trim());
+          // Add any remaining VEO3 script scenes (with avatar_urls) that don't have image arrays yet
+          // Only use avatar_urls, exclude background_image
+          if (veo3ScriptScenesByNumber && typeof veo3ScriptScenesByNumber === 'object') {
+            Object.entries(veo3ScriptScenesByNumber).forEach(([key, scene]) => {
+              if (!scene || typeof scene !== 'object') return;
+              const num =
+                scene?.scene_number ||
+                scene?.scene_no ||
+                scene?.sceneNo ||
+                scene?.scene ||
+                (Number.isFinite(Number(key)) ? Number(key) : undefined);
+              if (num == null || usedSceneNumbers.has(num)) return;
+              
+              // Get background_image URLs to exclude them
+              const backgroundImageUrls = new Set();
+              if (Array.isArray(scene?.background_image)) {
+                scene.background_image.forEach((bg) => {
+                  if (bg && typeof bg === 'object') {
+                    const url = bg?.imageurl || bg?.imageUrl || bg?.image_url || bg?.url || bg?.src || bg?.link || '';
+                    if (url && typeof url === 'string') backgroundImageUrls.add(url.trim());
+                  } else if (typeof bg === 'string' && bg.trim()) {
+                    backgroundImageUrls.add(bg.trim());
+                  }
+                });
               }
+              
+              // Collect URLs and filter out background_image
+              const collectedUrls = collectUrls(scene).filter(url => {
+                const trimmed = typeof url === 'string' ? url.trim() : '';
+                return trimmed && !backgroundImageUrls.has(trimmed);
+              });
+              
+              // Get avatar_urls
+              const avatarUrls = Array.isArray(scene?.avatar_urls)
+                ? scene.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim())
+                : [];
+              
+              // Combine, removing duplicates and background_image URLs
+              const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
+              const meta = {
+                description: scene?.desc || scene?.description || scene?.scene_description || '',
+                narration: scene?.narration || scene?.voiceover || '',
+                textToBeIncluded: scene?.text_to_be_included || scene?.textToBeIncluded || scene?.include_text || '',
+                model: scene?.model || scene?.mode || '',
+                avatar_urls: avatarUrls, // Store avatar_urls for VEO3
+                prompts: {
+                  opening_frame: normalizePromptFields(
+                    scene?.v1?.opening_frame ||
+                      scene?.v1?.prompts?.opening_frame ||
+                      scene?.opening_frame ||
+                      scene?.prompts?.opening_frame ||
+                      {}
+                  ),
+                  closing_frame: normalizePromptFields(
+                    scene?.v1?.closing_frame ||
+                      scene?.v1?.prompts?.closing_frame ||
+                      scene?.closing_frame ||
+                      scene?.prompts?.closing_frame ||
+                      {}
+                  )
+                },
+                isEditable: false
+              };
+              pushRow(num, scene?.scene_title || scene?.title, refs, meta);
             });
           }
-          
-          // Collect URLs and filter out background_image
-          const collectedUrls = collectUrls(scene).filter(url => {
-            const trimmed = typeof url === 'string' ? url.trim() : '';
-            return trimmed && !backgroundImageUrls.has(trimmed);
-          });
-          
-          // Get avatar_urls
-          const avatarUrls = Array.isArray(scene?.avatar_urls)
-            ? scene.avatar_urls.map((av) => {
-                if (typeof av === 'string') return av.trim();
-                return (
-                  av?.imageurl ||
-                  av?.imageUrl ||
-                  av?.image_url ||
-                  av?.url ||
-                  av?.src ||
-                  av?.link ||
-                  av?.avatar_url ||
-                  ''
-                );
-              }).filter(url => url && typeof url === 'string' && url.trim())
-            : [];
-          
-          // Combine, removing duplicates and background_image URLs
-          const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
-          const meta = {
-            description: scene?.desc || scene?.description || scene?.scene_description || '',
-            narration: scene?.narration || scene?.voiceover || '',
-            textToBeIncluded: scene?.text_to_be_included || scene?.textToBeIncluded || scene?.include_text || '',
-            model: scene?.model || scene?.mode || '',
-            prompts: {
-              opening_frame: normalizePromptFields(
-                scene?.v1?.opening_frame ||
-                  scene?.v1?.prompts?.opening_frame ||
-                  scene?.opening_frame ||
-                  scene?.prompts?.opening_frame ||
-                  {}
-              ),
-              closing_frame: normalizePromptFields(
-                scene?.v1?.closing_frame ||
-                  scene?.v1?.prompts?.closing_frame ||
-                  scene?.closing_frame ||
-                  scene?.prompts?.closing_frame ||
-                  {}
-              )
-            },
-            isEditable: false
-          };
-          pushRow(num, scene?.scene_title || scene?.title, refs, meta);
-        });
-      }
       return mapped;
     };
 
@@ -860,6 +883,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   setTransitionPresets(validPresets);
                   console.log('✅ Transition presets loaded:', validPresets.length, 'presets');
                   console.log('📋 Presets names:', validPresets.map(p => p.name || p.preset_name));
+                  
+                  // Set first preset as default for all non-VEO3 scenes
+                  if (validPresets.length > 0 && sessionImages.length > 0) {
+                    const firstPreset = validPresets[0];
+                    setSceneAdvancedOptions(prev => {
+                      const updated = { ...prev };
+                      sessionImages.forEach(row => {
+                        const sceneNumber = row?.scene_number || 1;
+                        const modelUpper = String(row?.model || '').toUpperCase();
+                        const isVEO3 = modelUpper === 'VEO3';
+                        
+                        // Only set default for non-VEO3 scenes that don't already have a preset
+                        if (!isVEO3 && (!updated[sceneNumber] || !updated[sceneNumber].transitionPreset)) {
+                          updated[sceneNumber] = {
+                            ...updated[sceneNumber],
+                            transitionPreset: firstPreset,
+                            transitionCustom: null
+                          };
+                        }
+                      });
+                      return updated;
+                    });
+                  }
                 } else {
                   console.warn('⚠️ No valid presets found. Response:', presetsData);
                   console.warn('⚠️ Presets array:', presetsArray);
@@ -1014,6 +1060,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       setTransitionPresets(validPresets);
                       console.log('✅ Transition presets loaded:', validPresets.length, 'presets');
                       console.log('📋 Presets names:', validPresets.map(p => p.name || p.preset_name));
+                      
+                      // Set first preset as default for all non-VEO3 scenes
+                      if (validPresets.length > 0 && sessionImages && sessionImages.length > 0) {
+                        const firstPreset = validPresets[0];
+                        setSceneAdvancedOptions(prev => {
+                          const updated = { ...prev };
+                          sessionImages.forEach(row => {
+                            const sceneNumber = row?.scene_number || 1;
+                            const modelUpper = String(row?.model || '').toUpperCase();
+                            const isVEO3 = modelUpper === 'VEO3';
+                            
+                            // Only set default for non-VEO3 scenes that don't already have a preset
+                            if (!isVEO3 && (!updated[sceneNumber] || !updated[sceneNumber].transitionPreset)) {
+                              updated[sceneNumber] = {
+                                ...updated[sceneNumber],
+                                transitionPreset: firstPreset,
+                                transitionCustom: null
+                              };
+                            }
+                          });
+                          return updated;
+                        });
+                      }
                     } else {
                       console.warn('⚠️ No valid presets found. Response:', presetsData);
                       console.warn('⚠️ Presets array:', presetsArray);
@@ -1656,6 +1725,44 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     setActiveImageTab(0);
   }, [selected?.sceneNumber, selected?.scene_number, selected?.index]);
 
+  // Set first transition preset and default voice option for all non-VEO3 scenes when presets and rows are loaded
+  useEffect(() => {
+    if (transitionPresets.length > 0 && rows.length > 0) {
+      const firstPreset = transitionPresets[0];
+      setSceneAdvancedOptions(prev => {
+        const updated = { ...prev };
+        let hasChanges = false;
+        
+        rows.forEach(row => {
+          const sceneNumber = row?.scene_number || 1;
+          const modelUpper = String(row?.model || '').toUpperCase();
+          const isVEO3 = modelUpper === 'VEO3';
+          const isAnchorSoraPlotly = modelUpper === 'ANCHOR' || modelUpper === 'SORA' || modelUpper === 'PLOTLY';
+          
+          const currentOptions = updated[sceneNumber] || {};
+          const needsPreset = !isVEO3 && !currentOptions.transitionPreset;
+          const needsVoice = isAnchorSoraPlotly && !currentOptions.voiceOption && !currentOptions.voiceUrl;
+          
+          if (needsPreset || needsVoice) {
+            updated[sceneNumber] = {
+              ...currentOptions,
+              ...(needsPreset && {
+                transitionPreset: firstPreset,
+                transitionCustom: null
+              }),
+              ...(needsVoice && {
+                voiceOption: 'male'
+              })
+            };
+            hasChanges = true;
+          }
+        });
+        
+        return hasChanges ? updated : prev;
+      });
+    }
+  }, [transitionPresets, rows]);
+
   const loadImageElement = (src) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -1861,23 +1968,144 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         return failed;
       }
 
+      // Helper function to capture and save a single container
+      const captureAndSaveContainer = async (sceneNumber, containerIndex, containerType = 'image') => {
+        try {
+          // Build selector based on container type
+          const indexAttr = containerType === 'avatar' ? 'avatar' : String(containerIndex);
+          const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${indexAttr}"]`;
+          
+          console.log(`📷 Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Looking for container...`);
+          
+          let container = document.querySelector(selector);
+          
+          // If not found, try waiting a bit and retry (DOM might not be ready)
+          if (!container) {
+            console.log(`⏳ Container not found immediately, waiting 500ms and retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            container = document.querySelector(selector);
+          }
+          
+          if (!container) {
+            console.warn(`⚠️ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Container not found in DOM (${selector})`);
+            const allContainers = document.querySelectorAll('[data-image-container]');
+            console.log(`🔍 Available containers: ${allContainers.length}`);
+            allContainers.forEach((c, idx) => {
+              const scene = c.getAttribute('data-scene-number');
+              const index = c.getAttribute('data-image-index');
+              console.log(`  Container ${idx}: scene=${scene}, index=${index}`);
+            });
+            return false;
+          }
+          
+          console.log(`📸 Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Capturing with html2canvas...`);
+          
+          // Capture the container with html2canvas (includes image + text + overlays with exact positioning)
+          const canvas = await html2canvas(container, {
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: null,
+            scale: 2,  // High quality (2x resolution)
+            logging: false,  // Disable html2canvas internal logging
+            windowWidth: container.scrollWidth,
+            windowHeight: container.scrollHeight
+          });
+          
+          // Convert canvas to blob
+          const blob = await new Promise((resolve) => {
+            canvas.toBlob((blob) => {
+              resolve(blob);
+            }, 'image/png', 1.0);
+          });
+          
+          if (!blob) {
+            console.warn(`⚠️ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Failed to create blob`);
+            return false;
+          }
+          
+          // Generate filename
+          const fileName = containerType === 'avatar' 
+            ? `scene-${sceneNumber}-avatar.png`
+            : `scene-${sceneNumber}-image-${containerIndex + 1}.png`;
+          
+          // Save to temp folder via backend API (NO browser download)
+          const file = new File([blob], fileName, { type: 'image/png' });
+          const formData = new FormData();
+          formData.append('image', file);
+          formData.append('fileName', fileName);
+          formData.append('sceneNumber', sceneNumber);
+          formData.append('imageIndex', containerType === 'avatar' ? 'avatar' : containerIndex);
+
+          console.log(`📤 Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Uploading to temp folder...`);
+          console.log(`   File: ${fileName}, Size: ${(blob.size / 1024).toFixed(2)} KB`);
+          
+          // Use fetch with explicit error handling to prevent any navigation/reload
+          let saveResponse;
+          try {
+            saveResponse = await fetch('/api/save-temp-image', {
+              method: 'POST',
+              body: formData,
+              // Ensure no redirects or navigation
+              redirect: 'manual',
+              // Prevent any default behaviors
+              credentials: 'same-origin'
+            });
+          } catch (fetchError) {
+            // Catch network errors without causing navigation
+            console.error(`❌ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Network error -`, fetchError);
+            return false;
+          }
+
+          if (saveResponse && saveResponse.ok) {
+            try {
+              const responseData = await saveResponse.json().catch(() => ({}));
+              console.log(`✅ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Saved successfully`);
+              console.log(`   Path: ${responseData.path || fileName}`);
+              return true;
+            } catch (jsonError) {
+              console.error(`❌ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Error parsing response -`, jsonError);
+              return false;
+            }
+          } else {
+            try {
+              const errorText = saveResponse ? await saveResponse.text().catch(() => 'Unknown error') : 'No response';
+              console.error(`❌ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Save failed (${saveResponse?.status || 'unknown'}): ${errorText}`);
+              return false;
+            } catch (textError) {
+              console.error(`❌ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Save failed -`, textError);
+              return false;
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Scene ${sceneNumber}, ${containerType === 'avatar' ? 'Avatar' : `Image ${containerIndex + 1}`}: Error -`, error);
+          return false;
+        }
+      };
+
       // Iterate through ALL rows (scenes)
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
+        const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
         const sceneImages = getSceneImages(row);
         const images = sceneImages;
+        
+        // Check for avatars (VEO3/ANCHOR scenes)
+        const avatarUrls = Array.isArray(row?.avatar_urls) ? row.avatar_urls.filter(Boolean) : [];
+        const hasAvatar = isVEO3 && avatarUrls.length > 0;
 
-        console.log(`\n🎬 Processing Scene ${sceneNumber} (${images.length} images)...`);
+        console.log(`\n🎬 Processing Scene ${sceneNumber}`);
+        console.log(`   Model: ${modelUpper}`);
+        console.log(`   Images: ${images.length}`);
+        console.log(`   Has Avatar: ${hasAvatar ? 'Yes' : 'No'}`);
 
         // First, select this scene to render it in the Reel Reports Image Editor section
         console.log(`📍 Selecting scene ${sceneNumber} for rendering...`);
-        const imgs = sceneImages;
         setSelected({
           index: sceneIndex,
-          imageUrl: imgs[0] || '',
-          images: imgs,
+          imageUrl: images[0] || '',
+          images: images,
           title: row.scene_title || 'Untitled',
           sceneNumber: row.scene_number,
           description: row?.description || '',
@@ -1889,95 +2117,110 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           textElements: Array.isArray(row?.textElements) ? row.textElements : [],
           imageVersionData: row?.imageVersionData || null,
           imageFrames: Array.isArray(row?.imageFrames) ? row.imageFrames : [],
-          isEditable: !!row?.isEditable
+          isEditable: !!row?.isEditable,
+          avatar_urls: avatarUrls
         });
         
         // Wait for DOM to update and images to render with text/overlays
         console.log(`⏳ Waiting for DOM to render scene ${sceneNumber}...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // Process each image in this scene by capturing from DOM
-        for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
-          const imageUrl = images[imageIndex];
+        // Step 1: Capture avatar if it exists (VEO3/ANCHOR scenes)
+        if (hasAvatar) {
+          console.log(`\n📸 Step 1: Capturing Avatar for Scene ${sceneNumber}...`);
           
-          if (!imageUrl) {
-            console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No URL, skipping`);
-            continue;
-          }
+          // Switch to avatar tab (tab 0)
+          setActiveImageTab(0);
+          await new Promise(resolve => setTimeout(resolve, 500)); // Wait for tab switch
           
-          try {
-            console.log(`📷 Scene ${sceneNumber}, Image ${imageIndex + 1}: Capturing from DOM...`);
-            
-            // Find the image container in the Reel Reports Image Editor section
-            // Use data-scene-number and data-image-index attributes to target the correct container
-            const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
-            const container = document.querySelector(selector);
-            
-            if (!container) {
-              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Container not found in DOM (${selector})`);
-              console.log('🔍 Available containers:', document.querySelectorAll('[data-image-container]').length);
+          const avatarSaved = await captureAndSaveContainer(sceneNumber, 0, 'avatar');
+          if (avatarSaved) {
+            saved += 1;
+          } else {
             failed += 1;
-            continue;
           }
-            
-            console.log(`📸 Scene ${sceneNumber}, Image ${imageIndex + 1}: Capturing with html2canvas...`);
-            
-            // Capture the container with html2canvas (includes image + text + overlays with exact positioning)
-            const canvas = await html2canvas(container, {
-              useCORS: true,
-              allowTaint: true,
-              backgroundColor: null,
-              scale: 2,  // High quality (2x resolution)
-              logging: false,  // Disable html2canvas internal logging
-              windowWidth: container.scrollWidth,
-              windowHeight: container.scrollHeight
-            });
-            
-            // Convert canvas to blob
-            const blob = await new Promise((resolve) => {
-              canvas.toBlob((blob) => {
-                resolve(blob);
-              }, 'image/png', 1.0);
-            });
-            
-            if (!blob) {
-              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create blob`);
-          failed += 1;
-              continue;
+          
+          // Small delay after avatar
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
+        // Step 2: Capture ALL images from the images tab
+        console.log(`\n📸 Step 2: Capturing ALL Images for Scene ${sceneNumber}...`);
+        
+        // Switch to image tab (tab 1 if avatar exists, otherwise tab 0)
+        if (hasAvatar) {
+          setActiveImageTab(1);
+          await new Promise(resolve => setTimeout(resolve, 500)); // Wait for tab switch
+        } else {
+          setActiveImageTab(0);
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        // Query DOM directly to find ALL image containers for this scene
+        // This ensures we capture all images that are actually rendered, not just from getSceneImages()
+        const allImageContainers = document.querySelectorAll(
+          `[data-image-container][data-scene-number="${sceneNumber}"]:not([data-image-index="avatar"])`
+        );
+        
+        console.log(`🔍 Found ${allImageContainers.length} image container(s) in DOM for Scene ${sceneNumber}`);
+        
+        // Extract all image indices from the DOM
+        const imageIndices = [];
+        allImageContainers.forEach((container) => {
+          const indexAttr = container.getAttribute('data-image-index');
+          if (indexAttr && indexAttr !== 'avatar') {
+            const indexNum = parseInt(indexAttr, 10);
+            if (!isNaN(indexNum) && !imageIndices.includes(indexNum)) {
+              imageIndices.push(indexNum);
             }
+          }
+        });
+        
+        // Sort indices to process in order
+        imageIndices.sort((a, b) => a - b);
+        
+        console.log(`📋 Image indices found in DOM: ${imageIndices.join(', ')}`);
+        console.log(`📋 Images from getSceneImages: ${images.length}`);
+        
+        // Process each image container found in the DOM (preferred method)
+        if (imageIndices.length > 0) {
+          for (let idx = 0; idx < imageIndices.length; idx++) {
+            const imageIndex = imageIndices[idx];
             
-            // Generate filename
-            const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
+            console.log(`📷 Processing image at index ${imageIndex} (${idx + 1} of ${imageIndices.length})...`);
             
-            // Save to temp folder via backend API (NO browser download)
-            const file = new File([blob], fileName, { type: 'image/png' });
-            const formData = new FormData();
-            formData.append('image', file);
-            formData.append('fileName', fileName);
-            formData.append('sceneNumber', sceneNumber);
-            formData.append('imageIndex', imageIndex);
-
-            console.log(`📤 Scene ${sceneNumber}, Image ${imageIndex + 1}: Uploading to temp folder...`);
-            const saveResponse = await fetch('/api/save-temp-image', {
-              method: 'POST',
-              body: formData,
-            });
-
-            if (saveResponse.ok) {
-              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Saved successfully with html2canvas`);
+            const imageSaved = await captureAndSaveContainer(sceneNumber, imageIndex, 'image');
+            if (imageSaved) {
               saved += 1;
             } else {
-              const errorText = await saveResponse.text();
-              console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Save failed (${saveResponse.status}): ${errorText}`);
               failed += 1;
             }
             
             // Small delay between images
             await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        } else {
+          // Fallback: If no containers found in DOM, use getSceneImages
+          console.warn(`⚠️ No image containers found in DOM for Scene ${sceneNumber}, falling back to getSceneImages()...`);
+          
+          // Process each image from getSceneImages as fallback
+          for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
+            const imageUrl = images[imageIndex];
             
-          } catch (error) {
-            console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Error -`, error);
-            failed += 1;
+            if (!imageUrl) {
+              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No URL, skipping`);
+              continue;
+            }
+            
+            const imageSaved = await captureAndSaveContainer(sceneNumber, imageIndex, 'image');
+            if (imageSaved) {
+              saved += 1;
+            } else {
+              failed += 1;
+            }
+            
+            // Small delay between images
+            await new Promise(resolve => setTimeout(resolve, 200));
           }
         }
       }
@@ -1987,8 +2230,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       // No alerts - just console logs for background processing
       if (saved > 0) {
         console.log(`✅ Successfully saved ${saved} image(s) to temp folder`);
-      } else if (failed > 0) {
+      }
+      if (failed > 0) {
         console.warn(`⚠️ Failed to save ${failed} image(s). Check console for details.`);
+        console.warn(`⚠️ This may cause issues with video generation. Please check:`);
+        console.warn(`   1. Are all scenes properly rendered in the DOM?`);
+        console.warn(`   2. Are the data-image-container attributes correctly set?`);
+        console.warn(`   3. Check browser console for specific error messages`);
+      }
+      if (saved === 0 && failed === 0) {
+        console.warn(`⚠️ No images were processed. Check if scenes have images.`);
       }
     } catch (error) {
       console.error('❌ Fatal error in mergeAndDownloadAllImages:', error);
@@ -1997,7 +2248,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
   
     return failed;
-  }, [rows, setSelected]);
+  }, [rows, setSelected, setActiveImageTab, getSceneImages]);
 
   // Function to call save-all-frames API with temp folder images
   const callSaveAllFramesAPI = React.useCallback(async () => {
@@ -2127,6 +2378,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       
       console.log('✅ API call successful:', responseData);
       
+      // NOTE: Temporarily disabled - don't delete images from temp folder
+      // The images will be kept for debugging and verification
+      // TODO: Re-enable deletion after confirming all images are saved correctly
+      console.log('📝 Keeping images in temp folder (deletion disabled for debugging)');
+      /*
       // Delete all images from temp folder
       console.log('🗑️ Deleting images from temp folder...');
       for (const fileName of imageFiles) {
@@ -2146,6 +2402,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       }
       
       console.log('✅ All temp images deleted');
+      */
       return { success: true, response: responseData };
       
     } catch (error) {
@@ -2177,15 +2434,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         );
 
       const scenesPayload = rows.map((row, index) => {
-        const sceneNumber = row?.scene_number || index + 1;
-        const modelUpper = String(row?.model || '').toUpperCase() || 'VEO3';
+                const sceneNumber = row?.scene_number || index + 1;
+                const modelUpper = String(row?.model || '').toUpperCase() || 'VEO3';
 
-        const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
-          logoNeeded: false,
-          voiceUrl: '',
-          voiceOption: '',
-          transitionPreset: null,
-          transitionCustom: null,
+                // Set default voice option to 'male' for ANCHOR, SORA, and PLOTLY
+                const isAnchorSoraPlotly = modelUpper === 'ANCHOR' || modelUpper === 'SORA' || modelUpper === 'PLOTLY';
+                const defaultVoiceOption = isAnchorSoraPlotly ? 'male' : '';
+
+                const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
+                  logoNeeded: false,
+                  voiceUrl: '',
+                  voiceOption: defaultVoiceOption,
+                  transitionPreset: null,
+                  transitionCustom: null,
           transitionCustomPreset: null,
           customDescription: '',
           customPreservationNotes: {
@@ -2235,8 +2496,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           }
         }
 
-        // Voice option string only when no explicit voice URL is selected
-        const voiceOption = sceneOptions.voiceUrl ? '' : (sceneOptions.voiceOption || '');
+        // Voice option string only when no explicit voice URL is selected (not for VEO3, but ANCHOR can have it)
+        const isVEO3Model = modelUpper === 'VEO3';
+        const voiceOption = isVEO3Model ? '' : (sceneOptions.voiceUrl ? '' : (sceneOptions.voiceOption || ''));
 
         // Default prompt template (mainly relevant for VEO3)
         const veo3PromptTemplate =
@@ -2253,7 +2515,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 focus_and_lens: '',
               }) || {};
 
-        // Build transitions (mainly for SORA/ANCHOR/PLOTLY)
+        // Build transitions (mainly for SORA/ANCHOR/PLOTLY, NOT for VEO3)
         // transitions must always be an array
         let transitions = [];
         const isSoraAnchorPlotly =
@@ -2261,6 +2523,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           modelUpper === 'ANCHOR' ||
           modelUpper === 'PLOTLY';
 
+        // Only build transitions for SORA/ANCHOR/PLOTLY, not for VEO3
         if (isSoraAnchorPlotly) {
           const hasPreset = !!sceneOptions.transitionPreset;
           // is_preset: true if preset is selected (not custom), false if custom/design your own
@@ -2325,15 +2588,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           }
         }
 
-        // Ensure transitions is always an array (required field)
+        // Build scene payload - exclude voiceoption and transitions for VEO3
         const scenePayload = {
           scene_number: sceneNumber,
           model: modelUpper,
           logo_url: logoUrl,
           voiceover: voiceover, // Object with name, type, url, created_at or null
-          voiceoption: voiceOption, // String like "male" or "female"
-          transitions: transitions, // Always an array (can be empty)
         };
+        
+        // Only include voiceoption and transitions for non-VEO3 models
+        if (!isVEO3Model) {
+          scenePayload.voiceoption = voiceOption; // String like "male" or "female"
+          scenePayload.transitions = transitions; // Always an array (can be empty)
+        }
         
         return scenePayload;
       });
@@ -2469,19 +2736,21 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     });
     
     // Run everything in background - no alerts, no interruptions
-    (async () => {
-      try {
-        // Step 1: Save images to temp folder
-        setVideoGenProgress((prev) => ({
-          ...prev,
-          visible: true,
-          percent: 10,
-          status: 'saving',
-          step: 'saving_images',
-          message: ''
-        }));
-        console.log('📦 Step 1: Saving all images to temp folder...');
-        const failedDownloads = await mergeAndDownloadAllImages();
+    // Use setTimeout to ensure this runs asynchronously and doesn't block
+    setTimeout(() => {
+      (async () => {
+        try {
+          // Step 1: Save images to temp folder
+          setVideoGenProgress((prev) => ({
+            ...prev,
+            visible: true,
+            percent: 10,
+            status: 'saving',
+            step: 'saving_images',
+            message: ''
+          }));
+          console.log('📦 Step 1: Saving all images to temp folder...');
+          const failedDownloads = await mergeAndDownloadAllImages();
         
         if (failedDownloads > 0) {
           console.warn(`⚠️ Some images failed to save: ${failedDownloads}`);
@@ -2498,7 +2767,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         try {
           await callSaveAllFramesAPI();
           console.log('✅ save-all-frames API completed successfully');
-          console.log('✅ All temp images deleted');
+          console.log('✅ Images kept in temp folder (deletion disabled for debugging)');
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
@@ -2552,7 +2821,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         }, 1000);
         setIsPreparingDownloads(false);
       }
-    })();
+      })();
+    }, 0);
     
     // Prevent any navigation or reload
     return false;
@@ -2623,18 +2893,62 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           ) : (
             <button
               type="button"
-              onClick={async (e) => {
-                if (e) {
-                  if (typeof e.preventDefault === 'function') e.preventDefault();
-                  if (typeof e.stopPropagation === 'function') e.stopPropagation();
-                  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+              onClick={(e) => {
+                // CRITICAL: Prevent all default behaviors immediately - MUST be synchronous
+                if (!e) {
+                  console.warn('⚠️ No event object in onClick');
+                  return false;
                 }
-                await handleGenerateVideosClick(e);
+                
+                // Prevent default immediately - CRITICAL for preventing reload
+                try {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (typeof e.stopImmediatePropagation === 'function') {
+                    e.stopImmediatePropagation();
+                  }
+                } catch (err) {
+                  console.warn('Error preventing default in onClick:', err);
+                }
+                
+                // Prevent form submission if inside a form
+                const button = e.currentTarget || e.target;
+                if (button && button.form) {
+                  const form = button.form;
+                  const preventSubmit = (formE) => {
+                    try {
+                      formE.preventDefault();
+                      formE.stopPropagation();
+                      if (typeof formE.stopImmediatePropagation === 'function') {
+                        formE.stopImmediatePropagation();
+                      }
+                    } catch (err) {
+                      console.warn('Error preventing form submit:', err);
+                    }
+                    return false;
+                  };
+                  form.onsubmit = preventSubmit;
+                  form.addEventListener('submit', preventSubmit, { capture: true, once: false });
+                }
+                
+                // Use setTimeout to ensure handler runs asynchronously and doesn't block
+                // This prevents any potential reload during the click event
+                setTimeout(() => {
+                  handleGenerateVideosClick(e).catch((error) => {
+                    console.error('Error in handleGenerateVideosClick:', error);
+                  });
+                }, 0);
+                
                 return false;
               }}
               onMouseDown={(e) => {
-                if (e && typeof e.preventDefault === 'function') {
-                  e.preventDefault();
+                if (e) {
+                  try {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  } catch (err) {
+                    console.warn('Error in onMouseDown:', err);
+                  }
                 }
               }}
               disabled={isPreparingDownloads || videoGenProgress.visible}
@@ -2648,55 +2962,153 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       </div>
 
       {videoGenProgress.visible && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
-          <div className="bg-white shadow-2xl rounded-2xl px-8 py-10 max-w-md w-full text-center">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="relative w-20 h-20">
-                <svg className="w-20 h-20" viewBox="0 0 100 100">
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="45"
-                    stroke="#E5E7EB"
-                    strokeWidth="8"
-                    fill="none"
-                  />
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="45"
-                    stroke="#13008B"
-                    strokeWidth="8"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeDasharray="283"
-                    strokeDashoffset={`${283 - (283 * Math.min(videoGenProgress.percent, 100)) / 100}`}
-                    style={{ transformOrigin: '50% 50%', transform: 'rotate(-90deg)' }}
-                  />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center text-xl font-semibold text-[#13008B]">
-                  {Math.min(100, Math.max(0, Math.round(videoGenProgress.percent)))}%
+        <>
+          <style>{`
+            @keyframes pulse-ring {
+              0% {
+                transform: scale(0.95);
+                opacity: 1;
+              }
+              50% {
+                transform: scale(1.05);
+                opacity: 0.8;
+              }
+              100% {
+                transform: scale(0.95);
+                opacity: 1;
+              }
+            }
+            @keyframes rotate-progress {
+              from {
+                transform: rotate(-90deg);
+              }
+              to {
+                transform: rotate(270deg);
+              }
+            }
+            .progress-ring {
+              animation: rotate-progress 2s linear infinite;
+            }
+            .pulse-ring {
+              animation: pulse-ring 2s ease-in-out infinite;
+            }
+            @keyframes shimmer {
+              0% {
+                background-position: -200% 0;
+              }
+              100% {
+                background-position: 200% 0;
+              }
+            }
+            .shimmer-effect {
+              background: linear-gradient(
+                90deg,
+                rgba(19, 0, 139, 0.1) 0%,
+                rgba(19, 0, 139, 0.3) 50%,
+                rgba(19, 0, 139, 0.1) 100%
+              );
+              background-size: 200% 100%;
+              animation: shimmer 2s infinite;
+            }
+          `}</style>
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-gradient-to-br from-white via-blue-50/30 to-white backdrop-blur-sm">
+            <div className="bg-white shadow-2xl rounded-3xl px-10 py-12 max-w-md w-full text-center border border-blue-100/50">
+              <div className="flex flex-col items-center space-y-6">
+                <div className="relative w-24 h-24">
+                  {/* Outer pulsing ring */}
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-br from-[#13008B]/20 to-[#13008B]/5 pulse-ring"></div>
+                  
+                  {/* SVG Progress Circle */}
+                  <svg className="w-24 h-24 relative z-10" viewBox="0 0 100 100">
+                    {/* Background circle */}
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      stroke="#E5E7EB"
+                      strokeWidth="6"
+                      fill="none"
+                      className="opacity-30"
+                    />
+                    {/* Progress circle with gradient effect */}
+                    <defs>
+                      <linearGradient id="progressGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#13008B" stopOpacity="1" />
+                        <stop offset="50%" stopColor="#2563EB" stopOpacity="1" />
+                        <stop offset="100%" stopColor="#13008B" stopOpacity="1" />
+                      </linearGradient>
+                    </defs>
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="42"
+                      stroke="url(#progressGradient)"
+                      strokeWidth="6"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeDasharray="264"
+                      strokeDashoffset={`${264 - (264 * Math.min(videoGenProgress.percent, 100)) / 100}`}
+                      style={{ 
+                        transformOrigin: '50% 50%', 
+                        transform: 'rotate(-90deg)',
+                        transition: 'stroke-dashoffset 0.3s ease-out',
+                        filter: 'drop-shadow(0 0 3px rgba(19, 0, 139, 0.3))'
+                      }}
+                    />
+                    {/* Animated glow dot at progress end */}
+                    {videoGenProgress.percent > 0 && (
+                      <circle
+                        cx="50"
+                        cy="8"
+                        r="4"
+                        fill="#13008B"
+                        style={{
+                          transformOrigin: '50% 50%',
+                          transform: `rotate(${-90 + (360 * Math.min(videoGenProgress.percent, 100)) / 100}deg) translate(0, -42)`,
+                          transition: 'transform 0.3s ease-out',
+                          filter: 'drop-shadow(0 0 4px rgba(19, 0, 139, 0.6))',
+                          animation: 'pulse-ring 1.5s ease-in-out infinite'
+                        }}
+                      />
+                    )}
+                  </svg>
+                  
+                  {/* Percentage text with subtle animation */}
+                  <div className="absolute inset-0 flex items-center justify-center z-20">
+                    <div className="text-2xl font-bold bg-gradient-to-br from-[#13008B] to-[#2563EB] bg-clip-text text-transparent">
+                      {Math.min(100, Math.max(0, Math.round(videoGenProgress.percent)))}%
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <p className="text-lg font-semibold text-gray-900">
-                  {videoGenProgress.step === 'saving_images' && 'Saving images to workspace'}
-                  {videoGenProgress.step === 'uploading_frames' && 'Uploading frames'}
-                  {videoGenProgress.step === 'queueing' && 'Submitting video job'}
-                  {videoGenProgress.step === 'queued' && 'Waiting for job to start'}
-                  {videoGenProgress.step === 'regenerating_videos' && 'Generating videos'}
-                  {videoGenProgress.step === 'completed' && 'Finalizing'}
-                  {(!videoGenProgress.step || videoGenProgress.step === '') && 'Processing'}
-                </p>
-                {videoGenProgress.message ? (
-                  <p className="text-sm text-gray-600 mt-2">{videoGenProgress.message}</p>
-                ) : (
-                  <p className="text-sm text-gray-600 mt-2">This may take a moment. Please keep this tab open.</p>
-                )}
+                
+                <div className="space-y-2">
+                  <p className="text-lg font-semibold text-gray-900">
+                    {videoGenProgress.step === 'saving_images' && 'Saving images to workspace'}
+                    {videoGenProgress.step === 'uploading_frames' && 'Uploading frames'}
+                    {videoGenProgress.step === 'queueing' && 'Submitting video job'}
+                    {videoGenProgress.step === 'queued' && 'Waiting for job to start'}
+                    {videoGenProgress.step === 'regenerating_videos' && 'Generating videos'}
+                    {videoGenProgress.step === 'completed' && 'Finalizing'}
+                    {(!videoGenProgress.step || videoGenProgress.step === '') && 'Processing'}
+                  </p>
+                  {videoGenProgress.message ? (
+                    <p className="text-sm text-gray-600 mt-2">{videoGenProgress.message}</p>
+                  ) : (
+                    <p className="text-sm text-gray-600 mt-2">This may take a moment. Please keep this tab open.</p>
+                  )}
+                  
+                  {/* Progress bar below text */}
+                  <div className="mt-4 w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-[#13008B] via-[#2563EB] to-[#13008B] rounded-full transition-all duration-300 ease-out shimmer-effect"
+                      style={{ width: `${Math.min(100, Math.max(0, videoGenProgress.percent))}%` }}
+                    ></div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {showVideoRedirectPopup && (
@@ -2885,6 +3297,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const hasSecondImage = img2 && img2.trim();
               const isVEO3 = selectedModel === 'VEO3' || selectedModel === 'ANCHOR';
               
+              // Get avatar URL for VEO3 scenes
+              const getAvatarUrl = () => {
+                if (!isVEO3) return '';
+                const currentRow = rows[selected.index];
+                if (currentRow && Array.isArray(currentRow.avatar_urls) && currentRow.avatar_urls.length > 0) {
+                  const avatarUrl = currentRow.avatar_urls[0];
+                  if (typeof avatarUrl === 'string' && isValidImageUrl(avatarUrl.trim())) {
+                    return avatarUrl.trim();
+                  }
+                }
+                return '';
+              };
+              const avatarUrl = getAvatarUrl();
+              
               // Debug log to see what images are being used
               console.log('🖼️ Displaying Images:', {
                 sceneNumber: selected?.sceneNumber,
@@ -2893,18 +3319,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 img1Valid: img1 ? isValidImageUrl(img1) : false,
                 img2: img2 || '(empty)',
                 img2Valid: img2 ? isValidImageUrl(img2) : false,
+                avatarUrl: avatarUrl || '(empty)',
                 selectedImages: selected.images,
                 selectedImageUrl: selected.imageUrl,
                 hasSecondImage,
                 currentRowRefs: rows[selected.index]?.refs || 'N/A',
+                currentRowAvatarUrls: rows[selected.index]?.avatar_urls || 'N/A',
                 allRowsCount: rows.length,
                 warning: !img1 ? '⚠️ No valid image URL found for Image 1' : (img1 && !isValidImageUrl(img1) ? '⚠️ Image 1 URL format is invalid' : '✅ Image 1 URL is valid')
               });
               
               return (
                   <div className="mb-4">
-                    {/* Tabs - only show if there are 2 images */}
-                    {hasSecondImage && (
+                    {/* Tabs - show if there are 2 images OR if VEO3 has avatar */}
+                    {(hasSecondImage || (isVEO3 && avatarUrl)) && (
                       <div className="flex gap-2 mb-4 border-b border-gray-200">
                         <button
                           type="button"
@@ -2917,23 +3345,54 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         >
                           {isVEO3 ? 'Avatar' : 'Image 1'}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveImageTab(1)}
-                          className={`px-4 py-2 text-sm font-medium transition-colors ${
-                            activeImageTab === 1
-                              ? 'text-[#13008B] border-b-2 border-[#13008B]'
-                              : 'text-gray-600 hover:text-gray-900'
-                          }`}
-                        >
-                          {isVEO3 ? 'Image' : 'Image 2'}
-                        </button>
+                        {(hasSecondImage || (isVEO3 && img1)) && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveImageTab(1)}
+                            className={`px-4 py-2 text-sm font-medium transition-colors ${
+                              activeImageTab === 1
+                                ? 'text-[#13008B] border-b-2 border-[#13008B]'
+                                : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            {isVEO3 ? 'Image' : 'Image 2'}
+                          </button>
+                        )}
                       </div>
                     )}
                     
                     <div className="grid grid-cols-1 gap-4">
-                  {/* Show Image 1 when: tab 0 is active OR no second image exists */}
-                  {img1 && typeof img1 === 'string' && img1.trim() && (activeImageTab === 0 || !hasSecondImage) ? (
+                  {/* Show Avatar for VEO3 when: tab 0 is active OR no second image exists */}
+                  {isVEO3 && avatarUrl && (activeImageTab === 0 || (!hasSecondImage && !img1)) ? (
+                    <div
+                      key="avatar"
+                      className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
+                      data-image-container
+                      data-scene-number={activeSceneNumber}
+                      data-image-index="avatar"
+                      style={{
+                        aspectRatio: cssAspectRatio,
+                        minHeight: '200px'
+                      }}
+                    >
+                      <img
+                        src={avatarUrl}
+                        alt={`scene-${selected.sceneNumber}-avatar`}
+                        className="w-full h-full object-contain"
+                        crossOrigin={avatarUrl.startsWith('http') && !avatarUrl.includes(window.location.hostname) ? "anonymous" : undefined}
+                        onLoad={(e) => {
+                          handleNaturalSize(avatarUrl, e.target);
+                          console.log('✅ Avatar loaded successfully:', avatarUrl);
+                        }}
+                        onError={(e) => {
+                          console.error('❌ Avatar failed to load:', avatarUrl);
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  
+                  {/* Show Image 1 when: tab 0 is active OR no second image exists (and not showing avatar) */}
+                  {img1 && typeof img1 === 'string' && img1.trim() && (activeImageTab === 0 || !hasSecondImage) && !(isVEO3 && avatarUrl && activeImageTab === 0) ? (
                     <div
                       key="image-1"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
@@ -3211,8 +3670,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     </div>
                   ) : null}
 
-                  {/* Show Image 2 only when: tab 1 is active AND second image exists */}
-                  {hasSecondImage && img2 && typeof img2 === 'string' && img2.trim() && activeImageTab === 1 ? (
+                  {/* Show Image 1/Image when: tab 1 is active AND (second image exists OR VEO3 with image) */}
+                  {((hasSecondImage && img2) || (isVEO3 && img1)) && (img2 || img1) && typeof (img2 || img1) === 'string' && (img2 || img1).trim() && activeImageTab === 1 ? (
                     <div
                       key="image-2"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
@@ -3226,7 +3685,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     >
                       {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
-                    const frameForImg2 = findFrameForImage(frames, img2, 1);
+                    const imageToShow = img2 || img1; // Use img2 if available, otherwise img1
+                    const frameForImg2 = findFrameForImage(frames, imageToShow, img2 ? 1 : 0);
                     const fallbackFrame2 =
                       frameForImg2 || (frames.length > 1 ? frames[1] : frames.length > 0 ? frames[0] : null);
                     // Get text elements from the matched frame, fallback to selected.textElements
@@ -3254,6 +3714,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     const frameDims2 =
                       fallbackFrame2?.base_image?.image_dimensions ||
                       fallbackFrame2?.base_image?.imageDimensions ||
+                      imageNaturalDims[imageToShow] ||
                       imageNaturalDims[img2] ||
                       selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
@@ -3264,22 +3725,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         {selected?.isEditable && (
                          <></>
                         )}
-                        {img2 && typeof img2 === 'string' && img2.trim() ? (
+                        {imageToShow && typeof imageToShow === 'string' && imageToShow.trim() ? (
                           <img
-                            src={img2}
-                            alt={`scene-${selected.sceneNumber}-2`}
+                            src={imageToShow}
+                            alt={`scene-${selected.sceneNumber}-${img2 ? '2' : '1'}`}
                             className="w-full h-full object-contain"
-                            crossOrigin={img2.startsWith('http') && !img2.includes(window.location.hostname) ? "anonymous" : undefined}
+                            crossOrigin={imageToShow.startsWith('http') && !imageToShow.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
-                              handleNaturalSize(img2, e.target);
-                              console.log('✅ Image 2 loaded successfully:', img2);
+                              handleNaturalSize(imageToShow, e.target);
+                              console.log('✅ Image loaded successfully:', imageToShow);
                             }}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
-                              console.error('❌ Image 2 failed to load:', {
+                              console.error('❌ Image failed to load:', {
                                 attemptedUrl: failedUrl,
-                                originalImg2: img2,
+                                originalImg: imageToShow,
                                 errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
                                 naturalWidth: errorImg.naturalWidth,
                                 naturalHeight: errorImg.naturalHeight,
@@ -3578,19 +4039,24 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               );
             })()} */}
             
-            {/* Advanced Options Accordion - Hide only for VEO3 */}
+            {/* Advanced Options Accordion - Show for all models including VEO3 */}
             {(() => {
               const modelUpper = String(selected?.model || '').toUpperCase();
-              const isRelevantModel = modelUpper !== 'VEO3';
+              const isVEO3Model = modelUpper === 'VEO3'; // Only VEO3, not ANCHOR
               const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
               
-              if (!isRelevantModel) return null;
+              // Get first preset as default for non-VEO3 scenes
+              const defaultPreset = !isVEO3Model && transitionPresets.length > 0 ? transitionPresets[0] : null;
+              
+              // Set default voice option to 'male' for ANCHOR, SORA, and PLOTLY
+              const isAnchorSoraPlotly = modelUpper === 'ANCHOR' || modelUpper === 'SORA' || modelUpper === 'PLOTLY';
+              const defaultVoiceOption = isAnchorSoraPlotly ? 'male' : '';
               
               const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
-                logoNeeded: false,
+                logoNeeded: isVEO3Model ? true : false, // Default to true for VEO3
                 voiceUrl: '',
-                voiceOption: '',
-                transitionPreset: null,
+                voiceOption: defaultVoiceOption, // Default to 'male' for ANCHOR, SORA, PLOTLY
+                transitionPreset: defaultPreset, // Default to first preset for non-VEO3
                 transitionCustom: null,
                 customDescription: '',
                 customPreservationNotes: {
@@ -3744,8 +4210,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 </div>
                               </div>
                               
-                              {/* Voice Option (Female / Male) - only when no specific voice URL selected */}
-                              {!sceneOptions.voiceUrl && (
+                              {/* Voice Option (Female / Male) - only when no specific voice URL selected and not VEO3 */}
+                              {!sceneOptions.voiceUrl && !isVEO3Model && (
                                 <div>
                                   <label className="text-sm font-medium text-gray-700 mb-2 block">Voice Option</label>
                                   <div className="flex gap-4">
@@ -4152,7 +4618,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       textElements: Array.isArray(r?.textElements) ? r.textElements : [],
                       imageVersionData: r?.imageVersionData || null,
                       imageFrames: Array.isArray(r?.imageFrames) ? r.imageFrames : [],
-                      isEditable: !!r?.isEditable
+                      isEditable: !!r?.isEditable,
+                      avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [] // Include avatar_urls
                     });
                   }}
                 >
