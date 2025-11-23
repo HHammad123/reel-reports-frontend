@@ -98,6 +98,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   );
   const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
   const selectedModel = String(selected?.model || selected?.mode || '').toUpperCase();
+  // State for active image tab (0 for Image 1/Avatar, 1 for Image 2/Image)
+  const [activeImageTab, setActiveImageTab] = useState(0);
+  // Cache-busting value for chart overlays - updates when scene changes to ensure fresh chart images
+  const chartCacheBuster = React.useMemo(() => {
+    return `${activeSceneNumber}_${Date.now()}`;
+  }, [activeSceneNumber]);
   const redirectIntervalRef = React.useRef(null);
 
   const startVideoRedirectFlow = React.useCallback(
@@ -1645,6 +1651,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
   }, [regenerateUserQuery, regeneratingSceneNumber, refreshLoad]);
 
+  // Reset active image tab when scene changes
+  useEffect(() => {
+    setActiveImageTab(0);
+  }, [selected?.sceneNumber, selected?.scene_number, selected?.index]);
+
   const loadImageElement = (src) => {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -2799,6 +2810,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           {chartEditorError && selectedModel === 'PLOTLY' && (
             <p className="text-xs text-red-600 mb-2">{chartEditorError}</p>
           )}
+          
+          {/* Title - below Edit Charts/Regenerate buttons */}
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">
+            {selected?.title || selected?.scene_title || 'Untitled Scene'}
+          </h2>
+          
             {/* Top Section: Images - Show only avatar if second image is missing */}
             {(() => {
               // Helper function to validate URL
@@ -2866,6 +2883,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const img1 = getImg1();
               const img2 = getImg2();
               const hasSecondImage = img2 && img2.trim();
+              const isVEO3 = selectedModel === 'VEO3' || selectedModel === 'ANCHOR';
               
               // Debug log to see what images are being used
               console.log('🖼️ Displaying Images:', {
@@ -2884,10 +2902,40 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               });
               
               return (
-                  <div className="grid grid-cols-1 gap-4 mb-4">
-                  {/* Image 1 */}
-                  {(img1 && typeof img1 === 'string' && img1.trim()) ? (
+                  <div className="mb-4">
+                    {/* Tabs - only show if there are 2 images */}
+                    {hasSecondImage && (
+                      <div className="flex gap-2 mb-4 border-b border-gray-200">
+                        <button
+                          type="button"
+                          onClick={() => setActiveImageTab(0)}
+                          className={`px-4 py-2 text-sm font-medium transition-colors ${
+                            activeImageTab === 0
+                              ? 'text-[#13008B] border-b-2 border-[#13008B]'
+                              : 'text-gray-600 hover:text-gray-900'
+                          }`}
+                        >
+                          {isVEO3 ? 'Avatar' : 'Image 1'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveImageTab(1)}
+                          className={`px-4 py-2 text-sm font-medium transition-colors ${
+                            activeImageTab === 1
+                              ? 'text-[#13008B] border-b-2 border-[#13008B]'
+                              : 'text-gray-600 hover:text-gray-900'
+                          }`}
+                        >
+                          {isVEO3 ? 'Image' : 'Image 2'}
+                        </button>
+                      </div>
+                    )}
+                    
+                    <div className="grid grid-cols-1 gap-4">
+                  {/* Show Image 1 when: tab 0 is active OR no second image exists */}
+                  {img1 && typeof img1 === 'string' && img1.trim() && (activeImageTab === 0 || !hasSecondImage) ? (
                     <div
+                      key="image-1"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
                       data-image-container
                       data-scene-number={activeSceneNumber}
@@ -3112,7 +3160,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             {overlayEls1.map((ov, idx) => {
                               if (!ov || typeof ov !== 'object') return null;
                               const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(ov.bounding_box || {}, frameDims1 || selected?.imageDimensions || {});
-                              const overlayUrl =
+                              let overlayUrl =
                                 ov?.overlay_image?.image_url ||
                                 ov?.overlay_image?.imageUrl ||
                                 ov?.image_url ||
@@ -3122,10 +3170,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 ov?.link ||
                                 '';
                               if (!overlayUrl) return null;
+                              
+                              // Add cache-busting query parameter to prevent stale chart images (especially for PLOTLY)
+                              // Check if this is a chart overlay by checking if it's a chart image URL or if element_id is 'chart_overlay'
+                              const isChartOverlay = ov?.element_id === 'chart_overlay' || 
+                                                    ov?.label_name === 'Chart' ||
+                                                    overlayUrl.includes('chart') ||
+                                                    (selectedModel === 'PLOTLY' && overlayUrl);
+                              
+                              if (isChartOverlay) {
+                                // Add cache-busting parameter to force browser to fetch fresh chart image
+                                // Uses memoized value that updates when scene changes
+                                const separator = overlayUrl.includes('?') ? '&' : '?';
+                                overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                              }
+                              
                               const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
                               return (
                                 <img
-                                  key={idx}
+                                  key={`overlay-1-${idx}-${overlayUrl}`}
                                   src={overlayUrl}
                                   alt="overlay"
                                   className="absolute"
@@ -3146,25 +3209,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     );
                       })()}
                     </div>
-                  ) : (
-                    <div
-                      className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center"
-                      style={{
-                        aspectRatio: cssAspectRatio,
-                        minHeight: '200px'
-                      }}
-                    >
-                      <div className="text-center text-white text-sm">
-                        <p>No image available</p>
-                        <p className="text-xs mt-2 opacity-75">Scene {selected?.sceneNumber || selected?.scene_number || 1}</p>
-                        <p className="text-xs mt-1 opacity-50">Check console for details</p>
-                      </div>
-                    </div>
-                  )}
+                  ) : null}
 
-                  {/* Image 2 - Only show if it exists */}
-                  {(hasSecondImage && img2 && typeof img2 === 'string' && img2.trim()) ? (
+                  {/* Show Image 2 only when: tab 1 is active AND second image exists */}
+                  {hasSecondImage && img2 && typeof img2 === 'string' && img2.trim() && activeImageTab === 1 ? (
                     <div
+                      key="image-2"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
                       data-image-container
                       data-scene-number={activeSceneNumber}
@@ -3385,7 +3435,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             {overlayEls2.map((ov, idx) => {
                               if (!ov || typeof ov !== 'object') return null;
                               const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(ov.bounding_box || {}, frameDims2 || selected?.imageDimensions || {});
-                              const overlayUrl =
+                              let overlayUrl =
                                 ov?.overlay_image?.image_url ||
                                 ov?.overlay_image?.imageUrl ||
                                 ov?.image_url ||
@@ -3395,10 +3445,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 ov?.link ||
                                 '';
                               if (!overlayUrl) return null;
+                              
+                              // Add cache-busting query parameter to prevent stale chart images (especially for PLOTLY)
+                              // Check if this is a chart overlay by checking if it's a chart image URL or if element_id is 'chart_overlay'
+                              const isChartOverlay = ov?.element_id === 'chart_overlay' || 
+                                                    ov?.label_name === 'Chart' ||
+                                                    overlayUrl.includes('chart') ||
+                                                    (selectedModel === 'PLOTLY' && overlayUrl);
+                              
+                              if (isChartOverlay) {
+                                // Add cache-busting parameter to force browser to fetch fresh chart image
+                                // Uses memoized value that updates when scene changes
+                                const separator = overlayUrl.includes('?') ? '&' : '?';
+                                overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                              }
+                              
                               const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
                               return (
                                 <img
-                                  key={idx}
+                                  key={`overlay-2-${idx}-${overlayUrl}`}
                                   src={overlayUrl}
                                   alt="overlay"
                                   className="absolute"
@@ -3420,20 +3485,14 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       })()}
                     </div>
                   ) : null}
-                </div>
+                    </div>
+                  </div>
               );
             })()}
 
             {/* Title, Description, Narration stacked vertically */}
             <div className="space-y-3">
-              <div>
-                <input
-                  type="text"
-                  readOnly
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                  value={selected?.title || (selected?.sceneNumber ? `Scene ${selected.sceneNumber}` : '')}
-                />
-              </div>
+              
               <div>
                 <label className="text-sm text-gray-600">Description</label>
                 <textarea

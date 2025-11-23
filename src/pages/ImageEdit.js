@@ -2225,15 +2225,6 @@ const handleTemplateJsonLoad = () => {
         throw new Error(`API request failed: ${response.status} ${responseText}`);
       }
       
-      // ✅ NEW: Save edited image to temp folder
-      try {
-        console.log('💾 Saving edited image to temp folder...');
-        await saveImageToTempFolder();
-      } catch (tempSaveError) {
-        console.warn('⚠️ Failed to save to temp folder (continuing with API save):', tempSaveError);
-        // Don't block the main save flow if temp save fails
-      }
-      
       // Show success popup with updating message
       setShowSuccessPopup(true);
       setIsRefreshing(true);
@@ -2249,63 +2240,6 @@ const handleTemplateJsonLoad = () => {
       alert('Failed to save changes: ' + (error?.message || 'Unknown error'));
     } finally {
       setIsSaving(false);
-    }
-  };
-
-  // ✅ NEW: Function to save the edited image (with overlays and text) to temp folder
-  const saveImageToTempFolder = async () => {
-    try {
-      // Find the container with the edited image (includes image + text layers + overlays)
-      const imageContainer = document.querySelector('[data-image-editor-canvas]');
-      
-      if (!imageContainer) {
-        console.warn('⚠️ Image editor canvas not found for temp save');
-        return;
-      }
-
-      console.log('📸 Capturing edited image from editor canvas...');
-      
-      // Dynamically import html2canvas (since it might not be in this component's imports)
-      const html2canvas = (await import('html2canvas')).default;
-      
-      // Capture the container with html2canvas
-      const canvas = await html2canvas(imageContainer, {
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: null,
-        scale: 2
-      });
-
-      // Convert to blob
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-      
-      // Generate filename
-      const fileName = `scene-${sceneNumber}-image-${Number(imageIndex) + 1}.png`;
-      
-      console.log(`📝 Uploading to temp folder: ${fileName}`);
-      
-      // Create FormData
-      const formData = new FormData();
-      formData.append('image', new File([blob], fileName, { type: 'image/png' }));
-      formData.append('fileName', fileName);
-      formData.append('sceneNumber', sceneNumber);
-      formData.append('imageIndex', imageIndex);
-      
-      // Upload to backend
-      const saveResponse = await fetch('/api/save-temp-image', {
-        method: 'POST',
-        body: formData,
-      });
-      
-      if (saveResponse.ok) {
-        const result = await saveResponse.json();
-        console.log(`✅ Saved to temp folder: ${result.path || fileName}`);
-      } else {
-        console.warn(`⚠️ Temp save failed with status ${saveResponse.status}`);
-      }
-    } catch (error) {
-      console.error('❌ Error saving to temp folder:', error);
-      throw error;
     }
   };
 
@@ -2527,6 +2461,328 @@ const handleTemplateJsonLoad = () => {
           {/* Editor Section */}
           <div className="flex-1 overflow-auto flex flex-col overflow-y-auto min-h-0">
             <div className={workspaceContainerClasses}>
+              {/* Wrapper for toolbar and canvas to ensure column layout */}
+              <div className="flex flex-col items-center w-full">
+              {/* Text Toolbar - Shows when text is clicked, positioned above image area */}
+              {selectedLayer && (() => {
+                // Get the latest layer from textLayers to ensure we have the most up-to-date data
+                const currentLayer = textLayers.find(layer => layer.id === selectedLayer.id) || selectedLayer
+                if (!currentLayer) return null
+                
+                return (
+                  <div
+                    key={`toolbar-${selectedLayer.id}`}
+                    className="w-full z-50 bg-white rounded-lg shadow-2xl border border-gray-200 p-2 flex items-center gap-2 mb-2"
+                    style={{
+                      pointerEvents: 'auto'
+                    }}
+                  >
+                    {/* Font Family */}
+                    <div className="relative">
+                      <select
+                        value={currentLayer?.fontFamily || selectedLayer?.fontFamily || 'Arial'}
+                        onChange={(e) => {
+                          const newFontFamily = e.target.value
+                          const previousLayers = [...textLayers]
+                          const previousSelected = selectedLayer
+                          
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, fontFamily: newFontFamily } : layer
+                          )
+                          const newSelected = { ...selectedLayer, fontFamily: newFontFamily }
+                          
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer(newSelected)
+                          
+                          // Save to history
+                          saveToHistory('text_edit', {
+                            previousLayers,
+                            previousSelected,
+                            newLayers: updatedLayers,
+                            newSelected
+                          })
+                        }}
+                        className="px-2 py-1 pr-7 text-xs border border-gray-300 rounded-md bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 appearance-none cursor-pointer min-w-[120px]"
+                        style={{ fontFamily: currentLayer?.fontFamily || selectedLayer?.fontFamily || 'Arial' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {fonts.map(font => (
+                          <option key={font} value={font} style={{ fontFamily: font, backgroundColor: '#ffffff', color: '#111827' }}>
+                            {font}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
+                    </div>
+
+                    {/* Font Size */}
+                    <div className="relative">
+                      <select
+                        value={currentLayer?.fontSize || selectedLayer?.fontSize || 16}
+                        onChange={(e) => {
+                          const size = parseInt(e.target.value) || 8
+                          const previousLayers = [...textLayers]
+                          const previousSelected = selectedLayer
+                          
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, fontSize: size } : layer
+                          )
+                          const newSelected = { ...selectedLayer, fontSize: size }
+                          
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer(newSelected)
+                          
+                          // Save to history
+                          saveToHistory('text_edit', {
+                            previousLayers,
+                            previousSelected,
+                            newLayers: updatedLayers,
+                            newSelected
+                          })
+                        }}
+                        className="px-2 py-1 pr-7 text-xs border border-gray-300 rounded-md bg-gray-100 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 appearance-none cursor-pointer min-w-[60px]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {Array.from({ length: 20 }, (_, i) => (i + 8) * 2).map(size => (
+                          <option key={size} value={size} style={{ backgroundColor: '#ffffff', color: '#111827' }}>{size}</option>
+                        ))}
+                      </select>
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
+                    </div>
+
+                    {/* Text Style Buttons */}
+                    <div className="flex gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const isBold = currentLayer.fontWeight === '700' || currentLayer.fontWeight === 700 || currentLayer.fontWeight === 'bold'
+                          const newWeight = isBold ? '400' : '700'
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, fontWeight: newWeight } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, fontWeight: newWeight })
+                        }}
+                        className={`px-2 py-1 rounded text-xs font-bold transition-all ${
+                          (currentLayer.fontWeight === '700' || currentLayer.fontWeight === 700 || currentLayer.fontWeight === 'bold')
+                            ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                        title="Bold"
+                      >
+                        B
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const newStyle = currentLayer.fontStyle === 'italic' ? 'normal' : 'italic'
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, fontStyle: newStyle } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, fontStyle: newStyle })
+                        }}
+                        className={`px-2 py-1 rounded text-xs italic transition-all ${
+                          currentLayer.fontStyle === 'italic' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                        title="Italic"
+                      >
+                        I
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const newDecoration = currentLayer.textDecoration === 'underline' ? 'none' : 'underline'
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, textDecoration: newDecoration } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, textDecoration: newDecoration })
+                        }}
+                        className={`px-2 py-1 rounded text-xs underline transition-all ${
+                          currentLayer.textDecoration === 'underline' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                        title="Underline"
+                      >
+                        U
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const newDecoration = currentLayer.textDecoration === 'line-through' ? 'none' : 'line-through'
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, textDecoration: newDecoration } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, textDecoration: newDecoration })
+                        }}
+                        className={`px-2 py-1 rounded text-xs line-through transition-all ${
+                          currentLayer.textDecoration === 'line-through' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                        title="Strikethrough"
+                      >
+                        S
+                      </button>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="w-px h-5 bg-gray-300"></div>
+
+                    {/* Text Alignment Buttons */}
+                    <div className="flex gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, textAlign: 'left' } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, textAlign: 'left' })
+                        }}
+                        className={`px-2 py-1 rounded transition-all ${
+                          currentLayer.textAlign === 'left'
+                            ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
+                        }`}
+                        title="Align Left"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={currentLayer.textAlign === 'left' ? 'text-white' : 'text-gray-700'}>
+                          <line x1="3" y1="6" x2="21" y2="6"/>
+                          <line x1="3" y1="12" x2="15" y2="12"/>
+                          <line x1="3" y1="18" x2="21" y2="18"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, textAlign: 'center' } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, textAlign: 'center' })
+                        }}
+                        className={`px-2 py-1 rounded transition-all ${
+                          currentLayer.textAlign === 'center'
+                            ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
+                        }`}
+                        title="Align Center"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={currentLayer.textAlign === 'center' ? 'text-white' : 'text-gray-700'}>
+                          <line x1="3" y1="6" x2="21" y2="6"/>
+                          <line x1="9" y1="12" x2="15" y2="12"/>
+                          <line x1="3" y1="18" x2="21" y2="18"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const updatedLayers = textLayers.map(layer =>
+                            layer.id === selectedLayer.id ? { ...layer, textAlign: 'right' } : layer
+                          )
+                          setTextLayers(updatedLayers)
+                          setSelectedLayer({ ...selectedLayer, textAlign: 'right' })
+                        }}
+                        className={`px-2 py-1 rounded transition-all ${
+                          currentLayer.textAlign === 'right'
+                            ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
+                        }`}
+                        title="Align Right"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={currentLayer.textAlign === 'right' ? 'text-white' : 'text-gray-700'}>
+                          <line x1="3" y1="6" x2="21" y2="6"/>
+                          <line x1="9" y1="12" x2="21" y2="12"/>
+                          <line x1="3" y1="18" x2="21" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="w-px h-5 bg-gray-300"></div>
+
+                    {/* Text Color */}
+                    <input
+                      type="color"
+                      value={currentLayer.color || selectedLayer.color}
+                      onChange={(e) => {
+                        const newColor = e.target.value
+                        const updatedLayers = textLayers.map(layer =>
+                          layer.id === selectedLayer.id ? { ...layer, color: newColor } : layer
+                        )
+                        setTextLayers(updatedLayers)
+                        setSelectedLayer({ ...selectedLayer, color: newColor })
+                      }}
+                      className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        WebkitAppearance: 'none',
+                        MozAppearance: 'none',
+                        appearance: 'none',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px'
+                      }}
+                      title="Text Color"
+                    />
+
+                    {/* Divider */}
+                    <div className="w-px h-5 bg-gray-300"></div>
+
+                    {/* More Options Button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setActivePanel('text')
+                      }}
+                      className="px-2.5 py-1.5 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded transition-colors flex items-center gap-1"
+                      title="More Options"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="1"/>
+                        <circle cx="19" cy="12" r="1"/>
+                        <circle cx="5" cy="12" r="1"/>
+                      </svg>
+                      More
+                    </button>
+
+                    {/* Divider */}
+                    <div className="w-px h-5 bg-gray-300"></div>
+
+                    {/* Delete Button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const previousLayers = [...textLayers]
+                        const previousSelected = selectedLayer
+                        
+                        const updatedLayers = textLayers.filter(layer => layer.id !== selectedLayer.id)
+                        setTextLayers(updatedLayers)
+                        setSelectedLayer(null)
+                        
+                        saveToHistory('text_delete', {
+                          previousLayers,
+                          previousSelected,
+                          newLayers: updatedLayers,
+                          newSelected: null
+                        })
+                      }}
+                      className="px-2 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-1"
+                      title="Delete Text"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18"/>
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      </svg>
+                    </button>
+                  </div>
+                )
+              })()}
+              
               {imageLoaded ? (
                 <div 
                   className={canvasWrapperClasses}
@@ -2715,73 +2971,6 @@ const handleTemplateJsonLoad = () => {
                           }}
                           onClick={() => handleLayerClick(layer)}
                           onMouseDown={(e) => handleMouseDown(e, layer.id, 'drag')}
-                          onMouseEnter={(e) => {
-                            // Clear any pending hide timeout
-                            if (hoverTimeoutRef.current) {
-                              clearTimeout(hoverTimeoutRef.current)
-                              hoverTimeoutRef.current = null
-                            }
-                            setHoveredTextLayerId(layer.id)
-                            setIsHoveringToolbar(false)
-                            const rect = e.currentTarget.getBoundingClientRect()
-                            const canvasEl = e.currentTarget.closest('[data-image-editor-canvas]')
-                            const toolbarHeight = 48 // approx toolbar height in px
-                            const toolbarWidth = 600 // approximate toolbar width in px
-                            const toolbarHeightActual = 60 // approximate toolbar height in px
-                            
-                            if (canvasEl) {
-                              const canvasRect = canvasEl.getBoundingClientRect()
-                              const relativeLeft = rect.left - canvasRect.left + rect.width / 2
-                              const relativeTop = rect.top - canvasRect.top
-                              const isNearTop = relativeTop < toolbarHeight + 8
-                              
-                              // Calculate desired position
-                              let desiredX = relativeLeft
-                              let desiredY = isNearTop
-                                ? relativeTop + rect.height + 10
-                                : relativeTop - 10
-                              
-                              // Constrain X position (toolbar is centered, so half width on each side)
-                              const minX = toolbarWidth / 2 + 10 // padding from left edge
-                              const maxX = canvasRect.width - toolbarWidth / 2 - 10 // padding from right edge
-                              desiredX = Math.max(minX, Math.min(maxX, desiredX))
-                              
-                              // Constrain Y position
-                              if (isNearTop) {
-                                // Toolbar below text - ensure it doesn't go below canvas
-                                const maxY = canvasRect.height - toolbarHeightActual - 10
-                                desiredY = Math.min(desiredY, maxY)
-                              } else {
-                                // Toolbar above text - ensure it doesn't go above canvas
-                                const minY = toolbarHeightActual + 10
-                                desiredY = Math.max(desiredY, minY)
-                              }
-                              
-                              setHoverToolbarPosition({
-                                x: desiredX,
-                                y: desiredY
-                              })
-                            } else {
-                              const isNearTop = topPx < toolbarHeight + 8
-                              // Fallback to old calculation if canvas not found
-                              setHoverToolbarPosition({
-                                x: leftPx + widthPx / 2,
-                                y: isNearTop ? topPx + heightPx + 10 : topPx - 10
-                              })
-                            }
-                          }}
-                          onMouseLeave={() => {
-                            // Only hide if not hovering over toolbar
-                            if (!isHoveringToolbarRef.current) {
-                              hoverTimeoutRef.current = setTimeout(() => {
-                                // Double check that we're still not hovering
-                                if (!isHoveringToolbarRef.current) {
-                                  setHoveredTextLayerId(null)
-                                }
-                                hoverTimeoutRef.current = null
-                              }, 300) // 300ms delay before hiding
-                            }
-                          }}
                         >
                           {layer.overlayImage?.enabled && layer.overlayImage?.imageUrl ? (
                             <img
@@ -2829,356 +3018,6 @@ const handleTemplateJsonLoad = () => {
                   
                   {/* Overlay Image */}
                   {renderOverlayImage()}
-
-                  {/* Hover Text Toolbar */}
-                  {hoveredTextLayerId && (() => {
-                    const hoveredLayer = textLayers.find(layer => layer.id === hoveredTextLayerId)
-                    if (!hoveredLayer) return null
-                    
-                    return (
-                      <div
-                        ref={hoverToolbarRef}
-                        className="absolute z-50 bg-white rounded-lg shadow-2xl border border-gray-200 p-2 flex items-center gap-2"
-                        style={{
-                          left: hoverToolbarPosition.x,
-                          top: hoverToolbarPosition.y,
-                          transform: 'translate(-50%, -100%)',
-                          pointerEvents: 'auto'
-                        }}
-                        onMouseEnter={() => {
-                          // Clear any pending hide timeout
-                          if (hoverTimeoutRef.current) {
-                            clearTimeout(hoverTimeoutRef.current)
-                            hoverTimeoutRef.current = null
-                          }
-                          setIsHoveringToolbar(true)
-                          setHoveredTextLayerId(hoveredTextLayerId)
-                        }}
-                        onMouseLeave={() => {
-                          setIsHoveringToolbar(false)
-                          // Delay hiding to allow moving back to text
-                          hoverTimeoutRef.current = setTimeout(() => {
-                            // Double check that we're still not hovering
-                            if (!isHoveringToolbarRef.current) {
-                              setHoveredTextLayerId(null)
-                            }
-                            hoverTimeoutRef.current = null
-                          }, 300) // 300ms delay before hiding
-                        }}
-                      >
-                        {/* Font Family */}
-                        <div className="relative">
-                          <select
-                            value={hoveredLayer.fontFamily}
-                            onChange={(e) => {
-                              // Update the hovered layer directly
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, fontFamily: e.target.value } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, fontFamily: e.target.value })
-                              }
-                            }}
-                            className="px-3 py-1.5 pr-8 text-sm border border-gray-300 rounded-md bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 appearance-none cursor-pointer min-w-[140px]"
-                            style={{ fontFamily: hoveredLayer.fontFamily }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {fonts.map(font => (
-                              <option key={font} value={font} style={{ fontFamily: font, backgroundColor: '#ffffff', color: '#111827' }}>
-                                {font}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </div>
-                        </div>
-
-                        {/* Font Size */}
-                        <div className="relative">
-                          <select
-                            value={hoveredLayer.fontSize}
-                            onChange={(e) => {
-                              // Update the hovered layer directly
-                              const size = parseInt(e.target.value) || 8
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, fontSize: size } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, fontSize: size })
-                              }
-                            }}
-                            className="px-3 py-1.5 pr-8 text-sm border border-gray-300 rounded-md bg-gray-100 text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 appearance-none cursor-pointer min-w-[70px]"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {Array.from({ length: 20 }, (_, i) => (i + 8) * 2).map(size => (
-                              <option key={size} value={size} style={{ backgroundColor: '#ffffff', color: '#111827' }}>{size}</option>
-                            ))}
-                          </select>
-                          <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-600">
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </div>
-                        </div>
-
-                        {/* Text Style Buttons */}
-                        <div className="flex gap-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const isBold = hoveredLayer.fontWeight === '700' || hoveredLayer.fontWeight === 700 || hoveredLayer.fontWeight === 'bold'
-                              const newWeight = isBold ? '400' : '700'
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, fontWeight: newWeight } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, fontWeight: newWeight })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded text-sm font-bold transition-all ${
-                              (hoveredLayer.fontWeight === '700' || hoveredLayer.fontWeight === 700 || hoveredLayer.fontWeight === 'bold')
-                                ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                            title="Bold"
-                          >
-                            B
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const newStyle = hoveredLayer.fontStyle === 'italic' ? 'normal' : 'italic'
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, fontStyle: newStyle } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, fontStyle: newStyle })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded text-sm italic transition-all ${
-                              hoveredLayer.fontStyle === 'italic' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                            title="Italic"
-                          >
-                            I
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const newDecoration = hoveredLayer.textDecoration === 'underline' ? 'none' : 'underline'
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, textDecoration: newDecoration } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, textDecoration: newDecoration })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded text-sm underline transition-all ${
-                              hoveredLayer.textDecoration === 'underline' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                            title="Underline"
-                          >
-                            U
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const newDecoration = hoveredLayer.textDecoration === 'line-through' ? 'none' : 'line-through'
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, textDecoration: newDecoration } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, textDecoration: newDecoration })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded text-sm line-through transition-all ${
-                              hoveredLayer.textDecoration === 'line-through' ? 'bg-purple-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                            }`}
-                            title="Strikethrough"
-                          >
-                            S
-                          </button>
-                        </div>
-
-                        {/* Divider */}
-                        <div className="w-px h-6 bg-gray-300"></div>
-
-                        {/* Text Alignment Buttons */}
-                        <div className="flex gap-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, textAlign: 'left' } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, textAlign: 'left' })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded transition-all ${
-                              hoveredLayer.textAlign === 'left'
-                                ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
-                            }`}
-                            title="Align Left"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={hoveredLayer.textAlign === 'left' ? 'text-white' : 'text-gray-700'}>
-                              <line x1="3" y1="6" x2="21" y2="6"/>
-                              <line x1="3" y1="12" x2="15" y2="12"/>
-                              <line x1="3" y1="18" x2="21" y2="18"/>
-                            </svg>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, textAlign: 'center' } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, textAlign: 'center' })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded transition-all ${
-                              hoveredLayer.textAlign === 'center'
-                                ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
-                            }`}
-                            title="Align Center"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={hoveredLayer.textAlign === 'center' ? 'text-white' : 'text-gray-700'}>
-                              <line x1="3" y1="6" x2="21" y2="6"/>
-                              <line x1="9" y1="12" x2="15" y2="12"/>
-                              <line x1="3" y1="18" x2="21" y2="18"/>
-                            </svg>
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              // Update the hovered layer directly
-                              const updatedLayers = textLayers.map(layer =>
-                                layer.id === hoveredLayer.id ? { ...layer, textAlign: 'right' } : layer
-                              )
-                              setTextLayers(updatedLayers)
-                              if (selectedLayer?.id === hoveredLayer.id) {
-                                setSelectedLayer({ ...selectedLayer, textAlign: 'right' })
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded transition-all ${
-                              hoveredLayer.textAlign === 'right'
-                                ? 'bg-purple-600 border border-purple-600' : 'bg-gray-200 hover:bg-gray-300'
-                            }`}
-                            title="Align Right"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={hoveredLayer.textAlign === 'right' ? 'text-white' : 'text-gray-700'}>
-                              <line x1="3" y1="6" x2="21" y2="6"/>
-                              <line x1="9" y1="12" x2="21" y2="12"/>
-                              <line x1="3" y1="18" x2="21" y2="18"/>
-                            </svg>
-                          </button>
-                        </div>
-
-                    
-
-                        
-
-                        {/* Text Color */}
-                        <div className="w-px h-6 bg-gray-300"></div>
-                        <input
-                          type="color"
-                          value={hoveredLayer.color}
-                          onChange={(e) => {
-                            // Update the hovered layer directly
-                            const updatedLayers = textLayers.map(layer =>
-                              layer.id === hoveredLayer.id ? { ...layer, color: e.target.value } : layer
-                            )
-                            setTextLayers(updatedLayers)
-                            if (selectedLayer?.id === hoveredLayer.id) {
-                              setSelectedLayer({ ...selectedLayer, color: e.target.value })
-                            }
-                          }}
-                          className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            WebkitAppearance: 'none',
-                            MozAppearance: 'none',
-                            appearance: 'none',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '6px'
-                          }}
-                          title="Text Color"
-                        />
-
-                        {/* Divider */}
-                        <div className="w-px h-6 bg-gray-300"></div>
-
-                        {/* More Options Button */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            // Select the hovered layer and open the main text editor panel
-                            setSelectedLayer(hoveredLayer)
-                            setActivePanel('text')
-                            setHoveredTextLayerId(null)
-                          }}
-                          className="px-2.5 py-1.5 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded transition-colors flex items-center gap-1"
-                          title="More Options"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <circle cx="12" cy="12" r="1"/>
-                            <circle cx="19" cy="12" r="1"/>
-                            <circle cx="5" cy="12" r="1"/>
-                          </svg>
-                          More
-                        </button>
-
-                        {/* Divider */}
-                        <div className="w-px h-6 bg-gray-300"></div>
-
-                        {/* Delete Button */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            const previousLayers = [...textLayers]
-                            const previousSelected = selectedLayer
-                            
-                            const updatedLayers = textLayers.filter(layer => layer.id !== hoveredTextLayerId)
-                            setTextLayers(updatedLayers)
-                            setSelectedLayer(null)
-                            setHoveredTextLayerId(null)
-                            
-                            saveToHistory('text_delete', {
-                              previousLayers,
-                              previousSelected,
-                              newLayers: updatedLayers,
-                              newSelected: null
-                            })
-                          }}
-                          className="px-2 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-1"
-                          title="Delete Text"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M3 6h18"/>
-                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                          </svg>
-                        </button>
-                      </div>
-                    )
-                  })()}
                 </div>
               ) : (
                 <div className="text-center py-10 text-gray-500">
@@ -3187,6 +3026,7 @@ const handleTemplateJsonLoad = () => {
                   <p className="text-sm">Enter an image URL above and click 'Load Image'</p>
                 </div>
               )}
+              </div>
             </div>
           </div>
 

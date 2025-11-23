@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import Plot from 'react-plotly.js'
 import Plotly from 'plotly.js-dist-min'
-import { FaTimes } from 'react-icons/fa'
+import { FaTimes, FaUndo, FaRedo } from 'react-icons/fa'
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value))
 
@@ -408,15 +408,114 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   const [isDirty, setIsDirty] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [layoutOverrides, setLayoutOverrides] = useState({
+    title: { text: '', font: { size: 20, color: '#000000', family: 'Arial' }, x: 0.5, xanchor: 'center' },
+    showlegend: true,
+    legend: { orientation: 'v', x: 1.02, y: 0.5, font: { size: 12, color: '#000000', family: 'Arial' } },
+    paper_bgcolor: '#FFFFFF',
+    plot_bgcolor: '#FFFFFF',
+    xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
+    yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
+  })
+  const [expandedSections, setExpandedSections] = useState({
+    title: false,
+    legend: false,
+    background: false,
+    axes: false,
+    data: false
+  })
+  const [history, setHistory] = useState([])
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(-1)
+  const historyInitializedRef = useRef(false)
+  const currentHistoryIndexRef = useRef(-1)
   const plotRef = useRef(null)
   const sceneNumber = sceneData?.scene_number || sceneData?.sceneNumber
   const chartTitle = sceneData?.chart_title || sceneData?.scene_title || 'Chart'
+
+  // Capture current editor state
+  const captureEditorState = useCallback(() => {
+    return {
+      chartTypeState,
+      chartDataState: deepClone(chartDataState),
+      seriesColorOverrides: deepClone(seriesColorOverrides),
+      layoutOverrides: deepClone(layoutOverrides),
+      rawChartDataInput
+    }
+  }, [chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, rawChartDataInput])
+
+  // Restore editor state from history entry
+  const restoreEditorState = useCallback((state) => {
+    setChartTypeState(state.chartTypeState)
+    setChartDataState(deepClone(state.chartDataState))
+    setSeriesColorOverrides(deepClone(state.seriesColorOverrides))
+    setLayoutOverrides(deepClone(state.layoutOverrides))
+    setRawChartDataInput(state.rawChartDataInput)
+    setRawChartError('')
+    setIsDirty(true)
+    setSaveError('')
+  }, [])
+
+  // Save current state to history
+  const saveToHistory = useCallback((skipMarkDirty = false) => {
+    const currentState = captureEditorState()
+    setHistory((prev) => {
+      const idx = currentHistoryIndexRef.current
+      const newHistory = prev.slice(0, idx + 1)
+      newHistory.push(currentState)
+      // Limit history to 50 entries
+      const finalHistory = newHistory.length > 50 ? newHistory.slice(-50) : newHistory
+      const newIndex = finalHistory.length - 1
+      currentHistoryIndexRef.current = newIndex
+      setCurrentHistoryIndex(newIndex)
+      return finalHistory
+    })
+    if (!skipMarkDirty) {
+      setIsDirty(true)
+      setSaveError('')
+    }
+  }, [captureEditorState])
+
+  // Undo handler
+  const handleUndo = useCallback(() => {
+    const idx = currentHistoryIndexRef.current
+    if (idx > 0 && history.length > 0) {
+      const prevIndex = idx - 1
+      const prevState = history[prevIndex]
+      if (prevState) {
+        restoreEditorState(prevState)
+        currentHistoryIndexRef.current = prevIndex
+        setCurrentHistoryIndex(prevIndex)
+      }
+    }
+  }, [history, restoreEditorState])
+
+  // Redo handler
+  const handleRedo = useCallback(() => {
+    const idx = currentHistoryIndexRef.current
+    if (idx < history.length - 1 && history.length > 0) {
+      const nextIndex = idx + 1
+      const nextState = history[nextIndex]
+      if (nextState) {
+        restoreEditorState(nextState)
+        currentHistoryIndexRef.current = nextIndex
+        setCurrentHistoryIndex(nextIndex)
+      }
+    }
+  }, [history, restoreEditorState])
+
+  const canUndo = currentHistoryIndex > 0 && history.length > 0
+  const canRedo = currentHistoryIndex < history.length - 1 && history.length > 0
 
   const rebuildEditorStateFromScene = useCallback(() => {
     if (!sceneData) return
     const nextType = (sceneData?.chart_type || sceneData?.chartType || 'unknown').toLowerCase()
     const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
     const targets = computeColorTargets(nextType, parsedData)
+    const presetSections = sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+    const titleConfig = getConfigDict(presetSections.title ?? [])
+    const legendConfig = getConfigDict(presetSections.legend ?? [])
+    const bgConfig = getConfigDict(presetSections.background ?? [])
+    
     setChartTypeState(nextType)
     setChartDataState(parsedData)
     setSeriesColorOverrides(extractInitialColorOverrides(sceneData, targets))
@@ -424,6 +523,71 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
     setRawChartError('')
     setIsDirty(false)
     setSaveError('')
+    setLayoutOverrides({
+      title: {
+        text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
+        font: {
+          size: titleConfig.font_size || 20,
+          color: titleConfig.font_color || '#000000',
+          family: titleConfig.font_family || 'Arial'
+        },
+        x: titleConfig.x_align === 'left' ? 0 : 0.5,
+        xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
+      },
+      showlegend: legendConfig.show !== false,
+      legend: {
+        orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
+        x: legendConfig.x ?? 1.02,
+        y: legendConfig.y ?? 0.5,
+        font: {
+          size: legendConfig.font_size || 12,
+          color: legendConfig.font_color || '#000000',
+          family: legendConfig.font_family || 'Arial'
+        }
+      },
+      paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
+      plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF',
+      xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
+      yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
+    })
+    // Initialize history with initial state
+    const initialState = {
+      chartTypeState: nextType,
+      chartDataState: deepClone(parsedData),
+      seriesColorOverrides: extractInitialColorOverrides(sceneData, targets),
+      layoutOverrides: {
+        title: {
+          text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
+          font: {
+            size: titleConfig.font_size || 20,
+            color: titleConfig.font_color || '#000000',
+            family: titleConfig.font_family || 'Arial'
+          },
+          x: titleConfig.x_align === 'left' ? 0 : 0.5,
+          xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
+        },
+        showlegend: legendConfig.show !== false,
+        legend: {
+          orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
+          x: legendConfig.x ?? 1.02,
+          y: legendConfig.y ?? 0.5,
+          font: {
+            size: legendConfig.font_size || 12,
+            color: legendConfig.font_color || '#000000',
+            family: legendConfig.font_family || 'Arial'
+          }
+        },
+        paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
+        plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF',
+        xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
+        yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
+      },
+      rawChartDataInput: JSON.stringify(parsedData, null, 2)
+    }
+    setHistory([initialState])
+    setCurrentHistoryIndex(0)
+    currentHistoryIndexRef.current = 0
+    historyInitializedRef.current = true
   }, [sceneData])
 
   useEffect(() => {
@@ -463,14 +627,16 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   }, [])
 
   const handleColorOverrideChange = useCallback((target, color) => {
+    if (historyInitializedRef.current) saveToHistory()
     setSeriesColorOverrides((prev) => ({
       ...prev,
       [target]: color
     }))
     markDirty()
-  }, [markDirty])
+  }, [markDirty, saveToHistory])
 
   const handleChartTypeChange = (event) => {
+    if (historyInitializedRef.current) saveToHistory()
     setChartTypeState(event.target.value)
     markDirty()
   }
@@ -481,6 +647,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
 
   const handleApplyRawChartData = useCallback(() => {
     try {
+      if (historyInitializedRef.current) saveToHistory()
       const parsed = JSON.parse(rawChartDataInput || '{}')
       setChartDataState(parsed)
       setRawChartError('')
@@ -502,13 +669,33 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
     } catch (err) {
       setRawChartError(err?.message || 'Invalid chart_data JSON')
     }
-  }, [chartTypeState, rawChartDataInput, sceneData, markDirty])
+  }, [chartTypeState, rawChartDataInput, sceneData, markDirty, saveToHistory])
 
   const handleResetEditor = useCallback(() => {
     rebuildEditorStateFromScene()
     setIsDirty(false)
     setSaveError('')
   }, [rebuildEditorStateFromScene])
+
+  const updateLayoutOverride = useCallback((path, value) => {
+    if (historyInitializedRef.current) saveToHistory()
+    setLayoutOverrides((prev) => {
+      const keys = path.split('.')
+      const newState = deepClone(prev)
+      let current = newState
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (!current[keys[i]]) current[keys[i]] = {}
+        current = current[keys[i]]
+      }
+      current[keys[keys.length - 1]] = value
+      return newState
+    })
+    markDirty()
+  }, [markDirty, saveToHistory])
+
+  const toggleSection = useCallback((section) => {
+    setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }))
+  }, [])
 
   const colorControlsVisible = colorTargets.length > 0
 
@@ -527,40 +714,123 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
       if (!plotElement) {
         throw new Error('Chart preview is not ready yet.')
       }
-      const width = Math.max(plotElement.offsetWidth * 2, 1200)
-      const height = Math.max(plotElement.offsetHeight * 2, 800)
-      const dataUrl = await Plotly.toImage(plotElement, {
+      
+      console.log('📸 Exporting chart with Plotly.toImage...')
+      
+      // Wait a moment to ensure plot is fully rendered
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // Get dimensions - prefer figure layout dimensions if available, otherwise use DOM dimensions
+      const plotWidth = figure?.layout?.width || plotElement.offsetWidth || 960
+      const plotHeight = figure?.layout?.height || plotElement.offsetHeight || 540
+      
+      console.log(`📐 Export dimensions: ${plotWidth}x${plotHeight}`)
+      
+      // Use Plotly's built-in toImage method (same as download as PNG feature)
+      // This uses Plotly's native export functionality that handles all scaling automatically
+      // Use scale: 3 for high-resolution export with proper font scaling
+      // Note: width/height are optional - if omitted, Plotly uses the element's dimensions
+      const imageDataUrl = await Plotly.toImage(plotElement, {
         format: 'png',
-        width,
-        height,
-        scale: 1
+        width: plotWidth,
+        height: plotHeight,
+        scale: 3 // High resolution - Plotly automatically scales fonts, labels, titles, etc.
       })
-      const blob = await (await fetch(dataUrl)).blob()
-      const formData = new FormData()
-      formData.append('session_id', sessionId)
-      formData.append('user_id', userId)
-      formData.append('scene_number', sceneNumber)
-      formData.append('file', blob, `scene-${sceneNumber}-chart.png`)
+      
+      console.log('✅ Chart exported to data URL, converting to blob...')
+      
+      // Convert data URL to blob (matching ImageList.js pattern)
+      const response = await fetch(imageDataUrl)
+      if (!response.ok) {
+        throw new Error('Failed to convert image data URL to blob')
+      }
+      const blob = await response.blob()
+      
+      if (!blob || blob.size === 0) {
+        throw new Error('Failed to create blob from image data')
+      }
+      
+      console.log(`✅ Blob created: ${blob.size} bytes`)
+      
+      // Generate filename
+      const fileName = `scene-${sceneNumber}-chart.png`
+      
+      // Create a File object from the blob (matching ImageList.js pattern)
+      const file = new File([blob], fileName, {
+        type: 'image/png',
+        lastModified: Date.now()
+      })
+      
+      // First, save to temp folder via backend API (matching ImageList.js pattern)
+      console.log(`📤 Saving chart to temp folder: ${fileName}...`)
+      const tempFormData = new FormData()
+      tempFormData.append('image', file)
+      tempFormData.append('fileName', fileName)
+      tempFormData.append('sceneNumber', sceneNumber)
+      tempFormData.append('imageIndex', 0) // Charts are typically index 0
+      
+      const saveTempResponse = await fetch('/api/save-temp-image', {
+        method: 'POST',
+        body: tempFormData
+      })
+      
+      if (!saveTempResponse.ok) {
+        const errorText = await saveTempResponse.text()
+        console.warn(`⚠️ Failed to save to temp folder (${saveTempResponse.status}): ${errorText}`)
+        // Continue anyway - we can still upload directly
+      } else {
+        console.log(`✅ Chart saved to temp folder successfully`)
+      }
+      
+      // Now upload the chart image to the upload_chart API using the file from temp folder
+      console.log(`📤 Uploading chart to upload_chart API...`)
+      const uploadFormData = new FormData()
+      uploadFormData.append('session_id', sessionId)
+      uploadFormData.append('user_id', userId)
+      uploadFormData.append('scene_number', String(sceneNumber))
+      uploadFormData.append('file', file, fileName)
 
-      const resp = await fetch(
+      const uploadResponse = await fetch(
         'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/upload_chart',
         {
           method: 'POST',
-          body: formData
+          body: uploadFormData
         }
       )
-      if (!resp.ok) {
-        const text = await resp.text()
+      
+      if (!uploadResponse.ok) {
+        const text = await uploadResponse.text()
         throw new Error(text || 'Failed to upload chart')
       }
+      
+      console.log('✅ Chart uploaded successfully')
+      
+      // Delete the image from temp folder after successful upload (matching ImageList.js pattern)
+      console.log(`🗑️ Deleting chart from temp folder: ${fileName}...`)
+      try {
+        const deleteResponse = await fetch(`/api/delete-temp-image?fileName=${encodeURIComponent(fileName)}`, {
+          method: 'DELETE'
+        })
+        
+        if (deleteResponse.ok) {
+          console.log(`✅ Deleted ${fileName} from temp folder`)
+        } else {
+          console.warn(`⚠️ Could not delete ${fileName} from temp folder (${deleteResponse.status})`)
+        }
+      } catch (deleteError) {
+        console.warn(`⚠️ Error deleting ${fileName} from temp folder:`, deleteError)
+        // Don't fail the whole operation if deletion fails
+      }
+      
       setIsDirty(false)
       window.location.reload()
     } catch (err) {
+      console.error('❌ Error saving chart:', err)
       setSaveError(err?.message || 'Failed to save chart')
     } finally {
       setIsSaving(false)
     }
-  }, [sceneNumber])
+  }, [sceneNumber, figure])
 
   useEffect(() => {
     if (!sceneData) return
@@ -625,6 +895,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
       }
       fig.layout = {
         ...fig.layout,
+        ...layoutOverrides,
         dragmode: 'zoom',
         hovermode: 'closest',
         newshape: {
@@ -641,7 +912,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
       setFigure(null)
       setError(err?.message || 'Unable to render chart')
     }
-  }, [sceneData, chartTypeState, chartDataState, seriesColorOverrides])
+  }, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides])
 
   if (!isOpen) return null
 
@@ -656,6 +927,36 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
             </h2>
           </div>
           <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 border-r pr-3">
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={!canUndo}
+                className={`w-9 h-9 flex items-center justify-center rounded-lg transition ${
+                  canUndo
+                    ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    : 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                }`}
+                title="Undo"
+                aria-label="Undo"
+              >
+                <FaUndo />
+              </button>
+              <button
+                type="button"
+                onClick={handleRedo}
+                disabled={!canRedo}
+                className={`w-9 h-9 flex items-center justify-center rounded-lg transition ${
+                  canRedo
+                    ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    : 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                }`}
+                title="Redo"
+                aria-label="Redo"
+              >
+                <FaRedo />
+              </button>
+            </div>
             {isDirty && (
               <button
                 type="button"
@@ -737,6 +1038,398 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Title Settings */}
+            <div className="border rounded-lg bg-white">
+              <button
+                type="button"
+                onClick={() => toggleSection('title')}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+              >
+                <span>Title</span>
+                <span className={`transform transition-transform ${expandedSections.title ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+              {expandedSections.title && (
+                <div className="px-3 pb-3 space-y-2 border-t">
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Title Text</label>
+                    <input
+                      type="text"
+                      value={layoutOverrides.title.text}
+                      onChange={(e) => updateLayoutOverride('title.text', e.target.value)}
+                      className="w-full text-sm border rounded px-2 py-1"
+                      placeholder="Chart Title"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-600 block mb-1">Font Size</label>
+                      <input
+                        type="number"
+                        value={layoutOverrides.title.font.size}
+                        onChange={(e) => updateLayoutOverride('title.font.size', Number(e.target.value) || 20)}
+                        className="w-full text-sm border rounded px-2 py-1"
+                        min="8"
+                        max="48"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600 block mb-1">Color</label>
+                      <input
+                        type="color"
+                        value={layoutOverrides.title.font.color}
+                        onChange={(e) => updateLayoutOverride('title.font.color', e.target.value)}
+                        className="w-full h-8 border rounded"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Alignment</label>
+                    <select
+                      value={layoutOverrides.title.xanchor}
+                      onChange={(e) => {
+                        updateLayoutOverride('title.xanchor', e.target.value)
+                        updateLayoutOverride('title.x', e.target.value === 'left' ? 0 : 0.5)
+                      }}
+                      className="w-full text-sm border rounded px-2 py-1"
+                    >
+                      <option value="left">Left</option>
+                      <option value="center">Center</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Legend Settings */}
+            <div className="border rounded-lg bg-white">
+              <button
+                type="button"
+                onClick={() => toggleSection('legend')}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+              >
+                <span>Legend</span>
+                <span className={`transform transition-transform ${expandedSections.legend ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+              {expandedSections.legend && (
+                <div className="px-3 pb-3 space-y-2 border-t">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={layoutOverrides.showlegend}
+                      onChange={(e) => updateLayoutOverride('showlegend', e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-xs text-gray-700">Show Legend</span>
+                  </label>
+                  {layoutOverrides.showlegend && (
+                    <>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Position</label>
+                        <select
+                          value={layoutOverrides.legend.orientation}
+                          onChange={(e) => updateLayoutOverride('legend.orientation', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        >
+                          <option value="v">Vertical</option>
+                          <option value="h">Horizontal</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Font Size</label>
+                          <input
+                            type="number"
+                            value={layoutOverrides.legend.font.size}
+                            onChange={(e) => updateLayoutOverride('legend.font.size', Number(e.target.value) || 12)}
+                            className="w-full text-sm border rounded px-2 py-1"
+                            min="8"
+                            max="24"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Color</label>
+                          <input
+                            type="color"
+                            value={layoutOverrides.legend.font.color}
+                            onChange={(e) => updateLayoutOverride('legend.font.color', e.target.value)}
+                            className="w-full h-8 border rounded"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Background Settings */}
+            <div className="border rounded-lg bg-white">
+              <button
+                type="button"
+                onClick={() => toggleSection('background')}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+              >
+                <span>Background</span>
+                <span className={`transform transition-transform ${expandedSections.background ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+              {expandedSections.background && (
+                <div className="px-3 pb-3 space-y-2 border-t">
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Paper Color</label>
+                    <input
+                      type="color"
+                      value={layoutOverrides.paper_bgcolor}
+                      onChange={(e) => updateLayoutOverride('paper_bgcolor', e.target.value)}
+                      className="w-full h-8 border rounded"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Plot Color</label>
+                    <input
+                      type="color"
+                      value={layoutOverrides.plot_bgcolor}
+                      onChange={(e) => updateLayoutOverride('plot_bgcolor', e.target.value)}
+                      className="w-full h-8 border rounded"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Axes Settings */}
+            <div className="border rounded-lg bg-white">
+              <button
+                type="button"
+                onClick={() => toggleSection('axes')}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+              >
+                <span>Axes & Grid</span>
+                <span className={`transform transition-transform ${expandedSections.axes ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+              {expandedSections.axes && (
+                <div className="px-3 pb-3 space-y-3 border-t">
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">X-Axis Title</label>
+                    <input
+                      type="text"
+                      value={layoutOverrides.xaxis.title.text}
+                      onChange={(e) => updateLayoutOverride('xaxis.title.text', e.target.value)}
+                      className="w-full text-sm border rounded px-2 py-1"
+                      placeholder="X-Axis Label"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Y-Axis Title</label>
+                    <input
+                      type="text"
+                      value={layoutOverrides.yaxis.title.text}
+                      onChange={(e) => updateLayoutOverride('yaxis.title.text', e.target.value)}
+                      className="w-full text-sm border rounded px-2 py-1"
+                      placeholder="Y-Axis Label"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={layoutOverrides.xaxis.showgrid}
+                        onChange={(e) => updateLayoutOverride('xaxis.showgrid', e.target.checked)}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-xs text-gray-700">Show X Grid</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={layoutOverrides.yaxis.showgrid}
+                        onChange={(e) => updateLayoutOverride('yaxis.showgrid', e.target.checked)}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-xs text-gray-700">Show Y Grid</span>
+                    </label>
+                  </div>
+                  {(layoutOverrides.xaxis.showgrid || layoutOverrides.yaxis.showgrid) && (
+                    <div>
+                      <label className="text-xs text-gray-600 block mb-1">Grid Color</label>
+                      <input
+                        type="color"
+                        value={layoutOverrides.xaxis.gridcolor}
+                        onChange={(e) => {
+                          updateLayoutOverride('xaxis.gridcolor', e.target.value)
+                          updateLayoutOverride('yaxis.gridcolor', e.target.value)
+                        }}
+                        className="w-full h-8 border rounded"
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Axis Borders */}
+                  <div className="pt-2 border-t">
+                    <p className="text-xs font-medium text-gray-700 mb-2">Axis Borders</p>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={layoutOverrides.xaxis.showline}
+                          onChange={(e) => updateLayoutOverride('xaxis.showline', e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-xs text-gray-700">Show X-Axis Border</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={layoutOverrides.yaxis.showline}
+                          onChange={(e) => updateLayoutOverride('yaxis.showline', e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-xs text-gray-700">Show Y-Axis Border</span>
+                      </label>
+                    </div>
+                    {(layoutOverrides.xaxis.showline || layoutOverrides.yaxis.showline) && (
+                      <>
+                        <div className="mt-2">
+                          <label className="text-xs text-gray-600 block mb-1">Border Color</label>
+                          <input
+                            type="color"
+                            value={layoutOverrides.xaxis.linecolor}
+                            onChange={(e) => {
+                              updateLayoutOverride('xaxis.linecolor', e.target.value)
+                              updateLayoutOverride('yaxis.linecolor', e.target.value)
+                            }}
+                            className="w-full h-8 border rounded"
+                          />
+                        </div>
+                        <div className="mt-2">
+                          <label className="text-xs text-gray-600 block mb-1">Border Width</label>
+                          <input
+                            type="number"
+                            value={layoutOverrides.xaxis.linewidth}
+                            onChange={(e) => {
+                              const width = Number(e.target.value) || 1
+                              updateLayoutOverride('xaxis.linewidth', width)
+                              updateLayoutOverride('yaxis.linewidth', width)
+                            }}
+                            className="w-full text-sm border rounded px-2 py-1"
+                            min="1"
+                            max="10"
+                            step="1"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Data Editing */}
+            {datasetSummary && (
+              <div className="border rounded-lg bg-white">
+                <button
+                  type="button"
+                  onClick={() => toggleSection('data')}
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+                >
+                  <span>Edit Data</span>
+                  <span className={`transform transition-transform ${expandedSections.data ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+                {expandedSections.data && (
+                  <div className="px-3 pb-3 space-y-2 border-t max-h-64 overflow-y-auto">
+                    {datasetSummary.categories && datasetSummary.categories.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-600 mb-2">Categories</p>
+                        <div className="space-y-1">
+                          {datasetSummary.categories.map((cat, idx) => (
+                            <input
+                              key={idx}
+                              type="text"
+                              value={cat}
+                              onChange={(e) => {
+                                if (historyInitializedRef.current) saveToHistory()
+                                const newCategories = [...datasetSummary.categories]
+                                newCategories[idx] = e.target.value
+                                const updatedData = { ...chartDataState }
+                                if (updatedData.series) {
+                                  updatedData.series.x = newCategories
+                                  setChartDataState(updatedData)
+                                  setRawChartDataInput(JSON.stringify(updatedData, null, 2))
+                                  markDirty()
+                                }
+                              }}
+                              className="w-full text-xs border rounded px-2 py-1"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {datasetSummary.dataset &&
+                      Object.entries(datasetSummary.dataset).map(([seriesName, values]) => (
+                        <div key={seriesName} className="mt-2">
+                          <p className="text-xs font-medium text-gray-600 mb-1">{seriesName}</p>
+                          <div className="space-y-1">
+                            {values.map((val, idx) => (
+                              <input
+                                key={idx}
+                                type="number"
+                                value={val}
+                                onChange={(e) => {
+                                  if (historyInitializedRef.current) saveToHistory()
+                                  const numVal = Number(e.target.value) || 0
+                                  const updatedData = { ...chartDataState }
+                                  if (updatedData.series?.data) {
+                                    const seriesIdx = updatedData.series.data.findIndex((s) => s.name === seriesName)
+                                    if (seriesIdx >= 0) {
+                                      const newY = [...updatedData.series.data[seriesIdx].y]
+                                      newY[idx] = numVal
+                                      updatedData.series.data[seriesIdx].y = newY
+                                      setChartDataState(updatedData)
+                                      setRawChartDataInput(JSON.stringify(updatedData, null, 2))
+                                      markDirty()
+                                    }
+                                  }
+                                }}
+                                className="w-full text-xs border rounded px-2 py-1"
+                                step="any"
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    {datasetSummary.values && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-gray-600 mb-1">Values</p>
+                        <div className="space-y-1">
+                          {datasetSummary.values.map((val, idx) => (
+                            <input
+                              key={idx}
+                              type="number"
+                              value={val}
+                              onChange={(e) => {
+                                if (historyInitializedRef.current) saveToHistory()
+                                const numVal = Number(e.target.value) || 0
+                                const updatedData = { ...chartDataState }
+                                if (updatedData.series?.data?.[0]) {
+                                  const newValues = [...updatedData.series.data[0].values]
+                                  newValues[idx] = numVal
+                                  updatedData.series.data[0].values = newValues
+                                  setChartDataState(updatedData)
+                                  setRawChartDataInput(JSON.stringify(updatedData, null, 2))
+                                  markDirty()
+                                }
+                              }}
+                              className="w-full text-xs border rounded px-2 py-1"
+                              step="any"
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
