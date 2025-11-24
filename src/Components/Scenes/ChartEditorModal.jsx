@@ -431,6 +431,9 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   const plotRef = useRef(null)
   const sceneNumber = sceneData?.scene_number || sceneData?.sceneNumber
   const chartTitle = sceneData?.chart_title || sceneData?.scene_title || 'Chart'
+  const [availablePresets, setAvailablePresets] = useState([])
+  const [selectedPresetIndex, setSelectedPresetIndex] = useState(0)
+  const [isLoadingPresets, setIsLoadingPresets] = useState(false)
 
   // Capture current editor state
   const captureEditorState = useCallback(() => {
@@ -511,14 +514,20 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
     const nextType = (sceneData?.chart_type || sceneData?.chartType || 'unknown').toLowerCase()
     const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
     const targets = computeColorTargets(nextType, parsedData)
-    const presetSections = sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+    // Use selected preset if available, otherwise fall back to sceneData preset
+    const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+    const presetSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
     const titleConfig = getConfigDict(presetSections.title ?? [])
     const legendConfig = getConfigDict(presetSections.legend ?? [])
     const bgConfig = getConfigDict(presetSections.background ?? [])
     
     setChartTypeState(nextType)
     setChartDataState(parsedData)
-    setSeriesColorOverrides(extractInitialColorOverrides(sceneData, targets))
+    // Create a modified sceneData with selected preset for color extraction
+    const sceneDataWithSelectedPreset = selectedPreset 
+      ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
+      : sceneData
+    setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets))
     setRawChartDataInput(JSON.stringify(parsedData, null, 2))
     setRawChartError('')
     setIsDirty(false)
@@ -588,11 +597,96 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
     setCurrentHistoryIndex(0)
     currentHistoryIndexRef.current = 0
     historyInitializedRef.current = true
-  }, [sceneData])
+  }, [sceneData, availablePresets, selectedPresetIndex])
 
   useEffect(() => {
     rebuildEditorStateFromScene()
   }, [rebuildEditorStateFromScene])
+
+  // Fetch available chart presets
+  useEffect(() => {
+    const fetchChartPresets = async () => {
+      if (!sceneData || !sceneNumber) return
+      
+      setIsLoadingPresets(true)
+      try {
+        const sessionId = localStorage.getItem('session_id')
+        const userId = localStorage.getItem('token')
+        if (!sessionId || !userId) {
+          // Fallback: use preset_definitions from sceneData if available
+          const presetDefs = sceneData?.preset?.preset_definitions || []
+          if (Array.isArray(presetDefs) && presetDefs.length > 0) {
+            setAvailablePresets(presetDefs)
+            setSelectedPresetIndex(0)
+            setIsLoadingPresets(false)
+            return
+          }
+          setIsLoadingPresets(false)
+          return
+        }
+
+        // Try to fetch all available chart presets
+        // First, try fetching from the chart-preset endpoint to see if it returns a list
+        const resp = await fetch(
+          `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/${encodeURIComponent(
+            sessionId
+          )}/${encodeURIComponent(sceneNumber)}?user_id=${encodeURIComponent(userId)}`
+        )
+        
+        if (resp.ok) {
+          const payload = await resp.json()
+          const presetPayload = payload?.chart_preset || payload
+          
+          // Check if it's an array of presets or a single preset
+          if (Array.isArray(presetPayload) && presetPayload.length > 0) {
+            // If it's an array, extract preset_definitions from each
+            const allPresets = presetPayload.flatMap(p => 
+              Array.isArray(p?.preset?.preset_definitions) 
+                ? p.preset.preset_definitions 
+                : (p?.preset_definitions || [])
+            )
+            if (allPresets.length > 0) {
+              setAvailablePresets(allPresets)
+              // Find current preset index
+              const currentPresetName = sceneData?.preset?.preset_definitions?.[0]?.name
+              const foundIndex = allPresets.findIndex(p => p?.name === currentPresetName)
+              setSelectedPresetIndex(foundIndex >= 0 ? foundIndex : 0)
+              setIsLoadingPresets(false)
+              return
+            }
+          }
+        }
+
+        // Fallback: use preset_definitions from sceneData
+        const presetDefs = sceneData?.preset?.preset_definitions || []
+        if (Array.isArray(presetDefs) && presetDefs.length > 0) {
+          setAvailablePresets(presetDefs)
+          setSelectedPresetIndex(0)
+        } else {
+          // Default preset if none found
+          setAvailablePresets([{ name: 'Default', sections: {} }])
+          setSelectedPresetIndex(0)
+        }
+      } catch (err) {
+        console.error('Error fetching chart presets:', err)
+        // Fallback: use preset_definitions from sceneData
+        const presetDefs = sceneData?.preset?.preset_definitions || []
+        if (Array.isArray(presetDefs) && presetDefs.length > 0) {
+          setAvailablePresets(presetDefs)
+          setSelectedPresetIndex(0)
+        } else {
+          setAvailablePresets([{ name: 'Default', sections: {} }])
+          setSelectedPresetIndex(0)
+        }
+      } finally {
+        setIsLoadingPresets(false)
+      }
+    }
+
+    if (isOpen && sceneData) {
+      fetchChartPresets()
+    }
+  }, [isOpen, sceneData, sceneNumber])
 
   const colorTargets = useMemo(
     () => computeColorTargets(chartTypeState, chartDataState),
@@ -602,7 +696,12 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   useEffect(() => {
     if (!sceneData) return
     setSeriesColorOverrides((prev) => {
-      const baseColors = extractInitialColorOverrides(sceneData, colorTargets)
+      // Use selected preset if available
+      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+      const sceneDataWithSelectedPreset = selectedPreset 
+        ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
+        : sceneData
+      const baseColors = extractInitialColorOverrides(sceneDataWithSelectedPreset, colorTargets)
       const next = {}
       colorTargets.forEach((target) => {
         if (Object.prototype.hasOwnProperty.call(prev, target)) {
@@ -613,7 +712,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
       })
       return next
     })
-  }, [colorTargets, sceneData])
+  }, [colorTargets, sceneData, availablePresets, selectedPresetIndex])
 
   const datasetSummary = useMemo(() => {
     const extracted = extractChartData(chartDataState, chartTypeState)
@@ -638,6 +737,13 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   const handleChartTypeChange = (event) => {
     if (historyInitializedRef.current) saveToHistory()
     setChartTypeState(event.target.value)
+    markDirty()
+  }
+
+  const handlePresetChange = (event) => {
+    if (historyInitializedRef.current) saveToHistory()
+    const selectedIndex = Number(event.target.value)
+    setSelectedPresetIndex(selectedIndex)
     markDirty()
   }
 
@@ -835,15 +941,17 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   useEffect(() => {
     if (!sceneData) return
     try {
-      const baseSections = sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+      // Use selected preset if available, otherwise fall back to sceneData preset
+      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+      const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
       const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides)
       const mergedSections = mergeSectionsWithOverrides(baseSections, overrideSections)
-      const preparedPreset = sceneData?.preset
+      const preparedPreset = selectedPreset || sceneData?.preset
         ? {
-            ...sceneData.preset,
+            ...(selectedPreset || sceneData.preset),
             preset_definitions: [
               {
-                ...(sceneData.preset?.preset_definitions?.[0] ?? {}),
+                ...((selectedPreset || sceneData.preset?.preset_definitions?.[0]) ?? {}),
                 sections: mergedSections
               }
             ]
@@ -912,7 +1020,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
       setFigure(null)
       setError(err?.message || 'Unable to render chart')
     }
-  }, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides])
+  }, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex])
 
   if (!isOpen) return null
 
@@ -998,11 +1106,24 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
               <p className="text-[11px] text-gray-500">Switch chart styles without leaving the editor.</p>
             </div>
 
-            <div>
+            <div className="space-y-1">
               <p className="text-xs uppercase tracking-wide text-gray-500">Preset</p>
-              <p className="text-sm text-gray-900">
-                {sceneData?.preset?.preset_definitions?.[0]?.name || 'Default'}
-              </p>
+              {isLoadingPresets ? (
+                <p className="text-sm text-gray-500">Loading presets...</p>
+              ) : (
+                <select
+                  value={selectedPresetIndex}
+                  onChange={handlePresetChange}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                >
+                  {availablePresets.map((preset, idx) => (
+                    <option key={idx} value={idx}>
+                      {preset?.name || `Preset ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <p className="text-[11px] text-gray-500">Select a preset style for your chart.</p>
             </div>
 
             {colorControlsVisible && (

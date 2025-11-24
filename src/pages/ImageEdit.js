@@ -148,7 +148,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [isDraggingShape, setIsDraggingShape] = useState(false)
   const [isResizingShape, setIsResizingShape] = useState(false)
   const [defaultShapeColor, setDefaultShapeColor] = useState('#7c3aed')
-  const [isToolbarOpen, setIsToolbarOpen] = useState(false)
+  const [isToolbarOpen, setIsToolbarOpen] = useState(true)
   const [hoveredTextLayerId, setHoveredTextLayerId] = useState(null)
   const [hoverToolbarPosition, setHoverToolbarPosition] = useState({ x: 0, y: 0 })
   const [isHoveringToolbar, setIsHoveringToolbar] = useState(false)
@@ -2300,14 +2300,6 @@ const handleTemplateJsonLoad = () => {
             <h1 className="header-title text-gray-700 font-semibold">Storyboard Image</h1>
           </div>
           <div className="header-right flex items-center gap-4">
-            <button
-              onClick={() => setIsToolbarOpen(!isToolbarOpen)}
-              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-all border border-gray-300 flex items-center gap-2"
-              title="Open Tool"
-            >
-              <Icon name="edit" size={16} />
-              Open Tool
-            </button>
             <button
               onClick={handleSaveChanges}
               disabled={isSaving}

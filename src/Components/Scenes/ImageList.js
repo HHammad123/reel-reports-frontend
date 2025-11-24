@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ChevronDown, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
@@ -97,6 +97,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     [questionnaireAspectRatio]
   );
   const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+  
+  // Browser-based image storage (workaround for server temp folder)
+  // Maps fileName -> Blob
+  const imageStorageRef = useRef(new Map());
   const selectedModel = String(selected?.model || selected?.mode || '').toUpperCase();
   // State for active image tab (0 for Image 1/Avatar, 1 for Image 2/Image)
   const [activeImageTab, setActiveImageTab] = useState(0);
@@ -264,12 +268,37 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
   const getSceneImages = useCallback(
     (row) => {
+      const modelUpper = String(row?.model || '').toUpperCase()
+      const isVEO3 = modelUpper === 'VEO3'
+      
       const ordered = getOrderedRefs(row)
-      if (ordered.length > 0) {
-        return ordered.slice(0, 2)
+      const imageRefs = ordered.length > 0 ? ordered : (Array.isArray(row?.refs) ? row.refs.filter(Boolean) : [])
+      
+      // For VEO3 only: combine images and avatar_urls
+      if (isVEO3) {
+        const avatarUrls = Array.isArray(row?.avatar_urls)
+          ? row.avatar_urls.map((av) => {
+              if (typeof av === 'string') return av.trim()
+              return (
+                av?.imageurl ||
+                av?.imageUrl ||
+                av?.image_url ||
+                av?.url ||
+                av?.src ||
+                av?.link ||
+                av?.avatar_url ||
+                ''
+              )
+            }).filter(url => url && typeof url === 'string' && url.trim())
+          : []
+        
+        // Combine images and avatar_urls, removing duplicates
+        const combined = [...new Set([...imageRefs, ...avatarUrls])].filter(Boolean)
+        return combined // Return all combined images for VEO3
       }
-      const refs = Array.isArray(row?.refs) ? row.refs.filter(Boolean) : []
-      return refs.slice(0, 2)
+      
+      // For non-VEO3 models, return only images (max 2)
+      return imageRefs.slice(0, 2)
     },
     [getOrderedRefs]
   )
@@ -482,6 +511,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               console.log('  Initial refs (from images.base_image):', refs);
               
                 let finalRefs = refs;
+                let avatarUrlsForMeta = []; // Store avatar_urls for VEO3
+                
                 // Only use avatar_urls if we have no valid refs from image arrays
                 if ((isVEO3 || isSora) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
                   const scene = veo3ScriptScenesByNumber[sceneNumber];
@@ -506,6 +537,26 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   });
                   
                   console.log('  Filtered refs (images without background_image):', filteredRefs);
+                  
+                  // Extract avatar_urls for VEO3 (always, not just as fallback)
+                  if (isVEO3) {
+                    avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
+                      ? scene.avatar_urls.map((av) => {
+                          if (typeof av === 'string') return av.trim();
+                          return (
+                            av?.imageurl ||
+                            av?.imageUrl ||
+                            av?.image_url ||
+                            av?.url ||
+                            av?.src ||
+                            av?.link ||
+                            av?.avatar_url ||
+                            ''
+                          );
+                        }).filter(url => url && typeof url === 'string' && url.trim())
+                      : [];
+                    console.log('  Avatar URLs (for VEO3 - will be shown with images):', avatarUrlsForMeta);
+                  }
                   
                   // PRIORITY: Use base_image URLs from image arrays if available
                   if (filteredRefs.length > 0) {
@@ -553,6 +604,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   imageVersionData: imagesContainer,
                   imageFrames: arr,
                   isEditable: true,
+                  // Store avatar_urls in metadata for VEO3 only
+                  ...(isVEO3 && avatarUrlsForMeta.length > 0 ? { avatar_urls: avatarUrlsForMeta } : {}),
                   prompts: {
                     opening_frame: normalizePromptFields(
                       verObj?.opening_frame ||
@@ -708,13 +761,18 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               }).filter(url => url && typeof url === 'string' && url.trim())
             : [];
           
-          // Combine, removing duplicates and background_image URLs
+          // For VEO3: store avatar_urls separately in metadata, combine with collectedUrls in refs
+          // For other models: combine as before
+          const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
           const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
           const meta = {
             description: scene?.desc || scene?.description || scene?.scene_description || '',
             narration: scene?.narration || scene?.voiceover || '',
             textToBeIncluded: scene?.text_to_be_included || scene?.textToBeIncluded || scene?.include_text || '',
-            model: scene?.model || scene?.mode || '',
+            model: modelUpper,
+            // Store avatar_urls in metadata for VEO3 only
+            ...(isVEO3 && avatarUrls.length > 0 ? { avatar_urls: avatarUrls } : {}),
             prompts: {
               opening_frame: normalizePromptFields(
                 scene?.v1?.opening_frame ||
@@ -1311,6 +1369,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             }
             
             let refs = collectUrls(it);
+            let avatarUrlsForMeta = []; // Store avatar_urls for VEO3
+            
             if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
               const scene = veo3ScriptScenesByNumber[sceneNumber];
               
@@ -1333,30 +1393,31 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 return trimmed && !backgroundImageUrls.has(trimmed);
               });
               
+              // Extract avatar_urls for VEO3 (always, not just as fallback)
+              avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
+                ? scene.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim())
+                : [];
+              
               // PRIORITY: Use base_image URLs from image arrays if available
               if (filteredRefs.length > 0) {
                 refs = filteredRefs;
               } else {
                 // FALLBACK: Only use avatar_urls if no image arrays exist
-                const avatarUrls = Array.isArray(scene?.avatar_urls)
-                  ? scene.avatar_urls.map((av) => {
-                      if (typeof av === 'string') return av.trim();
-                      return (
-                        av?.imageurl ||
-                        av?.imageUrl ||
-                        av?.image_url ||
-                        av?.url ||
-                        av?.src ||
-                        av?.link ||
-                        av?.avatar_url ||
-                        ''
-                      );
-                    }).filter(url => url && typeof url === 'string' && url.trim())
-                  : [];
-                
-                if (avatarUrls.length > 0) {
+                if (avatarUrlsForMeta.length > 0) {
                   // If no filtered refs, use only avatar_urls
-                  refs = avatarUrls;
+                  refs = avatarUrlsForMeta;
                 }
               }
             }
@@ -1383,6 +1444,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 imageVersionData: it,
                 imageFrames: Array.isArray(it?.images) ? it.images : [it],
                 isEditable: true,
+                // Store avatar_urls in metadata for VEO3 only
+                ...(isVEO3 && avatarUrlsForMeta.length > 0 ? { avatar_urls: avatarUrlsForMeta } : {}),
                 prompts: normalizePromptFields(it?.prompts || {})
               });
             }
@@ -1438,8 +1501,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 }).filter(url => url && typeof url === 'string' && url.trim())
               : [];
             
-            // Combine, removing duplicates and background_image URLs
-            const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
+            // For VEO3: store avatar_urls separately in metadata, combine with collectedUrls in refs
+            // For other models: combine as before
+            const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+            const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
+            const refs = isVEO3 
+              ? [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean)
+              : [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
             const meta = {
               description: scene?.description || scene?.scene_description || '',
               narration: scene?.narration || '',
@@ -1449,6 +1517,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               imageVersionData: null,
               imageFrames: [],
               isEditable: false,
+              model: modelUpper,
+              // Store avatar_urls in metadata for VEO3 only
+              ...(isVEO3 && avatarUrls.length > 0 ? { avatar_urls: avatarUrls } : {}),
               prompts: normalizePromptFields(scene?.prompts || {})
             };
             pushRow(num, scene?.scene_title || scene?.title, refs, meta);
@@ -1998,26 +2069,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             // Generate filename
             const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
             
-            // Save to temp folder via backend API (NO browser download)
-            const file = new File([blob], fileName, { type: 'image/png' });
-            const formData = new FormData();
-            formData.append('image', file);
-            formData.append('fileName', fileName);
-            formData.append('sceneNumber', sceneNumber);
-            formData.append('imageIndex', imageIndex);
-
-            console.log(`📤 Scene ${sceneNumber}, Image ${imageIndex + 1}: Uploading to temp folder...`);
-            const saveResponse = await fetch('/api/save-temp-image', {
-              method: 'POST',
-              body: formData,
-            });
-
-            if (saveResponse.ok) {
-              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Saved successfully with html2canvas`);
+            // WORKAROUND: Store image in browser memory instead of server temp folder
+            // This bypasses the /api/save-temp-image endpoint that's not working
+            console.log(`💾 Scene ${sceneNumber}, Image ${imageIndex + 1}: Storing in browser memory...`);
+            console.log(`   File size: ${(blob.size / 1024).toFixed(2)} KB`);
+            
+            try {
+              // Store the blob in memory using a Map
+              imageStorageRef.current.set(fileName, blob);
+              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Stored in browser memory`);
+              console.log(`   Key: ${fileName}, Size: ${(blob.size / 1024).toFixed(2)} KB`);
               saved += 1;
-            } else {
-              const errorText = await saveResponse.text();
-              console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Save failed (${saveResponse.status}): ${errorText}`);
+            } catch (error) {
+              console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to store in memory -`, error);
               failed += 1;
             }
             
@@ -2032,12 +2096,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       }
 
       console.log(`\n✅ Save process complete! Saved: ${saved}, Failed: ${failed}`);
+      console.log(`📊 Total images in browser memory: ${imageStorageRef.current.size}`);
       
       // No alerts - just console logs for background processing
       if (saved > 0) {
-        console.log(`✅ Successfully saved ${saved} image(s) to temp folder`);
+        console.log(`✅ Successfully stored ${saved} image(s) in browser memory`);
       } else if (failed > 0) {
-        console.warn(`⚠️ Failed to save ${failed} image(s). Check console for details.`);
+        console.warn(`⚠️ Failed to store ${failed} image(s). Check console for details.`);
       }
     } catch (error) {
       console.error('❌ Fatal error in mergeAndDownloadAllImages:', error);
@@ -2111,8 +2176,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       formData.append('session_id', sessionId);
       formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
-      // Read all images from temp folder and add to FormData
-      console.log('📂 Reading images from temp folder...');
+      // WORKAROUND: Read images from browser memory instead of server temp folder
+      console.log('📂 Reading images from browser memory...');
       const imageFiles = [];
       
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
@@ -2125,26 +2190,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
           const fileKey = fileMap[fileName];
           
-          // Fetch image from temp folder
+          // Get image from browser memory storage
           try {
-            const imageUrl = `/temp/edited-images/${fileName}`;
-            const response = await fetch(imageUrl);
+            const blob = imageStorageRef.current.get(fileName);
             
-            if (!response.ok) {
-              console.warn(`⚠️ Could not fetch ${fileName} from temp folder`);
+            if (!blob) {
+              console.warn(`⚠️ Could not find ${fileName} in browser memory`);
+              console.warn(`   Available keys:`, Array.from(imageStorageRef.current.keys()));
               continue;
             }
             
-            const blob = await response.blob();
             const file = new File([blob], fileName, { type: 'image/png' });
             
             // Add to FormData with file key
             formData.append('frames', file);
             imageFiles.push(fileName);
             
-            console.log(`✅ Added ${fileName} as ${fileKey}`);
+            console.log(`✅ Added ${fileName} as ${fileKey} (from browser memory)`);
           } catch (error) {
-            console.error(`❌ Error reading ${fileName}:`, error);
+            console.error(`❌ Error reading ${fileName} from memory:`, error);
           }
         }
       }
@@ -2176,25 +2240,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       
       console.log('✅ API call successful:', responseData);
       
-      // Delete all images from temp folder
-      console.log('🗑️ Deleting images from temp folder...');
+      // WORKAROUND: Clear images from browser memory instead of deleting from server
+      console.log('🗑️ Clearing images from browser memory...');
       for (const fileName of imageFiles) {
         try {
-          const deleteResponse = await fetch(`/api/delete-temp-image?fileName=${encodeURIComponent(fileName)}`, {
-            method: 'DELETE',
-          });
-          
-          if (deleteResponse.ok) {
-            console.log(`✅ Deleted ${fileName}`);
+          if (imageStorageRef.current.has(fileName)) {
+            imageStorageRef.current.delete(fileName);
+            console.log(`✅ Removed ${fileName} from memory`);
           } else {
-            console.warn(`⚠️ Could not delete ${fileName}`);
+            console.warn(`⚠️ ${fileName} not found in memory`);
           }
         } catch (error) {
-          console.warn(`⚠️ Error deleting ${fileName}:`, error);
+          console.warn(`⚠️ Error removing ${fileName} from memory:`, error);
         }
       }
       
-      console.log('✅ All temp images deleted');
+      console.log(`✅ All images cleared from memory. Remaining: ${imageStorageRef.current.size}`);
       return { success: true, response: responseData };
       
     } catch (error) {
@@ -2930,6 +2991,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               
               // Get images from selected.images array, fallback to imageUrl, then to refs if available
               const getImg1 = () => {
+                const isVEO3 = selectedModel === 'VEO3';
+                
+                // For VEO3: Tab 0 (Avatar) should show avatar_urls
+                if (isVEO3) {
+                  const currentRow = rows[selected.index];
+                  if (currentRow && Array.isArray(currentRow.avatar_urls) && currentRow.avatar_urls.length > 0) {
+                    const avatarUrl = currentRow.avatar_urls[0];
+                    if (typeof avatarUrl === 'string') {
+                      const url = avatarUrl.trim();
+                      if (isValidImageUrl(url)) return url;
+                    } else if (avatarUrl && typeof avatarUrl === 'object') {
+                      const url = (avatarUrl?.imageurl || avatarUrl?.imageUrl || avatarUrl?.image_url || avatarUrl?.url || avatarUrl?.src || avatarUrl?.link || '').trim();
+                      if (url && isValidImageUrl(url)) return url;
+                    }
+                  }
+                  // Fallback: try to get from selected.images if avatar_urls not available
+                  if (Array.isArray(selected.images) && selected.images[0] && typeof selected.images[0] === 'string') {
+                    const url = selected.images[0].trim();
+                    if (isValidImageUrl(url)) return url;
+                  }
+                }
+                
                 // For ANCHOR model, prioritize base image from frame structure
                 if (selectedModel === 'ANCHOR') {
                   const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
@@ -2970,6 +3053,26 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 return '';
               };
               const getImg2 = () => {
+                const isVEO3 = selectedModel === 'VEO3';
+                
+                // For VEO3: Tab 1 (Image) should show base images (from refs)
+                if (isVEO3) {
+                  const currentRow = rows[selected.index];
+                  // Get base images from refs (not avatar_urls)
+                  if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs.length > 0) {
+                    const refUrl = currentRow.refs[0];
+                    if (typeof refUrl === 'string') {
+                      const url = refUrl.trim();
+                      if (isValidImageUrl(url)) return url;
+                    }
+                  }
+                  // Fallback: try to get from selected.images if refs not available
+                  if (Array.isArray(selected.images) && selected.images[1] && typeof selected.images[1] === 'string') {
+                    const url = selected.images[1].trim();
+                    if (isValidImageUrl(url)) return url;
+                  }
+                }
+                
                 // Priority 1: selected.images array
                 if (Array.isArray(selected.images) && selected.images[1] && typeof selected.images[1] === 'string') {
                   const url = selected.images[1].trim();
@@ -2985,8 +3088,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               };
               const img1 = getImg1();
               const img2 = getImg2();
-              const hasSecondImage = img2 && img2.trim();
               const isVEO3 = selectedModel === 'VEO3' || selectedModel === 'ANCHOR';
+              
+              // For VEO3: show tabs only if both avatar_urls and base images exist
+              // For other models: show tabs if img2 exists
+              const hasSecondImage = isVEO3 
+                ? (img1 && img1.trim() && img2 && img2.trim()) // Both avatar and base image must exist
+                : (img2 && img2.trim()); // Just check if img2 exists
               
               // Debug log to see what images are being used
               console.log('🖼️ Displaying Images:', {

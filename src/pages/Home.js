@@ -6,6 +6,7 @@ import Topbar from '../Components/Topbar'
 import Chat from '../Components/Chat'
 import ImageList from '../Components/Scenes/ImageList'
 import VideosList from '../Components/Scenes/VideosList'
+import FinalVideo from '../Components/Scenes/FinalVideo'
 import ErrorBoundary from '../Components/ErrorBoundary'
 import ScriptEditor from '../Components/ScriptEditor'
 import Guidlines from '../Components/VideoGuidlines/Guidlines'
@@ -93,9 +94,10 @@ const Home = () => {
   const [userChat, setuserChat] = useState("")
   const [isDocFollowup, setIsDocFollowup] = useState(false)
   const [chatHistory, setChatHistory] = useState([]) // Chat history to preserve across steps
-  const [currentStep, setCurrentStep] = useState(1) // 1: Chat, 2: Guidelines, 3: DynamicQuestion, 4: Scenes Images
+  const [currentStep, setCurrentStep] = useState(1) // 1: Chat, 2: Guidelines, 3: DynamicQuestion, 4: Scenes Images, 5: Videos, 6: ScriptEditor, 7: FinalVideo
   const [imagesJobId, setImagesJobId] = useState('');
   const [videosJobId, setVideosJobId] = useState('');
+  const [mergeJobId, setMergeJobId] = useState('');
   const [showVideoPopup, setShowVideoPopup] = useState(false);
   const [showVideoTypeModal, setShowVideoTypeModal] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
@@ -1361,10 +1363,25 @@ const Home = () => {
                 <h3 className='text-lg font-semibold text-[#13008B]'>Videos</h3>
                 <div className='flex items-center gap-2'>
                   <button onClick={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }} className='px-3 py-1.5 rounded-lg border text-sm'>Back</button>
-                  <button onClick={handleGenerateVideoMerge} className='px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800'>Generate Video</button>
                 </div>
               </div>
-              <VideosList jobId={videosJobId} onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }} />
+              <VideosList 
+                jobId={videosJobId} 
+                onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}
+                onGenerateFinalReel={(jobId) => {
+                  const mergeJobIdToUse = jobId || localStorage.getItem('current_merge_job_id') || '';
+                  setMergeJobId(mergeJobIdToUse);
+                  setCurrentStep(7); // Navigate to final video section
+                }}
+              />
+            </div>
+          )}
+          {currentStep === 7 && (
+            <div className='bg-white rounded-lg'>
+              <FinalVideo 
+                jobId={mergeJobId || localStorage.getItem('current_merge_job_id') || ''} 
+                onClose={() => setCurrentStep(5)} 
+              />
             </div>
           )}
       </div>

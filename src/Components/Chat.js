@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check, Maximize2, RefreshCcw, ChevronLeft, ChevronRight, ChevronDown, MoreHorizontal, Trash2 } from 'lucide-react';
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
+import ChartDataEditor from './ChartDataEditor';
 
 const GOOGLE_FONT_OPTIONS = [
   'Roboto',
@@ -513,6 +514,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isLoadingSwitchPresenterPresets, setIsLoadingSwitchPresenterPresets] = useState(false);
   const [switchChartType, setSwitchChartType] = useState('');
   const [switchChartData, setSwitchChartData] = useState('');
+  const [switchModelStep, setSwitchModelStep] = useState(1); // 1: chart type, 2: suggestions
+  const [switchSuggestions, setSwitchSuggestions] = useState([]);
+  const [isSuggestingSwitch, setIsSuggestingSwitch] = useState(false);
+  const [switchSelectedIdx, setSwitchSelectedIdx] = useState(-1);
+  const [switchSceneContent, setSwitchSceneContent] = useState('');
   const [showAddSceneModal, setShowAddSceneModal] = useState(false);
   const [insertSceneIndex, setInsertSceneIndex] = useState(null);
   const [sceneSuggestions, setSceneSuggestions] = useState([]);
@@ -643,7 +649,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   }, []);
 
   // Helper: fetch suggestions for a given model_type and position
-  const fetchSceneSuggestions = async (modelType, positionIdx, target = 'add') => {
+  const fetchSceneSuggestions = async (modelType, positionIdx, target = 'add', chartType = null) => {
     try {
       if (target === 'regen') setIsSuggestingRegen(true); else setIsSuggestingScenes(true);
       const sessionId = localStorage.getItem('session_id');
@@ -683,6 +689,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           ? (addSceneStep ? (newSceneDocSummary || '') : (regenDocSummary || ''))
           : ''
       };
+      // Add chart_type to request body when model is PLOTLY and chart_type is provided
+      if (modelType === 'PLOTLY' && chartType) {
+        suggestBody.chart_type = chartType;
+      }
       const sugResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/suggest-scenes', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(suggestBody)
       });
@@ -722,6 +732,13 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [isDescriptionEditing, setIsDescriptionEditing] = useState(false);
   const [pendingDescription, setPendingDescription] = useState('');
   const [descriptionSceneIndex, setDescriptionSceneIndex] = useState(null);
+  const [isTextToBeIncludedEditing, setIsTextToBeIncludedEditing] = useState(false);
+  const [pendingTextToBeIncluded, setPendingTextToBeIncluded] = useState([]);
+  const [textToBeIncludedSceneIndex, setTextToBeIncludedSceneIndex] = useState(null);
+  const [isChartTypeEditing, setIsChartTypeEditing] = useState(false);
+  const [pendingChartTypeValue, setPendingChartTypeValue] = useState('');
+  const [chartTypeSceneIndex, setChartTypeSceneIndex] = useState(null);
+  const [isRegeneratingChart, setIsRegeneratingChart] = useState(false);
   const assetsUploadInputRef = useRef(null);
   const [pendingUploadType, setPendingUploadType] = useState('');
   // Selected asset in Choose Asset modal
@@ -1084,23 +1101,211 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       return;
     }
     const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
-    const scenePresetId = scene?.presenter_options?.preset_id
-      ? String(scene.presenter_options.preset_id)
+    
+    // Extract all possible preset identifiers from scene data
+    // Check both presenter_options and presenterOptions (camelCase variant)
+    const presenterOpts = scene?.presenter_options || scene?.presenterOptions || {};
+    const scenePresetId = presenterOpts?.preset_id || presenterOpts?.presetId
+      ? String(presenterOpts.preset_id || presenterOpts.presetId)
       : '';
-    const scenePresetLabel = scene?.presenter_options?.option
-      ? String(scene.presenter_options.option)
+    const scenePresetLabel = presenterOpts?.option || presenterOpts?.name || presenterOpts?.label || presenterOpts?.title
+      ? String(presenterOpts.option || presenterOpts.name || presenterOpts.label || presenterOpts.title)
       : '';
-    let resolvedValue = scenePresetId;
-    if (!resolvedValue && scenePresetLabel) {
-      const match = list.find(
-        (item) => String(item?.option || '').toLowerCase() === scenePresetLabel.toLowerCase()
+    const sceneAnchorId = presenterOpts?.anchor_id || presenterOpts?.anchorId
+      ? String(presenterOpts.anchor_id || presenterOpts.anchorId)
+      : '';
+    
+    // For ANCHOR models, also check anchor_prompt_template.position and position_size
+    const anchorPromptTemplate = scene?.anchor_prompt_template || scene?.anchorPromptTemplate || {};
+    const anchorPosition = anchorPromptTemplate?.position || anchorPromptTemplate?.Position || '';
+    const anchorPositionSize = anchorPromptTemplate?.position_size || anchorPromptTemplate?.positionSize || anchorPromptTemplate?.PositionSize || '';
+    
+    console.log('[Scene Settings] Extracting preset data from scene:', {
+      scenePresetId,
+      scenePresetLabel,
+      sceneAnchorId,
+      anchorPosition,
+      anchorPositionSize,
+      presenterOpts,
+      anchorPromptTemplate,
+      availablePresets: list.map(p => ({ option: p.option, preset_id: p.preset_id, anchor_id: p.anchor_id, position: p.position }))
+    });
+    
+    let resolvedValue = '';
+    
+    // PRIORITY 1: Match by option name/label from scene data (this is what user sees and most reliable)
+    // This should be the primary matching method since the backend stores the option name
+    if (scenePresetLabel) {
+      const sceneOptionNormalized = scenePresetLabel.trim().toLowerCase();
+      const matchByLabel = list.find((item) => {
+        const itemOption = String(item?.option || '').trim();
+        const itemOptionNormalized = itemOption.toLowerCase();
+        // Try exact match first (case-insensitive)
+        if (itemOptionNormalized === sceneOptionNormalized) {
+          return true;
+        }
+        // Try normalized comparison (remove extra spaces, special chars)
+        const normalize = (str) => str.replace(/\s+/g, ' ').trim().toLowerCase();
+        if (normalize(itemOption) === normalize(scenePresetLabel)) {
+          return true;
+        }
+        return false;
+      });
+      
+      if (matchByLabel?.preset_id) {
+        resolvedValue = String(matchByLabel.preset_id);
+        console.log('[Scene Settings] Matched preset by name:', {
+          sceneOption: scenePresetLabel,
+          matchedPreset: matchByLabel.option,
+          presetId: resolvedValue
+        });
+      } else {
+        console.warn('[Scene Settings] Could not match preset by name:', {
+          sceneOption: scenePresetLabel,
+          availableOptions: list.map(p => p.option)
+        });
+      }
+    }
+    
+    // PRIORITY 2: Match by preset_id from scene data (if we haven't matched by name yet)
+    if (!resolvedValue && scenePresetId) {
+      const matchById = list.find(
+        (item) => String(item?.preset_id || '') === scenePresetId
       );
-      if (match?.preset_id) resolvedValue = String(match.preset_id);
+      if (matchById?.preset_id) {
+        resolvedValue = String(matchById.preset_id);
+        console.log('[Scene Settings] ✓ Matched preset by ID:', {
+          scenePresetId,
+          matchedPreset: matchById.option,
+          presetId: resolvedValue
+        });
+      } else {
+        console.warn('[Scene Settings] ✗ Could not match preset by ID:', {
+          scenePresetId,
+          availablePresetIds: list.map(p => p.preset_id)
+        });
+      }
     }
-    if (!resolvedValue && list.length > 0) {
+    
+    // PRIORITY 3: For ANCHOR models, match by position_size from anchor_prompt_template to preset_id
+    // This is the primary way to identify ANCHOR presets
+    // The anchor_prompt_template.position_size should match a preset_id
+    if (!resolvedValue && modelUpper === 'ANCHOR' && anchorPositionSize) {
+      const positionSizeStr = String(anchorPositionSize).trim();
+      const matchByPositionSize = list.find((item) => {
+        const itemPresetId = String(item?.preset_id || '').trim();
+        return itemPresetId === positionSizeStr;
+      });
+      
+      if (matchByPositionSize?.preset_id) {
+        resolvedValue = String(matchByPositionSize.preset_id);
+        console.log('[Scene Settings] ✓ Matched preset by anchor_prompt_template.position_size:', {
+          anchorPositionSize,
+          matchedPreset: matchByPositionSize.option,
+          presetId: resolvedValue
+        });
+      } else {
+        console.warn('[Scene Settings] ✗ Could not match preset by position_size:', {
+          anchorPositionSize,
+          availablePresetIds: list.map(p => p.preset_id)
+        });
+      }
+    }
+    
+    // PRIORITY 3b: For ANCHOR models, fallback to matching by comparing preset title/option with position
+    // The preset title/option should contain the position (e.g., "right bottom", "bottomright", "left bottom", etc.)
+    if (!resolvedValue && modelUpper === 'ANCHOR' && anchorPosition) {
+      const scenePositionNormalized = String(anchorPosition).toLowerCase().trim();
+      // Normalize position formats: "right bottom" -> "rightbottom", "bottom right" -> "bottomright", etc.
+      const normalizePosition = (pos) => {
+        return pos.replace(/\s+/g, '').toLowerCase();
+      };
+      const scenePositionKey = normalizePosition(scenePositionNormalized);
+      
+      const matchByPosition = list.find((item) => {
+        // Check preset title/option for position match
+        const presetTitle = String(item?.option || item?.title || item?.name || '').toLowerCase();
+        const presetTitleNormalized = normalizePosition(presetTitle);
+        
+        // Try exact match first
+        if (presetTitleNormalized.includes(scenePositionKey) || scenePositionKey.includes(presetTitleNormalized)) {
+          return true;
+        }
+        
+        // Try matching individual words (e.g., "right bottom" matches "bottom right")
+        const sceneWords = scenePositionNormalized.split(/\s+/).filter(w => w.length > 0);
+        const presetWords = presetTitle.split(/\s+/).filter(w => w.length > 0);
+        if (sceneWords.length > 0 && presetWords.length > 0) {
+          const allSceneWordsMatch = sceneWords.every(sw => 
+            presetWords.some(pw => pw.includes(sw) || sw.includes(pw))
+          );
+          if (allSceneWordsMatch) return true;
+        }
+        
+        // Also check if preset has a position field that matches
+        const itemPosition = String(item?.position || '').toLowerCase();
+        if (itemPosition && (itemPosition === scenePositionNormalized || normalizePosition(itemPosition) === scenePositionKey)) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      if (matchByPosition?.preset_id) {
+        resolvedValue = String(matchByPosition.preset_id);
+        console.log('[Scene Settings] ✓ Matched preset by comparing title with anchor_prompt_template.position:', {
+          anchorPosition,
+          scenePositionKey,
+          matchedPreset: matchByPosition.option,
+          presetId: resolvedValue
+        });
+      } else {
+        console.warn('[Scene Settings] ✗ Could not match preset by position:', {
+          anchorPosition,
+          scenePositionKey,
+          availablePresets: list.map(p => ({ option: p.option, title: p.title, position: p.position }))
+        });
+      }
+    }
+    
+    // PRIORITY 3b: For ANCHOR models, match by anchor_id if we haven't resolved yet
+    if (!resolvedValue && modelUpper === 'ANCHOR' && sceneAnchorId) {
+      const matchByAnchorId = list.find(
+        (item) => String(item?.anchor_id || '') === sceneAnchorId
+      );
+      if (matchByAnchorId?.preset_id) {
+        resolvedValue = String(matchByAnchorId.preset_id);
+        console.log('[Scene Settings] ✓ Matched preset by anchor_id:', {
+          sceneAnchorId,
+          matchedPreset: matchByAnchorId.option,
+          presetId: resolvedValue
+        });
+      }
+    }
+    
+    // PRIORITY 4: If we have preset data from scene but couldn't match it, preserve it anyway
+    // This handles cases where the preset might have been removed from the list
+    // or there's a type mismatch, but the backend still has the correct value
+    if (!resolvedValue) {
+      if (scenePresetId) {
+        resolvedValue = scenePresetId;
+        console.log('[Scene Settings] Preserving preset_id from scene (not in list):', scenePresetId);
+      } else if (modelUpper === 'ANCHOR' && sceneAnchorId) {
+        resolvedValue = sceneAnchorId;
+        console.log('[Scene Settings] Preserving anchor_id from scene (not in list):', sceneAnchorId);
+      }
+    }
+    
+    // PRIORITY 5: Only default to first preset if we have NO preset data from scene at all
+    // This ensures we preserve the scene's preset even if it's not in the current list
+    if (!resolvedValue && !scenePresetId && !sceneAnchorId && !scenePresetLabel && list.length > 0) {
+      // Only default to first if we truly have no preset data from scene
       resolvedValue = String(list[0].preset_id || list[0].option || '');
+      console.log('[Scene Settings] Defaulting to first preset (no scene data):', resolvedValue);
     }
+    
     const normalizedResolved = resolvedValue ? String(resolvedValue) : '';
+    console.log('[Scene Settings] Final resolved preset:', normalizedResolved);
     setSelectedPresenterPreset(normalizedResolved);
     setPresenterPresetOriginal(normalizedResolved);
     setPresenterPresetDirty(false);
@@ -2606,7 +2811,49 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             : (typeof row?.text_to_include === 'string' && row.text_to_include.trim() ? [row.text_to_include.trim()] : []),
           veo3_prompt_template: promptTemplate,
           anchor_prompt_template: anchorPromptTemplate,
-          word_count: wordCountValue
+          word_count: wordCountValue,
+          // Preserve presenter_options for VEO3/ANCHOR models
+          presenter_options: (() => {
+            if (row?.presenter_options && typeof row.presenter_options === 'object') {
+              return {
+                preset_id: row.presenter_options.preset_id ?? row.presenter_options.presetId ?? undefined,
+                option: row.presenter_options.option ?? row.presenter_options.name ?? row.presenter_options.label ?? undefined,
+                anchor_id: row.presenter_options.anchor_id ?? row.presenter_options.anchorId ?? undefined,
+                ...row.presenter_options
+              };
+            }
+            // Also check alternative field names
+            if (row?.presenterOptions && typeof row.presenterOptions === 'object') {
+              return {
+                preset_id: row.presenterOptions.preset_id ?? row.presenterOptions.presetId ?? undefined,
+                option: row.presenterOptions.option ?? row.presenterOptions.name ?? row.presenterOptions.label ?? undefined,
+                anchor_id: row.presenterOptions.anchor_id ?? row.presenterOptions.anchorId ?? undefined,
+                ...row.presenterOptions
+              };
+            }
+            return undefined;
+          })(),
+          // Preserve avatar_urls array if present, fallback to avatar field
+          avatar_urls: (() => {
+            if (Array.isArray(row?.avatar_urls) && row.avatar_urls.length > 0) {
+              return row.avatar_urls.filter(url => typeof url === 'string' && url.trim()).map(url => url.trim());
+            }
+            // Fallback: convert avatar to avatar_urls array
+            if (typeof row?.avatar === 'string' && row.avatar.trim()) {
+              return [row.avatar.trim()];
+            }
+            return [];
+          })(),
+          // Also preserve avatar field for backward compatibility
+          avatar: typeof row?.avatar === 'string' && row.avatar.trim() ? row.avatar.trim() : undefined,
+          // Preserve background_image array and background field
+          background_image: (() => {
+            if (Array.isArray(row?.background_image)) {
+              return row.background_image;
+            }
+            return [];
+          })(),
+          background: typeof row?.background === 'string' && row.background.trim() ? row.background.trim() : undefined
         };
       };
 
@@ -2739,10 +2986,23 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       
       if (isAvatarish) {
         // Check for avatar_urls array first, then avatar field
+        // Normalize URLs by trimming to ensure proper matching
+        let avatarToSet = null;
         if (Array.isArray(scene?.avatar_urls) && scene.avatar_urls.length > 0) {
-          setSelectedAvatar(scene.avatar_urls[0]);
+          const normalizedUrl = String(scene.avatar_urls[0] || '').trim();
+          if (normalizedUrl) {
+            avatarToSet = normalizedUrl;
+          }
         } else if (typeof scene?.avatar === 'string' && scene.avatar.trim()) {
-          setSelectedAvatar(scene.avatar.trim());
+          avatarToSet = scene.avatar.trim();
+        }
+        
+        // Only update if we have a valid avatar and it's different from current selection
+        if (avatarToSet) {
+          const currentNormalized = selectedAvatar ? String(selectedAvatar).trim() : null;
+          if (currentNormalized !== avatarToSet) {
+            setSelectedAvatar(avatarToSet);
+          }
         }
         // Don't reset to null - preserve user selection if scene doesn't have avatar data yet
       } else {
@@ -2752,7 +3012,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     } else {
       setSelectedAvatar(null);
     }
-  }, [currentSceneIndex]); // Removed scriptRows from dependencies to prevent resetting on user selection
+  }, [currentSceneIndex, scriptRows]); // Include scriptRows to update when scene data changes
 
   // Keep avatar selection scoped to the current scene - removed incorrect ref_image assignment
 
@@ -2763,6 +3023,59 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const arr = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
       setTextIncludeInput('');
     } catch (_) { setTextIncludeInput(''); }
+  }, [currentSceneIndex, scriptRows]);
+
+  // Initialize selectedRefImages from scene data when scene changes or scriptRows loads
+  useEffect(() => {
+    if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+      const scene = scriptRows[currentSceneIndex];
+      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+      const isSora = modelUpper === 'SORA';
+      const isAnchor = modelUpper === 'ANCHOR';
+      
+      // Extract background images from ref_image array
+      let backgroundImages = [];
+      if (Array.isArray(scene?.ref_image) && scene.ref_image.length > 0) {
+        backgroundImages = scene.ref_image
+          .filter(item => item && typeof item === 'string' ? item.trim() : item)
+          .map(item => typeof item === 'string' ? item.trim() : item);
+      }
+      
+      // Also check background_image field (could be string or array)
+      if (!backgroundImages.length) {
+        if (Array.isArray(scene?.background_image)) {
+          // Extract URLs from array of objects or strings
+          backgroundImages = scene.background_image
+            .map(item => {
+              if (typeof item === 'string' && item.trim()) return item.trim();
+              if (item && typeof item === 'object') {
+                return item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
+              }
+              return '';
+            })
+            .filter(url => url && typeof url === 'string');
+        } else if (typeof scene?.background === 'string' && scene.background.trim()) {
+          backgroundImages = [scene.background.trim()];
+        } else if (typeof scene?.background_image === 'string' && scene.background_image.trim()) {
+          backgroundImages = [scene.background_image.trim()];
+        }
+      }
+      
+      // Set selectedRefImages based on model type
+      if (backgroundImages.length > 0) {
+        if (isSora) {
+          // For SORA, select up to 2 images
+          setSelectedRefImages(backgroundImages.slice(0, 2));
+        } else {
+          // For ANCHOR/VEO3/PLOTLY, select the first image
+          setSelectedRefImages(backgroundImages.slice(0, 1));
+        }
+      } else {
+        setSelectedRefImages([]);
+      }
+    } else {
+      setSelectedRefImages([]);
+    }
   }, [currentSceneIndex, scriptRows]);
 
   const openScriptModal = (script) => {
@@ -2918,6 +3231,30 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const handleRegenerateScene = async () => {
     const content = (regenDocSummary && regenDocSummary.trim()) || (regenSceneContent && regenSceneContent.trim()) || regenQuery || '';
     if (!content) { alert('Please select a suggested scene or upload a document to provide scene content.'); return; }
+    
+    // For financial model, validate chart_data exists
+    if (regenModelUpper === 'PLOTLY') {
+      // Check if chart_data exists from selected suggestion, uploaded document, or manually entered
+      const hasChartDataFromSuggestion = regenSelectedIdx >= 0 && regenSuggestions?.[regenSelectedIdx]?.chart_data;
+      const hasChartDataFromUpload = regenDocSummary && regenDocSummary.trim();
+      const hasChartDataManual = regenChartData && regenChartData.trim();
+      
+      // Also check if chart_data exists in the selected suggestion's data structure
+      let chartDataFromSelected = null;
+      if (regenSelectedIdx >= 0 && regenSuggestions?.[regenSelectedIdx]) {
+        const selectedSuggestion = regenSuggestions[regenSelectedIdx];
+        chartDataFromSelected = selectedSuggestion?.chart_data || selectedSuggestion?.chartData;
+      }
+      
+      // Check if we have chart_data from any source
+      const hasChartData = chartDataFromSelected || hasChartDataManual;
+      
+      if (!hasChartData) {
+        alert('Please select a suggested scene with chart data, upload a document, or manually enter chart data before regenerating.');
+        return;
+      }
+    }
+    
     await regenerateSceneViaAPI(content);
   };
 
@@ -2939,10 +3276,19 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
         const normalizedModel = normalizeRegenModel(modelOverride || regenModel || 'SORA');
         const isAvatarModel = normalizedModel === 'VEO3' || normalizedModel === 'ANCHOR';
+        const isFinancialModel = normalizedModel === 'PLOTLY';
 
         setRegenPresenterError('');
         setRegenSelectedIdx(-1);
         setRegenSceneContent('');
+
+        // For financial model, require chart type before proceeding
+        if (isFinancialModel) {
+          if (!regenChartType || !regenChartType.trim()) {
+            alert('Please select a chart type before continuing.');
+            return;
+          }
+        }
 
         if (enablePresenterOptions && isAvatarModel) {
           let shouldPauseForPresenter = false;
@@ -2975,7 +3321,9 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           setRequiresRegenPresenterSelection(false);
         }
 
-        await fetchSceneSuggestions(normalizedModel || 'SORA', idx, 'regen');
+        // For financial model, pass chart_type to fetchSceneSuggestions
+        const chartTypeForSuggestions = isFinancialModel ? regenChartType : null;
+        await fetchSceneSuggestions(normalizedModel || 'SORA', idx, 'regen', chartTypeForSuggestions);
         setRegenStep(2);
       } catch (err) {
         console.error('Failed to continue regenerate flow:', err);
@@ -2991,6 +3339,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       isSuggestingRegen,
       normalizeRegenModel,
       regenModel,
+      regenChartType,
       scriptRows
     ]
   );
@@ -3004,8 +3353,12 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       setRegenSelectedIdx(-1);
       setRegenSceneContent('');
       setRegenDocSummary('');
-      setRegenChartType('');
-      setRegenChartData('');
+      // Initialize chart type from current scene if available
+      const currentScene = scriptRows?.[currentSceneIndex];
+      const existingChartType = currentScene?.chart_type || currentScene?.chartType || '';
+      setRegenChartType(existingChartType);
+      const existingChartData = currentScene?.chart_data || currentScene?.chartData || {};
+      setRegenChartData(typeof existingChartData === 'string' ? existingChartData : (existingChartData ? JSON.stringify(existingChartData, null, 2) : ''));
       setIsUploadingRegenDoc(false);
       setRegenManualText('');
       setRegenPresenterPresetId('');
@@ -3017,6 +3370,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const normalizedModel = normalizeRegenModel(rawSceneModel || 'SORA');
       setRegenModel(normalizedModel || 'SORA');
       setShowRegenModal(true);
+      // For PLOTLY, stay at step 1 to show chart type first
       if (normalizedModel !== 'PLOTLY') {
         continueRegenerateFlow(normalizedModel);
       }
@@ -4851,6 +5205,11 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         setSwitchChartType(scene?.chart_type || scene?.chartType || '');
         const cd = scene?.chart_data || scene?.chartData;
         setSwitchChartData(cd ? (typeof cd === 'string' ? cd : JSON.stringify(cd, null, 2)) : '');
+        // Reset switch model flow state
+        setSwitchModelStep(1);
+        setSwitchSuggestions([]);
+        setSwitchSelectedIdx(-1);
+        setSwitchSceneContent('');
       } catch(_) {}
       setShowModelConfirm(true);
       
@@ -5227,7 +5586,45 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             return [];
           })(),
           // Include model-specific option blobs
-          presenter_options: r?.presenter_options ?? undefined,
+          presenter_options: (() => {
+            const modelUpper = String(r?.mode ?? r?.model ?? '').toUpperCase();
+            if (r?.presenter_options) {
+              const presenterOpts = { ...r.presenter_options };
+              // For ANCHOR models, ensure preset_id is included if a preset is selected
+              if (modelUpper === 'ANCHOR') {
+                const anchorPresets = Array.isArray(presenterPresets.ANCHOR) ? presenterPresets.ANCHOR : [];
+                // Try to find preset by anchor_id if preset_id is missing
+                if (!presenterOpts.preset_id && presenterOpts.anchor_id) {
+                  const matchingPreset = anchorPresets.find(
+                    (p) => String(p?.anchor_id || '') === String(presenterOpts.anchor_id)
+                  );
+                  if (matchingPreset?.preset_id) {
+                    presenterOpts.preset_id = String(matchingPreset.preset_id);
+                  }
+                }
+                // If still no preset_id but we have an option/name, try to match by that
+                if (!presenterOpts.preset_id && (presenterOpts.option || presenterOpts.name)) {
+                  const matchingPreset = anchorPresets.find(
+                    (p) => String(p?.option || p?.name || '') === String(presenterOpts.option || presenterOpts.name)
+                  );
+                  if (matchingPreset?.preset_id) {
+                    presenterOpts.preset_id = String(matchingPreset.preset_id);
+                  }
+                }
+                // If this is the current scene and we have a selected preset, use that
+                if (!presenterOpts.preset_id && idx === currentSceneIndex && selectedPresenterPreset) {
+                  const matchingPreset = anchorPresets.find(
+                    (p) => String(p?.preset_id || p?.option || '') === String(selectedPresenterPreset)
+                  );
+                  if (matchingPreset?.preset_id) {
+                    presenterOpts.preset_id = String(matchingPreset.preset_id);
+                  }
+                }
+              }
+              return presenterOpts;
+            }
+            return undefined;
+          })(),
           anchor_options: r?.anchor_options ?? undefined,
           folderLink: r?.folderLink ?? r?.folder_link ?? '',
           veo3_prompt_template: clonePromptTemplate(r?.veo3_prompt_template),
@@ -5490,7 +5887,42 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             imageid: templateId ? String(templateId) : ''
           }];
         }
-        if (targetRow?.presenter_options) clone.presenter_options = targetRow.presenter_options;
+        // Handle presenter_options - ensure preset_id is included for ANCHOR models
+        const modelUpper = String(clone.model || clone.mode || '').toUpperCase();
+        if (targetRow?.presenter_options) {
+          clone.presenter_options = { ...targetRow.presenter_options };
+          // For ANCHOR models, ensure preset_id is included if a preset is selected
+          if (modelUpper === 'ANCHOR') {
+            const anchorPresets = Array.isArray(presenterPresets.ANCHOR) ? presenterPresets.ANCHOR : [];
+            // Try to find preset by anchor_id if preset_id is missing
+            if (!clone.presenter_options.preset_id && clone.presenter_options.anchor_id) {
+              const matchingPreset = anchorPresets.find(
+                (p) => String(p?.anchor_id || '') === String(clone.presenter_options.anchor_id)
+              );
+              if (matchingPreset?.preset_id) {
+                clone.presenter_options.preset_id = String(matchingPreset.preset_id);
+              }
+            }
+            // If still no preset_id but we have an option/name, try to match by that
+            if (!clone.presenter_options.preset_id && (clone.presenter_options.option || clone.presenter_options.name)) {
+              const matchingPreset = anchorPresets.find(
+                (p) => String(p?.option || p?.name || '') === String(clone.presenter_options.option || clone.presenter_options.name)
+              );
+              if (matchingPreset?.preset_id) {
+                clone.presenter_options.preset_id = String(matchingPreset.preset_id);
+              }
+            }
+            // If we're on the current scene and have a selected preset, use that
+            if (!clone.presenter_options.preset_id && sceneIdx === currentSceneIndex && selectedPresenterPreset) {
+              const matchingPreset = anchorPresets.find(
+                (p) => String(p?.preset_id || p?.option || '') === String(selectedPresenterPreset)
+              );
+              if (matchingPreset?.preset_id) {
+                clone.presenter_options.preset_id = String(matchingPreset.preset_id);
+              }
+            }
+          }
+        }
         if (targetRow?.anchor_options) clone.anchor_options = targetRow.anchor_options;
         if (targetRow?.anchor_prompt_template && typeof targetRow.anchor_prompt_template === 'object') {
           clone.anchor_prompt_template = clonePromptTemplate(targetRow.anchor_prompt_template);
@@ -5817,6 +6249,185 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     } catch(e) {
       console.error('updateSceneGenImageFlag failed:', e);
       throw e; // Re-throw to allow caller to handle the error
+    }
+  };
+
+  // Helper: Update text_to_be_included for a scene via update-text API
+  const updateTextToBeIncluded = async (sceneIdx, textToBeIncludedArray) => {
+    if (isUpdatingText) return;
+    setIsUpdatingText(true);
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+
+      // Load session snapshot
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessionResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
+      const rawSession = sessJson?.session_data || sessJson?.session || {};
+      const sessionForBody = sanitizeSessionSnapshot(rawSession, sessionId, token);
+      const rawUser = sessJson?.user_data || rawSession?.user_data || rawSession?.user || {};
+      const user = normalizeUserSnapshot(rawUser, token);
+      const scriptsSource = Array.isArray(sessionForBody?.scripts) ? sessionForBody.scripts : [];
+      const primaryScript = scriptsSource[0] || {};
+      const originalUserquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+      const scriptVersion = primaryScript?.version || sessionForBody?.version || 'v1';
+      const airesponseSource = Array.isArray(primaryScript?.airesponse)
+        ? primaryScript.airesponse.map((item) => (item && typeof item === 'object' ? { ...item } : item))
+        : [];
+      const rows = Array.isArray(scriptRows) ? scriptRows : [];
+      const targetRow = rows[sceneIdx] || {};
+      const targetSceneNumber = targetRow?.scene_number ?? (sceneIdx + 1);
+
+      const clonePromptTemplate = (tpl) => {
+        if (!tpl || typeof tpl !== 'object') return null;
+        if (Array.isArray(tpl)) return [...tpl];
+        return { ...tpl };
+      };
+
+      // Update the specific scene's text_to_be_included
+      let matchedScene = false;
+      const airesponse = airesponseSource.map((scene, idx) => {
+        if (!scene || typeof scene !== 'object') return scene;
+        const sceneNumber =
+          scene?.scene_number ??
+          scene?.scene_no ??
+          scene?.sceneNo ??
+          scene?.scene ??
+          (idx + 1);
+        if (sceneNumber !== targetSceneNumber) {
+          return { ...scene };
+        }
+        matchedScene = true;
+        const clone = { ...scene };
+        
+        // Update text_to_be_included
+        clone.text_to_be_included = Array.isArray(textToBeIncludedArray) 
+          ? textToBeIncludedArray.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
+          : [];
+        
+        return clone;
+      });
+
+      // If scene not found, add it as a new scene
+      const finalAiresponse = matchedScene ? airesponse : (() => {
+        const fallbackRow = rows[sceneIdx] || {};
+        const fallbackScene = {
+          scene_number: targetSceneNumber,
+          scene_title: fallbackRow?.scene_title ?? '',
+          model: fallbackRow?.mode ?? fallbackRow?.model ?? '',
+          timeline: fallbackRow?.timeline ?? '',
+          text_to_be_included: Array.isArray(textToBeIncludedArray)
+            ? textToBeIncludedArray.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
+            : [],
+          ref_image: [],
+          background_image: [],
+          avatar_urls: []
+        };
+        return [...airesponse, fallbackScene];
+      })();
+
+      const requestBody = {
+        user,
+        session: sessionForBody,
+        changed_script: {
+          userquery: originalUserquery,
+          airesponse: finalAiresponse,
+          version: String(scriptVersion || 'v1')
+        }
+      };
+
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+      });
+      const txt = await resp.text();
+      let data;
+      try { data = JSON.parse(txt); } catch(_) { data = txt; }
+      if (!resp.ok || resp.status !== 200) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+      
+      const container = data?.script ? { script: data.script } : data;
+      const normalized = normalizeScriptToRows(container);
+      const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+      setScriptRows(newRows);
+      try {
+        localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+        localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+      } catch(_) {}
+    } catch(e) {
+      console.error('updateTextToBeIncluded failed:', e);
+      alert('Failed to update text to be included. Please try again.');
+      throw e;
+    } finally {
+      setIsUpdatingText(false);
+    }
+  };
+
+  // Helper: Regenerate chart with new chart type via regenerate-chart API
+  const regenerateChart = async (sceneIdx, chartType) => {
+    if (isRegeneratingChart) return;
+    setIsRegeneratingChart(true);
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+
+      // Build session and user objects
+      const { session, user } = await buildSessionAndUserForScene();
+      const formattedUser = formatUserForVisual(user, token);
+      const formattedSession = formatSessionForVisual(session, sessionId, token);
+
+      // Get scene number
+      const rows = Array.isArray(scriptRows) ? scriptRows : [];
+      const targetRow = rows[sceneIdx] || {};
+      const sceneNumber = targetRow?.scene_number ?? (sceneIdx + 1);
+
+      const requestBody = {
+        user: formattedUser,
+        session: formattedSession,
+        scene_number: Number(sceneNumber) || 0,
+        chart_type: String(chartType || '').toLowerCase()
+      };
+
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/regenerate-chart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      const txt = await resp.text();
+      let data;
+      try { data = JSON.parse(txt); } catch(_) { data = txt; }
+      
+      if (!resp.ok || resp.status !== 200) {
+        throw new Error(`regenerate-chart failed: ${resp.status} ${txt}`);
+      }
+
+      // Update local state with the response
+      // The response should contain updated script data
+      if (data?.script || data?.scriptArray) {
+        const scriptArray = data.script || data.scriptArray;
+        const container = { script: scriptArray };
+        const normalized = normalizeScriptToRows(container);
+        const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+        setScriptRows(newRows);
+        try {
+          localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+          localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+        } catch(_) {}
+      }
+
+      // Update local chart type
+      handleSceneUpdate(sceneIdx, 'chart_type', chartType);
+    } catch(e) {
+      console.error('regenerateChart failed:', e);
+      alert('Failed to regenerate chart. Please try again.');
+      throw e;
+    } finally {
+      setIsRegeneratingChart(false);
     }
   };
 
@@ -6299,31 +6910,34 @@ const saveAnchorPromptTemplate = async () => {
                   </div>
                 </div>
               )}
-              {newSceneVideoType === 'Financial' && addSceneStep >= 2 && (
+              {newSceneVideoType === 'Financial' && addSceneStep === 1 && (
                 <div className="space-y-2">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                     <select value={newSceneChartType} onChange={(e)=>setNewSceneChartType(e.target.value)} className="w-full p-2 border rounded">
                       <option value="">Select</option>
-                      <option value="bar">bar</option>
-                      <option value="grouped_bar">grouped_bar</option>
-                      <option value="stacked_bar">stacked_bar</option>
-                      <option value="waterfall">waterfall</option>
+                      <option value="clustered_bar">clustered_bar</option>
+                      <option value="clustered_column">clustered_column</option>
                       <option value="line">line</option>
-                      <option value="multi_line">multi_line</option>
-                      <option value="area">area</option>
                       <option value="pie">pie</option>
+                      <option value="stacked_bar">stacked_bar</option>
+                      <option value="stacked_column">stacked_column</option>
+                      <option value="waterfall_bar">waterfall_bar</option>
+                      <option value="waterfall_column">waterfall_column</option>
+                      <option value="waterfall_stacked_bar">waterfall_stacked_bar</option>
+                      <option value="waterfall_stacked_column">waterfall_stacked_column</option>
                       <option value="donut">donut</option>
-                      <option value="treemap">treemap</option>
-                      <option value="scatter">scatter</option>
-                      <option value="bubble">bubble</option>
-                      <option value="heatmap">heatmap</option>
-                      <option value="combo_bar_line">combo_bar_line</option>
-                      <option value="funnel">funnel</option>
-                      <option value="histogram">histogram</option>
-                      <option value="box">box</option>
-                      <option value="candlestick">candlestick</option>
                     </select>
+                  </div>
+                </div>
+              )}
+              {newSceneVideoType === 'Financial' && addSceneStep >= 2 && (
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                    <div className="px-3 py-2 rounded-lg border bg-gray-50 text-sm font-medium text-gray-800">
+                      {newSceneChartType || 'Not selected'}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
@@ -6583,7 +7197,7 @@ const saveAnchorPromptTemplate = async () => {
               </button>
               {addSceneStep === 1 && (
                 <button
-                  disabled={isLoadingNewScenePresenter || isSuggestingScenes}
+                  disabled={isLoadingNewScenePresenter || isSuggestingScenes || (newSceneVideoType === 'Financial' && !newSceneChartType)}
                   onClick={async () => {
                     try {
                       const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
@@ -6595,6 +7209,13 @@ const saveAnchorPromptTemplate = async () => {
                         newSceneVideoType === 'Avatar Based'
                           ? (newSceneAvatarType === 'Anchor' ? 'ANCHOR' : 'VEO3')
                           : (newSceneVideoType === 'Financial' ? 'PLOTLY' : 'SORA');
+                      
+                      // For financial model, require chart type before proceeding
+                      if (newSceneVideoType === 'Financial' && !newSceneChartType) {
+                        alert('Please select a chart type before continuing.');
+                        return;
+                      }
+                      
                       setSceneSuggestions([]);
                       setNewSceneSelectedIdx(-1);
                       setNewSceneContent('');
@@ -6626,7 +7247,9 @@ const saveAnchorPromptTemplate = async () => {
                       } else {
                         setRequiresAvatarPresenterSelection(false);
                       }
-                      await fetchSceneSuggestions(modelType, idx, 'add');
+                      // For financial model, pass chart_type to fetchSceneSuggestions
+                      const chartTypeForSuggestions = (modelType === 'PLOTLY') ? newSceneChartType : null;
+                      await fetchSceneSuggestions(modelType, idx, 'add', chartTypeForSuggestions);
                       setAddSceneStep(2);
                     } catch (err) {
                       console.error('Failed to continue add-scene flow:', err);
@@ -6634,7 +7257,7 @@ const saveAnchorPromptTemplate = async () => {
                     }
                   }}
                   className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
-                    isLoadingNewScenePresenter || isSuggestingScenes
+                    isLoadingNewScenePresenter || isSuggestingScenes || (newSceneVideoType === 'Financial' && !newSceneChartType)
                       ? 'bg-[#9aa0d0] cursor-not-allowed'
                       : 'bg-[#13008B] hover:bg-blue-800'
                   }`}
@@ -6971,15 +7594,142 @@ const saveAnchorPromptTemplate = async () => {
                     {pendingModelType === 'Infographic' && (
                       <div className="mb-2 text-xs text-gray-600">After switching, pick a reference image in the editor or assets modal.</div>
                     )}
-                    {pendingModelType === 'Financial' && (
+                    {pendingModelType === 'Financial' && switchModelStep === 1 && (
                       <div className="mb-2">
                         <div className="text-xs text-gray-600 mb-1">Chart Type</div>
                         <select value={switchChartType} onChange={(e)=>setSwitchChartType(e.target.value)} className="w-full px-3 py-2 border rounded mb-2">
                           <option value="">Select</option>
-                          <option value="pie">Pie</option>
-                          <option value="bar">Bar</option>
-                          <option value="line">Line</option>
+                          <option value="clustered_bar">clustered_bar</option>
+                          <option value="clustered_column">clustered_column</option>
+                          <option value="line">line</option>
+                          <option value="pie">pie</option>
+                          <option value="stacked_bar">stacked_bar</option>
+                          <option value="stacked_column">stacked_column</option>
+                          <option value="waterfall_bar">waterfall_bar</option>
+                          <option value="waterfall_column">waterfall_column</option>
+                          <option value="waterfall_stacked_bar">waterfall_stacked_bar</option>
+                          <option value="waterfall_stacked_column">waterfall_stacked_column</option>
+                          <option value="donut">donut</option>
                         </select>
+                        <div className="flex justify-end mt-2">
+                          <button
+                            disabled={!switchChartType || isSuggestingSwitch}
+                            onClick={async () => {
+                              if (!switchChartType) {
+                                alert('Please select a chart type before continuing.');
+                                return;
+                              }
+                              try {
+                                setIsSuggestingSwitch(true);
+                                const total = Array.isArray(scriptRows) ? scriptRows.length : 0;
+                                const idx = Math.min(Math.max(0, currentSceneIndex), Math.max(0, total));
+                                // Create a custom fetch for switch model suggestions
+                                const sessionId = localStorage.getItem('session_id');
+                                const token = localStorage.getItem('token');
+                                if (!sessionId || !token) throw new Error('Missing session');
+                                const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                                });
+                                const text = await sessResp.text();
+                                let json; try { json = JSON.parse(text); } catch(_) { json = {}; }
+                                if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${text}`);
+                                const sd = json?.session_data || json?.session || {};
+                                const user = json?.user_data || sd?.user_data || sd?.user || {};
+                                const sessionForBody = {
+                                  session_id: sd?.session_id || sessionId,
+                                  user_id: sd?.user_id || token,
+                                  content: Array.isArray(sd?.content) ? sd.content : [],
+                                  document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
+                                  video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
+                                  created_at: sd?.created_at || new Date().toISOString(),
+                                  totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
+                                  messages: Array.isArray(sd?.messages) ? sd.messages : [],
+                                  scripts: Array.isArray(sd?.scripts) ? sd.scripts : [],
+                                  videos: Array.isArray(sd?.videos) ? sd.videos : [],
+                                  images: Array.isArray(sd?.images) ? sd.images : [],
+                                  final_link: sd?.final_link || '',
+                                  videoType: sd?.videoType || sd?.video_type || '',
+                                  brand_style_interpretation: sd?.brand_style_interpretation
+                                };
+                                const suggestBody = {
+                                  session: sessionForBody,
+                                  user,
+                                  action: 'add',
+                                  position: Math.max(0, Number(idx) || 0),
+                                  model_type: 'PLOTLY',
+                                  document_content: '',
+                                  chart_type: switchChartType
+                                };
+                                const sugResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/suggest-scenes', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(suggestBody)
+                                });
+                                const sugText = await sugResp.text();
+                                let sug; try { sug = JSON.parse(sugText); } catch(_) { sug = {}; }
+                                const list = Array.isArray(sug?.suggestions) ? sug.suggestions : [];
+                                setSwitchSuggestions(list);
+                                setSwitchModelStep(2);
+                              } catch (err) {
+                                console.error('Failed to fetch suggestions for switch model:', err);
+                                setSwitchSuggestions([]);
+                              } finally {
+                                setIsSuggestingSwitch(false);
+                              }
+                            }}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                              !switchChartType || isSuggestingSwitch
+                                ? 'bg-[#9aa0d0] cursor-not-allowed'
+                                : 'bg-[#13008B] hover:bg-blue-800'
+                            }`}
+                          >
+                            {isSuggestingSwitch ? 'Loading...' : 'Continue'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {pendingModelType === 'Financial' && switchModelStep >= 2 && (
+                      <div className="mb-2">
+                        <div className="text-xs text-gray-600 mb-1">Chart Type</div>
+                        <div className="px-3 py-2 border rounded mb-2 bg-gray-50 text-sm font-medium text-gray-800">
+                          {switchChartType || 'Not selected'}
+                        </div>
+                        <div className="text-xs text-gray-600 mb-1">Suggestions</div>
+                        {isSuggestingSwitch ? (
+                          <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
+                            <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                            Fetching suggestions…
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-44 overflow-y-auto border rounded-md p-2 mb-2">
+                            {Array.isArray(switchSuggestions) && switchSuggestions.length > 0 ? (
+                              switchSuggestions.map((sug, i) => (
+                                <div key={i}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSwitchSelectedIdx(i);
+                                      setSwitchSceneContent((((sug?.title ? (sug.title+': ') : '') + (sug?.content || '')).trim()));
+                                      // Extract chart_data from suggestion if available
+                                      if (sug?.chart_data || sug?.chartData) {
+                                        const chartData = sug.chart_data || sug.chartData;
+                                        setSwitchChartData(typeof chartData === 'string' ? chartData : JSON.stringify(chartData, null, 2));
+                                      }
+                                    }}
+                                    className={`relative w-full text-left p-2 rounded border hover:bg-gray-50 ${switchSelectedIdx===i?'border-[#13008B] ring-2 ring-[#cfcaf7]':''}`}
+                                    title="Click to select this suggestion"
+                                  >
+                                    {switchSelectedIdx===i && (
+                                      <span className="absolute top-1 right-1 text-[10px] px-2 py-0.5 rounded-full bg-[#13008B] text-white">Selected</span>
+                                    )}
+                                    <div className="text-xs font-medium text-gray-800">{sug?.title || 'Suggestion'}</div>
+                                    <div className="text-xs text-gray-600 whitespace-pre-wrap">{sug?.content || ''}</div>
+                                  </button>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-xs text-gray-500">No suggestions available.</div>
+                            )}
+                          </div>
+                        )}
                         <div className="text-xs text-gray-600 mb-1">Chart Data (JSON)</div>
                         <textarea value={switchChartData} onChange={(e)=>setSwitchChartData(e.target.value)} className="w-full h-24 px-3 py-2 border rounded" placeholder='{"labels":["A","B"],"values":[10,20]}' />
                       </div>
@@ -7497,157 +8247,122 @@ const saveAnchorPromptTemplate = async () => {
                             if (typeof d === 'string') return d;
                             try { return JSON.stringify(d, null, 2); } catch (_) { return String(d); }
                           })();
+                          const isCurrentlyEditingChartType = isChartTypeEditing && chartTypeSceneIndex === currentSceneIndex;
+                          const displayChartType = isCurrentlyEditingChartType ? pendingChartTypeValue : chartType;
+                          const hasChartTypeChanged = isCurrentlyEditingChartType && pendingChartTypeValue !== chartType;
+                          
+                          const startEditingChartType = () => {
+                            setPendingChartTypeValue(chartType || '');
+                            setChartTypeSceneIndex(currentSceneIndex);
+                            setIsChartTypeEditing(true);
+                          };
+                          
+                          const cancelEditingChartType = () => {
+                            setPendingChartTypeValue('');
+                            setIsChartTypeEditing(false);
+                            setChartTypeSceneIndex(null);
+                          };
+                          
+                          const saveChartType = async () => {
+                            try {
+                              await regenerateChart(currentSceneIndex, pendingChartTypeValue);
+                              setIsChartTypeEditing(false);
+                              setChartTypeSceneIndex(null);
+                            } catch (e) {
+                              console.error('Failed to save chart type:', e);
+                              // Keep editing mode open on error so user can retry
+                            }
+                          };
+                          
                           return (
                             <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                               <h4 className="text-lg font-semibold text-gray-800 mb-4">Chart</h4>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                  <div className="text-sm font-medium text-gray-700 mb-1">Chart Type</div>
-                                  {isEditingScene ? (
+                                  <div className="flex items-center justify-between mb-1">
+                                    <div className="text-sm font-medium text-gray-700">Chart Type</div>
+                                    {isCurrentlyEditingChartType ? (
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100"
+                                          onClick={cancelEditingChartType}
+                                          disabled={isRegeneratingChart}
+                                        >
+                                          Cancel
+                                        </button>
+                                        {hasChartTypeChanged && (
+                                          <button
+                                            type="button"
+                                            disabled={isRegeneratingChart}
+                                            className={`px-3 py-1.5 rounded-lg text-sm ${
+                                              isRegeneratingChart
+                                                ? 'bg-blue-400 text-white cursor-not-allowed'
+                                                : 'bg-[#13008B] text-white hover:bg-blue-800'
+                                            }`}
+                                            onClick={saveChartType}
+                                          >
+                                            {isRegeneratingChart ? 'Saving...' : 'Save'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                        onClick={startEditingChartType}
+                                      >
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                        </svg>
+                                        Edit
+                                      </button>
+                                    )}
+                                  </div>
+                                  {isCurrentlyEditingChartType ? (
                                     <select
-                                      value={chartType || ''}
-                                      onChange={(e)=>{
-                                        const sel = e.target.value;
-                                        const prev = chartType || '';
-                                        if (sel === prev) return;
-                                        try { e.target.value = prev; } catch(_) {}
-                                        setPendingChartType(sel);
-                                        setShowChartTypeConfirm(true);
-                                      }}
+                                      value={pendingChartTypeValue || ''}
+                                      onChange={(e) => setPendingChartTypeValue(e.target.value)}
                                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
                                     >
                                       <option value="">Select</option>
-                                      <option value="bar">bar</option>
-                                      <option value="grouped_bar">grouped_bar</option>
-                                      <option value="stacked_bar">stacked_bar</option>
-                                      <option value="waterfall">waterfall</option>
+                                      <option value="clustered_bar">clustered_bar</option>
+                                      <option value="clustered_column">clustered_column</option>
                                       <option value="line">line</option>
-                                      <option value="multi_line">multi_line</option>
-                                      <option value="area">area</option>
                                       <option value="pie">pie</option>
+                                      <option value="stacked_bar">stacked_bar</option>
+                                      <option value="waterfall_bar">waterfall_bar</option>
+                                      <option value="waterfall_column">waterfall_column</option>
+                                      <option value="waterfall_stacked_bar">waterfall_stacked_bar</option>
+                                      <option value="waterfall_stacked_column">waterfall_stacked_column</option>
                                       <option value="donut">donut</option>
-                                      <option value="treemap">treemap</option>
-                                      <option value="scatter">scatter</option>
-                                      <option value="bubble">bubble</option>
-                                      <option value="heatmap">heatmap</option>
-                                      <option value="combo_bar_line">combo_bar_line</option>
-                                      <option value="funnel">funnel</option>
-                                      <option value="histogram">histogram</option>
-                                      <option value="box">box</option>
-                                      <option value="candlestick">candlestick</option>
                                     </select>
                                   ) : (
-                                    <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">{chartType || '-'}</div>
+                                    <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">{displayChartType || '-'}</div>
                                   )}
                                 </div>
                                 <div className="md:col-span-2">
-                                  <div className="text-sm font-medium text-gray-700 mb-1">Chart Data</div>
-                                  {(() => {
-                                    let raw = scene?.chart_data || scene?.chartData;
-                                    // If raw is a JSON string, try to parse
-                                    if (typeof raw === 'string') {
-                                      try { raw = JSON.parse(raw); } catch (_) { /* keep as string */ }
-                                    }
-                                    const renderTable = (headers, rows) => (
-                                      <div className="w-full overflow-x-auto overflow-y-auto max-h-60 border border-gray-200 rounded-lg bg-white">
-                                        <table className="min-w-full text-sm">
-                                          <thead className="bg-gray-50 sticky top-0">
-                                            <tr>
-                                              {headers.map((h, i) => (
-                                                <th key={i} className="px-3 py-2 text-left font-semibold text-gray-700 border-b border-gray-200 whitespace-nowrap">{h}</th>
-                                              ))}
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {rows.map((r, ri) => (
-                                              <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                                                {headers.map((h, hi) => (
-                                                  <td key={hi} className="px-3 py-2 border-b border-gray-100 text-gray-800 whitespace-nowrap">{r[h] ?? ''}</td>
-                                                ))}
-                                              </tr>
-                                            ))}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    );
-                                    try {
-                                      if (!raw) return <div className="w-full px-3 py-2 text-gray-600 border border-gray-200 rounded-lg bg-white">-</div>;
-                                      // Prefer series[x,y,z] table view
-                                      const trySeriesTable = (obj) => {
-                                        try {
-                                          let series = obj?.series || (Array.isArray(obj) && obj[0]?.series) || null;
-                                          if (!series) return null;
-                                          // Normalize series to array of objects with optional name
-                                          let seriesArr = [];
-                                          if (Array.isArray(series)) {
-                                            seriesArr = series;
-                                          } else if (typeof series === 'object') {
-                                            // Case: single series object with x/y/z/data arrays
-                                            if (Array.isArray(series.x) || Array.isArray(series.y) || Array.isArray(series.z) || Array.isArray(series.data)) {
-                                              seriesArr = [{ name: series.name || 'Series', ...series }];
-                                            } else {
-                                              // Map of name -> {y:[...], x?:[], data?:[]}
-                                              seriesArr = Object.entries(series).map(([name, val]) => ({ name, ...(val||{}) }));
-                                            }
-                                          }
-                                          if (!Array.isArray(seriesArr) || seriesArr.length === 0) return null;
-
-                                          // Determine X axis
-                                          let xArr = Array.isArray(obj?.x) ? obj.x : null;
-                                          if (!xArr) {
-                                            if (Array.isArray(seriesArr[0]?.x)) xArr = seriesArr[0].x;
-                                            else if (Array.isArray(seriesArr[0]?.data)) {
-                                              const pts = seriesArr[0].data;
-                                              if (pts.length && typeof pts[0] === 'object' && 'x' in pts[0]) {
-                                                xArr = pts.map(p => p?.x);
-                                              }
-                                            }
-                                          }
-
-                                          // Build headers: x + one column per series (y) and optional z per series
-                                          const yHeaders = seriesArr.map(s => (s?.name || 'Series') + ' (y)');
-                                          const zPresence = seriesArr.some(s => Array.isArray(s?.z) || (Array.isArray(s?.data) && s.data.length && typeof s.data[0]==='object' && 'z' in s.data[0]));
-                                          const zHeaders = zPresence ? seriesArr.map(s => (s?.name || 'Series') + ' (z)') : [];
-                                          const headers = ['x', ...yHeaders, ...zHeaders];
-
-                                          const maxLen = Math.max(
-                                            xArr ? xArr.length : 0,
-                                            ...seriesArr.map(s => Array.isArray(s?.y) ? s.y.length : (Array.isArray(s?.data) ? s.data.length : 0))
-                                          );
-                                          if (maxLen === 0) return null;
-
-                                          const rows = Array.from({ length: maxLen }, (_, i) => {
-                                            const row = {};
-                                            row['x'] = xArr ? xArr[i] : (Array.isArray(seriesArr[0]?.data) ? seriesArr[0].data[i]?.x : (Array.isArray(seriesArr[0]?.x) ? seriesArr[0].x[i] : ''));
-                                            // y values per series
-                                            seriesArr.forEach((s, si) => {
-                                              let yv = '';
-                                              if (Array.isArray(s?.y)) yv = s.y[i];
-                                              else if (Array.isArray(s?.data)) yv = s.data[i]?.y;
-                                              row[yHeaders[si]] = (yv ?? '');
-                                            });
-                                            if (zHeaders.length) {
-                                              seriesArr.forEach((s, si) => {
-                                                let zv = '';
-                                                if (Array.isArray(s?.z)) zv = s.z[i];
-                                                else if (Array.isArray(s?.data)) zv = s.data[i]?.z;
-                                                row[zHeaders[si]] = (zv ?? '');
-                                              });
-                                            }
-                                            return row;
-                                          });
-
-                                          return renderTable(headers, rows);
-                                        } catch(_) { return null; }
-                                      };
-                                      const seriesView = trySeriesTable(raw);
-                                      if (seriesView) return seriesView;
-                                      // If no series object present, show placeholder
-                                      return <div className="w-full px-3 py-2 text-gray-600 border border-gray-200 rounded-lg bg-white">No series data</div>;
-                                    } catch (_) {
-                                      return renderTable(['Value'], [{ Value: chartData }]);
-                                    }
-                                  })()}
+                                  <ChartDataEditor
+                                    chartType={chartType || ''}
+                                    chartData={scene?.chart_data || scene?.chartData}
+                                    onDataChange={(updatedData) => {
+                                      // Update local state immediately
+                                      handleSceneUpdate(currentSceneIndex, 'chart_data', updatedData);
+                                    }}
+                                    onSave={async (updatedData) => {
+                                      try {
+                                        // Update local state
+                                        handleSceneUpdate(currentSceneIndex, 'chart_data', updatedData);
+                                        // Call API to persist changes
+                                        await updateSceneGenImageFlag(currentSceneIndex);
+                                        // Show success message (optional)
+                                        console.log('Chart data saved successfully');
+                                      } catch (err) {
+                                        console.error('Failed to save chart data:', err);
+                                        alert('Failed to save chart data. Please try again.');
+                                      }
+                                    }}
+                                  />
                                 </div>
                               </div>
                             </div>
@@ -7805,13 +8520,74 @@ const saveAnchorPromptTemplate = async () => {
                         const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                         if (!(sceneModelUpper === 'SORA' || sceneModelUpper === 'ANCHOR' || sceneModelUpper === 'PLOTLY')) return null;
                         const items = Array.isArray(scene?.text_to_be_included) ? scene.text_to_be_included : [];
+                        const isCurrentlyEditing = isTextToBeIncludedEditing && textToBeIncludedSceneIndex === currentSceneIndex;
+                        const displayItems = isCurrentlyEditing ? pendingTextToBeIncluded : items;
+                        const startEditing = () => {
+                          setPendingTextToBeIncluded(items.slice());
+                          setTextToBeIncludedSceneIndex(currentSceneIndex);
+                          setIsTextToBeIncludedEditing(true);
+                        };
+                        const cancelEditing = () => {
+                          setPendingTextToBeIncluded([]);
+                          setIsTextToBeIncludedEditing(false);
+                          setTextToBeIncludedSceneIndex(null);
+                        };
+                        const saveEditing = async () => {
+                          try {
+                            // Update local state first
+                            handleSceneUpdate(currentSceneIndex, 'text_to_be_included', pendingTextToBeIncluded);
+                            // Update via API
+                            await updateTextToBeIncluded(currentSceneIndex, pendingTextToBeIncluded);
+                            setIsTextToBeIncludedEditing(false);
+                            setTextToBeIncludedSceneIndex(null);
+                          } catch (e) {
+                            console.error('Failed to save text to be included:', e);
+                            // Keep editing mode open on error so user can retry
+                          }
+                        };
                         return (
                           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Text To Be Included</label>
-                            {isEditingScene ? (
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="block text-sm font-medium text-gray-700">Text To Be Included</label>
+                              {isCurrentlyEditing ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100"
+                                    onClick={cancelEditing}
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isUpdatingText}
+                                    className={`px-3 py-1.5 rounded-lg text-sm ${
+                                      isUpdatingText
+                                        ? 'bg-blue-400 text-white cursor-not-allowed'
+                                        : 'bg-[#13008B] text-white hover:bg-blue-800'
+                                    }`}
+                                    onClick={saveEditing}
+                                  >
+                                    {isUpdatingText ? 'Saving...' : 'Save'}
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                  onClick={startEditing}
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                  </svg>
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                            {isCurrentlyEditing ? (
                               <div>
                                 <div className="flex flex-wrap gap-2 mb-2">
-                                  {items.map((t, i) => (
+                                  {displayItems.map((t, i) => (
                                     <span
                                       key={i}
                                       className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm"
@@ -7820,9 +8596,9 @@ const saveAnchorPromptTemplate = async () => {
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          const copy = items.slice();
+                                          const copy = displayItems.slice();
                                           copy.splice(i, 1);
-                                          handleSceneUpdate(currentSceneIndex, 'text_to_be_included', copy);
+                                          setPendingTextToBeIncluded(copy);
                                         }}
                                         className="text-gray-500 hover:text-red-600"
                                       >
@@ -7841,8 +8617,7 @@ const saveAnchorPromptTemplate = async () => {
                                         e.preventDefault();
                                         const val = (textIncludeInput || '').trim();
                                         if (!val) return;
-                                        const next = [...items, val];
-                                        handleSceneUpdate(currentSceneIndex, 'text_to_be_included', next);
+                                        setPendingTextToBeIncluded([...displayItems, val]);
                                         setTextIncludeInput('');
                                       }
                                     }}
@@ -7854,8 +8629,7 @@ const saveAnchorPromptTemplate = async () => {
                                     onClick={() => {
                                       const val = (textIncludeInput || '').trim();
                                       if (!val) return;
-                                      const next = [...items, val];
-                                      handleSceneUpdate(currentSceneIndex, 'text_to_be_included', next);
+                                      setPendingTextToBeIncluded([...displayItems, val]);
                                       setTextIncludeInput('');
                                     }}
                                     className="px-3 py-2 rounded-md bg-[#13008B] text-white text-sm"
@@ -7876,54 +8650,110 @@ const saveAnchorPromptTemplate = async () => {
                       {/* Text To Be Included */}
                       {(() => { const r = scriptRows?.[currentSceneIndex]; const titleLower = String(r?.scene_title || r?.sceneTitle || '').trim().toLowerCase(); if (titleLower === 'summary') return null; const m = String(r?.model||r?.mode||'').toUpperCase(); if (m==='SORA' || m==='ANCHOR' || m==='VEO3' || m==='PLOTLY') return null; return (
                         <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                          <h4 className="text-lg font-semibold text-gray-800 mb-2">Text To Be Included</h4>
-                        {(() => {
-                          const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
-                          const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
-                          if (!isEditingScene) {
+                          {(() => {
+                            const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                            const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
+                            const isCurrentlyEditing = isTextToBeIncludedEditing && textToBeIncludedSceneIndex === currentSceneIndex;
+                            const displayItems = isCurrentlyEditing ? pendingTextToBeIncluded : items;
+                            const startEditing = () => {
+                              setPendingTextToBeIncluded(items.slice());
+                              setTextToBeIncludedSceneIndex(currentSceneIndex);
+                              setIsTextToBeIncludedEditing(true);
+                            };
+                            const cancelEditing = () => {
+                              setPendingTextToBeIncluded([]);
+                              setIsTextToBeIncludedEditing(false);
+                              setTextToBeIncludedSceneIndex(null);
+                            };
+                            const saveEditing = async () => {
+                              try {
+                                // Update local state first
+                                handleSceneUpdate(currentSceneIndex, 'text_to_be_included', pendingTextToBeIncluded);
+                                // Update via API
+                                await updateTextToBeIncluded(currentSceneIndex, pendingTextToBeIncluded);
+                                setIsTextToBeIncludedEditing(false);
+                                setTextToBeIncludedSceneIndex(null);
+                              } catch (e) {
+                                console.error('Failed to save text to be included:', e);
+                                // Keep editing mode open on error so user can retry
+                              }
+                            };
+                            const removeAt = (idx) => {
+                              const copy = displayItems.slice();
+                              copy.splice(idx, 1);
+                              setPendingTextToBeIncluded(copy);
+                            };
+                            const addItem = () => {
+                              const val = (textIncludeInput || '').trim();
+                              if (!val) return;
+                              setPendingTextToBeIncluded([...displayItems, val]);
+                              setTextIncludeInput('');
+                            };
                             return (
-                              <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
-                                {items.length ? items.join(', ') : '-'}
-                              </div>
+                              <>
+                                <div className="flex items-center justify-between mb-2">
+                                  <h4 className="text-lg font-semibold text-gray-800">Text To Be Included</h4>
+                                  {isCurrentlyEditing ? (
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100"
+                                        onClick={cancelEditing}
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800"
+                                        onClick={saveEditing}
+                                      >
+                                        Save
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                      onClick={startEditing}
+                                    >
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                      </svg>
+                                      Edit
+                                    </button>
+                                  )}
+                                </div>
+                                {isCurrentlyEditing ? (
+                                  <div>
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                      {displayItems.map((t, i) => (
+                                        <span key={i} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm">
+                                          {t}
+                                          <button type="button" onClick={() => removeAt(i)} className="text-gray-500 hover:text-red-600">×</button>
+                                        </span>
+                                      ))}
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={textIncludeInput}
+                                      onChange={(e) => setTextIncludeInput(e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                      placeholder="Type text and press Enter to add"
+                                    />
+                                    <div className="mt-2 flex justify-end">
+                                      <button type="button" onClick={addItem} className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-sm">Add</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-800 whitespace-pre-wrap">
+                                    {items.length ? items.join(', ') : '-'}
+                                  </div>
+                                )}
+                              </>
                             );
-                          }
-                          const removeAt = (idx) => {
-                            const copy = items.slice();
-                            copy.splice(idx,1);
-                            handleSceneUpdate(currentSceneIndex, 'text_to_be_included', copy);
-                          };
-                          const addItem = () => {
-                            const val = (textIncludeInput || '').trim();
-                            if (!val) return;
-                            const next = [...items, val];
-                            handleSceneUpdate(currentSceneIndex, 'text_to_be_included', next);
-                            setTextIncludeInput('');
-                          };
-                          return (
-                            <div>
-                              <div className="flex flex-wrap gap-2 mb-2">
-                                {items.map((t, i) => (
-                                  <span key={i} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm">
-                                    {t}
-                                    <button type="button" onClick={() => removeAt(i)} className="text-gray-500 hover:text-red-600">×</button>
-                                  </span>
-                                ))}
-                              </div>
-                              <input
-                                type="text"
-                                value={textIncludeInput}
-                                onChange={(e) => setTextIncludeInput(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                                placeholder="Type text and press Enter to add"
-                              />
-                              <div className="mt-2 flex justify-end">
-                                <button type="button" onClick={addItem} className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-sm">Add</button>
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
+                          })()}
+                        </div>
                       );})()}
 
                                            {/* Video Type Selection */}
@@ -8000,34 +8830,51 @@ const saveAnchorPromptTemplate = async () => {
                             // Check session data for avatar_urls
                             const sessionId = localStorage.getItem('session_id');
                             const token = localStorage.getItem('token');
-                            if (!sessionId || !token) return [];
                             
-                            // Try to get from script scene data
+                            // First priority: Try to get from script scene data
                             const currentScene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
-                            if (currentScene && Array.isArray(currentScene.avatar_urls)) {
-                              return currentScene.avatar_urls;
+                            if (currentScene && Array.isArray(currentScene.avatar_urls) && currentScene.avatar_urls.length > 0) {
+                              return currentScene.avatar_urls.filter(url => typeof url === 'string' && url.trim()).map(url => url.trim());
                             }
                             
-                            // Try to get from cached brand assets
-                            const cacheKey = `brand_assets_images:${token}`;
-                            const cached = localStorage.getItem(cacheKey);
-                            if (cached) {
-                              const data = JSON.parse(cached);
-                              return Array.isArray(data?.avatar_urls) ? data.avatar_urls : [];
+                            // Fallback: Try to get from avatar field
+                            if (currentScene && typeof currentScene.avatar === 'string' && currentScene.avatar.trim()) {
+                              return [currentScene.avatar.trim()];
+                            }
+                            
+                            // Last resort: Try to get from cached brand assets
+                            if (sessionId && token) {
+                              const cacheKey = `brand_assets_images:${token}`;
+                              const cached = localStorage.getItem(cacheKey);
+                              if (cached) {
+                                const data = JSON.parse(cached);
+                                return Array.isArray(data?.avatar_urls) ? data.avatar_urls : [];
+                              }
                             }
                           } catch(_) {}
                           return [];
                         };
                         
                         // Combine all avatar sources (API + session + preset defaults)
+                        // Prioritize scene avatar_urls by putting them first
                         const sessionAvatarUrls = getAvatarUrlsFromSession();
                         const allAvatars = Array.from(
                           new Set([
+                            ...sessionAvatarUrls, // Scene avatar_urls first
                             ...presetAvatars,
-                            ...brandAssetsAvatars,
-                            ...sessionAvatarUrls
+                            ...brandAssetsAvatars
                           ])
-                        );
+                        ).map(url => typeof url === 'string' ? url.trim() : url).filter(Boolean);
+                        
+                        // Normalize selectedAvatar for comparison (trim whitespace)
+                        const normalizedSelectedAvatar = selectedAvatar ? String(selectedAvatar).trim() : null;
+                        
+                        // Helper function to compare avatar URLs (normalized)
+                        const isAvatarSelected = (url) => {
+                          if (!normalizedSelectedAvatar || !url) return false;
+                          const normalizedUrl = String(url).trim();
+                          return normalizedSelectedAvatar === normalizedUrl;
+                        };
                         
                         return (
                        <>
@@ -8076,28 +8923,31 @@ const saveAnchorPromptTemplate = async () => {
                                  No avatars available. Click "Upload Avatar" to add one.
                                </div>
                              ) : (
-                               allAvatars.map((avatarUrl, index) => (
+                               allAvatars.map((avatarUrl, index) => {
+                                 const trimmedUrl = typeof avatarUrl === 'string' ? avatarUrl.trim() : avatarUrl;
+                                 const isSelected = isAvatarSelected(trimmedUrl);
+                                 return (
                                  <button
                                    type="button"
                                    key={index}
                                    onClick={async () => {
                                      try {
-                                       setSelectedAvatar(avatarUrl);
+                                       setSelectedAvatar(trimmedUrl);
                                        if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
                                          const rows = [...scriptRows];
                                          const scene = { ...rows[currentSceneIndex] };
-                                         scene.avatar = avatarUrl;
+                                         scene.avatar = trimmedUrl;
                                          // Also update avatar_urls array for ANCHOR/VEO3
                                          if (Array.isArray(scene.avatar_urls)) {
-                                           scene.avatar_urls = [avatarUrl];
+                                           scene.avatar_urls = [trimmedUrl];
                                          } else {
-                                           scene.avatar_urls = [avatarUrl];
+                                           scene.avatar_urls = [trimmedUrl];
                                          }
                                          rows[currentSceneIndex] = scene;
                                          setScriptRows(rows);
                                          // Call updateSceneGenImageFlag to save to backend, preserving existing background_image
                                          try {
-                                           await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: avatarUrl });
+                                           await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: trimmedUrl });
                                          } catch (err) {
                                            console.error('Failed to update avatar:', err);
                                          }
@@ -8105,13 +8955,14 @@ const saveAnchorPromptTemplate = async () => {
                                      } catch (_) { /* noop */ }
                                    }}
                                    className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
-                                     selectedAvatar === avatarUrl ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
+                                     isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
                                    }`}
                                    title={`Avatar ${index + 1}`}
                                  >
-                                   <img src={avatarUrl} alt={`Avatar ${index + 1}`} className="w-full h-full object-cover" />
+                                   <img src={trimmedUrl} alt={`Avatar ${index + 1}`} className="w-full h-full object-cover" />
                                  </button>
-                               ))
+                               );
+                               })
                              )}
                              <button
                                type="button"
@@ -8148,10 +8999,45 @@ const saveAnchorPromptTemplate = async () => {
                           try { handleSceneUpdate(currentSceneIndex, 'gen_image', next); await updateSceneGenImageFlag(currentSceneIndex, { genImage: next }); } catch(_) {}
                         };
                         const refs = (() => {
+                          const urls = [];
+                          
+                          // First try ref_image (primary source)
                           const r = scene?.ref_image;
-                          if (Array.isArray(r)) return r;
-                          if (typeof r === 'string' && r.trim()) return [r.trim()];
-                          return [];
+                          if (Array.isArray(r) && r.length > 0) {
+                            r.forEach(url => {
+                              const trimmed = typeof url === 'string' ? url.trim() : url;
+                              if (trimmed && !urls.includes(trimmed)) {
+                                urls.push(trimmed);
+                              }
+                            });
+                          } else if (typeof r === 'string' && r.trim()) {
+                            const trimmed = r.trim();
+                            if (!urls.includes(trimmed)) urls.push(trimmed);
+                          }
+                          
+                          // Fallback to background_image array (only if ref_image is empty)
+                          if (urls.length === 0 && Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
+                            scene.background_image.forEach(item => {
+                              let url = '';
+                              if (typeof item === 'string' && item.trim()) {
+                                url = item.trim();
+                              } else if (item && typeof item === 'object') {
+                                url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
+                                if (url) url = url.trim();
+                              }
+                              if (url && !urls.includes(url)) {
+                                urls.push(url);
+                              }
+                            });
+                          }
+                          
+                          // Fallback to background field (only if still empty)
+                          if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
+                            const trimmed = scene.background.trim();
+                            if (!urls.includes(trimmed)) urls.push(trimmed);
+                          }
+                          
+                          return urls;
                         })();
                         return (
                           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
@@ -8166,14 +9052,6 @@ const saveAnchorPromptTemplate = async () => {
                                 </button>
                               )}
                             </div>
-                            {(() => { const bg = scene?.background || scene?.background_image || ''; if (!bg) return null; return (
-                              <div className="mb-3">
-                                <div className="text-sm font-medium text-gray-700 mb-1">Selected Background</div>
-                                <div className="w-28 h-28 border rounded-lg overflow-hidden">
-                                  <img src={bg} alt="Selected background" className="w-full h-full object-cover" />
-                                </div>
-                              </div>
-                            ); })()}
                             {(() => {
                               // Default behavior: show refs
                               return (
@@ -9610,11 +10488,11 @@ const saveAnchorPromptTemplate = async () => {
                           });
                         } catch(_) { /* noop */ }
                       }
-                      // Keep Default: clear description
+                      // Keep Default: clear description and update gen_image to false in local state
                       try {
                         const r2 = [...rows];
                         if (r2[currentSceneIndex]) {
-                          r2[currentSceneIndex] = { ...r2[currentSceneIndex], description: '' };
+                          r2[currentSceneIndex] = { ...r2[currentSceneIndex], description: '', gen_image: false };
                           setScriptRows(r2);
                         }
                       } catch(_) {}
@@ -9652,8 +10530,10 @@ const saveAnchorPromptTemplate = async () => {
                         // For SORA/infographics, allow multiple templates as ref images
                         scene.ref_image = multi;
                       }
+                      // For Generate button, set gen_image to true (we're generating new images with templates)
+                      // Only Keep Default sets gen_image to false
                       if (assetsTab === 'templates') {
-                        scene.gen_image = false;
+                        scene.gen_image = true;
                       }
                       rows[currentSceneIndex] = scene;
                       setScriptRows(rows);
@@ -9671,11 +10551,32 @@ const saveAnchorPromptTemplate = async () => {
                             scene?.scene_number ?? (currentSceneIndex + 1),
                             templatesToSend
                           );
+                          // For Generate button, set gen_image to true (we're generating new images with templates)
+                          await updateSceneGenImageFlag(currentSceneIndex, { genImage: true });
+                          // Refresh scriptRows to get updated data from server
+                          const sessionId = localStorage.getItem('session_id');
+                          const token = localStorage.getItem('token');
+                          if (sessionId && token) {
+                            const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                            });
+                            const refreshText = await refreshResp.text();
+                            let refresh; try { refresh = JSON.parse(refreshText); } catch(_) { refresh = refreshText; }
+                            if (refresh && typeof refresh === 'object') {
+                              const sd2 = refresh?.session_data || refresh?.session || {};
+                              const scripts = Array.isArray(sd2?.scripts) ? sd2.scripts : [];
+                              const container = scripts[0]?.airesponse ? { script: scripts[0].airesponse } : { script: scripts };
+                              const normalized = normalizeScriptToRows(container);
+                              const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+                              setScriptRows(newRows);
+                            }
+                          }
                         } finally {
                           setIsEnhancing(false);
                         }
                         setSelectedAssetUrl('');
                         setSelectedTemplateUrls([]);
+                        setShowAssetsModal(false);
                         return;
                       }
                       setIsEnhancing(true);
@@ -9806,31 +10707,47 @@ const saveAnchorPromptTemplate = async () => {
                   </p>
                 )}
               </div>
-              {regenModelUpper === 'PLOTLY' && (
+              {regenModelUpper === 'PLOTLY' && regenStep === 1 && (
                 <div className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                     <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
                       <option value="">Select</option>
-                      <option value="bar">bar</option>
-                      <option value="grouped_bar">grouped_bar</option>
-                      <option value="stacked_bar">stacked_bar</option>
-                      <option value="waterfall">waterfall</option>
+                      <option value="clustered_bar">clustered_bar</option>
+                      <option value="clustered_column">clustered_column</option>
                       <option value="line">line</option>
-                      <option value="multi_line">multi_line</option>
-                      <option value="area">area</option>
                       <option value="pie">pie</option>
+                      <option value="stacked_bar">stacked_bar</option>
+                      <option value="stacked_column">stacked_column</option>
+                      <option value="waterfall_bar">waterfall_bar</option>
+                      <option value="waterfall_column">waterfall_column</option>
+                      <option value="waterfall_stacked_bar">waterfall_stacked_bar</option>
+                      <option value="waterfall_stacked_column">waterfall_stacked_column</option>
                       <option value="donut">donut</option>
-                      <option value="treemap">treemap</option>
-                      <option value="scatter">scatter</option>
-                      <option value="bubble">bubble</option>
-                      <option value="heatmap">heatmap</option>
-                      <option value="combo_bar_line">combo_bar_line</option>
-                      <option value="funnel">funnel</option>
-                      <option value="histogram">histogram</option>
-                      <option value="box">box</option>
-                      <option value="candlestick">candlestick</option>
                     </select>
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <button
+                      disabled={isRegenerating || isLoadingRegenPresenter || isSuggestingRegen || !regenChartType}
+                      onClick={() => continueRegenerateFlow('PLOTLY')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
+                        isRegenerating || isLoadingRegenPresenter || isSuggestingRegen || !regenChartType
+                          ? 'bg-[#9aa0d0] cursor-not-allowed'
+                          : 'bg-[#13008B] hover:bg-blue-800'
+                      }`}
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </div>
+              )}
+              {regenModelUpper === 'PLOTLY' && regenStep >= 2 && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                    <div className="px-3 py-2 rounded-lg border bg-gray-50 text-sm font-medium text-gray-800">
+                      {regenChartType || 'Not selected'}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data (JSON)</label>
@@ -9840,21 +10757,6 @@ const saveAnchorPromptTemplate = async () => {
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Document Summary</label>
                       <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{regenDocSummary}</div>
-                    </div>
-                  )}
-                  {regenStep === 1 && (
-                    <div className="flex justify-end pt-1">
-                      <button
-                        disabled={isRegenerating || isLoadingRegenPresenter || isSuggestingRegen}
-                        onClick={() => continueRegenerateFlow('PLOTLY')}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${
-                          isRegenerating || isLoadingRegenPresenter || isSuggestingRegen
-                            ? 'bg-[#9aa0d0] cursor-not-allowed'
-                            : 'bg-[#13008B] hover:bg-blue-800'
-                        }`}
-                      >
-                        Continue
-                      </button>
                     </div>
                   )}
                 </div>

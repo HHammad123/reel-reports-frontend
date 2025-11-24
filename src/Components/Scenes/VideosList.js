@@ -1,6 +1,24 @@
 import React, { useEffect, useState } from 'react';
 
-const VideosList = ({ jobId, onClose }) => {
+const TRANSITION_MAP = {
+  "fade": "fade",
+  "fadeblack": "fadeblack",
+  "fadewhite": "fadewhite",
+  "slideleft": "slideleft",
+  "slideright": "slideright",
+  "slideup": "slideup",
+  "slidedown": "slidedown",
+  "circleopen": "circleopen",
+  "circleclose": "circleclose",
+  "wipeleft": "wipeleft",
+  "wiperight": "wiperight",
+  "wipeup": "wipeup",
+  "wipedown": "wipedown",
+  "pixelize": "pixelize",
+  "dissolve": "dissolve",
+};
+
+const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -8,6 +26,13 @@ const VideosList = ({ jobId, onClose }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showVideoLoader, setShowVideoLoader] = useState(false);
   const [jobProgress, setJobProgress] = useState({ percent: 0, phase: '' });
+  // Transitions state: key is video index (transition between video[index] and video[index+1])
+  const [transitions, setTransitions] = useState({}); // { 0: "fade", 1: "slideleft", ... }
+  const [hoveredTransitionIndex, setHoveredTransitionIndex] = useState(null); // null or video index
+  const [showTransitionMenu, setShowTransitionMenu] = useState(null); // null or video index
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [mergeJobId, setMergeJobId] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -176,12 +201,122 @@ const VideosList = ({ jobId, onClose }) => {
     }
   }, [items.length, selectedIndex]);
 
+  // Close transition menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (showTransitionMenu !== null && !e.target.closest('.transition-menu-container')) {
+        setShowTransitionMenu(null);
+        // Also reset hover if menu was closed
+        if (!e.target.closest('[onMouseEnter]')) {
+          setHoveredTransitionIndex(null);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showTransitionMenu]);
+
+  // Handle success popup timeout
+  useEffect(() => {
+    if (showSuccessPopup && mergeJobId) {
+      const timer = setTimeout(() => {
+        setShowSuccessPopup(false);
+        // Navigate to final video section
+        if (onGenerateFinalReel && typeof onGenerateFinalReel === 'function') {
+          onGenerateFinalReel(mergeJobId);
+        }
+      }, 5000); // 5 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [showSuccessPopup, mergeJobId, onGenerateFinalReel]);
+
+  // Generate Final Reel function
+  const handleGenerateFinalReel = async () => {
+    try {
+      setIsGenerating(true);
+      setError('');
+
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+
+      if (!session_id || !user_id) {
+        setError('Missing session or user');
+        setIsGenerating(false);
+        return;
+      }
+
+      if (items.length < 2) {
+        setError('At least 2 videos are required to generate a final reel');
+        setIsGenerating(false);
+        return;
+      }
+
+      // Transform transitions to API format
+      // transitions object: { 0: "fade", 1: "slideleft" } means transition between video[0] and video[1], video[1] and video[2]
+      // API expects: [{ from: 1, to: 2, type: "fade", duration: 0.5 }] (1-indexed)
+      const transitionsArray = [];
+      for (let i = 0; i < items.length - 1; i++) {
+        const transitionType = transitions[i] || 'fade'; // Default to 'fade' if not set
+        transitionsArray.push({
+          from: i + 1, // 1-indexed
+          to: i + 2,   // 1-indexed
+          type: transitionType,
+          duration: 0.5
+        });
+      }
+
+      const requestBody = {
+        session_id,
+        user_id,
+        transitions: transitionsArray
+      };
+
+      const resp = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/merge-videos',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        }
+      );
+
+      const text = await resp.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!resp.ok) {
+        throw new Error(`merge-videos failed: ${resp.status} ${text}`);
+      }
+
+      // Store job_id for final video component
+      const jobId = data?.job_id || data?.jobId || data?.id || '';
+      if (jobId) {
+        localStorage.setItem('current_merge_job_id', jobId);
+        setMergeJobId(jobId);
+      }
+
+      // Show success popup
+      setShowSuccessPopup(true);
+      setIsGenerating(false);
+
+    } catch (e) {
+      console.error('❌ Error generating final reel:', e);
+      setError(e?.message || 'Failed to generate final reel');
+      setIsGenerating(false);
+    }
+  };
+
   const selectedVideo = items[selectedIndex] || {};
   const selectedScenes = Array.isArray(selectedVideo.scenes) ? selectedVideo.scenes : [];
   const selectedVideoUrl = selectedVideo.url || selectedScenes[0]?.url || '';
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100vh]">
+    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100%]">
       {showVideoLoader && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
           <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3">
@@ -194,14 +329,45 @@ const VideosList = ({ jobId, onClose }) => {
           </div>
         </div>
       )}
+
+      {/* Success popup */}
+      {showSuccessPopup && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md">
+            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div className="text-lg font-semibold text-[#13008B]">Final Reel Generation Started!</div>
+            <p className="text-sm text-gray-600">Your final reel is being generated. Redirecting to the video section...</p>
+          </div>
+        </div>
+      )}
       {/* <div className="flex items-center justify-between p-4 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
         {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back</button>)}
       </div> */}
       <div className="p-4 space-y-4">
-        {/* <div className="mb-2 text-sm text-gray-600">Status: {status}</div>
-        {isLoading && (<div className="text-sm text-gray-600">Loading…</div>)}
-        {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)} */}
+        {/* Header with Generate Final Reel button */}
+        <div className="flex items-center justify-between mb-4">
+          <div></div>
+          {items.length >= 2 && (
+            <button
+              onClick={handleGenerateFinalReel}
+              disabled={isGenerating}
+              className="px-6 py-2.5 rounded-lg bg-[#13008B] text-white text-sm font-semibold hover:bg-[#0f0069] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {isGenerating ? 'Generating...' : 'Generate Final Reel'}
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-2">
+            <div className="text-sm text-red-600">{error}</div>
+          </div>
+        )}
 
         {/* Top preview */}
         {selectedVideoUrl && (
@@ -260,22 +426,127 @@ const VideosList = ({ jobId, onClose }) => {
         {/* Video selector */}
         <div className="bg-white border rounded-xl p-4">
           <div className="text-base font-semibold mb-3">Available Videos</div>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide">
+          <div className="flex gap-4 overflow-x-auto scrollbar-hide items-start">
             {items.length === 0 && !isLoading && !error && (
               <div className="text-sm text-gray-600">No videos available yet.</div>
             )}
             {items.map((video, i) => (
-              <div key={video?.id || i} className="min-w-[220px] w-[220px] cursor-pointer" onClick={() => setSelectedIndex(i)}>
-                <div className={`rounded-xl border overflow-hidden ${selectedIndex === i ? 'ring-2 ring-[#13008B]' : ''}`}>
-                  <div className="w-full h-32 bg-black">
-                    <video src={video?.url || video?.scenes?.[0]?.url} className="w-full h-full object-cover" muted />
+              <React.Fragment key={video?.id || i}>
+                <div className="min-w-[220px] w-[220px] flex-shrink-0 cursor-pointer" onClick={() => setSelectedIndex(i)}>
+                  <div className={`rounded-xl border overflow-hidden ${selectedIndex === i ? 'ring-2 ring-[#13008B]' : ''}`}>
+                    <div className="w-full h-32 bg-black">
+                      <video src={video?.url || video?.scenes?.[0]?.url} className="w-full h-full object-cover" muted />
+                    </div>
                   </div>
+                  <div className="mt-2 text-sm font-semibold">{video?.title || `Video ${i + 1}`}</div>
+                  {video?.description ? (
+                    <div className="mt-1 text-xs text-gray-600 line-clamp-2">{video.description}</div>
+                  ) : null}
                 </div>
-                <div className="mt-2 text-sm font-semibold">{video?.title || `Scence ${i + 1}`}</div>
-                {video?.description ? (
-                  <div className="mt-1 text-xs text-gray-600 line-clamp-2">{video.description}</div>
-                ) : null}
-              </div>
+                {/* Transition zone between videos */}
+                {i < items.length - 1 && (
+                  <div
+                    className="relative flex-shrink-0 w-16 flex items-center justify-center py-4"
+                    onMouseEnter={() => setHoveredTransitionIndex(i)}
+                    onMouseLeave={() => {
+                      // Only hide hover indicator if menu is not open
+                      if (showTransitionMenu !== i) {
+                        setHoveredTransitionIndex(null);
+                      }
+                    }}
+                  >
+                    {/* Hover indicator line */}
+                    {hoveredTransitionIndex === i && (
+                      <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                        <div className="w-0.5 h-full bg-[#13008B] rounded-full opacity-40"></div>
+                      </div>
+                    )}
+                    {/* Transition button/indicator */}
+                    <div className="relative z-20">
+                      {(transitions[i] || hoveredTransitionIndex === i || showTransitionMenu === i) && (
+                        <>
+                          {transitions[i] ? (
+                            <div
+                              className="px-3 py-1.5 bg-[#13008B] text-white text-xs rounded-lg cursor-pointer hover:bg-[#0f0069] transition-all shadow-md"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowTransitionMenu(showTransitionMenu === i ? null : i);
+                              }}
+                              onMouseEnter={() => setHoveredTransitionIndex(i)}
+                            >
+                              {transitions[i]}
+                            </div>
+                          ) : (
+                            <div
+                              className="px-3 py-1.5 bg-gray-200 text-gray-600 text-xs rounded-lg cursor-pointer hover:bg-gray-300 transition-all flex items-center gap-1 shadow-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowTransitionMenu(showTransitionMenu === i ? null : i);
+                              }}
+                              onMouseEnter={() => setHoveredTransitionIndex(i)}
+                            >
+                              <span className="font-semibold">+</span>
+                              <span>Transition</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {/* Transition menu dropdown */}
+                      {showTransitionMenu === i && (
+                        <div 
+                          className="transition-menu-container absolute top-full left-1/2 transform -translate-x-1/2 mt-2 z-30 bg-white border rounded-lg shadow-xl p-2 max-h-64 overflow-y-auto min-w-[180px]"
+                          onMouseEnter={() => setHoveredTransitionIndex(i)}
+                          onMouseLeave={() => {
+                            // Keep menu open when hovering over it
+                          }}
+                        >
+                          <div className="text-xs font-semibold text-gray-700 mb-2 px-2">Select Transition</div>
+                          <div className="space-y-1">
+                            {Object.keys(TRANSITION_MAP).map((transitionKey) => (
+                              <button
+                                key={transitionKey}
+                                className={`w-full text-left px-3 py-2 text-xs rounded hover:bg-gray-100 transition-colors ${
+                                  transitions[i] === TRANSITION_MAP[transitionKey]
+                                    ? 'bg-[#13008B] text-white hover:bg-[#0f0069]'
+                                    : 'text-gray-700'
+                                }`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTransitions((prev) => ({
+                                    ...prev,
+                                    [i]: TRANSITION_MAP[transitionKey],
+                                  }));
+                                  setShowTransitionMenu(null);
+                                  setHoveredTransitionIndex(null);
+                                }}
+                              >
+                                {transitionKey}
+                              </button>
+                            ))}
+                            {transitions[i] && (
+                              <button
+                                className="w-full text-left px-3 py-2 text-xs rounded hover:bg-red-50 text-red-600 transition-colors border-t border-gray-200 mt-1 pt-2"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTransitions((prev) => {
+                                    const newTransitions = { ...prev };
+                                    delete newTransitions[i];
+                                    return newTransitions;
+                                  });
+                                  setShowTransitionMenu(null);
+                                  setHoveredTransitionIndex(null);
+                                }}
+                              >
+                                Remove Transition
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </React.Fragment>
             ))}
           </div>
         </div>

@@ -66,6 +66,12 @@ const upload = multer({
 })
 
 module.exports = function setupProxy(app) {
+  // Test endpoint to verify server is receiving requests
+  app.get('/api/test', (req, res) => {
+    console.log('✅ Test endpoint hit');
+    res.json({ success: true, message: 'Server is working', timestamp: new Date().toISOString() });
+  });
+
   // Existing image proxy endpoint
   app.post('/image-proxy', async (req, res) => {
     try {
@@ -97,12 +103,39 @@ module.exports = function setupProxy(app) {
   })
 
   // New endpoint: Save image to temporary folder
-  app.post('/api/save-temp-image', upload.single('image'), async (req, res) => {
+  app.post('/api/save-temp-image', (req, res, next) => {
+    console.log('📥 POST /api/save-temp-image - Request received');
+    console.log('   Content-Type:', req.headers['content-type']);
+    console.log('   Content-Length:', req.headers['content-length']);
+    
+    // Handle multer errors
+    upload.single('image')(req, res, (err) => {
+      if (err) {
+        console.error('❌ Multer error:', err);
+        console.error('   Error code:', err.code);
+        console.error('   Error message:', err.message);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(413).json({ error: 'File too large', message: 'File size exceeds 10MB limit' });
+        }
+        return res.status(400).json({ error: 'File upload error', message: err.message });
+      }
+      console.log('✅ Multer processed successfully');
+      next();
+    });
+  }, async (req, res) => {
     try {
-      console.log('📥 Received request to save temp image');
+      console.log('📥 Processing save-temp-image request');
+      console.log('   Has file:', !!req.file);
+      if (req.file) {
+        console.log('   File name:', req.file.originalname);
+        console.log('   File size:', req.file.size);
+        console.log('   File mimetype:', req.file.mimetype);
+      }
+      console.log('   Body keys:', Object.keys(req.body || {}));
       
       if (!req.file) {
         console.error('❌ No file uploaded');
+        console.error('   Request headers:', JSON.stringify(req.headers, null, 2));
         return res.status(400).json({ error: 'No image file provided' });
       }
 
@@ -113,8 +146,11 @@ module.exports = function setupProxy(app) {
       console.log(`📝 Saving: ${fileName} (Scene ${sceneNumber}, Image ${imageIndex})`);
       console.log(`   File size: ${(req.file.size / 1024).toFixed(2)} KB`);
 
-      // Define temp directory path
-      const tempDir = path.join(__dirname, '..', 'public', 'temp', 'edited-images');
+      // Define temp directory path - works in both dev and production
+      // In dev: __dirname = src/, so we go up one level to root
+      // In production: __dirname = root (where server.js is), so we go to public directly
+      const rootDir = __dirname.includes('src') ? path.join(__dirname, '..') : __dirname;
+      const tempDir = path.join(rootDir, 'public', 'temp', 'edited-images');
       
       // Ensure temp directory exists
       if (!fs.existsSync(tempDir)) {
@@ -140,7 +176,7 @@ module.exports = function setupProxy(app) {
       // Get relative path for frontend
       const relativePath = `/temp/edited-images/${fileName}`;
       
-      res.json({
+      const response = {
         success: true,
         message: 'Image saved successfully',
         path: relativePath,
@@ -149,15 +185,22 @@ module.exports = function setupProxy(app) {
         sceneNumber,
         imageIndex,
         fileSize: stats.size
-      });
+      };
+      
+      console.log('📤 Sending success response');
+      res.json(response);
       
     } catch (error) {
       console.error('❌ Error saving temp image:', error);
       console.error('   Stack:', error.stack);
-      res.status(500).json({ 
-        error: 'Failed to save image', 
-        message: error.message 
-      });
+      
+      // Make sure to send response even on error
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: 'Failed to save image', 
+          message: error.message 
+        });
+      }
     }
   })
 
@@ -172,8 +215,9 @@ module.exports = function setupProxy(app) {
 
       console.log(`🗑️ Deleting temp image: ${fileName}`);
 
-      // Define temp directory path
-      const tempDir = path.join(__dirname, '..', 'public', 'temp', 'edited-images');
+      // Define temp directory path - works in both dev and production
+      const rootDir = __dirname.includes('src') ? path.join(__dirname, '..') : __dirname;
+      const tempDir = path.join(rootDir, 'public', 'temp', 'edited-images');
       const filePath = path.join(tempDir, fileName);
 
       // Check if file exists
