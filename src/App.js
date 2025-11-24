@@ -26,6 +26,7 @@ import ProtectedRoute from './Components/ProtectedRoute';
 import OAuthCallback from './Components/Login/OAuthCallback';
 import AdminUsers from './pages/AdminUsers';
 import AdminCreateUser from './pages/AdminCreateUser';
+import VideoEditor from './pages/VideoEditor';
 
 
 function App() {
@@ -92,6 +93,11 @@ function App() {
          <Route path="/scenesettings" element={
            <ProtectedRoute>
              <Scenesettings />
+           </ProtectedRoute>
+         } />
+         <Route path="/videoEditor" element={
+           <ProtectedRoute>
+             <VideoEditor />
            </ProtectedRoute>
          } />
          <Route path="/subscription" element={

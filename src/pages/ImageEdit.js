@@ -1,6 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { FaTimes } from 'react-icons/fa'
-
 // Minimal icon set (inline SVG) for consistent, clean UI
 const Icon = ({ name, size = 18 }) => {
   const commonProps = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }
@@ -115,10 +114,9 @@ const convertBoundingBoxToPercent = (bb = {}, dims = {}) => {
   }
 }
 
-function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = null, imageIndex = null, onRefresh = null, aspectRatioCss = '16 / 9' }) {
+function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = null, imageIndex = null, onFrameEditComplete = null, aspectRatioCss = '16 / 9' }) {
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   // State management
   const [imageUrl, setImageUrl] = useState('')
   const [imageLoaded, setImageLoaded] = useState(false)
@@ -142,6 +140,16 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [overlayResizeMode, setOverlayResizeMode] = useState(null) // 'nw'|'n'|'ne'|'e'|'se'|'s'|'sw'|'w'
   const [overlayDragStart, setOverlayDragStart] = useState({ x: 0, y: 0 })
   const [overlaySizeStart, setOverlaySizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  const [overlayBackgroundRemoved, setOverlayBackgroundRemoved] = useState(false)
+  const [isRemovingBackground, setIsRemovingBackground] = useState(false)
+  const getProcessedOverlaySrc = useCallback(
+    async (src) => {
+      if (!src) return ''
+      return src
+    },
+    []
+  )
+
   const [activePanel, setActivePanel] = useState(null)
   const [shapeLayers, setShapeLayers] = useState([])
   const [selectedShape, setSelectedShape] = useState(null)
@@ -649,6 +657,46 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     }
   }
 
+  const clampOverlayCropArea = useCallback(
+    (rect) => {
+      if (
+        croppingTarget !== 'overlay' ||
+        !overlayVisible ||
+        !overlayImage ||
+        !imageRef.current
+      ) {
+        return rect
+      }
+
+      const { scaleX, scaleY } = getImageScale()
+      const displayWidth = (overlaySize?.width || (overlayImage.width * overlayScale) || 0) * scaleX
+      const displayHeight = (overlaySize?.height || (overlayImage.height * overlayScale) || 0) * scaleY
+
+      if (!displayWidth || !displayHeight) {
+        return rect
+      }
+
+      const minX = (overlayPosition.x || 0) * scaleX
+      const minY = (overlayPosition.y || 0) * scaleY
+      const maxX = minX + displayWidth
+      const maxY = minY + displayHeight
+      const minSelection = 20
+
+      const width = Math.min(Math.max(rect.width, minSelection), displayWidth)
+      const height = Math.min(Math.max(rect.height, minSelection), displayHeight)
+
+      let x = rect.x
+      let y = rect.y
+      if (x < minX) x = minX
+      if (y < minY) y = minY
+      if (x + width > maxX) x = maxX - width
+      if (y + height > maxY) y = maxY - height
+
+      return { x, y, width, height }
+    },
+    [croppingTarget, overlayVisible, overlayImage, overlaySize, overlayScale, overlayPosition, getImageScale]
+  )
+
   // Crop dragging handler
   useEffect(() => {
     const onMove = (e) => {
@@ -715,7 +763,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           break
       }
       
-      setCropArea({ x: nx, y: ny, width: nw, height: nh })
+      const nextCrop = clampOverlayCropArea({ x: nx, y: ny, width: nw, height: nh })
+      setCropArea(nextCrop)
     }
     
     const onUp = () => {
@@ -730,82 +779,192 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [isCropping, dragStart, cropDragMode, layerStart])
+  }, [isCropping, dragStart, cropDragMode, layerStart, clampOverlayCropArea])
 
-  const startCropping = () => {
+  const startCropping = (target = croppingTarget) => {
     if (!imageLoaded && !overlayVisible) return
-    
+
+    setCroppingTarget(target)
     setIsCropping(true)
     setOriginalImageUrl(imageUrl)
     
     // Initialize crop area based on target
-    if (croppingTarget === 'overlay' && overlayVisible && imageRef.current) {
+    if (target === 'overlay' && overlayVisible && imageRef.current) {
       // Convert overlay position and size from natural coordinates to display coordinates
       const imgEl = imageRef.current
       const scaleX = imgEl.naturalWidth > 0 ? imgEl.width / imgEl.naturalWidth : 1
       const scaleY = imgEl.naturalHeight > 0 ? imgEl.height / imgEl.naturalHeight : 1
       const overlayWidth = overlaySize?.width || (overlayImage?.width * overlayScale || 200)
       const overlayHeight = overlaySize?.height || (overlayImage?.height * overlayScale || 200)
+      setCropArea({
+        x: overlayPosition.x * scaleX,
+        y: overlayPosition.y * scaleY,
+        width: Math.max(overlayWidth * scaleX, 20),
+        height: Math.max(overlayHeight * scaleY, 20)
+      })
+    } else if (imageRef.current) {
+      // Base image crop - initialize to center of image with reasonable size
+      const imgEl = imageRef.current
+      const imgWidth = imgEl.width || imgEl.clientWidth || 400
+      const imgHeight = imgEl.height || imgEl.clientHeight || 300
+      const cropWidth = Math.max(200, imgWidth * 0.6)
+      const cropHeight = Math.max(150, imgHeight * 0.6)
+      const cropX = (imgWidth - cropWidth) / 2
+      const cropY = (imgHeight - cropHeight) / 2
       setCropArea({ 
-        x: overlayPosition.x * scaleX, 
-        y: overlayPosition.y * scaleY, 
-        width: Math.min(overlayWidth * scaleX, 200), 
-        height: Math.min(overlayHeight * scaleY, 200) 
+        x: Math.max(0, cropX), 
+        y: Math.max(0, cropY), 
+        width: cropWidth, 
+        height: cropHeight 
       })
     } else {
-      // Base image crop
+      // Fallback
       setCropArea({ x: 50, y: 50, width: 200, height: 150 })
     }
   }
 
-  const applyCrop = () => {
+  const applyCrop = async () => {
     try {
       if (croppingTarget === 'overlay' && overlayImage && imageRef.current) {
         const previousUrl = overlayImageUrl
         const previousImage = overlayImage
         
-        // Convert cropArea from display coordinates to natural coordinates
+        // Get image scale factors
         const imgEl = imageRef.current
-        const scaleX = imgEl.width > 0 ? imgEl.naturalWidth / imgEl.width : 1
-        const scaleY = imgEl.height > 0 ? imgEl.naturalHeight / imgEl.height : 1
-        const cropXNat = cropArea.x * scaleX
-        const cropYNat = cropArea.y * scaleY
-        const cropWNat = cropArea.width * scaleX
-        const cropHNat = cropArea.height * scaleY
+        const { scaleX, scaleY } = getImageScale()
         
-        // Calculate source coordinates relative to overlay image
+        // Calculate overlay display size
         const overlayWidth = overlaySize?.width || (overlayImage.width * overlayScale)
         const overlayHeight = overlaySize?.height || (overlayImage.height * overlayScale)
-        const sx = Math.max(0, (cropXNat - overlayPosition.x))
-        const sy = Math.max(0, (cropYNat - overlayPosition.y))
-        const sw = Math.max(1, Math.min(cropWNat, overlayWidth - sx))
-        const sh = Math.max(1, Math.min(cropHNat, overlayHeight - sy))
+        const overlayDisplayWidth = Math.max(overlayWidth * scaleX, 1)
+        const overlayDisplayHeight = Math.max(overlayHeight * scaleY, 1)
         
+        // Calculate overlay display position
+        const overlayDisplayX = overlayPosition.x * scaleX
+        const overlayDisplayY = overlayPosition.y * scaleY
+        
+        // Calculate crop box position relative to overlay in display coordinates
+        const cropBoxLeft = cropArea.x - overlayDisplayX
+        const cropBoxTop = cropArea.y - overlayDisplayY
+        const cropBoxWidth = cropArea.width
+        const cropBoxHeight = cropArea.height
+        
+        // Clamp crop box to overlay bounds
+        const clampedLeft = Math.max(0, Math.min(cropBoxLeft, overlayDisplayWidth))
+        const clampedTop = Math.max(0, Math.min(cropBoxTop, overlayDisplayHeight))
+        const clampedRight = Math.min(overlayDisplayWidth, clampedLeft + cropBoxWidth)
+        const clampedBottom = Math.min(overlayDisplayHeight, clampedTop + cropBoxHeight)
+        const clampedWidth = clampedRight - clampedLeft
+        const clampedHeight = clampedBottom - clampedTop
+        
+        // Convert clamped display coordinates to natural overlay image coordinates
+        // The overlay image's natural size vs its display size
+        const overlayNaturalWidth = overlayImage.width
+        const overlayNaturalHeight = overlayImage.height
+        const overlayDisplayToNaturalX = overlayNaturalWidth / overlayDisplayWidth
+        const overlayDisplayToNaturalY = overlayNaturalHeight / overlayDisplayHeight
+        
+        // Calculate source coordinates in the original overlay image
+        const sx = clampedLeft * overlayDisplayToNaturalX
+        const sy = clampedTop * overlayDisplayToNaturalY
+        const sw = clampedWidth * overlayDisplayToNaturalX
+        const sh = clampedHeight * overlayDisplayToNaturalY
+        
+        // Ensure we don't go outside the image bounds
+        const finalSx = Math.max(0, Math.min(sx, overlayNaturalWidth - 1))
+        const finalSy = Math.max(0, Math.min(sy, overlayNaturalHeight - 1))
+        const finalSw = Math.max(1, Math.min(sw, overlayNaturalWidth - finalSx))
+        const finalSh = Math.max(1, Math.min(sh, overlayNaturalHeight - finalSy))
+        
+        // Create canvas with exact crop dimensions
         const canvas = document.createElement('canvas')
-        canvas.width = sw
-        canvas.height = sh
+        canvas.width = finalSw
+        canvas.height = finalSh
         const ctx = canvas.getContext('2d')
-        ctx.drawImage(overlayImage, sx, sy, sw, sh, 0, 0, sw, sh)
-        const croppedUrl = canvas.toDataURL('image/png')
-        const img = new Image()
-        img.onload = () => {
-          setOverlayImage(img)
-          setOverlayImageUrl(croppedUrl)
-          setOverlayPosition({ x: cropXNat, y: cropYNat })
-          setOverlaySize({ width: sw, height: sh })
-          setOverlayScale(1)
-          setIsCropping(false)
-          
-          // Save to history
-          saveToHistory('crop_apply', {
-            target: 'overlay',
-            previousUrl,
-            previousImage,
-            newUrl: croppedUrl,
-            newImage: img
-          })
+        
+        // Draw the exact cropped region from the overlay image
+        ctx.drawImage(overlayImage, finalSx, finalSy, finalSw, finalSh, 0, 0, finalSw, finalSh)
+        
+        // Convert canvas to blob (temp file)
+        const blob = await new Promise((resolve) => {
+          canvas.toBlob((blob) => {
+            resolve(blob)
+          }, 'image/png')
+        })
+        
+        // Create a File object from the blob (simulating file upload)
+        const tempFile = new File([blob], 'cropped-overlay.png', { type: 'image/png' })
+        
+        // Create a temporary object URL
+        const tempUrl = URL.createObjectURL(blob)
+        
+        // Create a synthetic event to use existing upload handler
+        const syntheticEvent = {
+          target: {
+            files: [tempFile]
+          }
         }
-        img.src = croppedUrl
+        
+        // Load the cropped image as a new overlay using existing upload logic
+        const reader = new FileReader()
+        reader.onload = async (event) => {
+          const previousVisible = overlayVisible
+          const previousPosition = overlayPosition
+          const previousScale = overlayScale
+          
+          const rawResult = event.target.result
+          const processedSrc = await getProcessedOverlaySrc(rawResult)
+          setOverlayImageUrl(processedSrc)
+          
+          const img = new Image()
+          img.crossOrigin = 'anonymous'
+          img.onload = () => {
+            // Reset overlay as if it's a new upload
+            const initialPos = { x: 20, y: 20 }
+            const initialScale = 0.3
+            const initialWidth = img.width * initialScale
+            const initialHeight = img.height * initialScale
+            
+            setOverlayImage(img)
+            setOverlayVisible(true)
+            setOverlayPosition(initialPos)
+            setOverlayScale(initialScale)
+            setOverlaySize({ width: initialWidth, height: initialHeight })
+            setIsCropping(false)
+            
+            // Clean up temp URL
+            URL.revokeObjectURL(tempUrl)
+            
+            // Save to history
+            saveToHistory('crop_apply', {
+              target: 'overlay',
+              previousUrl,
+              previousImage,
+              previousVisible,
+              previousPosition,
+              previousScale,
+              newUrl: processedSrc,
+              newImage: img,
+              newPosition: initialPos,
+              newScale: initialScale
+            })
+          }
+          img.onerror = () => {
+            console.error('Failed to load cropped overlay image')
+            alert('Failed to load cropped overlay image')
+            URL.revokeObjectURL(tempUrl)
+            setIsCropping(false)
+          }
+          img.src = processedSrc
+        }
+        reader.onerror = () => {
+          console.error('Failed to read cropped image')
+          alert('Failed to read cropped image')
+          URL.revokeObjectURL(tempUrl)
+          setIsCropping(false)
+        }
+        reader.readAsDataURL(tempFile)
+        
         return
       }
 
@@ -937,6 +1096,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     handleStyleChange(property, value)
   }
 
+  const saveButtonLabel = isCropping ? 'Save Cropped Image' : 'Save Changes'
+
   const renderOverlayImage = () => {
     if (!overlayVisible || !overlayImage) return null
     const { scaleX, scaleY } = getImageScale()
@@ -978,31 +1139,71 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           style={{
             width: '100%',
             height: '100%',
-            display: 'block',
+            display: 'block'
           }}
         />
         {hoveredOverlay && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              handleOverlayRemove()
-              setHoveredOverlay(false)
-            }}
-            className="absolute -top-2 -right-2 w-6 h-6 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-lg z-5 transition-all"
-            title="Delete Overlay"
-            onMouseEnter={() => {
-              if (overlayHoverTimeoutRef.current) {
-                clearTimeout(overlayHoverTimeoutRef.current)
-                overlayHoverTimeoutRef.current = null
-              }
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M3 6h18"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-          </button>
+          <div className="absolute -top-2 right-2 z-10 flex gap-2">
+            {!isCropping && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  startCropping('overlay')
+                  setHoveredOverlay(false)
+                }}
+                className="w-7 h-7 bg-white/90 border border-purple-500 text-purple-600 rounded-full flex items-center justify-center shadow-md hover:bg-purple-50 transition"
+                title="Crop Overlay"
+                onMouseEnter={() => {
+                  if (overlayHoverTimeoutRef.current) {
+                    clearTimeout(overlayHoverTimeoutRef.current)
+                    overlayHoverTimeoutRef.current = null
+                  }
+                }}
+              >
+                <Icon name="crop" size={12} />
+              </button>
+            )}
+            {isCropping && croppingTarget === 'overlay' && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  cancelCrop()
+                  setHoveredOverlay(false)
+                }}
+                className="px-3 h-7 bg-gray-100 border border-gray-300 text-gray-700 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition text-xs font-medium"
+                title="Cancel Crop"
+                onMouseEnter={() => {
+                  if (overlayHoverTimeoutRef.current) {
+                    clearTimeout(overlayHoverTimeoutRef.current)
+                    overlayHoverTimeoutRef.current = null
+                  }
+                }}
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                handleOverlayRemove()
+                setHoveredOverlay(false)
+              }}
+              className="w-7 h-7 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center shadow-md transition"
+              title="Delete Overlay"
+              onMouseEnter={() => {
+                if (overlayHoverTimeoutRef.current) {
+                  clearTimeout(overlayHoverTimeoutRef.current)
+                  overlayHoverTimeoutRef.current = null
+                }
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M3 6h18"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
         )}
         {/* Four corner resize handles */}
         <div
@@ -1037,43 +1238,180 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           }}
           title="Resize from bottom-right"
         />
-        {isCropping && croppingTarget === 'overlay' && imageRef.current && (
-          (() => {
-            const { scaleX, scaleY } = getImageScale()
-            const overlayDisplayX = overlayPosition.x * scaleX
-            const overlayDisplayY = overlayPosition.y * scaleY
-            return (
+        {isCropping && croppingTarget === 'overlay' && imageRef.current && (() => {
+          const { scaleX, scaleY } = getImageScale()
+          const overlayDisplayX = overlayPosition.x * scaleX
+          const overlayDisplayY = overlayPosition.y * scaleY
+          const overlayWidth = Math.max(1, widthPx)
+          const overlayHeight = Math.max(1, heightPx)
+          const rawLeft = cropArea.x - overlayDisplayX
+          const rawTop = cropArea.y - overlayDisplayY
+          const selectionLeft = Math.min(Math.max(0, rawLeft), overlayWidth)
+          const selectionTop = Math.min(Math.max(0, rawTop), overlayHeight)
+          const selectionWidth = Math.max(
+            20,
+            Math.min(cropArea.width, overlayWidth - selectionLeft)
+          )
+          const selectionHeight = Math.max(
+            20,
+            Math.min(cropArea.height, overlayHeight - selectionTop)
+          )
+          const rightWidth = Math.max(0, overlayWidth - (selectionLeft + selectionWidth))
+          const bottomHeight = Math.max(0, overlayHeight - (selectionTop + selectionHeight))
+          return (
+            <>
+              <div className="absolute inset-0 pointer-events-none">
+                <div
+                  className="absolute"
+                  style={{
+                    left: 0,
+                    top: 0,
+                    width: overlayWidth,
+                    height: selectionTop,
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)'
+                  }}
+                />
+                <div
+                  className="absolute"
+                  style={{
+                    left: 0,
+                    top: selectionTop,
+                    width: selectionLeft,
+                    height: selectionHeight,
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)'
+                  }}
+                />
+                <div
+                  className="absolute"
+                  style={{
+                    left: selectionLeft + selectionWidth,
+                    top: selectionTop,
+                    width: rightWidth,
+                    height: selectionHeight,
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)'
+                  }}
+                />
+                <div
+                  className="absolute"
+                  style={{
+                    left: 0,
+                    top: selectionTop + selectionHeight,
+                    width: overlayWidth,
+                    height: bottomHeight,
+                    backgroundColor: 'rgba(0, 0, 0, 0.85)'
+                  }}
+                />
+              </div>
               <div
-                className="absolute border-2 border-dashed border-purple-600 bg-purple-100"
-                style={{ 
-                  left: cropArea.x - overlayDisplayX, 
-                  top: cropArea.y - overlayDisplayY, 
-                  width: cropArea.width, 
-                  height: cropArea.height 
+                className="absolute border-2 border-solid border-white shadow-[0_0_0_2px_rgba(147,51,234,0.8)]"
+                style={{
+                  left: selectionLeft,
+                  top: selectionTop,
+                  width: selectionWidth,
+                  height: selectionHeight,
+                  backgroundColor: 'transparent'
                 }}
-            onMouseDown={(e) => {
-              e.stopPropagation()
-              const rect = e.currentTarget.getBoundingClientRect()
-              const x = e.clientX - rect.left
-              const y = e.clientY - rect.top
-              const edge = 8
-              let mode = 'move'
-              if (y < edge && x < edge) mode = 'nw'
-              else if (y < edge && x > rect.width - edge) mode = 'ne'
-              else if (y > rect.height - edge && x < edge) mode = 'sw'
-              else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
-              else if (y < edge) mode = 'n'
-              else if (y > rect.height - edge) mode = 's'
-              else if (x < edge) mode = 'w'
-              else if (x > rect.width - edge) mode = 'e'
-              setCropDragMode(mode)
-              setDragStart({ x: e.clientX, y: e.clientY })
-              setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
-            }}
-          />
-            )
-          })()
-        )}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const y = e.clientY - rect.top
+                  const edge = 8
+                  let mode = 'move'
+                  if (y < edge && x < edge) mode = 'nw'
+                  else if (y < edge && x > rect.width - edge) mode = 'ne'
+                  else if (y > rect.height - edge && x < edge) mode = 'sw'
+                  else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
+                  else if (y < edge) mode = 'n'
+                  else if (y > rect.height - edge) mode = 's'
+                  else if (x < edge) mode = 'w'
+                  else if (x > rect.width - edge) mode = 'e'
+                  setCropDragMode(mode)
+                  setDragStart({ x: e.clientX, y: e.clientY })
+                  setLayerStart({
+                    x: cropArea.x,
+                    y: cropArea.y,
+                    width: cropArea.width,
+                    height: cropArea.height
+                  })
+                }}
+              />
+              {/* Corner handles for overlay crop */}
+              <div
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg"
+                style={{
+                  left: selectionLeft - 8,
+                  top: selectionTop - 8
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  setCropDragMode('nw')
+                  setDragStart({ x: e.clientX, y: e.clientY })
+                  setLayerStart({
+                    x: cropArea.x,
+                    y: cropArea.y,
+                    width: cropArea.width,
+                    height: cropArea.height
+                  })
+                }}
+              />
+              <div
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg"
+                style={{
+                  left: selectionLeft + selectionWidth - 8,
+                  top: selectionTop - 8
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  setCropDragMode('ne')
+                  setDragStart({ x: e.clientX, y: e.clientY })
+                  setLayerStart({
+                    x: cropArea.x,
+                    y: cropArea.y,
+                    width: cropArea.width,
+                    height: cropArea.height
+                  })
+                }}
+              />
+              <div
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg"
+                style={{
+                  left: selectionLeft - 8,
+                  top: selectionTop + selectionHeight - 8
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  setCropDragMode('sw')
+                  setDragStart({ x: e.clientX, y: e.clientY })
+                  setLayerStart({
+                    x: cropArea.x,
+                    y: cropArea.y,
+                    width: cropArea.width,
+                    height: cropArea.height
+                  })
+                }}
+              />
+              <div
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg"
+                style={{
+                  left: selectionLeft + selectionWidth - 8,
+                  top: selectionTop + selectionHeight - 8
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  setCropDragMode('se')
+                  setDragStart({ x: e.clientX, y: e.clientY })
+                  setLayerStart({
+                    x: cropArea.x,
+                    y: cropArea.y,
+                    width: cropArea.width,
+                    height: cropArea.height
+                  })
+                }}
+              />
+            </>
+          )
+        })()}
       </div>
     )
   }
@@ -1476,6 +1814,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     e.stopPropagation()
     
     if (!overlayImage) return
+    setActivePanel('overlay')
     
     // Calculate current size
     const currentWidth = overlaySize?.width || (overlayImage.width * overlayScale)
@@ -1833,15 +2172,18 @@ const handleTemplateJsonLoad = () => {
     if (file) {
       setOverlayImageFile(file)
       const reader = new FileReader()
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const previousVisible = overlayVisible
         const previousUrl = overlayImageUrl
         const previousImage = overlayImage
         const previousPosition = overlayPosition
         const previousScale = overlayScale
-        
-        setOverlayImageUrl(event.target.result)
+
+        const rawResult = event.target.result
+        const processedSrc = await getProcessedOverlaySrc(rawResult)
+        setOverlayImageUrl(processedSrc)
         const img = new Image()
+        img.crossOrigin = 'anonymous'
         img.onload = () => {
           console.log('Overlay image loaded:', img.width, 'x', img.height)
           setOverlayImage(img)
@@ -1863,7 +2205,7 @@ const handleTemplateJsonLoad = () => {
             previousPosition,
             previousScale,
             newVisible: true,
-            newUrl: event.target.result,
+            newUrl: processedSrc,
             newImage: img,
             newPosition: initialPos,
             newScale: initialScale
@@ -1873,7 +2215,7 @@ const handleTemplateJsonLoad = () => {
           console.error('Failed to load overlay image')
           alert('Failed to load overlay image')
         }
-        img.src = event.target.result
+        img.src = processedSrc
       }
       reader.readAsDataURL(file)
     }
@@ -1881,22 +2223,27 @@ const handleTemplateJsonLoad = () => {
 
   const handleOverlayImageUrlLoad = () => {
     if (overlayImageUrl) {
-      const img = new Image()
-      img.onload = () => {
-        console.log('Overlay image loaded from URL:', img.width, 'x', img.height)
-        setOverlayImage(img)
-        setOverlayVisible(true)
-        // Start smaller and near the top-left; user can drag afterwards
-        const initialScale = 0.3
-        setOverlayPosition({ x: 20, y: 20 })
-        setOverlayScale(initialScale)
-        setOverlaySize({ width: img.width * initialScale, height: img.height * initialScale })
+      const loadOverlayFromUrl = async () => {
+        const processedSrc = await getProcessedOverlaySrc(overlayImageUrl)
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.onload = () => {
+          console.log('Overlay image loaded from URL:', img.width, 'x', img.height)
+          setOverlayImage(img)
+          setOverlayVisible(true)
+          const initialScale = 0.3
+          setOverlayPosition({ x: 20, y: 20 })
+          setOverlayScale(initialScale)
+          setOverlaySize({ width: img.width * initialScale, height: img.height * initialScale })
+        }
+        img.onerror = () => {
+          console.error('Failed to load overlay image from URL')
+          alert('Failed to load overlay image from URL')
+        }
+        setOverlayImageUrl(processedSrc)
+        img.src = processedSrc
       }
-      img.onerror = () => {
-        console.error('Failed to load overlay image from URL')
-        alert('Failed to load overlay image from URL')
-      }
-      img.src = overlayImageUrl
+      loadOverlayFromUrl()
     }
   }
 
@@ -1906,7 +2253,121 @@ const handleTemplateJsonLoad = () => {
     setOverlayImageFile(null)
     setOverlayVisible(false)
     setOverlaySize({ width: 200, height: 200 })
+    setOverlayBackgroundRemoved(false)
   }
+
+  // Remove background from overlay (replace with white, not transparent)
+  const removeOverlayBackground = async () => {
+    console.log('removeOverlayBackground called', { overlayImage: !!overlayImage, overlayImageUrl: !!overlayImageUrl })
+    if (!overlayImage || !overlayImageUrl) {
+      console.warn('Missing overlay image or URL')
+      alert('Please upload an overlay image first')
+      return
+    }
+    
+    setIsRemovingBackground(true)
+    console.log('Setting isRemovingBackground to true')
+    
+    try {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        console.log('Image loaded for processing', img.width, img.height)
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth || img.width
+        canvas.height = img.naturalHeight || img.height
+        const ctx = canvas.getContext('2d')
+        
+        // Fill with white background first
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        
+        // Draw the image on top
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        
+        // Get image data
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        const data = imageData.data
+        const threshold = 245
+        
+        console.log('Processing pixels...', data.length / 4, 'pixels')
+        
+        // Replace bright background pixels with white (not transparent)
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i]
+          const g = data[i + 1]
+          const b = data[i + 2]
+          
+          // Check if pixel is bright (likely background)
+          const isBright = r >= threshold && g >= threshold && b >= threshold
+          
+          if (isBright) {
+            // Replace with white
+            data[i] = 255
+            data[i + 1] = 255
+            data[i + 2] = 255
+            data[i + 3] = 255
+          }
+        }
+        
+        ctx.putImageData(imageData, 0, 0)
+        const processedUrl = canvas.toDataURL('image/png')
+        console.log('Processed image created, URL length:', processedUrl.length)
+        
+        // Create new image from processed canvas
+        const processedImg = new Image()
+        processedImg.crossOrigin = 'anonymous'
+        processedImg.onload = () => {
+          console.log('Processed image loaded successfully')
+          setOverlayImage(processedImg)
+          setOverlayImageUrl(processedUrl)
+          setOverlayBackgroundRemoved(true)
+          setIsRemovingBackground(false)
+          
+          // Save to history
+          saveToHistory('overlay_background_remove', {
+            previousUrl: overlayImageUrl,
+            previousImage: overlayImage,
+            newUrl: processedUrl,
+            newImage: processedImg
+          })
+        }
+        processedImg.onerror = (err) => {
+          console.error('Failed to load processed overlay image', err)
+          alert('Failed to process overlay image')
+          setIsRemovingBackground(false)
+        }
+        processedImg.src = processedUrl
+      }
+      img.onerror = (err) => {
+        console.error('Failed to load overlay image for background removal', err)
+        alert('Failed to load overlay image')
+        setIsRemovingBackground(false)
+      }
+      img.src = overlayImageUrl
+    } catch (error) {
+      console.error('Background removal failed:', error)
+      alert('Failed to remove background: ' + error.message)
+      setIsRemovingBackground(false)
+    }
+  }
+
+  // Get model type from frameData
+  const modelType = frameData?.model ? String(frameData.model).toUpperCase() : ''
+  const isAnchorModel = modelType === 'ANCHOR'
+  
+  // Debug log for model type
+  useEffect(() => {
+    if (overlayVisible && overlayImage) {
+      console.log('Overlay panel debug:', {
+        modelType,
+        isAnchorModel,
+        overlayVisible,
+        hasOverlayImage: !!overlayImage,
+        overlayImageUrl: !!overlayImageUrl
+      })
+    }
+  }, [overlayVisible, overlayImage, modelType, isAnchorModel, overlayImageUrl])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -2006,28 +2467,28 @@ const handleTemplateJsonLoad = () => {
                 
                 const ovUrl = ov?.overlay_image?.image_url;
                 if (ovUrl) {
-                  const oImg = new Image();
-                  oImg.onload = () => {
-                    setOverlayImage(oImg);
-                    setOverlayImageUrl(ovUrl);
-                    setOverlayVisible(true);
-                    
-                    // Store in natural pixel coordinates (like shapes)
-                    setOverlayPosition({ x: posXNat, y: posYNat });
-                    
-                    // Store size in natural pixel coordinates
-                    setOverlaySize({ width: targetWNat, height: targetHNat });
-                    
-                    // Calculate scale for backward compatibility
-                    const scaleX = oImg.width > 0 ? (targetWNat / oImg.width) : 1;
-                    const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1;
-                    const fitScale = Math.min(scaleX, scaleY);
-                    setOverlayScale(fitScale || 1);
+                  const loadOverlay = async () => {
+                    const oImg = new Image();
+                    oImg.crossOrigin = 'anonymous';
+                    oImg.onload = () => {
+                      setOverlayImage(oImg);
+                      setOverlayImageUrl(ovUrl);
+                      setOverlayVisible(true);
+                      
+                      setOverlayPosition({ x: posXNat, y: posYNat });
+                      setOverlaySize({ width: targetWNat, height: targetHNat });
+                      
+                      const scaleX = oImg.width > 0 ? (targetWNat / oImg.width) : 1;
+                      const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1;
+                      const fitScale = Math.min(scaleX, scaleY);
+                      setOverlayScale(fitScale || 1);
+                    };
+                    oImg.onerror = () => {
+                      console.error('Failed to load overlay image');
+                    };
+                    oImg.src = ovUrl;
                   };
-                  oImg.onerror = () => {
-                    console.error('Failed to load overlay image');
-                  };
-                  oImg.src = ovUrl;
+                  loadOverlay();
                 }
               }
             };
@@ -2225,16 +2686,19 @@ const handleTemplateJsonLoad = () => {
         throw new Error(`API request failed: ${response.status} ${responseText}`);
       }
       
-      // Show success popup with updating message
+      if (typeof onFrameEditComplete === 'function') {
+        onFrameEditComplete({
+          sceneNumber,
+          imageIndex,
+          textElements,
+          overlayElements
+        });
+      }
+
       setShowSuccessPopup(true);
-      setIsRefreshing(true);
-      
-      // Reload the window after a short delay to show the success message
-      setTimeout(() => {
-        setShowSuccessPopup(false);
-        setIsRefreshing(false);
-        window.location.reload();
-      }, 1500);
+      setTimeout(() => setShowSuccessPopup(false), 1200);
+      onClose?.();
+      return;
     } catch (error) {
       console.error('Failed to save changes:', error);
       alert('Failed to save changes: ' + (error?.message || 'Unknown error'));
@@ -2271,19 +2735,12 @@ const handleTemplateJsonLoad = () => {
                 </svg>
               </div>
               <h3 className="text-xl font-semibold text-gray-800 mb-2">
-                {isRefreshing ? 'Updating Changes...' : 'Changes Done!'}
+                Changes Done!
               </h3>
               <p className="text-gray-600 mb-4">
-                {isRefreshing 
-                  ? 'Your changes have been saved and the page is being refreshed.' 
-                  : 'Your changes have been successfully saved.'}
+                Your changes have been successfully saved.
               </p>
               <div className="w-8 h-1 bg-[#13008B] rounded-full animate-pulse"></div>
-              {isRefreshing && (
-                <div className="mt-4 flex items-center justify-center">
-                  <div className="w-5 h-5 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -2301,10 +2758,10 @@ const handleTemplateJsonLoad = () => {
           </div>
           <div className="header-right flex items-center gap-4">
             <button
-              onClick={handleSaveChanges}
+              onClick={isCropping && croppingTarget === 'overlay' ? applyCrop : handleSaveChanges}
               disabled={isSaving}
               className="px-6 py-2 bg-[#13008B] hover:bg-[#0f0068] text-white text-sm font-semibold rounded-lg transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              title="Save Changes"
+              title={saveButtonLabel}
             >
               {isSaving ? (
                 <>
@@ -2314,7 +2771,7 @@ const handleTemplateJsonLoad = () => {
               ) : (
                 <>
                   <Icon name="save" size={16} />
-                  Save Changes
+                  {saveButtonLabel}
                 </>
               )}
             </button>
@@ -2419,7 +2876,7 @@ const handleTemplateJsonLoad = () => {
               {/* Overlay Images Panel */}
               <button
                 className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'overlay' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
-                onClick={() => togglePanel('overlay')}
+                onClick={() => setActivePanel('overlay')}
                 title="Overlay Images"
               >
                 <Icon name="image" size={18} />
@@ -2793,35 +3250,91 @@ const handleTemplateJsonLoad = () => {
                     }}
                     onLoad={() => setImageLoaded(true)}
                   />
-                  {isCropping && (
-                    <div
-                      className="absolute border-2 border-dashed border-purple-600 bg-purple-100 cursor-move z-[1001]"
-                      style={{ 
-                        left: cropArea.x, 
-                        top: cropArea.y, 
-                        width: cropArea.width, 
-                        height: cropArea.height 
-                      }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation()
-                        const rect = e.currentTarget.getBoundingClientRect()
-                        const x = e.clientX - rect.left
-                        const y = e.clientY - rect.top
-                        const edge = 8
-                        let mode = 'move'
-                        if (y < edge && x < edge) mode = 'nw'
-                        else if (y < edge && x > rect.width - edge) mode = 'ne'
-                        else if (y > rect.height - edge && x < edge) mode = 'sw'
-                        else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
-                        else if (y < edge) mode = 'n'
-                        else if (y > rect.height - edge) mode = 's'
-                        else if (x < edge) mode = 'w'
-                        else if (x > rect.width - edge) mode = 'e'
-                        setCropDragMode(mode)
-                        setDragStart({ x: e.clientX, y: e.clientY })
-                        setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
-                      }}
-                    />
+                  {isCropping && croppingTarget === 'base' && (
+                    <>
+                      <div
+                        className="absolute border-2 border-solid border-white cursor-move z-[1001] shadow-[0_0_0_2px_rgba(147,51,234,0.8)]"
+                        style={{ 
+                          left: cropArea.x, 
+                          top: cropArea.y, 
+                          width: cropArea.width, 
+                          height: cropArea.height,
+                          backgroundColor: 'transparent'
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          const x = e.clientX - rect.left
+                          const y = e.clientY - rect.top
+                          const edge = 8
+                          let mode = 'move'
+                          if (y < edge && x < edge) mode = 'nw'
+                          else if (y < edge && x > rect.width - edge) mode = 'ne'
+                          else if (y > rect.height - edge && x < edge) mode = 'sw'
+                          else if (y > rect.height - edge && x > rect.width - edge) mode = 'se'
+                          else if (y < edge) mode = 'n'
+                          else if (y > rect.height - edge) mode = 's'
+                          else if (x < edge) mode = 'w'
+                          else if (x > rect.width - edge) mode = 'e'
+                          setCropDragMode(mode)
+                          setDragStart({ x: e.clientX, y: e.clientY })
+                          setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                        }}
+                      />
+                      {/* Corner handles */}
+                      <div
+                        className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg"
+                        style={{
+                          left: cropArea.x - 8,
+                          top: cropArea.y - 8
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          setCropDragMode('nw')
+                          setDragStart({ x: e.clientX, y: e.clientY })
+                          setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                        }}
+                      />
+                      <div
+                        className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg"
+                        style={{
+                          left: cropArea.x + cropArea.width - 8,
+                          top: cropArea.y - 8
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          setCropDragMode('ne')
+                          setDragStart({ x: e.clientX, y: e.clientY })
+                          setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                        }}
+                      />
+                      <div
+                        className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg"
+                        style={{
+                          left: cropArea.x - 8,
+                          top: cropArea.y + cropArea.height - 8
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          setCropDragMode('sw')
+                          setDragStart({ x: e.clientX, y: e.clientY })
+                          setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                        }}
+                      />
+                      <div
+                        className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg"
+                        style={{
+                          left: cropArea.x + cropArea.width - 8,
+                          top: cropArea.y + cropArea.height - 8
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          setCropDragMode('se')
+                          setDragStart({ x: e.clientX, y: e.clientY })
+                          setLayerStart({ x: cropArea.x, y: cropArea.y, width: cropArea.width, height: cropArea.height })
+                        }}
+                      />
+                    </>
                   )}
                   <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
                     {shapeLayers.map((shape) => {
@@ -3682,6 +4195,34 @@ const handleTemplateJsonLoad = () => {
                             />
                           </div>
                         </div>
+                        {isAnchorModel && (
+                          <div className="control-group">
+                            <label className="flex items-center cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={overlayBackgroundRemoved}
+                                onChange={(e) => {
+                                  console.log('Checkbox changed', e.target.checked, { isAnchorModel, overlayVisible, overlayImage: !!overlayImage })
+                                  if (e.target.checked) {
+                                    removeOverlayBackground()
+                                  } else {
+                                    // If unchecking, we'd need to restore original, but for now just reset state
+                                    setOverlayBackgroundRemoved(false)
+                                  }
+                                }}
+                                disabled={isRemovingBackground}
+                                className="mr-2 w-4 h-4"
+                              />
+                              <span>Remove Background</span>
+                              {isRemovingBackground && (
+                                <span className="ml-2 text-sm text-gray-500 flex items-center">
+                                  <span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mr-1"></span>
+                                  Processing...
+                                </span>
+                              )}
+                            </label>
+                          </div>
+                        )}
                         <div className="overlay-actions">
                           <button className="btn btn-secondary" onClick={handleOverlayRemove}>
                             Remove Overlay

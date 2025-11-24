@@ -4,6 +4,7 @@ import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
 import ChartEditorModal from './ChartEditorModal';
+import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
 
 const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
   if (!ratio || typeof ratio !== 'string') return fallback;
@@ -28,6 +29,7 @@ const aspectRatioToCss = (ratio) => {
 };
 
 const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoToVideos }) => {
+  const getOverlayBackgroundRemovedUrl = useOverlayBackgroundRemoval(245);
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState({
     index: 0,
@@ -61,6 +63,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
   const [imageNaturalDims, setImageNaturalDims] = useState({});
+  const [isSceneUpdating, setIsSceneUpdating] = useState(false);
   const [showChartEditor, setShowChartEditor] = useState(false);
   const [chartEditorData, setChartEditorData] = useState(null);
   const [chartEditorLoading, setChartEditorLoading] = useState(false);
@@ -72,7 +75,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   // State for scene-specific advanced options
   const [sceneAdvancedOptions, setSceneAdvancedOptions] = useState({}); // { sceneNumber: { logoNeeded: false, voiceUrl: '', voiceOption: 'male', transitionPreset: null, transitionCustom: null, transitionCustomPreset: null, customDescription: '', customPreservationNotes: {}, subtitleSceneOnly: false, rememberCustomPreset: false, customPresetName: '' } }
   // Global subtitles toggle (applies to all scenes)
-  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   // State for accordion visibility
   const [showAdvancedOptions, setShowAdvancedOptions] = useState({}); // { sceneNumber: { assets: false, transitions: false } }
   // State for "Design your own" tabs
@@ -102,6 +105,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   // Maps fileName -> Blob
   const imageStorageRef = useRef(new Map());
   const selectedModel = String(selected?.model || selected?.mode || '').toUpperCase();
+  const isAnchorModel = selectedModel === 'ANCHOR';
   // State for active image tab (0 for Image 1/Avatar, 1 for Image 2/Image)
   const [activeImageTab, setActiveImageTab] = useState(0);
   // Cache-busting value for chart overlays - updates when scene changes to ensure fresh chart images
@@ -109,6 +113,32 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     return `${activeSceneNumber}_${Date.now()}`;
   }, [activeSceneNumber]);
   const redirectIntervalRef = React.useRef(null);
+  const sceneUpdateTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!rows.length || !transitionPresets.length) return;
+    setSceneAdvancedOptions((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      rows.forEach((row, idx) => {
+        const sceneNumber = row?.scene_number || row?.sceneNumber || idx + 1;
+        const existing = next[sceneNumber] || {};
+        let updated = existing;
+        if (!updated.transitionPreset && transitionPresets[0]) {
+          updated = { ...updated, transitionPreset: transitionPresets[0], transitionCustom: null };
+          changed = true;
+        }
+        if (!updated.voiceOption) {
+          updated = { ...updated, voiceOption: 'male' };
+          changed = true;
+        }
+        if (updated !== existing) {
+          next[sceneNumber] = updated;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [rows, transitionPresets]);
 
   const startVideoRedirectFlow = React.useCallback(
     (jobId) => {
@@ -1136,6 +1166,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         clearInterval(redirectIntervalRef.current);
         redirectIntervalRef.current = null;
       }
+      if (sceneUpdateTimeoutRef.current) {
+        clearTimeout(sceneUpdateTimeoutRef.current);
+        sceneUpdateTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -1928,6 +1962,59 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       return canvas.toDataURL('image/png');
     },
     []
+  );
+
+  const handleFrameEditComplete = useCallback(
+    ({ sceneNumber, imageIndex, textElements = [], overlayElements = [] }) => {
+      setIsSceneUpdating(true);
+      setRows((prevRows) =>
+        prevRows.map((row) => {
+          const rowSceneNumber = row?.scene_number ?? row?.sceneNumber;
+          if (rowSceneNumber !== sceneNumber) return row;
+          const updatedRow = { ...row };
+          if (Array.isArray(row.imageFrames)) {
+            updatedRow.imageFrames = row.imageFrames.map((frame, idx) => {
+              if (idx !== imageIndex) return frame;
+              return {
+                ...frame,
+                text_elements: textElements,
+                overlay_elements: overlayElements
+              };
+            });
+          }
+          updatedRow.textElements = textElements;
+          return updatedRow;
+        })
+      );
+
+      setSelected((prev) => {
+        if (!prev) return prev;
+        const rowSceneNumber = prev?.sceneNumber || prev?.scene_number;
+        if (rowSceneNumber !== sceneNumber) return prev;
+        const next = { ...prev };
+        next.textElements = textElements;
+        if (Array.isArray(prev.imageFrames)) {
+          next.imageFrames = prev.imageFrames.map((frame, idx) =>
+            idx === imageIndex
+              ? {
+                  ...frame,
+                  text_elements: textElements,
+                  overlay_elements: overlayElements
+                }
+              : frame
+          );
+        }
+        return next;
+      });
+
+      if (sceneUpdateTimeoutRef.current) {
+        clearTimeout(sceneUpdateTimeoutRef.current);
+      }
+      sceneUpdateTimeoutRef.current = setTimeout(() => {
+        setIsSceneUpdating(false);
+      }, 1500);
+    },
+    [sceneUpdateTimeoutRef]
   );
 
   const dataUrlToBlob = React.useCallback(async (dataUrl) => {
@@ -2762,7 +2849,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         }
       `}</style>
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-[#13008B]">Storyboard Images</h3>
+        <h3 className="text-lg font-semibold text-[#000]">Storyboard</h3>
         <div className="flex items-center gap-2">
           {hasVideos ? (
             <button
@@ -3301,7 +3388,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                     },
                                     text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
                                                    Array.isArray(frame?.textElements) ? frame.textElements : [],
-                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : []
+                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : [],
+                                    model: selectedModel
                                   };
                                   setEditingImageFrame(frameData);
                                   setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
@@ -3382,25 +3470,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 '';
                               if (!overlayUrl) return null;
                               
-                              // Add cache-busting query parameter to prevent stale chart images (especially for PLOTLY)
-                              // Check if this is a chart overlay by checking if it's a chart image URL or if element_id is 'chart_overlay'
                               const isChartOverlay = ov?.element_id === 'chart_overlay' || 
                                                     ov?.label_name === 'Chart' ||
                                                     overlayUrl.includes('chart') ||
                                                     (selectedModel === 'PLOTLY' && overlayUrl);
                               
                               if (isChartOverlay) {
-                                // Add cache-busting parameter to force browser to fetch fresh chart image
-                                // Uses memoized value that updates when scene changes
                                 const separator = overlayUrl.includes('?') ? '&' : '?';
                                 overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
                               }
+
+                              const displayUrl = isAnchorModel
+                                ? getOverlayBackgroundRemovedUrl(overlayUrl)
+                                : overlayUrl;
                               
                               const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
                               return (
                                 <img
                                   key={`overlay-1-${idx}-${overlayUrl}`}
-                                  src={overlayUrl}
+                                  src={displayUrl}
                                   alt="overlay"
                                   className="absolute"
                                   crossOrigin="anonymous"
@@ -3576,7 +3664,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                     },
                                     text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
                                                    Array.isArray(frame?.textElements) ? frame.textElements : [],
-                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : []
+                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : [],
+                                    model: selectedModel
                                   };
                                   setEditingImageFrame(frameData);
                                   setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
@@ -3657,25 +3746,25 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 '';
                               if (!overlayUrl) return null;
                               
-                              // Add cache-busting query parameter to prevent stale chart images (especially for PLOTLY)
-                              // Check if this is a chart overlay by checking if it's a chart image URL or if element_id is 'chart_overlay'
                               const isChartOverlay = ov?.element_id === 'chart_overlay' || 
                                                     ov?.label_name === 'Chart' ||
                                                     overlayUrl.includes('chart') ||
                                                     (selectedModel === 'PLOTLY' && overlayUrl);
                               
                               if (isChartOverlay) {
-                                // Add cache-busting parameter to force browser to fetch fresh chart image
-                                // Uses memoized value that updates when scene changes
                                 const separator = overlayUrl.includes('?') ? '&' : '?';
                                 overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
                               }
+
+                              const displayUrl = isAnchorModel
+                                ? getOverlayBackgroundRemovedUrl(overlayUrl)
+                                : overlayUrl;
                               
                               const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
                               return (
                                 <img
                                   key={`overlay-2-${idx}-${overlayUrl}`}
-                                  src={overlayUrl}
+                                  src={displayUrl}
                                   alt="overlay"
                                   className="absolute"
                                   crossOrigin="anonymous"
@@ -4402,6 +4491,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         )}
       </div>
 
+      {isSceneUpdating && (
+        <div className="px-4 pb-4">
+          <div className="flex items-center justify-center gap-3 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg py-2 shadow-sm">
+            <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <span>Applying changes…</span>
+          </div>
+        </div>
+      )}
+
       {showEditor && (
         <ImageEditor
           data={editorData}
@@ -4416,7 +4514,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         <ImageEdit
           isOpen={showImageEdit}
           onClose={handleInlineEditorClose}
-          onRefresh={refreshLoad}
+          onFrameEditComplete={handleFrameEditComplete}
           frameData={editingImageFrame}
           sceneNumber={editingSceneNumber}
           imageIndex={editingImageIndex}

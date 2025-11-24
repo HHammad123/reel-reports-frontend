@@ -29,6 +29,7 @@
     "react-redux": "^9.2.0",
     "react-router-dom": "^7.7.1",
     "react-scripts": "5.0.1",
+    "recordrtc": "^5.6.2",
     "redux-persist": "^6.0.0",
     "swiper": "^11.2.10",
     "use-image": "^1.1.4",
@@ -42,7 +43,6 @@
     "serve": "node server.js",
     "start:prod": "node server.js"
   },
-  
   "eslintConfig": {
     "extends": [
       "react-app",

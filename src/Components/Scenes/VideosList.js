@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import VideoEditor from '../../pages/VideoEditor';
 
 const TRANSITION_MAP = {
   "fade": "fade",
@@ -201,6 +202,82 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     }
   }, [items.length, selectedIndex]);
 
+  // Helper function to convert video URL to clip by loading metadata
+  const convertVideoUrlToClip = useCallback(async (videoItem) => {
+    return new Promise((resolve, reject) => {
+      const videoElement = document.createElement('video');
+      videoElement.src = videoItem.url;
+      videoElement.preload = 'metadata';
+      videoElement.crossOrigin = 'anonymous';
+      
+      videoElement.onloadedmetadata = () => {
+        const duration = videoElement.duration;
+        if (!isFinite(duration) || duration <= 0) {
+          console.warn('⚠️ Video duration is invalid, using default');
+          resolve(null);
+          return;
+        }
+        
+        const clip = {
+          id: videoItem.id || Date.now() + Math.random(),
+          url: videoItem.url,
+          name: videoItem.title || videoItem.name || `Video ${Date.now()}`,
+          type: 'video',
+          duration: duration,
+          speed: 1.0,
+          trimStart: 0,
+          trimEnd: duration,
+          description: videoItem.description || '',
+          narration: videoItem.narration || '',
+        };
+        
+        resolve(clip);
+      };
+      
+      videoElement.onerror = (error) => {
+        console.error('Error loading video:', error);
+        reject(error);
+      };
+      
+      videoElement.load();
+    });
+  }, []);
+
+  // Convert video items to clips when items change
+  const [editorTracks, setEditorTracks] = useState([[], []]);
+  const [isConvertingVideos, setIsConvertingVideos] = useState(false);
+  
+  useEffect(() => {
+    if (items.length === 0) {
+      setEditorTracks([[], []]);
+      return;
+    }
+    
+    const convertAllVideos = async () => {
+      setIsConvertingVideos(true);
+      try {
+        const clips = [];
+        for (const item of items) {
+          if (item.url) {
+            try {
+              const clip = await convertVideoUrlToClip(item);
+              if (clip) clips.push(clip);
+            } catch (error) {
+              console.error(`Failed to convert video ${item.id}:`, error);
+            }
+          }
+        }
+        setEditorTracks(prev => [clips, prev[1]]);
+      } catch (error) {
+        console.error('Error converting videos to clips:', error);
+      } finally {
+        setIsConvertingVideos(false);
+      }
+    };
+    
+    convertAllVideos();
+  }, [items, convertVideoUrlToClip]);
+
   // Close transition menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -316,7 +393,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const selectedVideoUrl = selectedVideo.url || selectedScenes[0]?.url || '';
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100%]">
+    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100%] w-full">
       {showVideoLoader && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
           <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3">
@@ -348,34 +425,46 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
         {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back</button>)}
       </div> */}
-      <div className="p-4 space-y-4">
-        {/* Header with Generate Final Reel button */}
-        <div className="flex items-center justify-between mb-4">
-          <div></div>
-          {items.length >= 2 && (
-            <button
-              onClick={handleGenerateFinalReel}
-              disabled={isGenerating}
-              className="px-6 py-2.5 rounded-lg bg-[#13008B] text-white text-sm font-semibold hover:bg-[#0f0069] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-            >
-              {isGenerating ? 'Generating...' : 'Generate Final Reel'}
-            </button>
-          )}
-        </div>
-
+      <div className="flex-1 flex flex-col overflow-hidden">
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-2">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 m-4">
             <div className="text-sm text-red-600">{error}</div>
           </div>
         )}
 
-        {/* Top preview */}
-        {selectedVideoUrl && (
+        {/* Video Editor - Full Section */}
+        {editorTracks[0].length > 0 && !isConvertingVideos ? (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <VideoEditor initialTracks={editorTracks} />
+          </div>
+        ) : isConvertingVideos ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto mb-4" />
+              <div className="text-[#13008B] font-semibold">Loading video editor...</div>
+            </div>
+          </div>
+        ) : items.length === 0 && !isLoading ? (
+          <div className="flex-1 flex items-center justify-center text-gray-600">
+            No videos available yet.
+          </div>
+        ) : null}
+        
+        {/* {selectedVideoUrl && (
           <div className="bg-white border rounded-xl p-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
               <div className="lg:col-span-2">
                 <div className="w-full aspect-video bg-black rounded-xl overflow-hidden">
-                  <video src={selectedVideoUrl} controls className="w-full h-full object-contain bg-black" />
+                  {isConvertingVideos ? (
+                    <div className="w-full h-full flex items-center justify-center text-white">
+                      <div className="text-center">
+                        <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto mb-4" />
+                        <div>Loading video editor...</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <video src={selectedVideoUrl} controls className="w-full h-full object-contain bg-black" />
+                  )}
                 </div>
                 <div className="mt-3">
                   <label className="text-sm text-gray-600">Narration</label>
@@ -424,132 +513,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         </div> */}
 
         {/* Video selector */}
-        <div className="bg-white border rounded-xl p-4">
-          <div className="text-base font-semibold mb-3">Available Videos</div>
-          <div className="flex gap-4 overflow-x-auto scrollbar-hide items-start">
-            {items.length === 0 && !isLoading && !error && (
-              <div className="text-sm text-gray-600">No videos available yet.</div>
-            )}
-            {items.map((video, i) => (
-              <React.Fragment key={video?.id || i}>
-                <div className="min-w-[220px] w-[220px] flex-shrink-0 cursor-pointer" onClick={() => setSelectedIndex(i)}>
-                  <div className={`rounded-xl border overflow-hidden ${selectedIndex === i ? 'ring-2 ring-[#13008B]' : ''}`}>
-                    <div className="w-full h-32 bg-black">
-                      <video src={video?.url || video?.scenes?.[0]?.url} className="w-full h-full object-cover" muted />
-                    </div>
-                  </div>
-                  <div className="mt-2 text-sm font-semibold">{video?.title || `Video ${i + 1}`}</div>
-                  {video?.description ? (
-                    <div className="mt-1 text-xs text-gray-600 line-clamp-2">{video.description}</div>
-                  ) : null}
-                </div>
-                {/* Transition zone between videos */}
-                {i < items.length - 1 && (
-                  <div
-                    className="relative flex-shrink-0 w-16 flex items-center justify-center py-4"
-                    onMouseEnter={() => setHoveredTransitionIndex(i)}
-                    onMouseLeave={() => {
-                      // Only hide hover indicator if menu is not open
-                      if (showTransitionMenu !== i) {
-                        setHoveredTransitionIndex(null);
-                      }
-                    }}
-                  >
-                    {/* Hover indicator line */}
-                    {hoveredTransitionIndex === i && (
-                      <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                        <div className="w-0.5 h-full bg-[#13008B] rounded-full opacity-40"></div>
-                      </div>
-                    )}
-                    {/* Transition button/indicator */}
-                    <div className="relative z-20">
-                      {(transitions[i] || hoveredTransitionIndex === i || showTransitionMenu === i) && (
-                        <>
-                          {transitions[i] ? (
-                            <div
-                              className="px-3 py-1.5 bg-[#13008B] text-white text-xs rounded-lg cursor-pointer hover:bg-[#0f0069] transition-all shadow-md"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setShowTransitionMenu(showTransitionMenu === i ? null : i);
-                              }}
-                              onMouseEnter={() => setHoveredTransitionIndex(i)}
-                            >
-                              {transitions[i]}
-                            </div>
-                          ) : (
-                            <div
-                              className="px-3 py-1.5 bg-gray-200 text-gray-600 text-xs rounded-lg cursor-pointer hover:bg-gray-300 transition-all flex items-center gap-1 shadow-sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setShowTransitionMenu(showTransitionMenu === i ? null : i);
-                              }}
-                              onMouseEnter={() => setHoveredTransitionIndex(i)}
-                            >
-                              <span className="font-semibold">+</span>
-                              <span>Transition</span>
-                            </div>
-                          )}
-                        </>
-                      )}
-                      {/* Transition menu dropdown */}
-                      {showTransitionMenu === i && (
-                        <div 
-                          className="transition-menu-container absolute top-full left-1/2 transform -translate-x-1/2 mt-2 z-30 bg-white border rounded-lg shadow-xl p-2 max-h-64 overflow-y-auto min-w-[180px]"
-                          onMouseEnter={() => setHoveredTransitionIndex(i)}
-                          onMouseLeave={() => {
-                            // Keep menu open when hovering over it
-                          }}
-                        >
-                          <div className="text-xs font-semibold text-gray-700 mb-2 px-2">Select Transition</div>
-                          <div className="space-y-1">
-                            {Object.keys(TRANSITION_MAP).map((transitionKey) => (
-                              <button
-                                key={transitionKey}
-                                className={`w-full text-left px-3 py-2 text-xs rounded hover:bg-gray-100 transition-colors ${
-                                  transitions[i] === TRANSITION_MAP[transitionKey]
-                                    ? 'bg-[#13008B] text-white hover:bg-[#0f0069]'
-                                    : 'text-gray-700'
-                                }`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setTransitions((prev) => ({
-                                    ...prev,
-                                    [i]: TRANSITION_MAP[transitionKey],
-                                  }));
-                                  setShowTransitionMenu(null);
-                                  setHoveredTransitionIndex(null);
-                                }}
-                              >
-                                {transitionKey}
-                              </button>
-                            ))}
-                            {transitions[i] && (
-                              <button
-                                className="w-full text-left px-3 py-2 text-xs rounded hover:bg-red-50 text-red-600 transition-colors border-t border-gray-200 mt-1 pt-2"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setTransitions((prev) => {
-                                    const newTransitions = { ...prev };
-                                    delete newTransitions[i];
-                                    return newTransitions;
-                                  });
-                                  setShowTransitionMenu(null);
-                                  setHoveredTransitionIndex(null);
-                                }}
-                              >
-                                Remove Transition
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
+      
 
         
       </div>
