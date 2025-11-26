@@ -34,6 +34,16 @@ const Icon = ({ name, size = 18 }) => {
           <path d="M21 15l-5-5-4 4-2-2-5 5" />
         </svg>
       )
+    case 'imageCut':
+      return (
+        <svg {...commonProps}>
+          <path d="M21 15V5a2 2 0 0 0-2-2H9" />
+          <path d="M3 9v10a2 2 0 0 0 2 2h10" />
+          <path d="M3 3l18 18" />
+          <path d="M14 14l-4 4h6a2 2 0 0 0 2-2v-2z" />
+          <path d="M10 10L6 6H8a2 2 0 0 1 2 2z" />
+        </svg>
+      )
     case 'save':
       return (
         <svg {...commonProps}>
@@ -57,6 +67,21 @@ const Icon = ({ name, size = 18 }) => {
           <rect x="3" y="3" width="7" height="7" />
           <circle cx="17" cy="8" r="4" />
           <path d="M4 18h16l-8-8Z" />
+        </svg>
+      )
+    case 'more':
+      return (
+        <svg {...commonProps}>
+          <circle cx="12" cy="5" r="1.5" />
+          <circle cx="12" cy="12" r="1.5" />
+          <circle cx="12" cy="19" r="1.5" />
+        </svg>
+      )
+    case 'close':
+      return (
+        <svg {...commonProps}>
+          <path d="M6 6l12 12" />
+          <path d="M6 18L18 6" />
         </svg>
       )
     case 'undo':
@@ -87,6 +112,10 @@ const Icon = ({ name, size = 18 }) => {
 }
 
 const BOUNDING_BOX_NORMALIZED_THRESHOLD = 1.05
+const BF_REMOVE_BASE =
+  'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/bf_remove'
+const BF_REMOVE_UPLOAD_ENDPOINT = `${BF_REMOVE_BASE}/upload`
+const BF_REMOVE_REMOVE_BG_ENDPOINT = `${BF_REMOVE_BASE}/remove-bg`
 
 const ensureNumber = (value) => {
   const num = Number(value)
@@ -142,6 +171,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [overlaySizeStart, setOverlaySizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 })
   const [overlayBackgroundRemoved, setOverlayBackgroundRemoved] = useState(false)
   const [isRemovingBackground, setIsRemovingBackground] = useState(false)
+  const [isOverlayUploading, setIsOverlayUploading] = useState(false)
+  const [overlaySelected, setOverlaySelected] = useState(false)
+  const [overlayOriginalBeforeBgRemoval, setOverlayOriginalBeforeBgRemoval] = useState(null)
+  const resetOverlayBackgroundState = useCallback(() => {
+    setOverlayBackgroundRemoved(false)
+    setOverlayOriginalBeforeBgRemoval(null)
+  }, [])
   const getProcessedOverlaySrc = useCallback(
     async (src) => {
       if (!src) return ''
@@ -273,6 +309,59 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [activeEffectPreset, setActiveEffectPreset] = useState('none')
   const [croppingTarget, setCroppingTarget] = useState('base')
   const [cropDragMode, setCropDragMode] = useState(null) // 'move' | 'nw'|'n'|'ne'|'e'|'se'|'s'|'sw'|'w'
+  const [cropShape, setCropShape] = useState('square') // 'square' | 'circle'
+
+  const toggleCropShape = useCallback(() => {
+    setCropShape(prev => (prev === 'square' ? 'circle' : 'square'))
+  }, [])
+
+  const applyCropShapeConstraints = useCallback((area, mode = null) => {
+    if (!area) return area
+    if (cropShape !== 'circle') return area
+
+    const size = Math.max(20, Math.min(area.width, area.height))
+    const centerX = area.x + area.width / 2
+    const centerY = area.y + area.height / 2
+    const touchesWest = mode?.includes?.('w')
+    const touchesEast = mode?.includes?.('e')
+    const touchesNorth = mode?.includes?.('n')
+    const touchesSouth = mode?.includes?.('s')
+
+    let x
+    let y
+
+    if (mode && mode !== 'move') {
+      if (touchesWest && !touchesEast) {
+        x = area.x + (area.width - size)
+      } else if (touchesEast && !touchesWest) {
+        x = area.x
+      } else {
+        x = centerX - size / 2
+      }
+
+      if (touchesNorth && !touchesSouth) {
+        y = area.y + (area.height - size)
+      } else if (touchesSouth && !touchesNorth) {
+        y = area.y
+      } else {
+        y = centerY - size / 2
+      }
+    } else {
+      x = centerX - size / 2
+      y = centerY - size / 2
+    }
+
+    x = Math.max(0, x)
+    y = Math.max(0, y)
+
+    return {
+      ...area,
+      x,
+      y,
+      width: size,
+      height: size
+    }
+  }, [cropShape])
 
   // Undo/Redo system
   const [history, setHistory] = useState([])
@@ -617,7 +706,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       }
       nw = Math.max(minSize, nw)
       nh = Math.max(minSize, nh)
-      setCropArea({ x: nx, y: ny, width: nw, height: nh })
+      setCropArea(applyCropShapeConstraints({ x: nx, y: ny, width: nw, height: nh }, cropDragMode))
     }
     const onUp = () => {
       if (!isCropping) return
@@ -629,7 +718,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [isCropping, dragStart, cropDragMode, layerStart])
+  }, [isCropping, dragStart, cropDragMode, layerStart, applyCropShapeConstraints])
 
   const resetFilters = () => {
     setImageFilters({
@@ -764,7 +853,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       }
       
       const nextCrop = clampOverlayCropArea({ x: nx, y: ny, width: nw, height: nh })
-      setCropArea(nextCrop)
+      setCropArea(applyCropShapeConstraints(nextCrop, cropDragMode))
     }
     
     const onUp = () => {
@@ -779,7 +868,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [isCropping, dragStart, cropDragMode, layerStart, clampOverlayCropArea])
+  }, [isCropping, dragStart, cropDragMode, layerStart, clampOverlayCropArea, applyCropShapeConstraints])
+
+  useEffect(() => {
+    if (!isCropping) return
+    setCropArea(prev => applyCropShapeConstraints(prev))
+  }, [cropShape, isCropping, applyCropShapeConstraints])
 
   const startCropping = (target = croppingTarget) => {
     if (!imageLoaded && !overlayVisible) return
@@ -787,6 +881,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setCroppingTarget(target)
     setIsCropping(true)
     setOriginalImageUrl(imageUrl)
+    if (target === 'overlay') {
+      setOverlaySelected(true)
+    } else {
+      setOverlaySelected(false)
+    }
     
     // Initialize crop area based on target
     if (target === 'overlay' && overlayVisible && imageRef.current) {
@@ -796,12 +895,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       const scaleY = imgEl.naturalHeight > 0 ? imgEl.height / imgEl.naturalHeight : 1
       const overlayWidth = overlaySize?.width || (overlayImage?.width * overlayScale || 200)
       const overlayHeight = overlaySize?.height || (overlayImage?.height * overlayScale || 200)
-      setCropArea({
+      setCropArea(applyCropShapeConstraints({
         x: overlayPosition.x * scaleX,
         y: overlayPosition.y * scaleY,
         width: Math.max(overlayWidth * scaleX, 20),
         height: Math.max(overlayHeight * scaleY, 20)
-      })
+      }))
     } else if (imageRef.current) {
       // Base image crop - initialize to center of image with reasonable size
       const imgEl = imageRef.current
@@ -811,23 +910,110 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       const cropHeight = Math.max(150, imgHeight * 0.6)
       const cropX = (imgWidth - cropWidth) / 2
       const cropY = (imgHeight - cropHeight) / 2
-      setCropArea({ 
+      setCropArea(applyCropShapeConstraints({ 
         x: Math.max(0, cropX), 
         y: Math.max(0, cropY), 
         width: cropWidth, 
         height: cropHeight 
-      })
+      }))
     } else {
       // Fallback
-      setCropArea({ x: 50, y: 50, width: 200, height: 150 })
+      setCropArea(applyCropShapeConstraints({ x: 50, y: 50, width: 200, height: 150 }))
     }
   }
+
+  const createCircularCanvas = (sourceCanvas) => {
+    if (!sourceCanvas) return sourceCanvas
+    const diameter = Math.min(sourceCanvas.width, sourceCanvas.height)
+    const canvas = document.createElement('canvas')
+    canvas.width = sourceCanvas.width
+    canvas.height = sourceCanvas.height
+    const ctx = canvas.getContext('2d')
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(sourceCanvas.width / 2, sourceCanvas.height / 2, diameter / 2, 0, Math.PI * 2)
+    ctx.closePath()
+    ctx.clip()
+    ctx.drawImage(sourceCanvas, 0, 0)
+    ctx.restore()
+    return canvas
+  }
+
+  const extractBase64Payload = (dataUrl = '') => {
+    if (!dataUrl) return ''
+    const parts = dataUrl.split(',')
+    return parts.length > 1 ? parts[1] : parts[0]
+  }
+
+  const uploadCroppedOverlay = useCallback(async (base64Src) => {
+    if (!base64Src) return
+    try {
+      setIsOverlayUploading(true)
+      const payload = {
+        base64_image: extractBase64Payload(base64Src)
+      }
+      const response = await fetch(BF_REMOVE_UPLOAD_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      })
+
+      const responseText = await response.text()
+      let responseData
+      try {
+        responseData = JSON.parse(responseText)
+      } catch (_) {
+        responseData = null
+      }
+
+      if (!response.ok) {
+        throw new Error(`bf_remove upload failed: ${response.status} ${responseText}`)
+      }
+
+      const replacementUrl =
+        responseData?.image_url ||
+        responseData?.url ||
+        responseData?.link ||
+        responseData?.data?.image_url ||
+        responseData?.data?.url ||
+        responseData?.data?.link ||
+        responseData?.result?.image_url ||
+        responseData?.result?.url ||
+        responseData?.result?.link
+
+      if (replacementUrl) {
+        await new Promise((resolve, reject) => {
+          const img = new Image()
+          img.crossOrigin = 'anonymous'
+          img.onload = () => {
+            setOverlayImage(img)
+            setOverlayImageUrl(replacementUrl)
+            resolve()
+          }
+          img.onerror = (err) => {
+            console.error('Failed to load overlay image from bf_remove response', err)
+            reject(err)
+          }
+          img.src = replacementUrl
+        })
+      } else {
+        console.warn('bf_remove response missing url/link field', responseData)
+      }
+    } catch (error) {
+      console.error('Failed to upload cropped overlay:', error)
+    } finally {
+      setIsOverlayUploading(false)
+    }
+  }, [])
 
   const applyCrop = async () => {
     try {
       if (croppingTarget === 'overlay' && overlayImage && imageRef.current) {
         const previousUrl = overlayImageUrl
         const previousImage = overlayImage
+        const previousSize = overlaySize
         
         // Get image scale factors
         const imgEl = imageRef.current
@@ -884,86 +1070,59 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         
         // Draw the exact cropped region from the overlay image
         ctx.drawImage(overlayImage, finalSx, finalSy, finalSw, finalSh, 0, 0, finalSw, finalSh)
-        
-        // Convert canvas to blob (temp file)
-        const blob = await new Promise((resolve) => {
-          canvas.toBlob((blob) => {
-            resolve(blob)
-          }, 'image/png')
-        })
-        
-        // Create a File object from the blob (simulating file upload)
-        const tempFile = new File([blob], 'cropped-overlay.png', { type: 'image/png' })
-        
-        // Create a temporary object URL
-        const tempUrl = URL.createObjectURL(blob)
-        
-        // Create a synthetic event to use existing upload handler
-        const syntheticEvent = {
-          target: {
-            files: [tempFile]
+
+        const targetCanvas = cropShape === 'circle' ? createCircularCanvas(canvas) : canvas
+        const base64DataUrl = targetCanvas.toDataURL('image/png')
+        const processedSrc = await getProcessedOverlaySrc(base64DataUrl)
+
+        const previousVisible = overlayVisible
+        const previousPosition = overlayPosition
+        const previousScale = overlayScale
+
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.onload = () => {
+          // Preserve selection position by offsetting the existing origin
+          const newPosition = {
+            x: (overlayPosition?.x || 0) + finalSx,
+            y: (overlayPosition?.y || 0) + finalSy
           }
-        }
-        
-        // Load the cropped image as a new overlay using existing upload logic
-        const reader = new FileReader()
-        reader.onload = async (event) => {
-          const previousVisible = overlayVisible
-          const previousPosition = overlayPosition
-          const previousScale = overlayScale
+          const newSize = { width: finalSw, height: finalSh }
+          const newScale = 1 // natural size already matches the cropped image
           
-          const rawResult = event.target.result
-          const processedSrc = await getProcessedOverlaySrc(rawResult)
+          setOverlayImage(img)
+          setOverlayVisible(true)
+          setOverlayPosition(newPosition)
+          setOverlayScale(newScale)
+          setOverlaySize(newSize)
           setOverlayImageUrl(processedSrc)
+          resetOverlayBackgroundState()
+          setIsCropping(false)
           
-          const img = new Image()
-          img.crossOrigin = 'anonymous'
-          img.onload = () => {
-            // Reset overlay as if it's a new upload
-            const initialPos = { x: 20, y: 20 }
-            const initialScale = 0.3
-            const initialWidth = img.width * initialScale
-            const initialHeight = img.height * initialScale
-            
-            setOverlayImage(img)
-            setOverlayVisible(true)
-            setOverlayPosition(initialPos)
-            setOverlayScale(initialScale)
-            setOverlaySize({ width: initialWidth, height: initialHeight })
-            setIsCropping(false)
-            
-            // Clean up temp URL
-            URL.revokeObjectURL(tempUrl)
-            
-            // Save to history
-            saveToHistory('crop_apply', {
-              target: 'overlay',
-              previousUrl,
-              previousImage,
-              previousVisible,
-              previousPosition,
-              previousScale,
-              newUrl: processedSrc,
-              newImage: img,
-              newPosition: initialPos,
-              newScale: initialScale
-            })
-          }
-          img.onerror = () => {
-            console.error('Failed to load cropped overlay image')
-            alert('Failed to load cropped overlay image')
-            URL.revokeObjectURL(tempUrl)
-            setIsCropping(false)
-          }
-          img.src = processedSrc
+          // Save to history
+          saveToHistory('crop_apply', {
+            target: 'overlay',
+            previousUrl,
+            previousImage,
+            previousVisible,
+            previousPosition,
+            previousScale,
+            previousSize,
+            newUrl: processedSrc,
+            newImage: img,
+            newPosition,
+            newScale,
+            newSize
+          })
+
+          uploadCroppedOverlay(processedSrc)
         }
-        reader.onerror = () => {
-          console.error('Failed to read cropped image')
-          alert('Failed to read cropped image')
-          URL.revokeObjectURL(tempUrl)
+        img.onerror = () => {
+          console.error('Failed to load cropped overlay image')
+          alert('Failed to load cropped overlay image')
           setIsCropping(false)
         }
-        reader.readAsDataURL(tempFile)
+        img.src = processedSrc
         
         return
       }
@@ -982,7 +1141,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       canvas.height = sh
       const ctx = canvas.getContext('2d')
       ctx.drawImage(baseImg, sx, sy, sw, sh, 0, 0, sw, sh)
-      const newUrl = canvas.toDataURL('image/png')
+      const targetCanvas = cropShape === 'circle' ? createCircularCanvas(canvas) : canvas
+      const newUrl = targetCanvas.toDataURL('image/png')
       setImageUrl(newUrl)
       setIsCropping(false)
       
@@ -1142,6 +1302,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             display: 'block'
           }}
         />
+        {(isOverlayUploading || isRemovingBackground) && (
+          <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-20 pointer-events-none">
+            <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
         {hoveredOverlay && (
           <div className="absolute -top-2 right-2 z-10 flex gap-2">
             {!isCropping && (
@@ -1164,23 +1329,46 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               </button>
             )}
             {isCropping && croppingTarget === 'overlay' && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  cancelCrop()
-                  setHoveredOverlay(false)
-                }}
-                className="px-3 h-7 bg-gray-100 border border-gray-300 text-gray-700 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition text-xs font-medium"
-                title="Cancel Crop"
-                onMouseEnter={() => {
-                  if (overlayHoverTimeoutRef.current) {
-                    clearTimeout(overlayHoverTimeoutRef.current)
-                    overlayHoverTimeoutRef.current = null
-                  }
-                }}
-              >
-                Cancel
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    cancelCrop()
+                    setHoveredOverlay(false)
+                  }}
+                  className="w-7 h-7 bg-gray-100 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition"
+                  title="Cancel Overlay Crop"
+                  onMouseEnter={() => {
+                    if (overlayHoverTimeoutRef.current) {
+                      clearTimeout(overlayHoverTimeoutRef.current)
+                      overlayHoverTimeoutRef.current = null
+                    }
+                  }}
+                >
+                  <Icon name="close" size={12} />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    applyCrop()
+                    setHoveredOverlay(false)
+                  }}
+                  className="w-7 h-7 bg-white/90 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-50 transition"
+                  title="Save Overlay Crop"
+                  onMouseEnter={() => {
+                    if (overlayHoverTimeoutRef.current) {
+                      clearTimeout(overlayHoverTimeoutRef.current)
+                      overlayHoverTimeoutRef.current = null
+                    }
+                  }}
+                >
+                  <span role="img" aria-label="Save overlay crop">
+                    💾
+                  </span>
+                </button>
+              </>
             )}
             <button
               onClick={(e) => {
@@ -1202,6 +1390,20 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
                 <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
               </svg>
+            </button>
+            <button
+              type="button"
+              onClick={handleOverlayOptionsToggle}
+              className="w-7 h-7 bg-white/90 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-100 transition"
+              title="Overlay Options"
+              onMouseEnter={() => {
+                if (overlayHoverTimeoutRef.current) {
+                  clearTimeout(overlayHoverTimeoutRef.current)
+                  overlayHoverTimeoutRef.current = null
+                }
+              }}
+            >
+              <Icon name="more" size={12} />
             </button>
           </div>
         )}
@@ -1309,6 +1511,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                   top: selectionTop,
                   width: selectionWidth,
                   height: selectionHeight,
+                  borderRadius: cropShape === 'circle' ? '9999px' : '0px',
                   backgroundColor: 'transparent'
                 }}
                 onMouseDown={(e) => {
@@ -1814,7 +2017,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     e.stopPropagation()
     
     if (!overlayImage) return
-    setActivePanel('overlay')
+    setOverlaySelected(true)
     
     // Calculate current size
     const currentWidth = overlaySize?.width || (overlayImage.width * overlayScale)
@@ -1830,6 +2033,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setOverlayDragStart({ x: e.clientX, y: e.clientY })
       setLayerStart({ x: overlayPosition.x, y: overlayPosition.y, width: currentWidth, height: currentHeight })
     }
+  }
+
+  const handleOverlayOptionsToggle = (event) => {
+    event.stopPropagation()
+    setActivePanel((prev) => (prev === 'overlay' ? null : 'overlay'))
   }
 
   const handleMouseUp = useCallback(() => {
@@ -1987,6 +2195,7 @@ const handleTemplateJsonLoad = () => {
           const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1
           const fitScale = Math.min(scaleX, scaleY)
           setOverlayScale(fitScale || 1)
+          resetOverlayBackgroundState()
         }
         oImg.onerror = () => {
           console.error('Failed to load overlay image from template')
@@ -2196,6 +2405,7 @@ const handleTemplateJsonLoad = () => {
           setOverlayPosition(initialPos)
           setOverlayScale(initialScale)
           setOverlaySize({ width: initialWidth, height: initialHeight })
+          resetOverlayBackgroundState()
           
           // Save to history
           saveToHistory('overlay_add', {
@@ -2235,6 +2445,7 @@ const handleTemplateJsonLoad = () => {
           setOverlayPosition({ x: 20, y: 20 })
           setOverlayScale(initialScale)
           setOverlaySize({ width: img.width * initialScale, height: img.height * initialScale })
+          resetOverlayBackgroundState()
         }
         img.onerror = () => {
           console.error('Failed to load overlay image from URL')
@@ -2253,76 +2464,67 @@ const handleTemplateJsonLoad = () => {
     setOverlayImageFile(null)
     setOverlayVisible(false)
     setOverlaySize({ width: 200, height: 200 })
-    setOverlayBackgroundRemoved(false)
+    resetOverlayBackgroundState()
+    setIsOverlayUploading(false)
+    setOverlaySelected(false)
   }
 
-  // Remove background from overlay (replace with white, not transparent)
+  // Remove background from overlay via API
   const removeOverlayBackground = async () => {
-    console.log('removeOverlayBackground called', { overlayImage: !!overlayImage, overlayImageUrl: !!overlayImageUrl })
-    if (!overlayImage || !overlayImageUrl) {
+    if (!overlayVisible || !overlayImageUrl) {
       console.warn('Missing overlay image or URL')
       alert('Please upload an overlay image first')
       return
     }
     
     setIsRemovingBackground(true)
-    console.log('Setting isRemovingBackground to true')
     
     try {
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      img.onload = () => {
-        console.log('Image loaded for processing', img.width, img.height)
-        const canvas = document.createElement('canvas')
-        canvas.width = img.naturalWidth || img.width
-        canvas.height = img.naturalHeight || img.height
-        const ctx = canvas.getContext('2d')
-        
-        // Fill with white background first
-        ctx.fillStyle = '#FFFFFF'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        
-        // Draw the image on top
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-        
-        // Get image data
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-        const data = imageData.data
-        const threshold = 245
-        
-        console.log('Processing pixels...', data.length / 4, 'pixels')
-        
-        // Replace bright background pixels with white (not transparent)
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i]
-          const g = data[i + 1]
-          const b = data[i + 2]
-          
-          // Check if pixel is bright (likely background)
-          const isBright = r >= threshold && g >= threshold && b >= threshold
-          
-          if (isBright) {
-            // Replace with white
-            data[i] = 255
-            data[i + 1] = 255
-            data[i + 2] = 255
-            data[i + 3] = 255
-          }
-        }
-        
-        ctx.putImageData(imageData, 0, 0)
-        const processedUrl = canvas.toDataURL('image/png')
-        console.log('Processed image created, URL length:', processedUrl.length)
-        
-        // Create new image from processed canvas
+      const previousOverlaySnapshot = {
+        image: overlayImage,
+        url: overlayImageUrl
+      }
+
+      const response = await fetch(BF_REMOVE_REMOVE_BG_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ image_url: overlayImageUrl })
+      })
+
+      const responseText = await response.text()
+      let responseData
+      try {
+        responseData = JSON.parse(responseText)
+      } catch (_) {
+        responseData = null
+      }
+
+      if (!response.ok) {
+        throw new Error(`remove-bg request failed: ${response.status} ${responseText}`)
+      }
+
+      const processedUrl =
+        responseData?.image_url ||
+        responseData?.url ||
+        responseData?.data?.image_url ||
+        responseData?.data?.url ||
+        responseData?.result?.image_url ||
+        responseData?.result?.url
+
+      if (!processedUrl) {
+        throw new Error('remove-bg response missing image_url')
+      }
+
+      await new Promise((resolve, reject) => {
         const processedImg = new Image()
         processedImg.crossOrigin = 'anonymous'
         processedImg.onload = () => {
-          console.log('Processed image loaded successfully')
           setOverlayImage(processedImg)
           setOverlayImageUrl(processedUrl)
           setOverlayBackgroundRemoved(true)
-          setIsRemovingBackground(false)
+          setOverlayOriginalBeforeBgRemoval(previousOverlaySnapshot)
           
           // Save to history
           saveToHistory('overlay_background_remove', {
@@ -2331,25 +2533,30 @@ const handleTemplateJsonLoad = () => {
             newUrl: processedUrl,
             newImage: processedImg
           })
+          resolve()
         }
-        processedImg.onerror = (err) => {
-          console.error('Failed to load processed overlay image', err)
-          alert('Failed to process overlay image')
-          setIsRemovingBackground(false)
-        }
+        processedImg.onerror = (err) => reject(err)
         processedImg.src = processedUrl
-      }
-      img.onerror = (err) => {
-        console.error('Failed to load overlay image for background removal', err)
-        alert('Failed to load overlay image')
-        setIsRemovingBackground(false)
-      }
-      img.src = overlayImageUrl
+      })
     } catch (error) {
       console.error('Background removal failed:', error)
-      alert('Failed to remove background: ' + error.message)
+      alert('Failed to remove background: ' + (error?.message || 'Unknown error'))
+    } finally {
       setIsRemovingBackground(false)
     }
+  }
+
+  const undoOverlayBackground = () => {
+    if (!overlayOriginalBeforeBgRemoval) return
+    const { image, url } = overlayOriginalBeforeBgRemoval
+    if (image) {
+      setOverlayImage(image)
+    }
+    if (url) {
+      setOverlayImageUrl(url)
+    }
+    setOverlayBackgroundRemoved(false)
+    setOverlayOriginalBeforeBgRemoval(null)
   }
 
   // Get model type from frameData
@@ -2482,6 +2689,7 @@ const handleTemplateJsonLoad = () => {
                       const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1;
                       const fitScale = Math.min(scaleX, scaleY);
                       setOverlayScale(fitScale || 1);
+                      resetOverlayBackgroundState();
                     };
                     oImg.onerror = () => {
                       console.error('Failed to load overlay image');
@@ -2509,7 +2717,7 @@ const handleTemplateJsonLoad = () => {
       setImageLoaded(false);
       setSelectedLayer(null);
     }
-  }, [isOpen, frameData]);
+  }, [isOpen, frameData, resetOverlayBackgroundState]);
 
   // Convert textLayers back to text_elements format for API
   const convertTextLayersToElements = () => {
@@ -2756,7 +2964,61 @@ const handleTemplateJsonLoad = () => {
           <div className="header-left flex items-center gap-3">
             <h1 className="header-title text-gray-700 font-semibold">Storyboard Image</h1>
           </div>
-          <div className="header-right flex items-center gap-4">
+          <div className="header-right flex items-center gap-3 flex-wrap justify-end">
+            <button
+              type="button"
+              onClick={toggleCropShape}
+              disabled={!isCropping}
+              className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
+                isCropping
+                  ? 'border-purple-600 text-purple-700 hover:bg-purple-50'
+                  : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
+              }`}
+              title={isCropping ? 'Toggle between square and circle crop' : 'Start a crop to change the shape'}
+            >
+              <span
+                className={`inline-flex items-center justify-center w-4 h-4 border-2 ${
+                  cropShape === 'circle' ? 'rounded-full' : 'rounded-sm'
+                } ${isCropping ? 'border-current' : 'border-gray-400'}`}
+              />
+              {cropShape === 'circle' ? 'Circle Crop' : 'Square Crop'}
+            </button>
+            <button
+              type="button"
+              onClick={overlayBackgroundRemoved ? undoOverlayBackground : removeOverlayBackground}
+              disabled={
+                !overlaySelected ||
+                !overlayVisible ||
+                !overlayImageUrl ||
+                isRemovingBackground ||
+                (overlayBackgroundRemoved && !overlayOriginalBeforeBgRemoval)
+              }
+              className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
+                overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground
+                  ? overlayBackgroundRemoved
+                    ? 'border-gray-500 text-gray-700 hover:bg-gray-100'
+                    : 'border-rose-500 text-rose-600 hover:bg-rose-50'
+                  : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
+              }`}
+              title={
+                overlaySelected && overlayVisible && overlayImageUrl
+                  ? isRemovingBackground
+                    ? 'Processing background change...'
+                    : overlayBackgroundRemoved
+                      ? 'Restore original overlay background'
+                      : 'Remove overlay background'
+                  : 'Select an overlay image to modify background'
+              }
+            >
+              {isRemovingBackground ? (
+                <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              ) : overlayBackgroundRemoved ? (
+                <Icon name="undo" size={16} />
+              ) : (
+                <Icon name="imageCut" size={16} />
+              )}
+              {overlayBackgroundRemoved ? 'Undo BG' : 'Remove BG'}
+            </button>
             <button
               onClick={isCropping && croppingTarget === 'overlay' ? applyCrop : handleSaveChanges}
               disabled={isSaving}
@@ -2909,7 +3171,13 @@ const handleTemplateJsonLoad = () => {
 
           {/* Editor Section */}
           <div className="flex-1 overflow-auto flex flex-col overflow-y-auto min-h-0">
-            <div className={workspaceContainerClasses}>
+            <div
+              className={workspaceContainerClasses}
+              onMouseDown={(e) => {
+                if (e.defaultPrevented) return
+                setOverlaySelected(false)
+              }}
+            >
               {/* Wrapper for toolbar and canvas to ensure column layout */}
               <div className="flex flex-col items-center w-full">
               {/* Text Toolbar - Shows when text is clicked, positioned above image area */}
@@ -3259,7 +3527,8 @@ const handleTemplateJsonLoad = () => {
                           top: cropArea.y, 
                           width: cropArea.width, 
                           height: cropArea.height,
-                          backgroundColor: 'transparent'
+                          backgroundColor: 'transparent',
+                          borderRadius: cropShape === 'circle' ? '9999px' : '0px'
                         }}
                         onMouseDown={(e) => {
                           e.stopPropagation()
@@ -4407,6 +4676,21 @@ const handleTemplateJsonLoad = () => {
                   />
                 </div>
               </div>
+
+                    <div className="control-group">
+                      <label>Crop Shape</label>
+                      <div className="action-buttons">
+                        <button
+                          className={`btn btn-secondary ${isCropping ? '' : 'opacity-60 cursor-not-allowed'}`}
+                          onClick={toggleCropShape}
+                          type="button"
+                          disabled={!isCropping}
+                          title={isCropping ? 'Toggle crop shape' : 'Start crop to enable shape toggle'}
+                        >
+                          {cropShape === 'circle' ? 'Circle Crop' : 'Square Crop'}
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="control-group">
                       <label>Crop Target</label>

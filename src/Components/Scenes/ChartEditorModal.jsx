@@ -58,6 +58,7 @@ const extractChartData = (chartData, chartType) => {
       'scatter'
     ].includes(chartType)
   ) {
+    // Primary extraction: try standard format (x and data[].y)
     const xValues = Array.isArray(seriesBlock.x) ? seriesBlock.x : []
     const dataEntries = Array.isArray(seriesBlock.data) ? seriesBlock.data : []
     const dataset = {}
@@ -65,10 +66,47 @@ const extractChartData = (chartData, chartType) => {
       if (!entry || typeof entry !== 'object') return
       const name = entry.name ?? `Series ${idx + 1}`
       const yValues = Array.isArray(entry.y) ? entry.y : []
-      if (yValues.length) dataset[name] = yValues
+      // Always add series to dataset, even if empty (will be handled in rendering)
+      dataset[name] = yValues
     })
-    if (!Object.keys(dataset).length || !xValues.length) return null
-    return { categories: xValues, dataset }
+    
+    // Debug logging
+    try {
+      console.log('[extractChartData] Extracted data:', {
+        chartType,
+        xValuesCount: xValues.length,
+        dataEntriesCount: dataEntries.length,
+        datasetKeys: Object.keys(dataset),
+        dataset: dataset
+      });
+    } catch(_) {}
+    
+    // If we have both x and dataset, return it (even if some series are empty)
+    if (Object.keys(dataset).length && xValues.length) {
+      return { categories: xValues, dataset }
+    }
+    
+    // Fallback: Try to convert from pie/donut format (labels/values) to other chart format
+    // This handles cases where API returns data in pie format but chart type has changed
+    const labels = Array.isArray(seriesBlock.labels) ? seriesBlock.labels : []
+    const pieDataEntries = Array.isArray(seriesBlock.data) ? seriesBlock.data : []
+    const pieValues = pieDataEntries[0]?.values
+    
+    if (labels.length && Array.isArray(pieValues) && pieValues.length) {
+      // Convert pie format to bar/line format
+      // Use labels as categories (x-axis) and values as a single series
+      const minLen = Math.min(labels.length, pieValues.length)
+      const convertedDataset = {
+        'Series 1': pieValues.slice(0, minLen)
+      }
+      return { 
+        categories: labels.slice(0, minLen), 
+        dataset: convertedDataset 
+      }
+    }
+    
+    // If still no data found, return null
+    return null
   }
 
   return null
@@ -100,17 +138,43 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
   const isStacked = chartType.includes('stacked')
   const isHorizontal = chartType.includes('bar') && !chartType.includes('column')
 
+  // Debug logging
+  try {
+    console.log('[createBarChart] Creating traces:', {
+      chartType,
+      categoriesCount: categories.length,
+      datasetKeys: Object.keys(dataset),
+      datasetEntries: Object.entries(dataset).map(([name, values]) => ({
+        name,
+        valuesCount: Array.isArray(values) ? values.length : 0
+      }))
+    });
+  } catch(_) {}
+
   const traces = Object.entries(dataset).map(([seriesName, yValues]) => {
     const seriesColor = colorMap[seriesName]?.color ?? colorMap.global?.color ?? '#333333'
+    // Ensure yValues is an array and has the same length as categories
+    const safeYValues = Array.isArray(yValues) ? yValues : []
+    // Pad or trim yValues to match categories length
+    const paddedYValues = categories.map((_, idx) => safeYValues[idx] ?? 0)
+    
     return {
       type: 'bar',
       name: seriesName,
       orientation: isHorizontal ? 'h' : 'v',
-      x: isHorizontal ? yValues : categories,
-      y: isHorizontal ? categories : yValues,
+      x: isHorizontal ? paddedYValues : categories,
+      y: isHorizontal ? categories : paddedYValues,
       marker: seriesColor ? { color: seriesColor } : undefined
     }
   })
+
+  // Debug logging for traces
+  try {
+    console.log('[createBarChart] Generated traces:', {
+      tracesCount: traces.length,
+      traceNames: traces.map(t => t.name)
+    });
+  } catch(_) {}
 
   const layout = {
     barmode: isStacked ? 'stack' : 'group'
@@ -400,7 +464,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   const [rawChartDataInput, setRawChartDataInput] = useState('')
   const [rawChartError, setRawChartError] = useState('')
   const [chartTypeState, setChartTypeState] = useState(
-    (sceneData?.chart_type || sceneData?.chartType || 'unknown').toLowerCase()
+    (sceneData?.chart_type || sceneData?.chartType || '').toLowerCase()
   )
   const [chartDataState, setChartDataState] = useState(
     safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
@@ -510,9 +574,27 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   const canRedo = currentHistoryIndex < history.length - 1 && history.length > 0
 
   const rebuildEditorStateFromScene = useCallback(() => {
-    if (!sceneData) return
-    const nextType = (sceneData?.chart_type || sceneData?.chartType || 'unknown').toLowerCase()
+    if (!sceneData) {
+      console.warn('[ChartEditorModal] rebuildEditorStateFromScene called but sceneData is null/undefined')
+      return
+    }
+    // Get chart_type from sceneData - prioritize chart_type over chartType, and don't default to 'unknown'
+    const nextType = (sceneData?.chart_type || sceneData?.chartType || '').toLowerCase()
+    if (!nextType) {
+      console.warn('[ChartEditorModal] No chart_type found in sceneData. Available keys:', Object.keys(sceneData || {}))
+      return
+    }
     const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
+    
+    // Debug logging
+    try {
+      console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
+        chart_type: nextType,
+        has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
+        chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
+        sceneData_keys: Object.keys(sceneData || {})
+      })
+    } catch(_) {}
     const targets = computeColorTargets(nextType, parsedData)
     // Use selected preset if available, otherwise fall back to sceneData preset
     const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
@@ -600,8 +682,10 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose }) => {
   }, [sceneData, availablePresets, selectedPresetIndex])
 
   useEffect(() => {
-    rebuildEditorStateFromScene()
-  }, [rebuildEditorStateFromScene])
+    if (isOpen && sceneData) {
+      rebuildEditorStateFromScene()
+    }
+  }, [isOpen, sceneData, rebuildEditorStateFromScene])
 
   // Fetch available chart presets
   useEffect(() => {

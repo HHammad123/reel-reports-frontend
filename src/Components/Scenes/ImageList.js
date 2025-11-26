@@ -8,7 +8,8 @@ import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval
 
 const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
   if (!ratio || typeof ratio !== 'string') return fallback;
-  const cleaned = ratio.replace(/\s+/g, '');
+  // Normalize common separators: space, underscore, "x", "/", ":"
+  const cleaned = ratio.replace(/\s+/g, '').replace(/_/g, ':');
   const match = cleaned.match(/(\d+(?:\.\d+)?)[:/xX](\d+(?:\.\d+)?)/);
   if (match) {
     const w = Number(match[1]);
@@ -94,9 +95,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [showVideoRedirectPopup, setShowVideoRedirectPopup] = useState(false);
   const [videoRedirectCountdown, setVideoRedirectCountdown] = useState(5);
   const [pendingVideoJobId, setPendingVideoJobId] = useState(null);
-  const [questionnaireAspectRatio, setQuestionnaireAspectRatio] = useState('16:9');
+  const [questionnaireAspectRatio, setQuestionnaireAspectRatio] = useState('');
   const cssAspectRatio = React.useMemo(
     () => aspectRatioToCss(questionnaireAspectRatio),
+    [questionnaireAspectRatio]
+  );
+  const isPortrait9x16 = React.useMemo(
+    () => normalizeAspectRatioValue(questionnaireAspectRatio || '16:9') === '9:16',
     [questionnaireAspectRatio]
   );
   const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
@@ -1783,13 +1788,13 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, [selected]);
 
-  // Get aspect ratio from script data
-  const getAspectRatio = React.useCallback(async () => {
+  // Get raw aspect ratio from script/session data (exact value for API payloads)
+  const getSessionAspectRatioRaw = React.useCallback(async () => {
     try {
       const session_id = localStorage.getItem('session_id');
       const user_id = localStorage.getItem('token');
-      if (!session_id || !user_id) return normalizeAspectRatioValue('16:9');
-      
+      if (!session_id || !user_id) return '16:9';
+
       const sresp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1802,23 +1807,64 @@ const getOrderedRefs = useCallback((row) => {
       } catch (_) {
         sdata = stext;
       }
-      
+
       const sessionData = sdata?.session_data || sdata?.session || {};
       const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
       const currentScript = scripts[0] || null;
-      
-      // Get aspect ratio from script
-      const aspectRatio = currentScript?.aspect_ratio || 
-                         currentScript?.aspectRatio || 
-                         sessionData?.aspect_ratio || 
-                         sessionData?.aspectRatio || 
-                         '16:9';
-      
-      return normalizeAspectRatioValue(aspectRatio);
+
+      // Helper to safely extract a trimmed string
+      const pickString = (val) => (typeof val === 'string' && val.trim() ? val.trim() : '');
+
+      // 1) Prefer aspect_ratio from scripts[current].current_version.userquery[].guidelines.technical_and_formal_constraints
+      let fromGuidelines = '';
+      if (currentScript && typeof currentScript === 'object') {
+        const currentVersionKey = currentScript.current_version || currentScript.currentVersion;
+        const currentVersionObj =
+          (typeof currentVersionKey === 'string' && currentScript[currentVersionKey]) ||
+          currentScript;
+        const userQueryArr =
+          (Array.isArray(currentVersionObj?.userquery) && currentVersionObj.userquery) ||
+          (Array.isArray(currentVersionObj?.user_query) && currentVersionObj.user_query) ||
+          [];
+        const firstUserQuery = userQueryArr[0] || {};
+        const guidelines = firstUserQuery?.guidelines || firstUserQuery?.guideLines || {};
+        const tech = guidelines.technical_and_formal_constraints ||
+          guidelines.technicalAndFormalConstraints ||
+          guidelines.technical_constraints ||
+          guidelines.technicalConstraints ||
+          {};
+        fromGuidelines =
+          pickString(tech.aspect_ratio) ||
+          pickString(tech.aspectRatio);
+      }
+
+      if (fromGuidelines) {
+        return fromGuidelines;
+      }
+
+      // 2) Fallback to script-level / session-level aspect_ratio fields
+      const aspectRatio =
+        pickString(currentScript?.aspect_ratio) ||
+        pickString(currentScript?.aspectRatio) ||
+        pickString(sessionData?.aspect_ratio) ||
+        pickString(sessionData?.aspectRatio) ||
+        '16:9';
+
+      return aspectRatio;
+    } catch (_) {
+      return '16:9';
+    }
+  }, []);
+
+  // Normalized aspect ratio for UI rendering (CSS aspect-ratio etc.)
+  const getAspectRatio = React.useCallback(async () => {
+    try {
+      const raw = await getSessionAspectRatioRaw();
+      return normalizeAspectRatioValue(raw);
     } catch (_) {
       return normalizeAspectRatioValue('16:9');
     }
-  }, []);
+  }, [getSessionAspectRatioRaw]);
 
   // Cache aspect ratio from questionnaire for consistent rendering
   useEffect(() => {
@@ -2040,7 +2086,8 @@ const getOrderedRefs = useCallback((row) => {
   };
 
   const mergeFrameToDataUrl = React.useCallback(
-    async (frame, fallbackDimensions = null) => {
+    async (frame, fallbackDimensions = null, options = {}) => {
+      const { includeOverlays = true } = options;
       if (!frame) return null;
       const base = frame?.base_image || frame?.baseImage || {};
       const imgUrl =
@@ -2080,8 +2127,15 @@ const getOrderedRefs = useCallback((row) => {
       if (textEls.length > 0) {
         drawTextElementsOnCanvas(ctx, textEls, width, height, baseWidth || width, baseHeight || height);
       }
-      if (overlayEls.length > 0) {
-        await drawOverlayElementsOnCanvas(ctx, overlayEls, width, height, baseWidth || width, baseHeight || height);
+      if (includeOverlays && overlayEls.length > 0) {
+        await drawOverlayElementsOnCanvas(
+          ctx,
+          overlayEls,
+          width,
+          height,
+          baseWidth || width,
+          baseHeight || height
+        );
       }
 
       return canvas.toDataURL('image/png');
@@ -2147,14 +2201,23 @@ const getOrderedRefs = useCallback((row) => {
     return await res.blob();
   }, []);
 
+  const blobToDataUrl = React.useCallback((blob) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }, []);
+
   const mergeAndDownloadAllImages = React.useCallback(async () => {
     let failed = 0;
     let saved = 0;
-  
+
     try {
-      console.log('🎬 Starting image save process using html2canvas...');
+      console.log('🎬 Starting image save process using frame data (no DOM capture)...');
       console.log(`📊 Total scenes: ${rows.length}`);
-      
+
       if (rows.length === 0) {
         console.warn('⚠️ No scenes found - nothing to save');
         return failed;
@@ -2166,141 +2229,103 @@ const getOrderedRefs = useCallback((row) => {
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
         const isVeo3 = modelUpper === 'VEO3';
+        const isPlotly = modelUpper === 'PLOTLY';
         const sceneImages = isVeo3 ? getVeo3ImageTabImages(row) : getSceneImages(row);
-        const images = sceneImages;
+        const images = sceneImages || [];
+        const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : [];
+        const fallbackDims = row?.imageDimensions || row?.image_dimensions || null;
 
         console.log(`\n🎬 Processing Scene ${sceneNumber} (${images.length} images)...`);
-        console.log(`📋 Scene ${sceneNumber} images:`, images.map((img, idx) => `Image ${idx + 1}: ${img ? '✅' : '❌'}`).join(', '));
+        console.log(
+          `📋 Scene ${sceneNumber} images:`,
+          images.map((img, idx) => `Image ${idx + 1}: ${img ? '✅' : '❌'}`).join(', ')
+        );
 
-        // First, select this scene to render it in the Reel Reports Image Editor section
-        console.log(`📍 Selecting scene ${sceneNumber} for rendering...`);
-        const imgs = sceneImages;
-        
-        // Reset active tab to 0 for each scene to start from a known state
-        setActiveImageTab(0);
-        
-        setSelected({
-          index: sceneIndex,
-          imageUrl: imgs[0] || '',
-          images: buildImageEntries(imgs, row?.imageFrames),
-          title: row.scene_title || 'Untitled',
-          sceneNumber: row.scene_number,
-          description: row?.description || '',
-          narration: row?.narration || '',
-          textToBeIncluded: row?.textToBeIncluded || '',
-          model: modelUpper,
-          prompts: row?.prompts || { opening_frame: {}, closing_frame: {} },
-          imageDimensions: row?.imageDimensions || null,
-          textElements: Array.isArray(row?.textElements) ? row.textElements : [],
-          imageVersionData: row?.imageVersionData || null,
-          imageFrames: Array.isArray(row?.imageFrames) ? row.imageFrames : [],
-          isEditable: !!row?.isEditable
-        });
-        
-        // Wait for DOM to update and images to render with text/overlays
-        console.log(`⏳ Waiting for DOM to render scene ${sceneNumber}...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Check if there are 2 images (tabs scenario)
-        const hasTwoImages = images.length >= 2 && images[1] && images[1].trim();
-        
-        // Process each image in this scene by capturing from DOM
+        // Process each image in this scene by rendering from frame data
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const imageUrl = images[imageIndex];
-          
+
           if (!imageUrl) {
             console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No URL, skipping`);
             continue;
           }
-          
+
           try {
-            // If there are 2 images, switch to the appropriate tab before capturing
-            if (hasTwoImages) {
-              console.log(`🔄 Scene ${sceneNumber}: Switching to tab ${imageIndex} to capture Image ${imageIndex + 1}...`);
-              setActiveImageTab(imageIndex);
-              // Wait for tab switch and DOM update
-              await new Promise(resolve => setTimeout(resolve, 600));
+            // Find the corresponding frame for this image (if any)
+            let frame = null;
+            if (frames.length > 0) {
+              frame = findFrameForImage(frames, imageUrl, imageIndex) || frames[imageIndex] || frames[0] || null;
             }
-            
-            console.log(`📷 Scene ${sceneNumber}, Image ${imageIndex + 1}: Capturing from DOM...`);
-            
-            // Find the image container in the Reel Reports Image Editor section
-            // Use data-scene-number and data-image-index attributes to target the correct container
-            const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
-            let container = null;
-            
-            // Retry finding the container (for tab switching and React rendering delays)
-            const maxRetries = hasTwoImages ? 5 : 3;
-            for (let retry = 0; retry < maxRetries; retry++) {
-              container = document.querySelector(selector);
-              if (container) {
-                break;
-              }
-              if (retry < maxRetries - 1) {
-                console.log(`⏳ Container not found (attempt ${retry + 1}/${maxRetries}), waiting...`);
-                await new Promise(resolve => setTimeout(resolve, 300));
-              }
+
+            let dataUrl = null;
+
+            if (frame) {
+              console.log(
+                `🧩 Scene ${sceneNumber}, Image ${imageIndex + 1}: Rendering from frame data with image dimensions`
+              );
+              // Use frame data + base image dimensions to build the canvas at the correct size.
+              // For PLOTLY, do NOT bake overlay images into the saved frame; overlays stay visual-only.
+              dataUrl = await mergeFrameToDataUrl(frame, fallbackDims, {
+                includeOverlays: !isPlotly,
+              });
+            } else {
+              console.log(
+                `🖼️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No frame data, using raw image dimensions`
+              );
+              // Fallback: load the raw image and render it to a canvas with its natural size
+              const imgEl = await loadImageElement(imageUrl);
+              const width = imgEl.naturalWidth || imgEl.width || 1280;
+              const height = imgEl.naturalHeight || imgEl.height || 720;
+
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(imgEl, 0, 0, width, height);
+
+              dataUrl = canvas.toDataURL('image/png');
             }
-            
-            if (!container) {
-              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Container not found in DOM after ${maxRetries} attempts (${selector})`);
-              console.log('🔍 Available containers:', document.querySelectorAll('[data-image-container]').length);
-              console.log('🔍 Available selectors:', Array.from(document.querySelectorAll('[data-image-container]')).map(el => ({
-                sceneNumber: el.getAttribute('data-scene-number'),
-                imageIndex: el.getAttribute('data-image-index')
-              })));
+
+            if (!dataUrl) {
+              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create data URL`);
               failed += 1;
               continue;
             }
-            
-            console.log(`📸 Scene ${sceneNumber}, Image ${imageIndex + 1}: Capturing with html2canvas...`);
-            
-            // Capture the container with html2canvas (includes image + text + overlays with exact positioning)
-            const canvas = await html2canvas(container, {
-              useCORS: true,
-              allowTaint: true,
-              backgroundColor: null,
-              scale: 2,  // High quality (2x resolution)
-              logging: false,  // Disable html2canvas internal logging
-              windowWidth: container.scrollWidth,
-              windowHeight: container.scrollHeight
-            });
-            
-            // Convert canvas to blob
-            const blob = await new Promise((resolve) => {
-              canvas.toBlob((blob) => {
-                resolve(blob);
-              }, 'image/png', 1.0);
-            });
-            
+
+            // Convert data URL to blob
+            const blob = await dataUrlToBlob(dataUrl);
             if (!blob) {
-              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create blob`);
-          failed += 1;
+              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create blob from data URL`);
+              failed += 1;
               continue;
             }
-            
+
             // Generate filename
             const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
-            
+
             // WORKAROUND: Store image in browser memory instead of server temp folder
             // This bypasses the /api/save-temp-image endpoint that's not working
             console.log(`💾 Scene ${sceneNumber}, Image ${imageIndex + 1}: Storing in browser memory...`);
             console.log(`   File size: ${(blob.size / 1024).toFixed(2)} KB`);
-            
+
             try {
               // Store the blob in memory using a Map
               imageStorageRef.current.set(fileName, blob);
               console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Stored in browser memory`);
-              console.log(`   Key: ${fileName}, Size: ${(blob.size / 1024).toFixed(2)} KB`);
+              console.log(
+                `   Key: ${fileName}, Size: ${(blob.size / 1024).toFixed(2)} KB, Source URL: ${imageUrl}`
+              );
               saved += 1;
             } catch (error) {
-              console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to store in memory -`, error);
+              console.error(
+                `❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to store in memory -`,
+                error
+              );
               failed += 1;
             }
-            
+
             // Small delay between images
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
+            await new Promise((resolve) => setTimeout(resolve, 200));
           } catch (error) {
             console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Error -`, error);
             failed += 1;
@@ -2310,7 +2335,7 @@ const getOrderedRefs = useCallback((row) => {
 
       console.log(`\n✅ Save process complete! Saved: ${saved}, Failed: ${failed}`);
       console.log(`📊 Total images in browser memory: ${imageStorageRef.current.size}`);
-      
+
       // No alerts - just console logs for background processing
       if (saved > 0) {
         console.log(`✅ Successfully stored ${saved} image(s) in browser memory`);
@@ -2322,9 +2347,9 @@ const getOrderedRefs = useCallback((row) => {
       // No alert - error will be handled by parent function
       throw error;
     }
-  
+
     return failed;
-  }, [rows, setSelected, setActiveImageTab, getSceneImages, getVeo3ImageTabImages]);
+  }, [rows, getSceneImages, getVeo3ImageTabImages, findFrameForImage, mergeFrameToDataUrl, dataUrlToBlob]);
 
   // Function to call save-all-frames API with temp folder images
   const callSaveAllFramesAPI = React.useCallback(async () => {
@@ -2425,9 +2450,20 @@ const getOrderedRefs = useCallback((row) => {
               console.warn(`   Available keys:`, Array.from(imageStorageRef.current.keys()));
               continue;
             }
-            
+
+            // Convert blob to base64 data URL so we can inspect the exact image being sent
+            const base64Url = await blobToDataUrl(blob);
+            console.log('🖼️ Base64 image for save-all-frames:', {
+              sceneIndex,
+              sceneNumber,
+              imageIndex,
+              fileName,
+              fileKey,
+              base64Url,
+            });
+             
             const file = new File([blob], fileName, { type: 'image/png' });
-            
+             
             // Add to FormData with file key
             formData.append('frames', file);
             imageFiles.push(fileName);
@@ -2488,7 +2524,7 @@ const getOrderedRefs = useCallback((row) => {
       console.error('❌ Error in callSaveAllFramesAPI:', error);
       throw error;
     }
-  }, [rows, getSceneImages, getVeo3ImageTabImages, getOrderedRefs]);
+  }, [rows, getSceneImages, getVeo3ImageTabImages, getOrderedRefs, blobToDataUrl]);
 
   // Function to call /v1/videos/regenerate after save-all-frames succeeds
   const callVideosRegenerateAPI = React.useCallback(async () => {
@@ -2501,7 +2537,11 @@ const getOrderedRefs = useCallback((row) => {
         return;
       }
 
-      const aspectRatio = await getAspectRatio();
+      // Use the raw aspect ratio from session data for the video generation API
+      let aspectRatio = await getSessionAspectRatioRaw();
+      // Map underscore formats from scripts to colon formats expected by backend
+      if (aspectRatio === '9_16') aspectRatio = '9:16';
+      else if (aspectRatio === '16_9') aspectRatio = '16:9';
       const subtitlesFlag = !!subtitlesEnabled;
 
       // Determine if any scene has logo enabled
@@ -2671,71 +2711,12 @@ const getOrderedRefs = useCallback((row) => {
         scenes: scenesPayload,
       };
 
-      setVideoGenProgress((prev) => ({
-        ...prev,
-        visible: true,
-        step: 'queueing',
-        status: 'queueing',
-        percent: Math.max(prev.percent, 50),
-        message: ''
-      }));
-
-      console.log('📡 Calling /v1/generate-videos-queue with body:', JSON.stringify(body, null, 2));
-
-      const resp = await fetch(
-        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }
-      );
-
-      const text = await resp.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (_) {
-        data = text;
-      }
-
-      if (!resp.ok) {
-        console.error(
-          '❌ /v1/generate-videos-queue failed:',
-          resp.status,
-          text
-        );
-        throw new Error(`generate-videos-queue API failed: ${resp.status} ${text}`);
-      }
-
-      console.log('✅ /v1/generate-videos-queue success:', data);
-      console.log('📋 Full queue response:', JSON.stringify(data, null, 2));
-      
-      const jobId = data?.job_id || data?.jobId || data?.id || data?.data?.job_id || null;
-      
-      if (!jobId) {
-        console.error('❌ No job_id in generate-videos-queue response. Full response:', JSON.stringify(data, null, 2));
-        throw new Error('No job_id received from generate-videos-queue API');
-      }
-      
-      const jobIdString = String(jobId).trim();
-      if (!jobIdString || jobIdString === 'null' || jobIdString === 'undefined') {
-        console.error('❌ Invalid job_id:', jobId);
-        throw new Error('Invalid job_id received from regenerate API');
-      }
-      
-      console.log('📋 Job ID received (validated):', jobIdString);
-
-      setVideoGenProgress((prev) => ({
-        ...prev,
-        step: 'queued',
-        status: 'queued',
-        percent: Math.max(prev.percent, 60),
-        jobId: jobIdString,
-        message: 'Video job queued successfully'
-      }));
-
-      return jobIdString;
+      // 🔕 TEMPORARILY DISABLE generate-videos-queue API
+      // The API call below is intentionally commented out for now.
+      // We only save all frames and skip queueing video generation.
+      console.log('⚠️ Skipping /v1/generate-videos-queue API call (temporarily disabled).');
+      console.log('📦 Prepared videos/regenerate payload (not sent):', JSON.stringify(body, null, 2));
+      return null;
     } catch (error) {
       setVideoGenProgress((prev) => ({
         ...prev,
@@ -2747,7 +2728,7 @@ const getOrderedRefs = useCallback((row) => {
       console.error('❌ Error in callVideosRegenerateAPI:', error);
       throw error;
     }
-  }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getAspectRatio, transitionPresets]);
+  }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getSessionAspectRatioRaw, transitionPresets]);
 
   const handleGenerateVideosClick = React.useCallback(async (e) => {
     // Prevent any default behavior and navigation
@@ -2830,13 +2811,11 @@ const getOrderedRefs = useCallback((row) => {
             message: ''
           }));
 
-          console.log('📡 Step 3: Calling /v1/videos/regenerate...');
-          const newJobId = await callVideosRegenerateAPI();
-          if (newJobId) {
-            startVideoRedirectFlow(newJobId);
-          }
-
-          console.log('✅ Process completed successfully - all frames saved and regeneration triggered');
+          // NOTE:
+          // For now we stop after save-all-frames succeeds and DO NOT call
+          // the generate-videos-queue API. Video generation / redirection
+          // is intentionally skipped as requested.
+          console.log('✅ Process completed successfully - all frames saved (video queue API skipped)');
 
         } catch (apiError) {
           console.error('❌ Error in save-all-frames or regenerate API:', apiError);
@@ -2875,7 +2854,7 @@ const getOrderedRefs = useCallback((row) => {
     
     // Prevent any navigation or reload
     return false;
-  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, callVideosRegenerateAPI, startVideoRedirectFlow]);
+  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI]);
 
   // Track natural dimensions of loaded images to align overlays more precisely
   const handleNaturalSize = React.useCallback((url, imgEl) => {
@@ -2932,34 +2911,33 @@ const getOrderedRefs = useCallback((row) => {
       <div className="flex items-center justify-between p-4 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-[#000]">Storyboard</h3>
         <div className="flex items-center gap-2">
-          {hasVideos ? (
+          <button
+            type="button"
+            onClick={async (e) => {
+              if (e) {
+                if (typeof e.preventDefault === 'function') e.preventDefault();
+                if (typeof e.stopPropagation === 'function') e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+              }
+              await handleGenerateVideosClick(e);
+              return false;
+            }}
+            onMouseDown={(e) => {
+              if (e && typeof e.preventDefault === 'function') {
+                e.preventDefault();
+              }
+            }}
+            disabled={isPreparingDownloads || videoGenProgress.visible}
+            className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {getVideoProgressLabel()}
+          </button>
+          {hasVideos && (
             <button
               onClick={() => { if (typeof onGoToVideos === 'function') onGoToVideos(); }}
               className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800"
             >
               Go to Videos
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={async (e) => {
-                if (e) {
-                  if (typeof e.preventDefault === 'function') e.preventDefault();
-                  if (typeof e.stopPropagation === 'function') e.stopPropagation();
-                  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-                }
-                await handleGenerateVideosClick(e);
-                return false;
-              }}
-              onMouseDown={(e) => {
-                if (e && typeof e.preventDefault === 'function') {
-                  e.preventDefault();
-                }
-              }}
-              disabled={isPreparingDownloads || videoGenProgress.visible}
-              className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {getVideoProgressLabel()}
             </button>
           )}
           {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back to Chat</button>)}
@@ -3309,7 +3287,9 @@ const getOrderedRefs = useCallback((row) => {
                       data-image-index="0"
                       style={{
                         aspectRatio: cssAspectRatio,
-                        minHeight: '200px'
+                        ...(isPortrait9x16
+                          ? { width: '500px', height: '100%' }
+                          : { width: '100%', height: '100%' })
                       }}
                     >
                       {(() => {
@@ -3590,7 +3570,9 @@ const getOrderedRefs = useCallback((row) => {
                       data-image-index="1"
                       style={{
                         aspectRatio: cssAspectRatio,
-                        minHeight: '200px'
+                        ...(isPortrait9x16
+                          ? { width: '500px', height: '100%' }
+                          : { width: '100%', height: '100%' })
                       }}
                     >
                       {(() => {
@@ -4535,7 +4517,11 @@ const getOrderedRefs = useCallback((row) => {
                       return (
                         <div
                           className={`grid ${gridCols} gap-0 w-full bg-black`}
-                          style={{ aspectRatio: cssAspectRatio }}
+                          style={{ aspectRatio: cssAspectRatio,
+                          ...(isPortrait9x16
+                            ? { height: '268px' }
+                            : {})
+                           }}
                         >
                           {first && (
                             <div className="w-full h-full bg-black flex items-center justify-center">
