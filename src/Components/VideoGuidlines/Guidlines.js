@@ -791,6 +791,7 @@ const Guidlines = () => {
   // Voice modal tab: 'record' or 'upload'
   const [voiceModalTab, setVoiceModalTab] = useState('record');
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [voiceName, setVoiceName] = useState('');
 
   useEffect(() => {
     let t;
@@ -1819,7 +1820,7 @@ const Guidlines = () => {
                 <FaMicrophone className="w-6 h-6" />
               </button>
             ))}
-            <button onClick={triggerFileUpload} className="w-16 h-16 rounded-full bg-gray-200 text-gray-600 hover:bg-gray-300 transition-all duration-200 flex items-center justify-center relative group" title="Upload new voice">
+            <button onClick={() => setIsVoiceModalOpen(true)} className="w-16 h-16 rounded-full bg-gray-200 text-gray-600 hover:bg-gray-300 transition-all duration-200 flex items-center justify-center relative group" title="Upload new voice">
               <FaPlus className="w-6 h-6" />
               <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-black rounded-full flex items-center justify-center">
                 <FaUpload className="w-3 h-3 text-white" />
@@ -1991,8 +1992,29 @@ const Guidlines = () => {
           <div className="bg-white w-[96%] max-w-4xl rounded-xl shadow-2xl p-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-gray-900">Add Voice</h3>
-              <button onClick={() => setIsVoiceModalOpen(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+              <button onClick={() => {
+                setIsVoiceModalOpen(false);
+                setVoiceName('');
+                setVoiceFilesForUpload([]);
+                setPendingVoiceBlobs([]);
+                setPendingVoiceUrls([]);
+              }} className="text-gray-500 hover:text-gray-700">✕</button>
             </div>
+            
+            {/* Name Input */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Voice Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={voiceName}
+                onChange={(e) => setVoiceName(e.target.value)}
+                placeholder="Enter voice name"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            
             {/* Tabs */}
             <div className="flex items-center gap-2 mb-4">
               <button
@@ -2067,41 +2089,125 @@ const Guidlines = () => {
                   ref={voiceModalFileInputRef}
                   type="file"
                   accept="audio/*"
-                  multiple
                   className="hidden"
-                  onChange={(e) => setVoiceFilesForUpload(Array.from(e.target.files || []))}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    setVoiceFilesForUpload(files.length > 0 ? [files[0]] : []);
+                  }}
                 />
-                <button onClick={() => voiceModalFileInputRef.current && voiceModalFileInputRef.current.click()} className="px-3 py-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm">Choose Files</button>
+                <button onClick={() => voiceModalFileInputRef.current && voiceModalFileInputRef.current.click()} className="px-3 py-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm">Choose File</button>
                 {voiceFilesForUpload && voiceFilesForUpload.length > 0 && (
-                  <ul className="mt-2 text-xs text-gray-700 list-disc ml-5">
-                    {voiceFilesForUpload.map((f, i) => (<li key={i}>{f.name}</li>))}
-                  </ul>
+                  <div className="mt-2 text-xs text-gray-700">
+                    <p className="font-medium">Selected file:</p>
+                    <p className="text-gray-600">{voiceFilesForUpload[0].name}</p>
+                  </div>
                 )}
               </div>
             )}
             <div className="mt-4 flex items-center justify-end gap-2">
-                <button onClick={() => setIsVoiceModalOpen(false)} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
+                <button onClick={() => {
+                  setIsVoiceModalOpen(false);
+                  setVoiceName('');
+                  setVoiceFilesForUpload([]);
+                  setPendingVoiceBlobs([]);
+                  setPendingVoiceUrls([]);
+                }} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
               <button
                 onClick={async () => {
                   try {
                     setVoiceSaveMsg('');
                     setIsSavingBrandVoices(true);
-                    const toMp3File = (blob, idx) => new File([blob], `recorded_${Date.now()}_${idx}.mp3`, { type: 'audio/mpeg' });
-                    const filesFromBlobs = (pendingVoiceBlobs || []).map((b, i) => toMp3File(b, i));
-                    const combined = [...(voiceFilesForUpload || []), ...filesFromBlobs];
-                    if (combined.length === 0) { setVoiceSaveMsg('Please upload or record a voice first.'); return; }
-                    await uploadBrandAssets({ userId: token, files: { voiceovers: combined } });
-                    setVoiceFilesForUpload([]);
-                    try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) {}
-                    setPendingVoiceUrls([]); setPendingVoiceBlobs([]);
-                    const refreshed = await getBrandAssets(token);
-                    const list = Array.isArray(refreshed?.voiceovers) ? refreshed.voiceovers : (Array.isArray(refreshed?.voiceover) ? refreshed.voiceover : (refreshed?.voices || []));
-                    setBrandVoices(list);
+                    
+                    // Validate name
+                    if (!voiceName || !voiceName.trim()) {
+                      setVoiceSaveMsg('Please enter a voice name.');
+                      return;
+                    }
+                    
+                    // Get the file to upload
+                    let fileToUpload = null;
+                    
+                    if (voiceModalTab === 'record') {
+                      // Use recorded voice
+                      if (!pendingVoiceBlobs || pendingVoiceBlobs.length === 0) {
+                        setVoiceSaveMsg('Please record a voice first.');
+                        return;
+                      }
+                      const toMp3File = (blob) => new File([blob], `recorded_${Date.now()}.mp3`, { type: 'audio/mpeg' });
+                      fileToUpload = toMp3File(pendingVoiceBlobs[pendingVoiceBlobs.length - 1]);
+                    } else {
+                      // Use uploaded file
+                      if (!voiceFilesForUpload || voiceFilesForUpload.length === 0) {
+                        setVoiceSaveMsg('Please upload a voice file first.');
+                        return;
+                      }
+                      fileToUpload = voiceFilesForUpload[0];
+                    }
+                    
+                    // Get the tone type for the API (professional, casual, humorous, storytelling)
+                    // Use selectedTone, defaulting to 'professional' if not set or if 'other'
+                    const toneType = (selectedTone && selectedTone !== 'other') 
+                      ? selectedTone.toLowerCase() 
+                      : 'professional';
+                    
+                    // Upload to the new API endpoint
+                    const form = new FormData();
+                    form.append('user_id', token);
+                    form.append('name', voiceName.trim());
+                    form.append('type', toneType); // Use tone (professional, casual, humorous, storytelling)
+                    form.append('file', fileToUpload);
+                    
+                    const uploadResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-voiceover', {
+                      method: 'POST',
+                      body: form
+                    });
+                    
+                    if (!uploadResp.ok) {
+                      const errorText = await uploadResp.text().catch(() => '');
+                      throw new Error(`Upload failed: ${uploadResp.status} ${errorText}`);
+                    }
+                    
+                    // Call get brand assets API to refresh the list (using same format as initial load)
+                    const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`);
+                    if (!getResp.ok) {
+                      throw new Error(`Failed to fetch brand assets: ${getResp.status}`);
+                    }
+                    
+                    const assets = await getResp.json().catch(() => ({}));
+                    // Parse voiceovers using the same logic as initial load
+                    const voices = Array.isArray(assets?.voiceovers)
+                      ? assets.voiceovers
+                      : (Array.isArray(assets?.voiceover)
+                        ? assets.voiceover
+                        : (assets?.voices || []));
+                    
+                    // Update brand voices state - this will trigger uniqueBrandVoiceOptions to recalculate
+                    // and the UI will automatically show the updated voiceover list
+                    setBrandVoices(voices);
+                    
+                    // Update localStorage to match initial load behavior
                     try {
-                      const urls = list.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean);
+                      const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean);
                       localStorage.setItem('brand_voiceover_urls', JSON.stringify(urls));
                     } catch (_) { /* noop */ }
-                    setIsVoiceModalOpen(false);
+                    
+                    // The uniqueBrandVoiceOptions useMemo will automatically recalculate when brandVoices changes
+                    // This ensures the newly uploaded voiceover appears in the list immediately
+                    
+                    // Reset form
+                    setVoiceName('');
+                    setVoiceFilesForUpload([]);
+                    try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) {}
+                    setPendingVoiceUrls([]);
+                    setPendingVoiceBlobs([]);
+                    setVoiceSaveMsg('Voice uploaded successfully!');
+                    
+                    // Close modal after a brief delay to show success message
+                    // The voiceover list will automatically update and show the new voiceover
+                    setTimeout(() => {
+                      setIsVoiceModalOpen(false);
+                      setVoiceSaveMsg('');
+                    }, 1500);
                   } catch (e) {
                     setVoiceSaveMsg(e?.message || 'Failed to save');
                   } finally {

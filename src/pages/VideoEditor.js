@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Play, Pause, SkipBack, SkipForward, Scissors, 
   Layers, Download, Upload, Settings, 
   Monitor, ArrowRightLeft, Move, GripVertical, 
-  Film, Plus, Trash2, X, Clock, Zap, Square
+  Film, Plus, Trash2, X, Clock, Zap, Square,
+  ArrowLeft, ArrowRight
 } from 'lucide-react';
 import RecordRTC from 'recordrtc';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 /**
  * NEXUS EDIT - MULTI-TRACK VIDEO EDITOR
@@ -14,8 +18,50 @@ import RecordRTC from 'recordrtc';
  */
 
 // --- Global Constants ---
-const TRANSITION_TYPES = ['None', 'Fade', 'Dip To Black', 'Slide Right'];
-const TRANSITION_DURATION = 0.5; // seconds
+const FFMPEG_TRANSITIONS = [
+  { id: 'none', label: 'None' },
+  { id: 'fade', label: 'Fade' },
+  { id: 'wipeleft', label: 'Wipe Left' },
+  { id: 'wiperight', label: 'Wipe Right' },
+  { id: 'wipeup', label: 'Wipe Up' },
+  { id: 'wipedown', label: 'Wipe Down' },
+  { id: 'slideleft', label: 'Slide Left' },
+  { id: 'slideright', label: 'Slide Right' },
+  { id: 'slideup', label: 'Slide Up' },
+  { id: 'slidedown', label: 'Slide Down' },
+  { id: 'squeezeleft', label: 'Squeeze Left' },
+  { id: 'squeezeright', label: 'Squeeze Right' },
+  { id: 'squeezeup', label: 'Squeeze Up' },
+  { id: 'squeezedown', label: 'Squeeze Down' },
+  { id: 'circlecrop', label: 'Circle Crop' },
+  { id: 'rectcrop', label: 'Rect Crop' },
+  { id: 'distance', label: 'Distance' },
+  { id: 'fadeblack', label: 'Fade Black' },
+  { id: 'fadewhite', label: 'Fade White' },
+  { id: 'radial', label: 'Radial' },
+  { id: 'smoothleft', label: 'Smooth Left' },
+  { id: 'smoothright', label: 'Smooth Right' },
+  { id: 'smoothup', label: 'Smooth Up' },
+  { id: 'smoothdown', label: 'Smooth Down' },
+  { id: 'circleopen', label: 'Circle Open' },
+  { id: 'circleclose', label: 'Circle Close' },
+  { id: 'vertopen', label: 'Vertical Open' },
+  { id: 'vertclose', label: 'Vertical Close' },
+  { id: 'horzopen', label: 'Horizontal Open' },
+  { id: 'horzclose', label: 'Horizontal Close' },
+  { id: 'dissolve', label: 'Dissolve' },
+  { id: 'pixelize', label: 'Pixelize' },
+  { id: 'diagtl', label: 'Diag Top-Left' },
+  { id: 'diagtr', label: 'Diag Top-Right' },
+  { id: 'diagbl', label: 'Diag Bottom-Left' },
+  { id: 'diagbr', label: 'Diag Bottom-Right' },
+  { id: 'hlslice', label: 'Horizontal Slice Left' },
+  { id: 'hrslice', label: 'Horizontal Slice Right' },
+  { id: 'vuslice', label: 'Vertical Slice Up' },
+  { id: 'vdslice', label: 'Vertical Slice Down' },
+  { id: 'hblur', label: 'Horizontal Blur' }
+];
+const DEFAULT_TRANSITION_DURATION = 0.5; // seconds
 // FAKE_EXPORT_URL is used to simulate the final encoded video download in the browser.
 const FAKE_EXPORT_URL = 'data:video/mp4;base64,GkXfo6NChoEBQveBAULygQRC84EIQoKEdmF2Jic2SAp3d2ViZQEAAAAAAAAFTgSgABRbmjrQltNErD5T+v4rB+Vv+QvB9i4b24gEAAAAAAAAAAgAAABHo+xHghAEAAAAAAAAYu0QoAAAAAAAAfSWhAIIAABAAqAAAAH3FhZ2JpbiB0ZXN0IG92ZXJsYXkgc2ltdWxhdGlvbi4=';
 
@@ -48,6 +94,8 @@ const formatTime = (seconds) => {
 };
 
 export default function VideoEditor({ initialTracks = null, initialAudioTracks = null }) {
+  const navigate = useNavigate();
+  
   // --- Global Sequence State ---
   // tracks[0] = V1 (Primary), tracks[1+] = Overlay layers (V2, V3, V4, etc.)
   const [tracks, setTracks] = useState(initialTracks || [[], []]);
@@ -66,9 +114,158 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       setAudioTracks(initialAudioTracks);
     }
   }, [initialAudioTracks]);
+  
+  // FFmpeg and session state
+  const ffmpegRef = useRef(null);
+  const [isFFmpegLoaded, setIsFFmpegLoaded] = useState(false);
+  const [sessionData, setSessionData] = useState({ session_id: '', user_id: '' });
+  const [isFetchingSession, setIsFetchingSession] = useState(false);
+  
+  // Load FFmpeg.wasm
+  useEffect(() => {
+    const loadFFmpeg = async () => {
+      try {
+        // Check if SharedArrayBuffer is available (required for FFmpeg.wasm)
+        if (typeof SharedArrayBuffer === 'undefined') {
+          console.warn('⚠️ SharedArrayBuffer is not available. FFmpeg.wasm may not work properly.');
+          console.warn('⚠️ This usually means the server needs to set Cross-Origin headers.');
+        }
+        
+        console.log('🔄 Initializing FFmpeg.wasm...');
+        const ffmpeg = new FFmpeg();
+        ffmpegRef.current = ffmpeg;
+        
+        // Listen to FFmpeg logs for debugging
+        ffmpeg.on('log', ({ message }) => {
+          console.log('FFmpeg:', message);
+        });
+        
+        // Load FFmpeg core - try local files first, then CDN fallbacks
+        console.log('📥 Loading FFmpeg core...');
+        
+        const loadSources = [
+          {
+            name: 'Local files',
+            coreURL: '/ffmpeg-core.js',
+            wasmURL: '/ffmpeg-core.wasm',
+            useToBlob: true
+          },
+          {
+            name: 'jsDelivr CDN',
+            baseURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm',
+            useToBlob: true
+          },
+          {
+            name: 'unpkg CDN',
+            baseURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
+            useToBlob: true
+          },
+          {
+            name: 'esm.sh CDN',
+            baseURL: 'https://esm.sh/@ffmpeg/core@0.12.6/dist/esm',
+            useToBlob: true
+          }
+        ];
+        
+        let loaded = false;
+        let lastError = null;
+        
+        for (const source of loadSources) {
+          try {
+            console.log(`🔄 Trying ${source.name}...`);
+            
+            let coreURL, wasmURL;
+            
+            if (source.useToBlob) {
+              if (source.baseURL) {
+                // Use CDN with toBlobURL
+                coreURL = await toBlobURL(`${source.baseURL}/ffmpeg-core.js`, 'text/javascript');
+                wasmURL = await toBlobURL(`${source.baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+              } else {
+                // Use local files with toBlobURL
+                coreURL = await toBlobURL(source.coreURL, 'text/javascript');
+                wasmURL = await toBlobURL(source.wasmURL, 'application/wasm');
+              }
+            } else {
+              // Direct URLs (fallback)
+              coreURL = source.coreURL;
+              wasmURL = source.wasmURL;
+            }
+            
+            await ffmpeg.load({
+              coreURL,
+              wasmURL,
+            });
+            console.log(`✅ Loaded FFmpeg from ${source.name}`);
+            loaded = true;
+            break;
+          } catch (error) {
+            console.warn(`⚠️ Failed to load from ${source.name}:`, error.message);
+            lastError = error;
+            // Continue to next source
+          }
+        }
+        
+        if (!loaded) {
+          throw new Error(`Failed to load FFmpeg from all sources. Last error: ${lastError?.message || 'Unknown error'}`);
+        }
+        
+        setIsFFmpegLoaded(true);
+        console.log('✅ FFmpeg.wasm loaded successfully and ready to use');
+      } catch (error) {
+        console.error('❌ Failed to load FFmpeg.wasm:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        });
+        // Set to null so we know it failed
+        ffmpegRef.current = null;
+        setIsFFmpegLoaded(false);
+      }
+    };
+    
+    loadFFmpeg();
+  }, []);
+  
+  // Load session data from localStorage at start
+  useEffect(() => {
+    const loadSessionData = () => {
+      try {
+        // Get from localStorage first (most reliable)
+        const storedSessionId = localStorage.getItem('session_id') || '';
+        const storedUserId = localStorage.getItem('token') || localStorage.getItem('user_id') || '';
+        
+        console.log('📋 Loading session data from localStorage:', {
+          session_id: storedSessionId,
+          user_id: storedUserId
+        });
+        
+        if (storedSessionId && storedUserId) {
+          setSessionData({ session_id: storedSessionId, user_id: storedUserId });
+          console.log('✅ Session data loaded from localStorage');
+        } else {
+          // Try to fetch from API as fallback
+          fetchSessionData();
+        }
+      } catch (error) {
+        console.error('Error loading session data:', error);
+        // Fallback to API fetch
+        fetchSessionData();
+      }
+    };
+    
+    loadSessionData();
+  }, []);
   const [selectedClipId, setSelectedClipId] = useState(null);
   const [activeTransitionId, setActiveTransitionId] = useState(null); 
   const [transitions, setTransitions] = useState({}); 
+  const [transitionDurations, setTransitionDurations] = useState({});
+  const [hoveredTransitionId, setHoveredTransitionId] = useState(null);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishForm, setPublishForm] = useState({ name: '' });
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [showPublishUploading, setShowPublishUploading] = useState(false);
 
   // --- Playback State ---
   const [isPlaying, setIsPlaying] = useState(false);
@@ -468,13 +665,15 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       const timeRemaining = (activeClip.trimEnd - activeClip.trimStart) - (localTime - activeClip.trimStart);
       const nextClipExists = tracks[0][index + 1];
       const transitionKey = nextClipExists ? `${activeClip.id}-${nextClipExists.id}` : null;
-      const transitionType = transitionKey ? transitions[transitionKey] : null;
+      const rawTransitionType = transitionKey ? transitions[transitionKey] : null;
+      const transitionType = normalizeTransitionForPlayback(rawTransitionType);
+      const transitionDuration = transitionKey ? (transitionDurations[transitionKey] || DEFAULT_TRANSITION_DURATION) : DEFAULT_TRANSITION_DURATION;
 
       let currentTransitionEffect = null;
       if (transitionType) {
-         if (timeRemaining <= TRANSITION_DURATION && timeRemaining > 0) {
+         if (timeRemaining <= transitionDuration && timeRemaining > 0) {
            currentTransitionEffect = `transition-out-${transitionType}`;
-         } else if (localTime - activeClip.trimStart < TRANSITION_DURATION && index > 0) {
+         } else if (localTime - activeClip.trimStart < transitionDuration && index > 0) {
             currentTransitionEffect = `transition-in-${transitionType}`;
          }
       }
@@ -482,13 +681,18 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       setTransitionEffect(currentTransitionEffect);
       
       if (playerContainer) {
+        playerContainer.style.setProperty('--transition-duration', `${transitionDuration}s`);
         // NOTE: Tailwind classes need to be directly applied, using template literals for class names might fail tree-shaking/JIT compilation in some environments, but we proceed for demonstration.
-        playerContainer.className = `player-container relative shadow-2xl shadow-black/50 group transition-all duration-[${TRANSITION_DURATION}s] ${currentTransitionEffect || ''}`;
+        playerContainer.className = `player-container relative shadow-2xl shadow-black/50 group transition-all ${currentTransitionEffect || ''}`;
       }
 
       // --- Source Swap Logic ---
       const currentSrc = videoElement.getAttribute('src'); 
       if (currentSrc !== activeClip.url) {
+        // Set crossOrigin before setting src to prevent canvas tainting
+        if (!videoElement.crossOrigin) {
+          videoElement.crossOrigin = 'anonymous';
+        }
         videoElement.src = activeClip.url;
         if (playerContainer) {
             playerContainer.className = `player-container relative shadow-2xl shadow-black/50 group`;
@@ -519,6 +723,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       const currentSrc = videoElement.getAttribute('src');
       
       if (firstClip && currentSrc !== firstClip.url) {
+        // Set crossOrigin before setting src to prevent canvas tainting
+        if (!videoElement.crossOrigin) {
+          videoElement.crossOrigin = 'anonymous';
+        }
         videoElement.src = firstClip.url;
         videoElement.currentTime = firstClip.trimStart || 0;
         if (playerContainer) {
@@ -544,7 +752,8 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
 
   // --- EXPORT LOGIC (Simplified) ---
 
-  const handleExport = async () => {
+  const handleExport = async (options = {}) => {
+    const { suppressAlerts = false, onComplete } = options;
     if (tracks[0].length === 0) {
         alert("Please add clips to the V1 (Primary) track before attempting to export.");
         return;
@@ -575,15 +784,15 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               const cacheKey = `${trackIndex}-${overlayClip.url}`;
               if (overlayClip.type === 'video') {
                 const tempVideo = document.createElement('video');
+                tempVideo.crossOrigin = 'anonymous'; // Must be set BEFORE src
                 tempVideo.src = overlayClip.url;
                 tempVideo.muted = true;
-                tempVideo.crossOrigin = 'anonymous';
                 tempVideo.preload = 'auto';
                 overlayElementCacheRef.current.set(cacheKey, tempVideo);
                 tempVideo.load();
               } else if (overlayClip.type === 'image') {
                 const tempImg = new Image();
-                tempImg.crossOrigin = 'anonymous';
+                tempImg.crossOrigin = 'anonymous'; // Must be set BEFORE src
                 tempImg.src = overlayClip.url;
                 overlayElementCacheRef.current.set(cacheKey, tempImg);
               }
@@ -637,7 +846,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       drawLoop();
       
       // Get canvas stream for video
-      const canvasStream = canvas.captureStream(30); // 30 FPS
+      let canvasStream;
+      try {
+        canvasStream = canvas.captureStream(30); // 30 FPS
+      } catch (error) {
+        // Canvas is tainted - likely due to cross-origin resources
+        console.error('❌ Failed to capture canvas stream:', error);
+        throw new Error('Export failed: Canvas contains cross-origin resources. Please ensure all videos and images are served with proper CORS headers, or use resources from the same origin.');
+      }
       
       // Create audio mixing context to combine all audio sources
       let audioContext = null;
@@ -800,7 +1016,13 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             
             const blobUrl = URL.createObjectURL(blob);
             setExportUrl(blobUrl);
-      setIsProcessing(false);
+            setIsProcessing(false);
+            if (onComplete) {
+              Promise.resolve(onComplete(blob, blobUrl)).catch((cbError) => {
+                console.error('Post-export callback failed:', cbError);
+                alert(`Post-export action failed: ${cbError.message}`);
+              });
+            }
             
             // Cleanup
             exportCanvasRef.current = null;
@@ -831,7 +1053,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             
             console.log('✅ Export complete! Video URL:', blobUrl);
             console.log('📦 Final blob type:', blob.type, 'size:', blob.size);
-            alert('Export complete! Click "Download Final Video" to save.');
+            if (!suppressAlerts) {
+              alert('Export complete! Click "Download Final Video" to save.');
+            }
             resolve();
           } catch (error) {
             console.error('Error processing recording:', error);
@@ -1016,6 +1240,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       // 1. Draw base layer (V1) video
       const videoElement = videoRef.current || playerContainer.querySelector('.player-container > video');
       
+      // Ensure crossOrigin is set on video element to prevent canvas tainting
+      if (videoElement && !videoElement.crossOrigin) {
+        videoElement.crossOrigin = 'anonymous';
+      }
+      
       if (videoElement && videoElement.readyState >= 2) {
         // Set playback speed if clip has speed property
         const activeClip = v1ClipInfo?.clip;
@@ -1075,6 +1304,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         // Find overlay by checking absolutely positioned elements
         for (const media of [...allVideos, ...allImages]) {
           if (media !== baseVideo) {
+            // Ensure crossOrigin is set to prevent canvas tainting
+            if (!media.crossOrigin) {
+              media.crossOrigin = 'anonymous';
+            }
             const parent = media.closest('[style*="absolute"]');
             if (parent && media.src === overlayClip.url) {
               overlayElementToDraw = media;
@@ -1095,15 +1328,15 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           try {
             if (overlayClip.type === 'video') {
               const tempVideo = document.createElement('video');
+              tempVideo.crossOrigin = 'anonymous'; // Must be set BEFORE src
               tempVideo.src = overlayClip.url;
               tempVideo.muted = true;
-              tempVideo.crossOrigin = 'anonymous';
               tempVideo.preload = 'auto';
               overlayElementCacheRef.current.set(cacheKey, tempVideo);
               overlayElementToDraw = tempVideo;
             } else if (overlayClip.type === 'image') {
               const tempImg = new Image();
-              tempImg.crossOrigin = 'anonymous';
+              tempImg.crossOrigin = 'anonymous'; // Must be set BEFORE src
               tempImg.src = overlayClip.url;
               overlayElementCacheRef.current.set(cacheKey, tempImg);
               overlayElementToDraw = tempImg;
@@ -1377,6 +1610,271 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     return null;
   }, [selectedClipId, tracks, audioTracks]);
 
+  const activeTransitionDuration = activeTransitionId ? (transitionDurations[activeTransitionId] || DEFAULT_TRANSITION_DURATION) : DEFAULT_TRANSITION_DURATION;
+
+  const normalizeTransitionForPlayback = (id) => {
+    if (!id) return null;
+    const map = {
+      fade: 'fade',
+      fadewhite: 'fade',
+      fadeblack: 'dip-to-black',
+      'dip-to-black': 'dip-to-black',
+      slideleft: 'slide-left',
+      wipeleft: 'slide-left',
+      wiperight: 'slide-right',
+      wiperup: 'slide-up',
+      wiperdown: 'slide-down',
+      slideright: 'slide-right',
+      slideup: 'slide-up',
+      slidedown: 'slide-down',
+      smoothleft: 'slide-left',
+      smoothright: 'slide-right',
+      smoothup: 'slide-up',
+      smoothdown: 'slide-down',
+    };
+    return map[id] || 'fade';
+  };
+
+  const updateTrimForClip = (clipId, updater) => {
+    let updated = false;
+    setTracks(prev => prev.map(track =>
+      track.map(clip => {
+        if (clip.id !== clipId) return clip;
+        updated = true;
+        return updater(clip);
+      })
+    ));
+    if (!updated) {
+      setAudioTracks(prev => prev.map(clip => {
+        if (clip.id !== clipId) return clip;
+        return updater(clip);
+      }));
+    }
+  };
+
+  const moveClipByOne = (trackIndex, fromIndex, direction) => {
+    setTracks(prev => {
+      const newTracks = prev.map(t => [...t]);
+      const track = newTracks[trackIndex];
+      if (!track) return prev;
+      const targetIndex = direction === 'left' ? fromIndex - 1 : fromIndex + 1;
+      if (targetIndex < 0 || targetIndex >= track.length) return prev;
+      [track[fromIndex], track[targetIndex]] = [track[targetIndex], track[fromIndex]];
+      return newTracks;
+    });
+  };
+
+  const getStoredSessionFromStorage = () => {
+    if (typeof window === 'undefined') return { session_id: '', user_id: '' };
+    const stores = [localStorage, sessionStorage];
+    const keys = [
+      'session_id',
+      'sessionId',
+      'user_id',
+      'userId'
+    ];
+    const result = { session_id: '', user_id: '' };
+    for (const store of stores) {
+      try {
+        result.session_id = result.session_id || store.getItem('session_id') || store.getItem('sessionId') || '';
+        result.user_id = result.user_id || store.getItem('user_id') || store.getItem('userId') || '';
+      } catch (_) {
+        // ignore storage access issues
+      }
+    }
+    return result;
+  };
+
+  const fetchSessionData = async () => {
+    setIsFetchingSession(true);
+    try {
+      let session_id = '';
+      let user_id = '';
+
+      // First priority: localStorage
+      try {
+        session_id = localStorage.getItem('session_id') || '';
+        user_id = localStorage.getItem('token') || localStorage.getItem('user_id') || '';
+        console.log('📋 Session data from localStorage:', { session_id, user_id });
+      } catch (e) {
+        console.warn('Error reading localStorage:', e);
+      }
+
+      // Second priority: fetch from user session API if not in localStorage
+      if ((!session_id || !user_id) && typeof fetch !== 'undefined') {
+        try {
+          const res = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', { credentials: 'include' });
+          if (res.ok) {
+            const data = await res.json();
+            session_id = session_id || data.session_id || '';
+            user_id = user_id || data.user_id || '';
+            console.log('📋 Session data from API:', { session_id, user_id });
+            
+            // Save to localStorage for future use
+            if (session_id) localStorage.setItem('session_id', session_id);
+            if (user_id) {
+              localStorage.setItem('token', user_id);
+              localStorage.setItem('user_id', user_id);
+            }
+          } else {
+            console.warn('Session API returned', res.status);
+          }
+        } catch (e) {
+          console.warn('Session API failed', e);
+        }
+      }
+
+      // Fallbacks
+      const globalSession = typeof window !== 'undefined' ? window.__USER_SESSION__ || {} : {};
+      const stored = getStoredSessionFromStorage();
+      session_id = session_id || globalSession.session_id || stored.session_id || '';
+      user_id = user_id || globalSession.user_id || stored.user_id || '';
+
+      console.log('✅ Final session data:', { session_id, user_id });
+      setSessionData({ session_id, user_id });
+      return { session_id, user_id };
+    } finally {
+      setIsFetchingSession(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (tracks[0].length === 0) {
+      alert('Please add clips to the V1 (Primary) track before publishing.');
+      return;
+    }
+    if (!publishForm.name) {
+      alert('Please enter a name to publish.');
+      return;
+    }
+    
+    // Get fresh session data from localStorage before publishing
+    let finalSessionId = sessionData.session_id || localStorage.getItem('session_id') || '';
+    let finalUserId = sessionData.user_id || localStorage.getItem('token') || localStorage.getItem('user_id') || '';
+    
+    if (!finalSessionId || !finalUserId) {
+      // Try to fetch one more time
+      try {
+        const freshData = await fetchSessionData();
+        finalSessionId = freshData.session_id || finalSessionId;
+        finalUserId = freshData.user_id || finalUserId;
+      } catch (e) {
+        console.error('Error fetching session data:', e);
+      }
+    }
+    
+    if (!finalSessionId || !finalUserId) {
+      alert('Missing session or user information. Please ensure you are logged in.');
+      console.error('Missing session data:', { session_id: finalSessionId, user_id: finalUserId });
+      return;
+    }
+    
+    console.log('📤 Publishing with session data:', { session_id: finalSessionId, user_id: finalUserId });
+    
+    setShowPublishModal(false);
+    setIsPublishing(true);
+    try {
+      await handleExport({
+        suppressAlerts: true,
+        onComplete: async (blob, blobUrl) => {
+          // Ensure we're working with a valid WebM blob
+          if (!blob || !blobUrl) {
+            console.error('❌ Invalid blob or blobUrl received');
+            setIsPublishing(false);
+            setShowPublishUploading(false);
+            alert('Export failed: Invalid video file');
+            return;
+          }
+
+          try {
+            // Step 1: Save WebM file locally to browser first
+            console.log('💾 Saving WebM file locally...');
+            try {
+              const link = document.createElement('a');
+              link.href = blobUrl;
+              link.download = `${publishForm.name || 'reel'}.webm`;
+              document.body.appendChild(link);
+              link.click();
+              // Give browser time to start download before cleanup
+              setTimeout(() => {
+                document.body.removeChild(link);
+              }, 200);
+              console.log('✅ Video saved locally');
+            } catch (downloadError) {
+              console.warn('⚠️ Local save failed (non-critical):', downloadError);
+              // Continue with API upload even if local save fails
+            }
+
+            // Step 2: Show loading screen and upload WebM file to webm-conversion-queue API
+            console.log('📤 Uploading WebM to conversion queue...');
+            setShowPublishUploading(true);
+            
+            console.log('📦 Blob details:', {
+              size: blob.size,
+              type: blob.type,
+              name: `${publishForm.name || 'reel'}.webm`
+            });
+            
+            const formData = new FormData();
+            formData.append('session_id', finalSessionId);
+            formData.append('user_id', finalUserId);
+            formData.append('name', publishForm.name);
+            formData.append('file', blob, `${publishForm.name || 'reel'}.webm`);
+            
+            console.log('📤 Uploading to webm-conversion-queue API:', {
+              session_id: finalSessionId,
+              user_id: finalUserId ? '***' : 'missing',
+              name: publishForm.name,
+              fileSize: blob.size,
+              fileType: blob.type
+            });
+
+            const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/webm-conversion-queue', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!response.ok) {
+              const text = await response.text();
+              throw new Error(`Upload failed: ${response.status} ${text}`);
+            }
+            
+            const responseData = await response.json().catch(() => {
+              // If response is not JSON, try parsing text
+              return { job_id: null };
+            });
+            
+            const jobId = responseData?.job_id || responseData?.jobId || responseData?.id;
+            
+            if (!jobId) {
+              throw new Error('No job_id received from API response');
+            }
+            
+            console.log('✅ Video uploaded to conversion queue. Job ID:', jobId);
+            
+            // Save job_id to localStorage
+            localStorage.setItem('webm_conversion_job_id', jobId);
+            
+            // Hide loading and redirect immediately to My Media page
+            setShowPublishUploading(false);
+            setIsPublishing(false);
+            navigate('/media');
+          } catch (error) {
+            console.error('❌ Error in onComplete callback:', error);
+            setShowPublishUploading(false);
+            setIsPublishing(false);
+            alert(`Publish failed: ${error.message}`);
+            throw error; // Re-throw so the outer catch can handle it
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Publish error:', error);
+      alert(`Publish failed: ${error.message}`);
+      setIsPublishing(false);
+    }
+  };
+
 
   // --- Drag & Trim Logic (Core) ---
   const handleDragStart = (e, clip, handle, trackIndex) => {
@@ -1390,7 +1888,8 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     }
     if (!timelineElement || totalDuration === 0) return;
 
-    const timelineWidth = timelineElement.getBoundingClientRect().width - 16;
+    const rect = timelineElement.getBoundingClientRect();
+    const timelineWidth = Math.max(timelineElement.scrollWidth, rect.width) - 16;
     const pixelsPerSecond = timelineWidth / totalDuration;
 
     setDragState({
@@ -1420,11 +1919,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             if (dragState.handle === 'start') {
               let newStart = dragState.initialTrimStart + deltaSeconds;
               newStart = Math.max(0, newStart);
-              newStart = Math.min(newStart, audioClip.trimEnd - 0.5);
+              newStart = Math.min(newStart, audioClip.trimEnd - 0.1);
               return { ...audioClip, trimStart: newStart };
             } else {
               let newEnd = dragState.initialTrimEnd + deltaSeconds;
-              newEnd = Math.max(audioClip.trimStart + 0.5, newEnd);
+              newEnd = Math.max(audioClip.trimStart + 0.1, newEnd);
               newEnd = Math.min(newEnd, audioClip.duration);
               return { ...audioClip, trimEnd: newEnd };
             }
@@ -1444,11 +1943,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 if (dragState.handle === 'start') {
                   let newStart = dragState.initialTrimStart + deltaSeconds;
                   newStart = Math.max(0, newStart);
-                  newStart = Math.min(newStart, clip.trimEnd - 0.5);
+                  newStart = Math.min(newStart, clip.trimEnd - 0.1);
                   return { ...clip, trimStart: newStart };
                 } else {
                   let newEnd = dragState.initialTrimEnd + deltaSeconds;
-                  newEnd = Math.max(clip.trimStart + 0.5, newEnd);
+                  newEnd = Math.max(clip.trimStart + 0.1, newEnd);
                   newEnd = Math.min(newEnd, clip.duration);
                   return { ...clip, trimEnd: newEnd };
                 }
@@ -1481,46 +1980,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         <div 
           key={trackIndex} 
           className="mb-4"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            if (!draggedClip) return;
-
-            const { clip, originalTrackIndex } = draggedClip;
-
-            setTracks(prevTracks => {
-                const newTracks = prevTracks.map(t => [...t]);
-                const newClip = { ...clip };
-
-                // 1. Remove from original track
-                newTracks[originalTrackIndex] = newTracks[originalTrackIndex].filter(c => c.id !== clip.id);
-
-                // 2. Add or remove transform based on target track (V2 requires transform)
-                if (trackIndex === 1 && !newClip.transform) {
-                     newClip.transform = { x: 50, y: 50, width: 30, height: 'auto', opacity: 1 };
-                } else if (trackIndex === 0 && newClip.transform) {
-                     delete newClip.transform;
-                }
-
-                // 3. Add to target track (append or replace for V2)
-                newTracks[trackIndex] = trackIndex === 1 ? [newClip] : [...newTracks[trackIndex], newClip];
-                
-                return newTracks;
-            });
-
-            setDraggedClip(null);
-          }}
         >
             <div className="flex items-center justify-between mb-1 px-1 sticky left-0">
               <span className="text-xs text-gray-700 uppercase font-bold tracking-wider flex items-center gap-2">
                 <Layers size={12} /> {trackName}
-                {draggedClip && draggedClip.originalTrackIndex !== trackIndex && (
-                    <span className="text-[#13008B] text-xs font-normal ml-2 transition-opacity">
-                        Drop Here to Move Clip
-                    </span>
-                )}
               </span>
               <button 
                 className="p-1 hover:bg-gray-200 rounded text-gray-600" 
@@ -1534,16 +1997,101 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               </button>
             </div>
             
-            <div className="relative h-14 bg-gray-100 rounded-lg border border-gray-300 flex items-center px-2 py-1 gap-0.5 overflow-visible">
+            <div 
+              className="relative h-14 bg-gray-100 rounded-lg border border-gray-300 flex items-center px-2 py-1 gap-0.5 overflow-visible cursor-pointer"
+              onMouseDown={(e) => {
+                // Only handle clicks if not clicking on a clip, handle, or playhead
+                if (e.target.closest('.clip-block') || 
+                    e.target.closest('[class*="resize"]') || 
+                    e.target.closest('[class*="handle"]') ||
+                    e.target.closest('[style*="bg-red-500"]')) {
+                  return;
+                }
+                e.preventDefault();
+                const rect = e.currentTarget.getBoundingClientRect();
+                const clickX = e.clientX - rect.left - 8; // Subtract padding
+                const timelineWidth = rect.width - 16; // Account for padding
+                if (timelineWidth > 0 && totalDuration > 0) {
+                  const clickedTime = (clickX / timelineWidth) * totalDuration;
+                  const clampedTime = Math.max(0, Math.min(totalDuration, clickedTime));
+                  setGlobalTime(clampedTime);
+                  // Pause playback when seeking
+                  if (isPlaying) {
+                    setIsPlaying(false);
+                  }
+                  
+                  // Allow dragging to scrub through timeline
+                  const handleMouseMove = (moveEvent) => {
+                    const moveX = moveEvent.clientX - rect.left - 8;
+                    const newTime = Math.max(0, Math.min(totalDuration, (moveX / timelineWidth) * totalDuration));
+                    setGlobalTime(newTime);
+                  };
+                  
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                  };
+                  
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                }
+              }}
+            >
                 {/* Global Playhead */}
                 {isPrimaryTrack && totalDuration > 0 && (
                    <div 
-                     className={`absolute top-0 bottom-0 w-0.5 bg-red-500 z-50 pointer-events-none transition-transform duration-75`}
-                     style={{ left: `calc(8px + ${(globalTime / totalDuration) * (100 - 2)}%)` }} 
+                     className={`absolute top-0 bottom-0 w-0.5 bg-red-500 z-50 transition-transform duration-75`}
+                     style={{ left: `calc(8px + ${(globalTime / totalDuration) * (100 - 2)}%)`, cursor: 'grab' }} 
+                     onMouseDown={(e) => {
+                       e.stopPropagation();
+                       const startX = e.clientX;
+                       const startTime = globalTime;
+                       const rect = e.currentTarget.parentElement.getBoundingClientRect();
+                       const timelineWidth = rect.width - 16;
+                       
+                       const handleMouseMove = (moveEvent) => {
+                         const deltaX = moveEvent.clientX - startX;
+                         const deltaTime = (deltaX / timelineWidth) * totalDuration;
+                         const newTime = Math.max(0, Math.min(totalDuration, startTime + deltaTime));
+                         setGlobalTime(newTime);
+                         if (isPlaying) {
+                           setIsPlaying(false);
+                         }
+                       };
+                       
+                       const handleMouseUp = () => {
+                         document.removeEventListener('mousemove', handleMouseMove);
+                         document.removeEventListener('mouseup', handleMouseUp);
+                       };
+                       
+                       document.addEventListener('mousemove', handleMouseMove);
+                       document.addEventListener('mouseup', handleMouseUp);
+                     }}
                    >
-                      <div className="absolute -top-3 -left-1.5 w-3 h-3 bg-red-500 rotate-45"></div>
+                      <div className="absolute -top-3 -left-1.5 w-3 h-3 bg-red-500 rotate-45 cursor-grab active:cursor-grabbing"></div>
                    </div>
                 )}
+                
+                {/* Invisible clickable overlay for timeline seeking - behind clips but clickable */}
+                <div
+                  className="absolute inset-0 z-0"
+                  onClick={(e) => {
+                    // Only handle if clicking directly on this overlay (not on clips)
+                    if (e.target === e.currentTarget) {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const clickX = e.clientX - rect.left - 8;
+                      const timelineWidth = rect.width - 16;
+                      if (timelineWidth > 0 && totalDuration > 0) {
+                        const clickedTime = (clickX / timelineWidth) * totalDuration;
+                        const clampedTime = Math.max(0, Math.min(totalDuration, clickedTime));
+                        setGlobalTime(clampedTime);
+                        if (isPlaying) {
+                          setIsPlaying(false);
+                        }
+                      }
+                    }
+                  }}
+                />
                 
                 {/* Clips Renderer */}
                 {trackClips.map((clip, index) => {
@@ -1567,22 +2115,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                       {/* Video Block */}
                       <div 
                         onClick={() => setSelectedClipId(clip.id)}
-                        draggable
-                        onDragStart={(e) => {
-                            e.stopPropagation();
-                            setDraggedClip({ clip, originalTrackIndex: trackIndex });
-                            e.dataTransfer.setData('text/plain', clip.id);
-                            setTimeout(() => e.target.style.opacity = '0.3', 0);
-                        }}
-                        onDragEnd={(e) => {
-                            e.target.style.opacity = '1';
-                            setDraggedClip(null);
-                        }}
                         className={`
                           clip-block relative h-full rounded-md cursor-grab transition-all border-2 group
                           ${isSelected ? 'border-[#13008B] ring-2 ring-[#13008B]/20 z-10' : 'border-gray-400 hover:border-gray-500'}
                           ${isActive ? 'opacity-100' : 'opacity-70'}
-                          ${!isPrimaryTrack && 'shrink-0'}
+                          shrink-0
                         `}
                         style={{ 
                           ...clipWidthStyle,
@@ -1633,26 +2170,69 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                              </div>
                            </>
                          )}
+
+                         {isPrimaryTrack && (
+                           <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto">
+                             <button
+                               onMouseDown={(e) => e.stopPropagation()}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 moveClipByOne(trackIndex, index, 'left');
+                               }}
+                               disabled={index === 0}
+                               className={`w-6 h-6 rounded-full border flex items-center justify-center text-gray-700 bg-white shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100`}
+                               title="Move clip left"
+                             >
+                               <ArrowLeft size={12} />
+                             </button>
+                             <button
+                               onMouseDown={(e) => e.stopPropagation()}
+                               onClicl={(e) => {
+                                 e.stopPropagation();
+                                 moveClipByOne(trackIndex, index, 'right');
+                               }}
+                               disabled={index === trackClips.length - 1}
+                               className={`w-6 h-6 rounded-full border flex items-center justify-center text-gray-700 bg-white shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100`}
+                               title="Move clip right"
+                             >
+                               <ArrowRight size={12} />
+                             </button>
+                           </div>
+                         )}
                       </div>
 
                       {/* Transition Node (Connector) - Only on Primary Track */}
                       {isPrimaryTrack && nextClip && (
-                        <div className="relative w-4 flex items-center justify-center z-20 -ml-2 -mr-2">
-                           <button 
-                             onClick={() => {
-                               setActiveTab('transitions');
-                               setActiveTransitionId(transitionId);
-                             }}
-                             className={`
-                               w-5 h-5 rounded-full flex items-center justify-center border transition-all transform hover:scale-110
-                               ${hasTransition 
-                                  ? 'bg-[#13008B] border-[#13008B] text-white' 
-                                  : 'bg-gray-200 border-gray-400 text-gray-600 hover:bg-gray-300 hover:text-gray-900'}
-                             `}
-                             title={`Edit Transition: ${transitions[transitionId] || 'None'}`}
-                           >
-                             <Zap size={10} />
-                           </button>
+                        <div 
+                          className="relative w-8 flex items-center justify-center z-30 -ml-1 -mr-1 group"
+                          onMouseEnter={() => setHoveredTransitionId(transitionId)}
+                          onMouseLeave={() => {
+                            if (activeTransitionId !== transitionId) {
+                              setHoveredTransitionId(null);
+                            }
+                          }}
+                        >
+                           {/* Transition Button - Show on Hover */}
+                           {(hoveredTransitionId === transitionId || activeTransitionId === transitionId) && (
+                             <button 
+                               onMouseDown={(e) => e.stopPropagation()}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 setActiveTab('transitions');
+                                 setActiveTransitionId(transitionId);
+                                 setSelectedClipId(null);
+                               }}
+                               className={`
+                                 w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all transform hover:scale-110 shadow-lg
+                                 ${hasTransition 
+                                    ? 'bg-[#13008B] border-[#13008B] text-white shadow-[#13008B]/50' 
+                                    : 'bg-white border-gray-400 text-gray-600 hover:bg-[#13008B] hover:border-[#13008B] hover:text-white'}
+                               `}
+                               title={hasTransition ? `Edit transition: ${transitions[transitionId]}` : 'Add transition'}
+                             >
+                               {hasTransition ? <Zap size={14} /> : <Plus size={14} />}
+                             </button>
+                           )}
                         </div>
                       )}
                     </React.Fragment>
@@ -1685,16 +2265,101 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           </button>
         </div>
         
-        <div className="relative h-14 bg-gray-100 rounded-lg border border-gray-300 flex items-center px-2 py-1 gap-0.5 overflow-visible">
+        <div 
+          className="relative h-14 bg-gray-100 rounded-lg border border-gray-300 flex items-center px-2 py-1 gap-0.5 overflow-visible cursor-pointer"
+          onMouseDown={(e) => {
+            // Only handle clicks if not clicking on a clip, handle, or playhead
+            if (e.target.closest('.clip-block') || 
+                e.target.closest('[class*="resize"]') || 
+                e.target.closest('[class*="handle"]') ||
+                e.target.closest('[style*="bg-red-500"]')) {
+              return;
+            }
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            const clickX = e.clientX - rect.left - 8; // Subtract padding
+            const timelineWidth = rect.width - 16; // Account for padding
+            if (timelineWidth > 0 && totalDuration > 0) {
+              const clickedTime = (clickX / timelineWidth) * totalDuration;
+              const clampedTime = Math.max(0, Math.min(totalDuration, clickedTime));
+              setGlobalTime(clampedTime);
+              // Pause playback when seeking
+              if (isPlaying) {
+                setIsPlaying(false);
+              }
+              
+              // Allow dragging to scrub through timeline
+              const handleMouseMove = (moveEvent) => {
+                const moveX = moveEvent.clientX - rect.left - 8;
+                const newTime = Math.max(0, Math.min(totalDuration, (moveX / timelineWidth) * totalDuration));
+                setGlobalTime(newTime);
+              };
+              
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+              };
+              
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+            }
+          }}
+        >
           {/* Global Playhead */}
           {totalDuration > 0 && (
             <div 
-              className={`absolute top-0 bottom-0 w-0.5 bg-red-500 z-50 pointer-events-none transition-transform duration-75`}
-              style={{ left: `calc(8px + ${(globalTime / totalDuration) * (100 - 2)}%)` }} 
+              className={`absolute top-0 bottom-0 w-0.5 bg-red-500 z-50 transition-transform duration-75`}
+              style={{ left: `calc(8px + ${(globalTime / totalDuration) * (100 - 2)}%)`, cursor: 'grab' }} 
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                const startX = e.clientX;
+                const startTime = globalTime;
+                const rect = e.currentTarget.parentElement.getBoundingClientRect();
+                const timelineWidth = rect.width - 16;
+                
+                const handleMouseMove = (moveEvent) => {
+                  const deltaX = moveEvent.clientX - startX;
+                  const deltaTime = (deltaX / timelineWidth) * totalDuration;
+                  const newTime = Math.max(0, Math.min(totalDuration, startTime + deltaTime));
+                  setGlobalTime(newTime);
+                  if (isPlaying) {
+                    setIsPlaying(false);
+                  }
+                };
+                
+                const handleMouseUp = () => {
+                  document.removeEventListener('mousemove', handleMouseMove);
+                  document.removeEventListener('mouseup', handleMouseUp);
+                };
+                
+                document.addEventListener('mousemove', handleMouseMove);
+                document.addEventListener('mouseup', handleMouseUp);
+              }}
             >
-              <div className="absolute -top-3 -left-1.5 w-3 h-3 bg-red-500 rotate-45"></div>
+              <div className="absolute -top-3 -left-1.5 w-3 h-3 bg-red-500 rotate-45 cursor-grab active:cursor-grabbing"></div>
             </div>
           )}
+          
+          {/* Invisible clickable overlay for timeline seeking - behind clips but clickable */}
+          <div
+            className="absolute inset-0 z-0"
+            onClick={(e) => {
+              // Only handle if clicking directly on this overlay (not on clips)
+              if (e.target === e.currentTarget) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const clickX = e.clientX - rect.left - 8;
+                const timelineWidth = rect.width - 16;
+                if (timelineWidth > 0 && totalDuration > 0) {
+                  const clickedTime = (clickX / timelineWidth) * totalDuration;
+                  const clampedTime = Math.max(0, Math.min(totalDuration, clickedTime));
+                  setGlobalTime(clampedTime);
+                  if (isPlaying) {
+                    setIsPlaying(false);
+                  }
+                }
+              }
+            }}
+          />
           
           {/* Audio Clips */}
           {audioTracks.map((audioClip) => {
@@ -1709,16 +2374,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               <div
                 key={audioClip.id}
                 onClick={() => setSelectedClipId(audioClip.id)}
-                draggable
-                onDragStart={(e) => {
-                  e.stopPropagation();
-                  setDraggedClip({ clip: audioClip, originalTrackIndex: 'audio' });
-                  setTimeout(() => e.target.style.opacity = '0.3', 0);
-                }}
-                onDragEnd={(e) => {
-                  e.target.style.opacity = '1';
-                  setDraggedClip(null);
-                }}
                 className={`
                   clip-block absolute h-full rounded-md cursor-grab transition-all border-2 group
                   ${isSelected ? 'border-[#13008B] ring-2 ring-[#13008B]/20 z-10' : 'border-gray-400 hover:border-gray-500'}
@@ -1886,6 +2541,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             <Component
                 ref={elementRef}
                 src={clip.url}
+                crossOrigin="anonymous"
                 className={`
                     w-full h-auto object-contain rounded-lg shadow-xl shadow-black/50 border-4 transition-all
                     ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/40' : 'border-transparent'}
@@ -1931,7 +2587,8 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         }
         
         .player-container {
-            transition: all ${TRANSITION_DURATION}s ease-in-out;
+            --transition-duration: ${DEFAULT_TRANSITION_DURATION}s;
+            transition: all var(--transition-duration) ease-in-out;
             position: relative;
             overflow: hidden;
         }
@@ -1945,7 +2602,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             inset: 0;
             background-color: black;
             opacity: 0;
-            transition: opacity ${TRANSITION_DURATION}s ease-in-out;
+            transition: opacity var(--transition-duration) ease-in-out;
             z-index: 10;
             pointer-events: none;
         }
@@ -1954,6 +2611,12 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         
         .transition-out-slide-right { transform: translateX(100%); }
         .transition-in-slide-right { transform: translateX(0); }
+        .transition-out-slide-left { transform: translateX(-100%); }
+        .transition-in-slide-left { transform: translateX(0); }
+        .transition-out-slide-up { transform: translateY(-100%); }
+        .transition-in-slide-up { transform: translateY(0); }
+        .transition-out-slide-down { transform: translateY(100%); }
+        .transition-in-slide-down { transform: translateY(0); }
 
         @keyframes pulse-red {
             0%, 100% { opacity: 1; }
@@ -2040,35 +2703,27 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             </Button>
 
             {/* EXPORT/RECORDING BUTTON */}
-            {exportUrl ? (
-                <button
-                    onClick={async () => {
-                        try {
-                            await handleDownload(exportUrl);
-                            // Don't clear URL immediately - let user download again if needed
-                            // setExportUrl(null);
-                        } catch (error) {
-                            console.error('Download failed:', error);
-                            alert(`Download failed: ${error.message}`);
-                        }
-                    }}
-                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-500 transition-all shadow-lg shadow-green-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                    <Download size={16} /> Download Final Video
-                </button>
-            ) : (
-                <Button 
-                    onClick={handleExport} 
-                    icon={Download} 
-                    disabled={tracks[0].length === 0 || isProcessing}
-                    active={!isProcessing}
-                     className={`bg-[#13008B] hover:bg-[#0f0069] text-white shadow-lg`}
-                >
-                    {isProcessing 
-                        ? 'Encoding...' 
-                        : 'Export Video'}
-                </Button>
-            )}
+            <Button 
+              onClick={async () => {
+                try {
+                  const { session_id, user_id } = await fetchSessionData();
+                  if (!session_id || !user_id) {
+                    throw new Error('Missing session or user information. Please ensure you are logged in.');
+                  }
+                  setShowPublishModal(true);
+                } catch (err) {
+                  alert(err.message);
+                }
+              }} 
+              icon={Download} 
+              disabled={tracks[0].length === 0 || isProcessing || isPublishing || isFetchingSession}
+              active={!isProcessing && !isPublishing && !isFetchingSession}
+               className={`bg-[#13008B] hover:bg-[#0f0069] text-white shadow-lg`}
+            >
+              {isProcessing || isPublishing || isFetchingSession
+                  ? 'Preparing...' 
+                  : 'Publish Reel'}
+            </Button>
 
           </div>
         </header>
@@ -2095,6 +2750,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                             className="w-full h-full object-contain bg-black relative z-10" 
                             muted={false} 
                             preload="auto"
+                            crossOrigin="anonymous"
                         />
                     )}
                     
@@ -2233,19 +2889,71 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             </div>
           </div>
 
-          {/* RIGHT SIDEBAR - CONTEXT PROPERTIES */}
-           <div className="w-80 bg-white border-l border-gray-200 overflow-y-auto shrink-0">
-            {selectedClip ? (
+         {/* RIGHT SIDEBAR - CONTEXT PROPERTIES */}
+           <div className="w-80 bg-white border-l border-gray-200 overflow-y-auto shrink-0 relative">
+            {/* Publish modal */}
+            <Modal open={showPublishModal} onClose={() => setShowPublishModal(false)}>
+              <div className="p-6 space-y-4">
+                <h3 className="text-lg font-semibold text-gray-900">Publish Reel</h3>
+                <p className="text-sm text-gray-600">Name your reel. Session/User info comes from your current session.</p>
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-semibold text-gray-700">Name</label>
+                    <input
+                      type="text"
+                      value={publishForm.name}
+                      onChange={(e) => setPublishForm(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="My Awesome Reel"
+                      className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                    <span className="font-semibold text-gray-700">Session</span>
+                    <span>Session ID: {sessionData.session_id || 'Not available'}</span>
+                    <span>User ID: {sessionData.user_id || 'Not available'}</span>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setShowPublishModal(false)}
+                    className="px-3 py-2 text-sm rounded border border-gray-300 text-gray-700 hover:bg-gray-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handlePublish}
+                    disabled={isPublishing || isProcessing}
+                    className="px-3 py-2 text-sm rounded bg-[#13008B] text-white hover:bg-[#0f0069] disabled:opacity-50"
+                  >
+                    {isPublishing ? 'Publishing...' : 'Publish'}
+                  </button>
+                </div>
+              </div>
+            </Modal>
+
+            {/* Publish uploading loading screen */}
+            {showPublishUploading && (
+              <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center px-4">
+                <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-4 max-w-md">
+                  <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto"></div>
+                  <div className="text-lg font-semibold text-[#13008B]">Uploading Video...</div>
+                  <p className="text-sm text-gray-600">Please wait while we upload your video to the conversion queue.</p>
+                </div>
+              </div>
+            )}
+            {(selectedClip || activeTab === 'transitions') ? (
               <div className="p-5">
                  {/* Header for Selected Clip */}
-                 <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-300">
-                    <div className="flex flex-col">
-                       <span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Properties</span>
-                       <span className="text-sm font-medium text-gray-900 truncate w-40" title={selectedClip.name}>{selectedClip.name}</span>
-                    </div>
-                    {/* Delete button from properties panel */}
-                    <Button variant="danger" onClick={() => deleteClip(selectedClip.id)} className="px-2 py-1"><Trash2 size={14}/></Button>
-                 </div>
+                 {selectedClip && (
+                   <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-300">
+                      <div className="flex flex-col">
+                         <span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Properties</span>
+                         <span className="text-sm font-medium text-gray-900 truncate w-40" title={selectedClip.name}>{selectedClip.name}</span>
+                      </div>
+                      {/* Delete button from properties panel */}
+                      <Button variant="danger" onClick={() => deleteClip(selectedClip.id)} className="px-2 py-1"><Trash2 size={14}/></Button>
+                   </div>
+                 )}
 
                 {/* Adjustments Tab */}
                 {activeTab === 'adjust' && (
@@ -2267,11 +2975,50 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                            <span className="font-mono text-sm text-gray-900">{selectedClip.trimEnd.toFixed(2)}s</span>
                         </div>
                       </div>
-                      
+                       
                        <div className="text-xs text-center text-gray-600 mt-4 border-t border-gray-300 pt-2">
                         Original File Duration: {selectedClip.duration.toFixed(2)}s
                       </div>
-                    </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button
+                          className="text-xs py-2 px-2 rounded bg-white border border-gray-300 hover:bg-gray-100"
+                          onClick={() => {
+                            updateTrimForClip(selectedClip.id, (clip) => ({
+                              ...clip,
+                              trimStart: Math.max(0, clip.trimStart - 1),
+                              trimEnd: clip.trimEnd
+                            }));
+                          }}
+                        >
+                          Extend Start (-1s)
+                        </button>
+                        <button
+                          className="text-xs py-2 px-2 rounded bg-white border border-gray-300 hover:bg-gray-100"
+                          onClick={() => {
+                            updateTrimForClip(selectedClip.id, (clip) => ({
+                              ...clip,
+                              trimStart: clip.trimStart,
+                              trimEnd: Math.min(clip.duration, clip.trimEnd + 1)
+                            }));
+                          }}
+                        >
+                          Extend End (+1s)
+                        </button>
+                        <button
+                          className="text-xs py-2 px-2 rounded bg-white border border-gray-300 hover:bg-gray-100 col-span-2"
+                          onClick={() => {
+                            updateTrimForClip(selectedClip.id, (clip) => ({
+                              ...clip,
+                              trimStart: 0,
+                              trimEnd: clip.duration
+                            }));
+                          }}
+                        >
+                          Reset to Full Length
+                        </button>
+                      </div>
+                     </div>
 
                     {/* Speed Control */}
                      <div className="bg-gray-50 p-4 rounded-xl border border-gray-300">
@@ -2381,34 +3128,62 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                        <p className="text-sm text-gray-600 italic">Click a <Zap size={10} className="inline"/> button between clips in the V1 timeline to edit transitions.</p>
                     ) : (
                       <>
-                        <div className="bg-gray-50 p-3 rounded-lg mb-4 flex items-center gap-3 border border-gray-300">
-                           <Clock size={16} className="text-[#13008B]"/>
-                           <span className="text-sm font-mono text-gray-900">Duration: {TRANSITION_DURATION.toFixed(1)}s</span>
+                        <div className="bg-gray-50 p-3 rounded-lg mb-4 border border-gray-300">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Clock size={16} className="text-[#13008B]"/>
+                              <span className="text-xs font-semibold text-gray-700 uppercase">Duration</span>
+                            </div>
+                            <span className="text-sm font-mono text-gray-900">{activeTransitionDuration.toFixed(1)}s</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.2"
+                            max="3"
+                            step="0.1"
+                            value={activeTransitionDuration}
+                            onChange={(e) => {
+                              const duration = parseFloat(e.target.value);
+                              setTransitionDurations(prev => ({ ...prev, [activeTransitionId]: duration }));
+                            }}
+                            className="w-full accent-[#13008B]"
+                          />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {TRANSITION_TYPES.map(type => (
-                            <button
-                              key={type}
-                              onClick={() => {
-                                setTransitions(prev => {
-                                  const formattedType = type.toLowerCase().replace(/\s/g, '-');
-                                  if (type === 'None') {
-                                    const next = { ...prev };
-                                    delete next[activeTransitionId];
-                                    return next;
-                                  }
-                                  return { ...prev, [activeTransitionId]: formattedType };
-                                });
-                              }}
-                              className={`p-3 rounded border text-sm transition-all
-                                ${transitions[activeTransitionId] === type.toLowerCase().replace(/\s/g, '-') || (!transitions[activeTransitionId] && type === 'None')
-                                  ? 'bg-[#13008B] border-[#13008B] text-white' 
-                                  : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}
-                              `}
-                            >
-                              {type}
-                            </button>
-                          ))}
+                        <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+                          {FFMPEG_TRANSITIONS.map(({ id, label }) => {
+                            const isNone = id === 'none';
+                            const isActiveTransition = transitions[activeTransitionId] === id || (!transitions[activeTransitionId] && isNone);
+                            return (
+                              <button
+                                key={id}
+                                onClick={() => {
+                                  setTransitions(prev => {
+                                    if (isNone) {
+                                      const next = { ...prev };
+                                      delete next[activeTransitionId];
+                                      return next;
+                                    }
+                                    return { ...prev, [activeTransitionId]: id };
+                                  });
+                                  setTransitionDurations(prev => {
+                                    if (isNone) {
+                                      const next = { ...prev };
+                                      delete next[activeTransitionId];
+                                      return next;
+                                    }
+                                    return { ...prev, [activeTransitionId]: prev[activeTransitionId] || DEFAULT_TRANSITION_DURATION };
+                                  });
+                                }}
+                                className={`p-3 rounded border text-sm transition-all text-left
+                                  ${isActiveTransition
+                                    ? 'bg-[#13008B] border-[#13008B] text-white' 
+                                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}
+                                `}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
                         </div>
                       </>
                     )}
@@ -2443,3 +3218,22 @@ const ToolButton = ({ icon: Icon, label, active, onClick }) => (
     <span className="text-[10px] font-medium">{label}</span>
   </button>
 );
+
+// Simple modal for publish details
+const Modal = ({ open, onClose, children }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center px-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md relative">
+        <button
+          onClick={onClose}
+          className="absolute top-3 right-3 text-gray-500 hover:text-gray-700"
+          aria-label="Close"
+        >
+          <X size={16} />
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+};

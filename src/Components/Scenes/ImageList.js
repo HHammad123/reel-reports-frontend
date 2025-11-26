@@ -223,14 +223,47 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     setEditingImageIndex(null);
   }, []);
 
-  const normalizeImageUrl = useCallback((url) => {
-    if (!url || typeof url !== 'string') return ''
-    return url.trim().split('?')[0].replace(/\/$/, '')
-  }, [])
+const normalizeImageUrl = useCallback((url) => {
+  if (!url || typeof url !== 'string') return ''
+  return url.trim().split('?')[0].replace(/\/$/, '')
+}, [])
 
-  const getOrderedRefs = useCallback((row) => {
-    const baseRefs = Array.isArray(row?.refs) ? row.refs.filter(Boolean) : []
-    const modelUpper = String(row?.model || '').toUpperCase()
+const getImageUrlFromEntry = (entry) => {
+  if (!entry) return ''
+  if (typeof entry === 'string') return entry.trim()
+  if (typeof entry === 'object') {
+    const candidate =
+      entry?.image_url ||
+      entry?.imageUrl ||
+      entry?.imageurl ||
+      entry?.url ||
+      entry?.src ||
+      entry?.link ||
+      ''
+    return typeof candidate === 'string' ? candidate.trim() : ''
+  }
+  return ''
+}
+
+const getSelectedImageEntry = (images, index = 0) => {
+  if (!Array.isArray(images)) return null
+  const entry = images[index]
+  if (!entry) return null
+  if (typeof entry === 'string') {
+    const trimmed = entry.trim()
+    return trimmed ? { image_url: trimmed } : null
+  }
+  return entry
+}
+
+const getSelectedImageUrl = (images, index = 0) => {
+  const entry = getSelectedImageEntry(images, index)
+  return entry?.image_url || ''
+}
+
+const getOrderedRefs = useCallback((row) => {
+  const baseRefs = Array.isArray(row?.refs) ? row.refs.filter(Boolean) : []
+  const modelUpper = String(row?.model || '').toUpperCase()
     
     // For ANCHOR model, get base image from frame structure
     if (modelUpper === 'ANCHOR') {
@@ -239,11 +272,38 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const frame = frames[0]
         const base = frame?.base_image || frame?.baseImage || {}
         const baseUrl = base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || ''
-        if (baseUrl && normalizeImageUrl(baseUrl)) {
-          return [baseUrl]
+        const finalUrl =
+          frame?.image_url ||
+          frame?.imageUrl ||
+          frame?.imageurl ||
+          frame?.url ||
+          frame?.src ||
+          ''
+        const normalizedBase = normalizeImageUrl(baseUrl)
+        const normalizedFinal = normalizeImageUrl(finalUrl)
+        const anchorUrls = []
+        // Always add baseUrl if it exists
+        if (normalizedBase) anchorUrls.push(baseUrl)
+        // Always add finalUrl if it exists (even if same as baseUrl to show two tabs)
+        if (normalizedFinal) anchorUrls.push(finalUrl)
+        // If we have at least one URL, ensure we have two items for two tabs
+        if (anchorUrls.length > 0) {
+          // If only one URL exists, duplicate it to show two tabs with same image
+          if (anchorUrls.length === 1) {
+            anchorUrls.push(anchorUrls[0])
+          }
+          return anchorUrls
         }
       }
-      // Fallback to refs if no base image found in frame
+      // Fallback to refs if no base or final image found in frame
+      // For ANCHOR model, ensure we have two items in array for two tabs
+      if (baseRefs.length > 0) {
+        // If only one ref exists, duplicate it to show two tabs with same image
+        if (baseRefs.length === 1) {
+          return [...baseRefs, baseRefs[0]]
+        }
+        return baseRefs
+      }
       return baseRefs
     }
     
@@ -333,6 +393,55 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     [getOrderedRefs]
   )
 
+  const normalizeSimpleUrl = useCallback((url) => (typeof url === 'string' ? url.trim() : ''), [])
+
+  const getAvatarUrlSet = useCallback(
+    (row) => {
+      return new Set(
+        (Array.isArray(row?.avatar_urls) ? row.avatar_urls : [])
+          .map((entry) => {
+            if (typeof entry === 'string') return normalizeSimpleUrl(entry)
+            return normalizeSimpleUrl(
+              entry?.imageurl ||
+                entry?.imageUrl ||
+                entry?.image_url ||
+                entry?.url ||
+                entry?.src ||
+                entry?.link ||
+                entry?.avatar_url ||
+                ''
+            )
+          })
+          .filter(Boolean)
+      )
+    },
+    [normalizeSimpleUrl]
+  )
+
+  const getVeo3ImageTabImages = useCallback(
+    (row) => {
+      const orderedRefs = getOrderedRefs(row)
+      const candidateSources = [
+        ...(Array.isArray(row?.refs) ? row.refs : []),
+        ...orderedRefs
+      ]
+      const uniqueCandidates = []
+      const seen = new Set()
+      candidateSources.forEach((candidate) => {
+        const normalized = normalizeSimpleUrl(candidate)
+        if (normalized && !seen.has(normalized)) {
+          uniqueCandidates.push(candidate)
+          seen.add(normalized)
+        }
+      })
+      const avatarSet = getAvatarUrlSet(row)
+      const nonAvatar = uniqueCandidates.filter((url) => !avatarSet.has(normalizeSimpleUrl(url)))
+      if (nonAvatar.length > 0) return [nonAvatar[0]]
+      return []
+    },
+    [getOrderedRefs, getAvatarUrlSet, normalizeSimpleUrl]
+  )
+
   const getPrimaryImage = useCallback((row) => {
     const ordered = getOrderedRefs(row)
     return ordered[0] || ''
@@ -366,6 +475,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     },
     [normalizeImageUrl]
   )
+
+  const buildImageEntries = (rawImages = [], frames = []) => {
+    if (!Array.isArray(rawImages)) return []
+    const frameList = Array.isArray(frames) ? frames : []
+    return rawImages
+      .map((item, index) => {
+        const url = getImageUrlFromEntry(item)
+        if (!url) return null
+        const frame = frameList.length ? findFrameForImage(frameList, url, index) : null
+        if (item && typeof item === 'object') {
+          return { ...item, image_url: url, frame }
+        }
+        return { image_url: url, frame }
+      })
+      .filter(Boolean)
+  }
 
 
   useEffect(() => {
@@ -891,7 +1016,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           setSelected({
             index: 0,
             imageUrl: first,
-            images: initialImages,
+            images: buildImageEntries(initialImages, sessionImages[0]?.imageFrames),
             title: sessionImages[0]?.scene_title || 'Untitled',
             sceneNumber: sessionImages[0]?.scene_number ?? '',
             description: sessionImages[0]?.description || '',
@@ -1043,10 +1168,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         const imgs = getSceneImages(sessionImages[0]);
                         const first = imgs[0] || '';
                         const model0 = String(sessionImages[0]?.model || '').toUpperCase();
-                        setSelected({
-                          index: 0,
-                          imageUrl: first,
-                          images: imgs,
+                      setSelected({
+                        index: 0,
+                        imageUrl: first,
+                        images: buildImageEntries(imgs, sessionImages[0]?.imageFrames),
                           title: sessionImages[0]?.scene_title || 'Untitled',
                           sceneNumber: sessionImages[0]?.scene_number ?? '',
                           description: sessionImages[0]?.description || '',
@@ -1572,7 +1697,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         setSelected({
           index: 0,
           imageUrl: first,
-          images: imgs,
+          images: buildImageEntries(imgs, sessionImages[0]?.imageFrames),
           title: sessionImages[0]?.scene_title || 'Untitled',
           sceneNumber: sessionImages[0]?.scene_number ?? '',
           description: sessionImages[0]?.description || '',
@@ -2040,7 +2165,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
-        const sceneImages = getSceneImages(row);
+        const isVeo3 = modelUpper === 'VEO3';
+        const sceneImages = isVeo3 ? getVeo3ImageTabImages(row) : getSceneImages(row);
         const images = sceneImages;
 
         console.log(`\n🎬 Processing Scene ${sceneNumber} (${images.length} images)...`);
@@ -2056,7 +2182,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         setSelected({
           index: sceneIndex,
           imageUrl: imgs[0] || '',
-          images: imgs,
+          images: buildImageEntries(imgs, row?.imageFrames),
           title: row.scene_title || 'Untitled',
           sceneNumber: row.scene_number,
           description: row?.description || '',
@@ -2198,7 +2324,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
   
     return failed;
-  }, [rows, setSelected, setActiveImageTab, getSceneImages]);
+  }, [rows, setSelected, setActiveImageTab, getSceneImages, getVeo3ImageTabImages]);
 
   // Function to call save-all-frames API with temp folder images
   const callSaveAllFramesAPI = React.useCallback(async () => {
@@ -2217,12 +2343,18 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       let fileIndex = 0;
       const fileMap = {}; // Map scene-image to file index
       
+      const sceneImagesByIndex = [];
+      
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const model = row?.model || 'VEO3';
         const modelUpper = String(model).toUpperCase();
-        const images = getSceneImages(row);
+        const isVeo3 = modelUpper === 'VEO3';
+        const orderedRefs = getOrderedRefs(row);
+        const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
+        const images = isVeo3 ? veo3ImageRefs : getSceneImages(row);
+        sceneImagesByIndex[sceneIndex] = images;
         
         const sceneMetadata = {
           scene_number: sceneNumber,
@@ -2235,7 +2367,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           const fileKey = `file_${fileIndex}`;
           fileMap[fileName] = fileKey;
           
-          if (images.length === 1) {
+          if (isVeo3) {
+            // VEO3 uses background_frame (single source)
+            if (!sceneMetadata.background_frame) {
+              sceneMetadata.background_frame = fileKey;
+            }
+          } else if (images.length === 1) {
             // Single image scene - use background_frame
             sceneMetadata.background_frame = fileKey;
           } else {
@@ -2271,7 +2408,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
-        const images = getSceneImages(row);
+        const isVeo3 = modelUpper === 'VEO3';
+        const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
+        const images = sceneImagesByIndex[sceneIndex] || (isVeo3 ? veo3ImageRefs : getSceneImages(row));
         
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
@@ -2349,9 +2488,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       console.error('❌ Error in callSaveAllFramesAPI:', error);
       throw error;
     }
-  }, [rows]);
+  }, [rows, getSceneImages, getVeo3ImageTabImages, getOrderedRefs]);
 
-  
   // Function to call /v1/videos/regenerate after save-all-frames succeeds
   const callVideosRegenerateAPI = React.useCallback(async () => {
     try {
@@ -2381,7 +2519,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
           logoNeeded: false,
           voiceUrl: '',
-          voiceOption: 'male', // Default to "male"
+          voiceOption: 'male',
           transitionPreset: null,
           transitionCustom: null,
           transitionCustomPreset: null,
@@ -2402,33 +2540,21 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           customPresetName: '',
         };
 
-      const logoUrl =
-        sceneOptions.logoNeeded && sessionAssets.logo_url
-          ? sessionAssets.logo_url
-          : '';
+        let logoUrl = '';
+        if (sceneOptions.logoNeeded && sessionAssets.logo_url) {
+          logoUrl = sessionAssets.logo_url;
+        } else if (!sceneOptions.logoNeeded && anyLogoNeeded) {
+          logoUrl = '';
+        }
 
-        // For VEO3: voiceover is null, no voiceoption, no transitions
-        // For other models: voiceoption should be default filled OR voiceover should be there
         let voiceover = null;
         let voiceOption = '';
-
+        const voiceoverUrl = sceneOptions.voiceUrl || '';
         if (!isVEO3) {
-          // For non-VEO3 models, build voiceover object
-          const voiceoverUrl = sceneOptions.voiceUrl || null;
           if (voiceoverUrl) {
-            // Find the voice entry from sessionAssets.voice_urls
-            const voiceEntries = Object.entries(sessionAssets.voice_urls || {});
-            const matched = voiceEntries.find(([, url]) => url === voiceoverUrl);
-            if (matched) {
-              const [name, url] = matched;
-              voiceover = {
-                name: name || '',
-                type: 'audio',
-                url: url || voiceoverUrl,
-                created_at: new Date().toISOString() // Use current timestamp if not available
-              };
+            if (typeof voiceoverUrl === 'object') {
+              voiceover = voiceoverUrl;
             } else {
-              // Fallback: create object from URL
               voiceover = {
                 name: sceneOptions.voiceOption || '',
                 type: 'audio',
@@ -2437,38 +2563,21 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               };
             }
           } else {
-            // If no voiceover URL, use voiceOption (default filled or from questionnaire)
             voiceOption = sceneOptions.voiceOption || '';
-            // If voiceOption is empty, default to "male"
             if (!voiceOption || voiceOption.trim() === '') {
               voiceOption = 'male';
             }
           }
         }
-        // For VEO3, voiceover remains null and voiceOption remains empty string
 
-        // Default prompt template (mainly relevant for VEO3)
-        const veo3PromptTemplate =
-          (row && typeof row.veo3_prompt_template === 'object'
-            ? row.veo3_prompt_template
-            : {
-                style: '',
-                action: '',
-                camera: '',
-                subject: '',
-                ambiance: '',
-                background: '',
-                composition: '',
-                focus_and_lens: '',
-              }) || {};
+        const scenePayload = {
+          scene_number: sceneNumber,
+          model: modelUpper,
+          logo_url: logoUrl,
+        };
 
-        // Build transitions
-        // For VEO3: transitions should be empty array (not included)
-        // For other models: transitions should be there (if not selected, use first transition as default)
-        let transitions = [];
-        
         if (!isVEO3) {
-          // For non-VEO3 models, build transitions
+          const transitions = [];
           const isSoraAnchorPlotly =
             modelUpper === 'SORA' ||
             modelUpper === 'ANCHOR' ||
@@ -2476,10 +2585,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
           if (isSoraAnchorPlotly) {
             const hasPreset = !!sceneOptions.transitionPreset;
-            // is_preset: true if preset is selected (not custom), false if custom/design your own
             const isPreset = hasPreset && sceneOptions.transitionCustom !== 'custom';
 
-            // Check if custom/design your own is selected
             const useCustom =
               !isPreset &&
               (sceneOptions.transitionCustom === 'custom' ||
@@ -2489,7 +2596,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 ));
 
             if (isPreset) {
-              // Use preset object as-is
               const preset = sceneOptions.transitionPreset;
               transitions.push({
                 is_preset: true,
@@ -2500,7 +2606,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 }
               });
             } else if (useCustom) {
-              // Custom/Design your own or library custom template
               const selectedCustomPreset = sceneOptions.transitionCustomPreset || null;
               const customNotes = selectedCustomPreset?.preservation_notes || sceneOptions.customPreservationNotes || {};
               const notes = {
@@ -2535,44 +2640,26 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 savecustom,
                 custom_name: customName,
               });
-            } else {
-              // No transition selected - use first transition preset as default
-              if (transitionPresets.length > 0) {
-                const firstPreset = transitionPresets[0];
-                transitions.push({
-                  is_preset: true,
-                  parameters: {
-                    name: firstPreset?.name || firstPreset?.preset_name || '',
-                    preservation_notes: firstPreset?.preservation_notes || {},
-                    prompt_description: firstPreset?.prompt_description || firstPreset?.promptDescription || ''
-                  }
-                });
-              }
+            } else if (transitionPresets.length > 0) {
+              const firstPreset = transitionPresets[0];
+              transitions.push({
+                is_preset: true,
+                parameters: {
+                  name: firstPreset?.name || firstPreset?.preset_name || '',
+                  preservation_notes: firstPreset?.preservation_notes || {},
+                  prompt_description: firstPreset?.prompt_description || firstPreset?.promptDescription || ''
+                }
+              });
             }
           }
-        }
-        // For VEO3, transitions remains empty array
 
-        // Build scene payload based on model type
-        const scenePayload = {
-          scene_number: sceneNumber,
-          model: modelUpper,
-          logo_url: logoUrl,
-        };
-
-        // For VEO3: no voiceover, no voiceoption, no transitions
-        // For other models: include voiceover (or voiceoption), and transitions
-        if (!isVEO3) {
-          scenePayload.voiceover = voiceover; // Object with name, type, url, created_at or null
-          scenePayload.voiceoption = voiceOption; // String like "male" or "female"
-          scenePayload.transitions = transitions; // Always an array
+          scenePayload.voiceover = voiceover;
+          scenePayload.voiceoption = voiceOption;
+          scenePayload.transitions = transitions;
         } else {
-          // VEO3: explicitly set to null/empty
           scenePayload.voiceover = null;
-          // voiceoption not included for VEO3
-          // transitions not included for VEO3 (or empty array)
         }
-        
+
         return scenePayload;
       });
 
@@ -2624,7 +2711,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       console.log('✅ /v1/generate-videos-queue success:', data);
       console.log('📋 Full queue response:', JSON.stringify(data, null, 2));
       
-      // Extract job_id from response - check multiple possible fields
       const jobId = data?.job_id || data?.jobId || data?.id || data?.data?.job_id || null;
       
       if (!jobId) {
@@ -2632,7 +2718,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         throw new Error('No job_id received from generate-videos-queue API');
       }
       
-      // Ensure jobId is a string
       const jobIdString = String(jobId).trim();
       if (!jobIdString || jobIdString === 'null' || jobIdString === 'undefined') {
         console.error('❌ Invalid job_id:', jobId);
@@ -2663,7 +2748,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       throw error;
     }
   }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getAspectRatio, transitionPresets]);
-  
 
   const handleGenerateVideosClick = React.useCallback(async (e) => {
     // Prevent any default behavior and navigation
@@ -2746,17 +2830,14 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             message: ''
           }));
 
-          // Step 3: Call videos/regenerate API with updated frames
           console.log('📡 Step 3: Calling /v1/videos/regenerate...');
           const newJobId = await callVideosRegenerateAPI();
           if (newJobId) {
             startVideoRedirectFlow(newJobId);
           }
 
-          console.log(
-            '✅ Process completed successfully - all images saved, uploaded, and regeneration triggered'
-          );
-          // No alert - just console log
+          console.log('✅ Process completed successfully - all frames saved and regeneration triggered');
+
         } catch (apiError) {
           console.error('❌ Error in save-all-frames or regenerate API:', apiError);
           setError('API upload failed: ' + apiError.message);
@@ -2794,7 +2875,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     
     // Prevent any navigation or reload
     return false;
-  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, callVideosRegenerateAPI, rows, startVideoRedirectFlow]);
+  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, callVideosRegenerateAPI, startVideoRedirectFlow]);
 
   // Track natural dimensions of loaded images to align overlays more precisely
   const handleNaturalSize = React.useCallback((url, imgEl) => {
@@ -3078,57 +3159,46 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               
               // Get images from selected.images array, fallback to imageUrl, then to refs if available
               const getImg1 = () => {
-                const isVEO3 = selectedModel === 'VEO3';
-                
-                // For VEO3: Tab 0 (Avatar) should show avatar_urls
-                if (isVEO3) {
-                  const currentRow = rows[selected.index];
+                const firstSelectedUrl = getSelectedImageUrl(selected.images, 0);
+                const currentRow = rows[selected.index];
+                const isAvatarModel = selectedModel === 'VEO3';
+
+                if (selectedModel === 'ANCHOR') {
+                  if (firstSelectedUrl && isValidImageUrl(firstSelectedUrl)) return firstSelectedUrl;
+                } else if (isAvatarModel) {
                   if (currentRow && Array.isArray(currentRow.avatar_urls) && currentRow.avatar_urls.length > 0) {
                     const avatarUrl = currentRow.avatar_urls[0];
-                    if (typeof avatarUrl === 'string') {
-                      const url = avatarUrl.trim();
-                      if (isValidImageUrl(url)) return url;
-                    } else if (avatarUrl && typeof avatarUrl === 'object') {
-                      const url = (avatarUrl?.imageurl || avatarUrl?.imageUrl || avatarUrl?.image_url || avatarUrl?.url || avatarUrl?.src || avatarUrl?.link || '').trim();
-                      if (url && isValidImageUrl(url)) return url;
-                    }
-                  }
-                  // Fallback: try to get from selected.images if avatar_urls not available
-                  if (Array.isArray(selected.images) && selected.images[0] && typeof selected.images[0] === 'string') {
-                    const url = selected.images[0].trim();
-                    if (isValidImageUrl(url)) return url;
-                  }
-                }
-                
-                // For ANCHOR model, prioritize base image from frame structure
-                if (selectedModel === 'ANCHOR') {
-                  const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
-                  if (frames.length > 0) {
-                    const frame = frames[0];
-                    const base = frame?.base_image || frame?.baseImage || {};
-                    const baseUrl = base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || '';
-                    if (baseUrl && isValidImageUrl(baseUrl)) {
-                      return baseUrl.trim();
-                    }
+                    const url =
+                      typeof avatarUrl === 'string'
+                        ? avatarUrl.trim()
+                        : (
+                            avatarUrl?.imageurl ||
+                            avatarUrl?.imageUrl ||
+                            avatarUrl?.image_url ||
+                            avatarUrl?.url ||
+                            avatarUrl?.src ||
+                            avatarUrl?.link ||
+                            ''
+                          ).trim();
+                    if (url && isValidImageUrl(url)) return url;
                   }
                 }
-                
+
                 // Priority 1: selected.images array
-                if (Array.isArray(selected.images) && selected.images[0] && typeof selected.images[0] === 'string') {
-                  const url = selected.images[0].trim();
-                  if (isValidImageUrl(url)) return url;
-                }
+                if (firstSelectedUrl && isValidImageUrl(firstSelectedUrl)) return firstSelectedUrl;
+
                 // Priority 2: selected.imageUrl
                 if (selected.imageUrl && typeof selected.imageUrl === 'string') {
                   const url = selected.imageUrl.trim();
                   if (isValidImageUrl(url)) return url;
                 }
+
                 // Priority 3: Get from rows data (where avatar_urls are stored)
-                const currentRow = rows[selected.index];
                 if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs[0]) {
                   const url = typeof currentRow.refs[0] === 'string' ? currentRow.refs[0].trim() : '';
                   if (isValidImageUrl(url)) return url;
                 }
+
                 // Priority 4: Try to get from any row if index doesn't match
                 if (rows.length > 0) {
                   const firstRow = rows[0];
@@ -3137,36 +3207,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     if (isValidImageUrl(url)) return url;
                   }
                 }
+
                 return '';
               };
               const getImg2 = () => {
-                const isVEO3 = selectedModel === 'VEO3';
-                
-                // For VEO3: Tab 1 (Image) should show base images (from refs)
-                if (isVEO3) {
-                  const currentRow = rows[selected.index];
-                  // Get base images from refs (not avatar_urls)
-                  if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs.length > 0) {
-                    const refUrl = currentRow.refs[0];
-                    if (typeof refUrl === 'string') {
-                      const url = refUrl.trim();
-                      if (isValidImageUrl(url)) return url;
-                    }
-                  }
-                  // Fallback: try to get from selected.images if refs not available
-                  if (Array.isArray(selected.images) && selected.images[1] && typeof selected.images[1] === 'string') {
-                    const url = selected.images[1].trim();
-                    if (isValidImageUrl(url)) return url;
-                  }
-                }
-                
-                // Priority 1: selected.images array
-                if (Array.isArray(selected.images) && selected.images[1] && typeof selected.images[1] === 'string') {
-                  const url = selected.images[1].trim();
-                  if (isValidImageUrl(url)) return url;
-                }
-                // Priority 2: Get from rows data (where avatar_urls are stored)
+                const secondSelectedUrl = getSelectedImageUrl(selected.images, 1);
                 const currentRow = rows[selected.index];
+                const isAvatarModel = selectedModel === 'VEO3';
+
+                if (selectedModel === 'ANCHOR') {
+                  return secondSelectedUrl && isValidImageUrl(secondSelectedUrl) ? secondSelectedUrl : '';
+                }
+
+                if (isAvatarModel) {
+                  if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs.length > 0) {
+                    const refUrl = typeof currentRow.refs[0] === 'string' ? currentRow.refs[0].trim() : '';
+                    if (refUrl && isValidImageUrl(refUrl)) return refUrl;
+                  }
+                  if (secondSelectedUrl && isValidImageUrl(secondSelectedUrl)) return secondSelectedUrl;
+                }
+
+                if (secondSelectedUrl && isValidImageUrl(secondSelectedUrl)) return secondSelectedUrl;
+
                 if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs[1]) {
                   const url = typeof currentRow.refs[1] === 'string' ? currentRow.refs[1].trim() : '';
                   if (isValidImageUrl(url)) return url;
@@ -3175,28 +3237,35 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               };
               const img1 = getImg1();
               const img2 = getImg2();
-              const isVEO3 = selectedModel === 'VEO3' || selectedModel === 'ANCHOR';
+              const isDualImageModel = selectedModel === 'VEO3' || selectedModel === 'ANCHOR';
+              const isVeoScene = selectedModel === 'VEO3';
+              const primaryImg = isVeoScene ? img2 : img1;
+              const secondaryImg = isVeoScene ? img1 : img2;
+              const primaryLabel = isVeoScene ? 'Image' : 'Image 1';
+              const secondaryLabel = isVeoScene ? 'Avatar' : 'Image 2';
+              const primaryFrameIndex = isVeoScene ? 1 : 0;
+              const secondaryFrameIndex = isVeoScene ? 0 : 1;
               
-              // For VEO3: show tabs only if both avatar_urls and base images exist
-              // For other models: show tabs if img2 exists
-              const hasSecondImage = isVEO3 
-                ? (img1 && img1.trim() && img2 && img2.trim()) // Both avatar and base image must exist
-                : (img2 && img2.trim()); // Just check if img2 exists
+              // Dual-image models (VEO3/ANCHOR) show tabs only if both images are available
+              // Other models just need a second image
+              const hasSecondImage = isDualImageModel
+                ? (primaryImg && primaryImg.trim() && secondaryImg && secondaryImg.trim())
+                : (secondaryImg && secondaryImg.trim());
               
               // Debug log to see what images are being used
               console.log('🖼️ Displaying Images:', {
                 sceneNumber: selected?.sceneNumber,
                 selectedIndex: selected.index,
-                img1: img1 || '(empty)',
-                img1Valid: img1 ? isValidImageUrl(img1) : false,
-                img2: img2 || '(empty)',
-                img2Valid: img2 ? isValidImageUrl(img2) : false,
-                selectedImages: selected.images,
+                primaryImg: primaryImg || '(empty)',
+                primaryValid: primaryImg ? isValidImageUrl(primaryImg) : false,
+                secondaryImg: secondaryImg || '(empty)',
+                secondaryValid: secondaryImg ? isValidImageUrl(secondaryImg) : false,
+                selectedImages: Array.isArray(selected.images) ? selected.images.map(getImageUrlFromEntry) : [],
                 selectedImageUrl: selected.imageUrl,
                 hasSecondImage,
                 currentRowRefs: rows[selected.index]?.refs || 'N/A',
                 allRowsCount: rows.length,
-                warning: !img1 ? '⚠️ No valid image URL found for Image 1' : (img1 && !isValidImageUrl(img1) ? '⚠️ Image 1 URL format is invalid' : '✅ Image 1 URL is valid')
+                warning: !primaryImg ? '⚠️ No valid image URL found for primary image' : (primaryImg && !isValidImageUrl(primaryImg) ? '⚠️ Primary image URL format is invalid' : '✅ Primary image URL is valid')
               });
               
               return (
@@ -3213,7 +3282,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               : 'text-gray-600 hover:text-gray-900'
                           }`}
                         >
-                          {isVEO3 ? 'Avatar' : 'Image 1'}
+                          {primaryLabel}
                         </button>
                         <button
                           type="button"
@@ -3224,14 +3293,14 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               : 'text-gray-600 hover:text-gray-900'
                           }`}
                         >
-                          {isVEO3 ? 'Image' : 'Image 2'}
+                          {secondaryLabel}
                         </button>
                       </div>
                     )}
                     
                     <div className="grid grid-cols-1 gap-4">
                   {/* Show Image 1 when: tab 0 is active OR no second image exists */}
-                  {img1 && typeof img1 === 'string' && img1.trim() && (activeImageTab === 0 || !hasSecondImage) ? (
+                  {primaryImg && typeof primaryImg === 'string' && primaryImg.trim() && (activeImageTab === 0 || !hasSecondImage) ? (
                     <div
                       key="image-1"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
@@ -3245,8 +3314,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     >
                       {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
-                    const frameForImg1 = findFrameForImage(frames, img1, 0);
-                    const fallbackFrame1 = frameForImg1 || (frames.length > 0 ? frames[0] : null);
+                    const frameForImg1 = findFrameForImage(frames, primaryImg, primaryFrameIndex);
+                    const fallbackFrame1 = frameForImg1 || (frames.length > 0 ? frames[primaryFrameIndex] || frames[0] : null);
                     // Get text elements from the matched frame, fallback to selected.textElements
                     const textElsFromFrame1 = fallbackFrame1 ? (
                       Array.isArray(fallbackFrame1?.text_elements)
@@ -3272,7 +3341,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     const frameDims1 =
                       fallbackFrame1?.base_image?.image_dimensions ||
                       fallbackFrame1?.base_image?.imageDimensions ||
-                      imageNaturalDims[img1] ||
+                      imageNaturalDims[primaryImg] ||
                       selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
                       { width: 1280, height: 720 };
@@ -3282,22 +3351,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         {selected?.isEditable && (
                          <></>
                         )}
-                        {img1 && typeof img1 === 'string' && img1.trim() ? (
+                        {primaryImg && typeof primaryImg === 'string' && primaryImg.trim() ? (
                           <img
-                            src={img1}
-                            alt={`scene-${selected.sceneNumber}-1`}
+                            src={primaryImg}
+                            alt={`scene-${selected.sceneNumber}-primary`}
                             className="w-full h-full object-contain"
-                            crossOrigin={img1.startsWith('http') && !img1.includes(window.location.hostname) ? "anonymous" : undefined}
+                            crossOrigin={primaryImg.startsWith('http') && !primaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
-                              handleNaturalSize(img1, e.target);
-                              console.log('✅ Image 1 loaded successfully:', img1);
+                              handleNaturalSize(primaryImg, e.target);
+                              console.log('✅ Primary image loaded successfully:', primaryImg);
                             }}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
-                              console.error('❌ Image 1 failed to load:', {
+                              console.error('❌ Primary image failed to load:', {
                                 attemptedUrl: failedUrl,
-                                originalImg1: img1,
+                                originalUrl: primaryImg,
                                 errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
                                 naturalWidth: errorImg.naturalWidth,
                                 naturalHeight: errorImg.naturalHeight,
@@ -3321,8 +3390,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               // Strategy 2: Try selected.images
                               if (Array.isArray(selected.images)) {
                                 selected.images.forEach((img) => {
-                                  if (img && typeof img === 'string' && img.trim() && img !== failedUrl && !fallbackUrls.includes(img.trim())) {
-                                    fallbackUrls.push(img.trim());
+                                  const fallbackUrl = getImageUrlFromEntry(img);
+                                  if (fallbackUrl && fallbackUrl !== failedUrl && !fallbackUrls.includes(fallbackUrl)) {
+                                    fallbackUrls.push(fallbackUrl);
                                   }
                                 });
                               }
@@ -3383,7 +3453,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                   // Build the JSON structure with base_image, text_elements, and overlay_elements
                                   const frameData = {
                                     base_image: frame?.base_image || frame?.baseImage || {
-                                      image_url: img1,
+                                      image_url: primaryImg,
                                       image_dimensions: selected?.imageDimensions || {}
                                     },
                                     text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
@@ -3393,7 +3463,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                   };
                                   setEditingImageFrame(frameData);
                                   setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
-                                  setEditingImageIndex(0); // Image 1 is index 0
+                                  setEditingImageIndex(primaryFrameIndex); // Track actual image index
                                   setShowImageEdit(true);
                                 }
                               }}
@@ -3511,7 +3581,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   ) : null}
 
                   {/* Show Image 2 only when: tab 1 is active AND second image exists */}
-                  {hasSecondImage && img2 && typeof img2 === 'string' && img2.trim() && activeImageTab === 1 ? (
+                  {hasSecondImage && secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() && activeImageTab === 1 ? (
                     <div
                       key="image-2"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
@@ -3525,9 +3595,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     >
                       {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
-                    const frameForImg2 = findFrameForImage(frames, img2, 1);
+                    const frameForImg2 = findFrameForImage(frames, secondaryImg, secondaryFrameIndex);
                     const fallbackFrame2 =
-                      frameForImg2 || (frames.length > 1 ? frames[1] : frames.length > 0 ? frames[0] : null);
+                      frameForImg2 || (frames.length > 1 ? frames[secondaryFrameIndex] || frames[0] : frames.length > 0 ? frames[0] : null);
                     // Get text elements from the matched frame, fallback to selected.textElements
                     const textElsFromFrame2 = fallbackFrame2 ? (
                       Array.isArray(fallbackFrame2?.text_elements)
@@ -3553,7 +3623,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     const frameDims2 =
                       fallbackFrame2?.base_image?.image_dimensions ||
                       fallbackFrame2?.base_image?.imageDimensions ||
-                      imageNaturalDims[img2] ||
+                      imageNaturalDims[secondaryImg] ||
                       selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
                       { width: 1280, height: 720 };
@@ -3563,22 +3633,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         {selected?.isEditable && (
                          <></>
                         )}
-                        {img2 && typeof img2 === 'string' && img2.trim() ? (
+                        {secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() ? (
                           <img
-                            src={img2}
-                            alt={`scene-${selected.sceneNumber}-2`}
+                            src={secondaryImg}
+                            alt={`scene-${selected.sceneNumber}-secondary`}
                             className="w-full h-full object-contain"
-                            crossOrigin={img2.startsWith('http') && !img2.includes(window.location.hostname) ? "anonymous" : undefined}
+                            crossOrigin={secondaryImg.startsWith('http') && !secondaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
-                              handleNaturalSize(img2, e.target);
-                              console.log('✅ Image 2 loaded successfully:', img2);
+                              handleNaturalSize(secondaryImg, e.target);
+                              console.log('✅ Secondary image loaded successfully:', secondaryImg);
                             }}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
-                              console.error('❌ Image 2 failed to load:', {
+                              console.error('❌ Secondary image failed to load:', {
                                 attemptedUrl: failedUrl,
-                                originalImg2: img2,
+                                originalUrl: secondaryImg,
                                 errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
                                 naturalWidth: errorImg.naturalWidth,
                                 naturalHeight: errorImg.naturalHeight,
@@ -3602,8 +3672,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               // Strategy 2: Try selected.images[1] or other indices
                               if (Array.isArray(selected.images)) {
                                 selected.images.forEach((img) => {
-                                  if (img && typeof img === 'string' && img.trim() && img !== failedUrl && !fallbackUrls.includes(img.trim())) {
-                                    fallbackUrls.push(img.trim());
+                                  const fallbackUrl = getImageUrlFromEntry(img);
+                                  if (fallbackUrl && fallbackUrl !== failedUrl && !fallbackUrls.includes(fallbackUrl)) {
+                                    fallbackUrls.push(fallbackUrl);
                                   }
                                 });
                               }
@@ -3611,7 +3682,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               // Try the first available fallback
                               if (fallbackUrls.length > 0) {
                                 const nextUrl = fallbackUrls[0];
-                                console.log('🔄 Trying fallback URL for Image 2:', nextUrl);
+                                console.log('🔄 Trying fallback URL for secondary image:', nextUrl);
                                 // Remove crossOrigin to avoid CORS issues on retry
                                 errorImg.crossOrigin = null;
                                 errorImg.src = nextUrl;
@@ -3659,7 +3730,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                   // Build the JSON structure with base_image, text_elements, and overlay_elements
                                   const frameData = {
                                     base_image: frame?.base_image || frame?.baseImage || {
-                                      image_url: img2,
+                                      image_url: secondaryImg,
                                       image_dimensions: selected?.imageDimensions || {}
                                     },
                                     text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
@@ -3669,7 +3740,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                   };
                                   setEditingImageFrame(frameData);
                                   setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
-                                  setEditingImageIndex(1); // Image 2 is index 1
+                                  setEditingImageIndex(secondaryFrameIndex); // Track actual image index
                                   setShowImageEdit(true);
                                 }
                               }}
@@ -4429,6 +4500,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   onClick={() => {
                     const refsArray = r.refs || [];
                     const imgs = orderedSceneImages;
+                    const imageEntries = buildImageEntries(imgs, r?.imageFrames);
                     console.log('🎯 Scene Selected:', {
                       sceneNumber: r.scene_number,
                       refs: refsArray,
@@ -4440,7 +4512,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     setSelected({
                       index: i,
                       imageUrl: first || '',
-                      images: imgs.filter(Boolean), // Filter out any empty values
+                      images: imageEntries,
                       title: r.scene_title || 'Untitled',
                       sceneNumber: r.scene_number,
                       description: r?.description || '',

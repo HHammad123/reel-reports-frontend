@@ -732,6 +732,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [isDescriptionEditing, setIsDescriptionEditing] = useState(false);
   const [pendingDescription, setPendingDescription] = useState('');
   const [descriptionSceneIndex, setDescriptionSceneIndex] = useState(null);
+  const [isSavingDescription, setIsSavingDescription] = useState(false);
   const [isTextToBeIncludedEditing, setIsTextToBeIncludedEditing] = useState(false);
   const [pendingTextToBeIncluded, setPendingTextToBeIncluded] = useState([]);
   const [textToBeIncludedSceneIndex, setTextToBeIncludedSceneIndex] = useState(null);
@@ -2158,10 +2159,11 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   // Note: triggerVideoGenerationFromSession is invoked on button click only
 
   // Generate Storyboard Images Flow:
-  // 1. Call /v1/generate-images-queue (POST) with user_id and session_id
-  // 2. Get job_id from response
-  // 3. Poll /v1/job-status/{job_id} (GET) until status is succeeded
-  // 4. Extract and display images from job-status response
+  // 1. Fetch session data snapshot
+  // 2. Validate VEO3 scenes have avatar_urls
+  // 3. Call /v1/generate-images-queue (POST) with user_id and session_id
+  // 4. Get job_id from response and start polling /v1/job-status/{job_id} (GET) until status is succeeded
+  // 5. Extract and display images from job-status response
   const triggerGenerateScenes = React.useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
@@ -2217,39 +2219,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         setShowMissingAvatarPopup(true);
         return; // Stop execution - user must select avatar for all VEO3 scenes first
       }
-      
-      // 3) Check if regenerate_desc is true in scripts, if so call process-regenerate
-      const regenerateDesc = currentScript?.regenerate_desc || currentScript?.regenerateDesc || false;
-      
-      if (regenerateDesc === true) {
-        // Build request body for process-regenerate with proper structure
-        const formattedUser = formatUserForVisual(user, token);
-        const formattedSession = formatSessionForVisual(sd, sessionId, token);
-        
-        const processRegenerateBody = {
-          user: formattedUser,
-          session: formattedSession
-        };
-        
-        // Call /v1/scripts/process-regenerate with user and session objects
-        const processRegenResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/process-regenerate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(processRegenerateBody)
-        });
-        const processRegenText = await processRegenResp.text();
-        let processRegenData;
-        try {
-          processRegenData = JSON.parse(processRegenText);
-        } catch (_) {
-          processRegenData = processRegenText;
-        }
-        if (!processRegenResp.ok) {
-          throw new Error(`process-regenerate failed: ${processRegenResp.status} ${processRegenText}`);
-        }
-      }
 
-      // 4) Call /v1/generate-images-queue API (POST) with user_id and session_id
+      // 3) Call /v1/generate-images-queue API (POST) with user_id and session_id
       const imgBody = {
         user_id: (user?.id || user?.user_id || localStorage.getItem('token') || ''),
         session_id: (localStorage.getItem('session_id') || sessionId || '')
@@ -2262,7 +2233,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
       try { localStorage.setItem('images_generate_response', JSON.stringify(imgData)); } catch(_) {}
 
-      // 5) Extract job_id from response and start polling /v1/job-status/{job_id}
+      // 4) Extract job_id from response and start polling /v1/job-status/{job_id}
       const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
       if (jobId) {
         try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
@@ -8402,6 +8373,7 @@ const saveAnchorPromptTemplate = async () => {
                             handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
 
                             if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+                              setIsSavingDescription(true);
                               try {
                                 const { session, user } = await buildSessionAndUserForScene();
                                 const token = localStorage.getItem('token') || '';
@@ -8417,7 +8389,9 @@ const saveAnchorPromptTemplate = async () => {
                                   scene_number: Number(sceneNumber) || 0,
                                   custom_desc: nextDescription
                                 };
-                                await fetch(
+                                
+                                // Call custom-desc API
+                                const customDescResp = await fetch(
                                   'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/custom-desc',
                                   {
                                     method: 'POST',
@@ -8425,8 +8399,98 @@ const saveAnchorPromptTemplate = async () => {
                                     body: JSON.stringify(payload)
                                   }
                                 );
+                                const customDescText = await customDescResp.text();
+                                let customDescData;
+                                try {
+                                  customDescData = JSON.parse(customDescText);
+                                } catch (_) {
+                                  customDescData = customDescText;
+                                }
+                                if (!customDescResp.ok) {
+                                  throw new Error(`custom-desc failed: ${customDescResp.status} ${customDescText}`);
+                                }
+
+                                // Small delay to ensure backend has processed the update
+                                await new Promise(resolve => setTimeout(resolve, 500));
+
+                                // After custom-desc API succeeds, call user-session-data API
+                                const sessionId = localStorage.getItem('session_id');
+                                const userId = localStorage.getItem('token');
+                                if (sessionId && userId) {
+                                  const sessionResp = await fetch(
+                                    'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data',
+                                    {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ user_id: userId, session_id: sessionId })
+                                    }
+                                  );
+                                  const sessionText = await sessionResp.text();
+                                  let sessionData;
+                                  try {
+                                    sessionData = JSON.parse(sessionText);
+                                  } catch (_) {
+                                    sessionData = sessionText;
+                                  }
+                                  if (sessionResp.ok && sessionData) {
+                                    // Update scriptRows from session data
+                                    const sd = sessionData?.session_data || sessionData?.session || {};
+                                    const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+                                    if (scripts.length > 0) {
+                                      const currentScript = scripts[0];
+                                      const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+                                      if (airesponse.length > 0) {
+                                        // Find the scene with matching scene_number and update its description
+                                        // Use the description we sent (nextDescription) as the source of truth
+                                        // but also check session data for any other updates
+                                        const updatedAiresponse = airesponse.map((scene) => {
+                                          const sceneNum = scene?.scene_number ?? scene?.scene_no ?? scene?.sceneNo ?? scene?.scene;
+                                          if (Number(sceneNum) === Number(sceneNumber)) {
+                                            // Prioritize custom_desc from session, fallback to nextDescription we just sent
+                                            const updatedDesc = scene?.custom_desc || scene?.desc || scene?.description || nextDescription;
+                                            return {
+                                              ...scene,
+                                              description: updatedDesc,
+                                              desc: updatedDesc,
+                                              custom_desc: updatedDesc
+                                            };
+                                          }
+                                          return scene;
+                                        });
+                                        
+                                        const scriptContainer = { script: { airesponse: updatedAiresponse } };
+                                        applyScriptContainer(scriptContainer);
+                                        
+                                        // Also update the local state directly after a small delay to ensure description is preserved
+                                        // This ensures the description is updated even if applyScriptContainer normalization doesn't pick it up
+                                        setTimeout(() => {
+                                          setScriptRows((prevRows) => {
+                                            if (!Array.isArray(prevRows)) return prevRows;
+                                            return prevRows.map((row, idx) => {
+                                              const rowSceneNum = row?.scene_number ?? (idx + 1);
+                                              if (Number(rowSceneNum) === Number(sceneNumber)) {
+                                                return {
+                                                  ...row,
+                                                  description: nextDescription,
+                                                  desc: nextDescription
+                                                };
+                                              }
+                                              return row;
+                                            });
+                                          });
+                                        }, 100);
+                                      }
+                                    }
+                                  }
+                                }
                               } catch (err) {
                                 console.warn('custom-desc update failed:', err);
+                                alert(err?.message || 'Failed to save description. Please try again.');
+                              } finally {
+                                setIsSavingDescription(false);
+                                // Close editing state after loading completes for VEO3/ANCHOR
+                                setIsDescriptionEditing(false);
+                                setDescriptionSceneIndex(null);
                               }
                             } else if (modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
                               try {
@@ -8436,6 +8500,8 @@ const saveAnchorPromptTemplate = async () => {
                               } catch (err) {
                                 console.warn('update-text description failed:', err);
                               }
+                              setIsDescriptionEditing(false);
+                              setDescriptionSceneIndex(null);
                             } else {
                               // Default to update-text flow for any other models
                               try {
@@ -8445,16 +8511,26 @@ const saveAnchorPromptTemplate = async () => {
                               } catch (err) {
                                 console.warn('description update failed:', err);
                               }
+                              setIsDescriptionEditing(false);
+                              setDescriptionSceneIndex(null);
                             }
                           } catch (_) {
                             /* noop */
                           }
-                          setIsDescriptionEditing(false);
-                          setDescriptionSceneIndex(null);
                         };
                         if (isEditingScene) {
                           return (
-                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
+                              {/* Loading Overlay */}
+                              {isSavingDescription && (
+                                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                                  <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                                    <div className="w-12 h-12 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
+                                    <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
+                                    <p className="text-xs text-gray-500">Please wait...</p>
+                                  </div>
+                                </div>
+                              )}
                               <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
                               {!isInlineEditing && (
                               <p className="mt-2 text-xs text-gray-500">Double-click the description to edit.</p>
@@ -8462,32 +8538,52 @@ const saveAnchorPromptTemplate = async () => {
                               <textarea
                                 value={sceneDescription}
                                 onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent !font-medium"
+                                className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent !font-medium ${isSavingDescription ? 'opacity-60' : ''}`}
                                 rows={4}
                                 placeholder="Enter scene description"
+                                readOnly={isSavingDescription}
                               />
                             </div>
                           );
                         }
                         return (
-                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
+                            {/* Loading Overlay */}
+                            {isSavingDescription && (
+                              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                                <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                                  <div className="w-12 h-12 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
+                                  <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
+                                  <p className="text-xs text-gray-500">Please wait...</p>
+                                </div>
+                              </div>
+                            )}
                             <div className="flex items-center justify-between mb-3">
                               <h4 className="text-lg font-semibold text-gray-800">Description</h4>
                               {isInlineEditing ? (
                                 <div className="flex items-center gap-2">
                                   <button
                                     type="button"
-                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100"
+                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                                     onClick={cancelInlineEditing}
+                                    disabled={isSavingDescription}
                                   >
                                     Cancel
                                   </button>
                                   <button
                                     type="button"
-                                    className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800"
+                                    className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                     onClick={saveInlineDescription}
+                                    disabled={isSavingDescription}
                                   >
-                                    Save
+                                    {isSavingDescription ? (
+                                      <>
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        <span>Saving...</span>
+                                      </>
+                                    ) : (
+                                      'Save'
+                                    )}
                                   </button>
                                 </div>
                               ) : (
@@ -8498,12 +8594,12 @@ const saveAnchorPromptTemplate = async () => {
                               value={isInlineEditing ? pendingDescription : sceneDescription}
                               onChange={(e) => setPendingDescription(e.target.value)}
                               onDoubleClick={startInlineEditing}
-                              readOnly={!isInlineEditing}
+                              readOnly={!isInlineEditing || isSavingDescription}
                               className={`w-full px-3 py-2 rounded-lg border ${
                                 isInlineEditing
                                   ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
                                   : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
-                              }`}
+                              } ${isSavingDescription ? 'opacity-60' : ''}`}
                               rows={4}
                               placeholder="Double-click to edit description"
                             />

@@ -44,6 +44,8 @@ const MyMedia = () => {
   const [isLoadingLib, setIsLoadingLib] = useState(false);
   const [libError, setLibError] = useState('');
   const [showShortPopup, setShowShortPopup] = useState(false);
+  const [webmConversionJobId, setWebmConversionJobId] = useState(null);
+  const [webmConversionStatus, setWebmConversionStatus] = useState(null);
 
   // Initialize Redux job from localStorage if user hit this page via redirect
   useEffect(() => {
@@ -54,6 +56,106 @@ const MyMedia = () => {
       }
     } catch (_) { /* noop */ }
   }, [videoJob?.jobId, dispatch]);
+
+  // Initialize webm conversion job from localStorage
+  useEffect(() => {
+    try {
+      const jobId = localStorage.getItem('webm_conversion_job_id');
+      if (jobId) {
+        setWebmConversionJobId(jobId);
+        setWebmConversionStatus('queued');
+      }
+    } catch (_) { /* noop */ }
+  }, []);
+
+  // Poll webm conversion job status until succeeded
+  useEffect(() => {
+    if (!webmConversionJobId) return;
+    
+    let cancelled = false;
+    let isPolling = false; // Track if polling is in progress
+    const pollInterval = 3000; // 3 seconds
+    const maxDuration = 10 * 60 * 1000; // 10 minutes
+    const startTime = Date.now();
+    
+    const poll = async () => {
+      // Prevent multiple polling loops
+      if (isPolling || cancelled) return;
+      
+      // Check timeout
+      if (Date.now() - startTime > maxDuration) {
+        setWebmConversionStatus('failed');
+        console.error('WebM conversion job polling timeout');
+        return;
+      }
+      
+      isPolling = true;
+      
+      try {
+        const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
+        const url = `${apiBase}/v1/videos/webm-conversion-job-status/${encodeURIComponent(webmConversionJobId)}`;
+        
+        const resp = await fetch(url);
+        const text = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+        
+        if (!resp.ok) {
+          throw new Error(`Job status check failed: ${resp.status} ${text}`);
+        }
+        
+        const status = data?.status || data?.job_status || 'queued';
+        
+        if (!cancelled) {
+          setWebmConversionStatus(status);
+          
+          // If succeeded, clear the job ID from localStorage
+          if (status === 'succeeded' || status === 'completed') {
+            localStorage.removeItem('webm_conversion_job_id');
+            // Refresh the video library to show the new video
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+            isPolling = false;
+            return; // Stop polling
+          }
+          
+          // If failed, keep job ID for debugging but stop polling
+          if (status === 'failed' || status === 'error') {
+            console.error('WebM conversion job failed:', data);
+            isPolling = false;
+            return; // Stop polling
+          }
+        }
+        
+        // Continue polling if not in terminal state
+        if (!cancelled && status !== 'succeeded' && status !== 'completed' && status !== 'failed' && status !== 'error') {
+          isPolling = false;
+          setTimeout(poll, pollInterval);
+        } else {
+          isPolling = false;
+        }
+      } catch (e) {
+        console.error('Error polling webm conversion job status:', e);
+        isPolling = false;
+        if (!cancelled) {
+          // On error, retry after interval (but check timeout first)
+          if (Date.now() - startTime < maxDuration) {
+            setTimeout(poll, pollInterval);
+          } else {
+            setWebmConversionStatus('failed');
+          }
+        }
+      }
+    };
+    
+    poll();
+    return () => { cancelled = true; };
+  }, [webmConversionJobId]); // Only depend on jobId, not status
 
   // Poll job status if jobId exists and not terminal (adjust to merge jobs when needed)
   useEffect(() => {
@@ -258,6 +360,22 @@ const MyMedia = () => {
                 {videoJob.status === 'failed' && (
                   <div className="mt-2 text-sm text-red-700">{videoJob.error || 'Video generation failed.'}</div>
                 )}
+              </div>
+            )}
+
+            {/* WebM Conversion job status card */}
+            {webmConversionJobId && webmConversionStatus && webmConversionStatus !== 'succeeded' && webmConversionStatus !== 'completed' && webmConversionStatus !== 'failed' && webmConversionStatus !== 'error' && (
+              <div className="mb-8 p-4 border border-gray-200 rounded-xl bg-gray-50">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-gray-900 font-medium">Converting Video to MP4</div>
+                  <div className={`text-sm ${webmConversionStatus === 'succeeded' || webmConversionStatus === 'completed' ? 'text-green-700' : webmConversionStatus === 'failed' || webmConversionStatus === 'error' ? 'text-red-700' : 'text-blue-700'}`}>
+                    {webmConversionStatus || 'queued'}
+                  </div>
+                </div>
+                <div className="relative w-full aspect-video rounded-lg border overflow-hidden bg-black flex items-center justify-center">
+                  <div className="absolute top-3 left-3 z-10 px-2 py-1 rounded bg-yellow-400 text-black text-xs font-semibold">Converting…</div>
+                  <div className="text-white/80 text-sm">{'Your video is being converted. Please wait...'}</div>
+                </div>
               </div>
             )}
 

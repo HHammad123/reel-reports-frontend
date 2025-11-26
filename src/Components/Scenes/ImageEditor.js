@@ -144,4 +144,3 @@ const ImageEditor = ({ data, onClose }) => {
 };
 
 export default ImageEditor;
-

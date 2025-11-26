@@ -1,22 +1,38 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import VideoEditor from '../../pages/VideoEditor';
+import { Zap, ChevronRight, X } from 'lucide-react';
 
+// FFmpeg xfade filter transition types
+// Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
 const TRANSITION_MAP = {
-  "fade": "fade",
-  "fadeblack": "fadeblack",
-  "fadewhite": "fadewhite",
-  "slideleft": "slideleft",
-  "slideright": "slideright",
-  "slideup": "slideup",
-  "slidedown": "slidedown",
-  "circleopen": "circleopen",
-  "circleclose": "circleclose",
-  "wipeleft": "wipeleft",
-  "wiperight": "wiperight",
-  "wipeup": "wipeup",
-  "wipedown": "wipedown",
-  "pixelize": "pixelize",
-  "dissolve": "dissolve",
+  "fade": "fade",                    // Cross-fade (default)
+  "fadeblack": "fadeblack",           // Fade to black
+  "fadewhite": "fadewhite",           // Fade to white
+  "distance": "distance",             // Distance-based transition
+  "wipeleft": "wipeleft",             // Wipe from right to left
+  "wiperight": "wiperight",           // Wipe from left to right
+  "wipeup": "wipeup",                 // Wipe from bottom to top
+  "wipedown": "wipedown",             // Wipe from top to bottom
+  "slideleft": "slideleft",           // Slide from right to left
+  "slideright": "slideright",         // Slide from left to right
+  "slideup": "slideup",               // Slide from bottom to top
+  "slidedown": "slidedown",           // Slide from top to bottom
+  "circleopen": "circleopen",         // Circle opening
+  "circleclose": "circleclose",       // Circle closing
+  "rectcrop": "rectcrop",             // Rectangular crop
+  "pixelize": "pixelize",             // Pixelize effect
+  "radial": "radial",                 // Radial transition
+  "hblur": "hblur",                   // Horizontal blur
+  "wipetl": "wipetl",                 // Wipe top-left
+  "wipetr": "wipetr",                 // Wipe top-right
+  "wipebl": "wipebl",                 // Wipe bottom-left
+  "wipebr": "wipebr",                 // Wipe bottom-right
+  "squeezeh": "squeezeh",             // Squeeze horizontally
+  "squeezev": "squeezev",             // Squeeze vertically
+  "zoomin": "zoomin",                 // Zoom in
+  "zoomout": "zoomout",               // Zoom out
+  "fadefast": "fadefast",             // Fast fade
+  "fadeslow": "fadeslow",             // Slow fade
 };
 
 const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
@@ -29,6 +45,18 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const [jobProgress, setJobProgress] = useState({ percent: 0, phase: '' });
   // Transitions state: key is video index (transition between video[index] and video[index+1])
   const [transitions, setTransitions] = useState({}); // { 0: "fade", 1: "slideleft", ... }
+  const [transitionDuration, setTransitionDuration] = useState(0.5);
+  
+  // Wrapper for setTransitions to add debugging
+  const handleTransitionsChange = useCallback((newTransitions) => {
+    console.log('🔄 VideosList: Transitions changed from VideoEditor:', {
+      oldTransitions: transitions,
+      newTransitions,
+      keys: Object.keys(newTransitions),
+      values: Object.values(newTransitions)
+    });
+    setTransitions(newTransitions);
+  }, [transitions]);
   const [hoveredTransitionIndex, setHoveredTransitionIndex] = useState(null); // null or video index
   const [showTransitionMenu, setShowTransitionMenu] = useState(null); // null or video index
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
@@ -39,6 +67,24 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     let cancelled = false;
     let timeoutId = null;
 
+    // Get silent video URL (video without audio) for primary layer
+    const getSilentVideoUrlFromEntry = (entry = {}) =>
+      entry?.silent_video_url ||
+      entry?.video_only_url ||
+      entry?.video_without_audio_url ||
+      entry?.video?.silent_video_url ||
+      entry?.video?.video_only_url ||
+      entry?.video?.v1?.silent_video_url ||
+      entry?.video?.v1?.video_only_url ||
+      entry?.videos?.silent_video_url ||
+      entry?.videos?.video_only_url ||
+      entry?.videos?.v1?.silent_video_url ||
+      entry?.videos?.v1?.video_only_url ||
+      entry?.blobLink?.silent_video_link ||
+      entry?.blobLink?.video_only_link ||
+      null;
+
+    // Get regular video URL (fallback if silent video not available)
     const getVideoUrlFromEntry = (entry = {}) =>
       entry?.video?.v1?.video_url ||
       entry?.video?.video_url ||
@@ -48,18 +94,91 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       entry?.blobLink?.video_link ||
       entry?.url;
 
+    // Get audio URL (prefer audio_only_url, especially from videos.v1 for SORA/PLOTLY)
+    const getAudioUrlFromEntry = (entry = {}) => {
+      // First check videos.v1.audio_only_url (for SORA/PLOTLY scenes)
+      if (entry?.videos?.v1?.audio_only_url) {
+        return entry.videos.v1.audio_only_url;
+      }
+      // Check videos.v1.audio_url as fallback
+      if (entry?.videos?.v1?.audio_url) {
+        return entry.videos.v1.audio_url;
+      }
+      // Check other nested structures
+      if (entry?.videos?.audio_only_url) {
+        return entry.videos.audio_only_url;
+      }
+      if (entry?.videos?.audio_url) {
+        return entry.videos.audio_url;
+      }
+      // Check video (singular) structure
+      if (entry?.video?.v1?.audio_only_url) {
+        return entry.video.v1.audio_only_url;
+      }
+      if (entry?.video?.v1?.audio_url) {
+        return entry.video.v1.audio_url;
+      }
+      if (entry?.video?.audio_only_url) {
+        return entry.video.audio_only_url;
+      }
+      if (entry?.video?.audio_url) {
+        return entry.video.audio_url;
+      }
+      // Check top-level fields
+      if (entry?.audio_only_url) {
+        return entry.audio_only_url;
+      }
+      if (entry?.audio_only?.url) {
+        return entry.audio_only.url;
+      }
+      if (entry?.audio_url) {
+        return entry.audio_url;
+      }
+      if (entry?.audio?.url) {
+        return entry.audio.url;
+      }
+      // Check other audio-related fields
+      if (entry?.voice_link) {
+        return entry.voice_link;
+      }
+      if (entry?.voiceover_url) {
+        return entry.voiceover_url;
+      }
+      if (entry?.narration_url) {
+        return entry.narration_url;
+      }
+      if (entry?.narration?.url) {
+        return entry.narration.url;
+      }
+      if (entry?.audio?.audio_url) {
+        return entry.audio.audio_url;
+      }
+      if (entry?.blobLink?.audio_link) {
+        return entry.blobLink.audio_link;
+      }
+      // Check if narration is a URL string
+      if (typeof entry?.narration === 'string' && entry.narration.startsWith('http')) {
+        return entry.narration;
+      }
+      return null;
+    };
+
     const parseVideosPayload = (payload = {}) => {
       const videosArr = Array.isArray(payload?.videos) ? payload.videos : [];
       return videosArr
         .map((videoEntry, videoIndex) => {
-          const primaryVideoUrl = getVideoUrlFromEntry(videoEntry);
+          // Prefer silent video URL for primary layer, fallback to regular video URL
+          const silentVideoUrl = getSilentVideoUrlFromEntry(videoEntry);
+          const primaryVideoUrl = silentVideoUrl || getVideoUrlFromEntry(videoEntry);
           const scenes = [];
 
           const appendScene = (sceneSource, fallbackLabel) => {
             const sceneUrl = getVideoUrlFromEntry(sceneSource);
+            const sceneAudioUrl = getAudioUrlFromEntry(sceneSource);
             if (sceneUrl) {
               scenes.push({
                 url: sceneUrl,
+                audioUrl: sceneAudioUrl, // Store audio URL per scene
                 description:
                   sceneSource?.desc ||
                   sceneSource?.description ||
@@ -67,6 +186,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                   fallbackLabel ||
                   '',
                 narration: sceneSource?.narration || sceneSource?.voiceover || '',
+                sceneNumber: sceneSource?.scene_number,
+                sceneTitle: sceneSource?.scene_title || sceneSource?.title,
               });
             }
           };
@@ -85,12 +206,48 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             return null;
           }
 
+          const audioUrl = getAudioUrlFromEntry(videoEntry);
+          
+          // Debug logging for audio URL extraction
+          if (audioUrl) {
+            console.log(`✅ Found audio URL for video ${videoIndex + 1}:`, audioUrl);
+            console.log(`   Source:`, {
+              from_videos_v1: !!videoEntry?.videos?.v1?.audio_only_url,
+              from_videos: !!videoEntry?.videos?.audio_only_url,
+              from_video_v1: !!videoEntry?.video?.v1?.audio_only_url,
+              from_top_level: !!videoEntry?.audio_only_url
+            });
+          } else {
+            console.log(`⚠️ No audio URL found for video ${videoIndex + 1}, checking entry:`, {
+              audio_only_url: videoEntry?.audio_only_url,
+              audio_url: videoEntry?.audio_url,
+              videos_v1: videoEntry?.videos?.v1 ? {
+                audio_only_url: videoEntry.videos.v1?.audio_only_url,
+                audio_url: videoEntry.videos.v1?.audio_url,
+                silent_video_url: videoEntry.videos.v1?.silent_video_url
+              } : null,
+              videos: videoEntry?.videos ? {
+                audio_only_url: videoEntry.videos?.audio_only_url,
+                audio_url: videoEntry.videos?.audio_url
+              } : null,
+              video_v1: videoEntry?.video?.v1 ? {
+                audio_only_url: videoEntry.video.v1?.audio_only_url,
+                audio_url: videoEntry.video.v1?.audio_url
+              } : null,
+              video: videoEntry?.video ? {
+                audio_only_url: videoEntry.video?.audio_only_url,
+                audio_url: videoEntry.video?.audio_url
+              } : null
+            });
+          }
+
           return {
             id: videoEntry?.id || videoEntry?.video_id || `video-${videoIndex}`,
             title: videoEntry?.title || videoEntry?.name || `Video ${videoIndex + 1}`,
             url: primaryVideoUrl || scenes[0]?.url || '',
             description: videoEntry?.desc || videoEntry?.scene_description || '',
             narration: videoEntry?.narration || '',
+            audioUrl: audioUrl,
             scenes,
           };
         })
@@ -206,9 +363,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const convertVideoUrlToClip = useCallback(async (videoItem) => {
     return new Promise((resolve, reject) => {
       const videoElement = document.createElement('video');
-      videoElement.src = videoItem.url;
+      videoElement.crossOrigin = 'anonymous'; // Must be set BEFORE src
       videoElement.preload = 'metadata';
-      videoElement.crossOrigin = 'anonymous';
+      videoElement.src = videoItem.url;
       
       videoElement.onloadedmetadata = () => {
         const duration = videoElement.duration;
@@ -243,13 +400,56 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     });
   }, []);
 
+  // Helper function to convert audio URL to clip by loading metadata
+  const convertAudioUrlToClip = useCallback(async (audioUrl, itemId, itemTitle) => {
+    return new Promise((resolve, reject) => {
+      const audioElement = document.createElement('audio');
+      audioElement.crossOrigin = 'anonymous'; // Must be set BEFORE src
+      audioElement.preload = 'metadata';
+      audioElement.src = audioUrl;
+      
+      audioElement.onloadedmetadata = () => {
+        const duration = audioElement.duration;
+        if (!isFinite(duration) || duration <= 0) {
+          console.warn('⚠️ Audio duration is invalid, using default');
+          resolve(null);
+          return;
+        }
+        
+        const audioClip = {
+          id: `audio-${itemId}-${Date.now()}`,
+          url: audioUrl,
+          name: itemTitle ? `Audio: ${itemTitle}` : `Audio ${Date.now()}`,
+          type: 'audio',
+          duration: duration,
+          speed: 1.0,
+          trimStart: 0,
+          trimEnd: duration,
+          startTime: 0, // Start at beginning of timeline
+          volume: 1.0,
+        };
+        
+        resolve(audioClip);
+      };
+      
+      audioElement.onerror = (error) => {
+        console.error('Error loading audio:', error);
+        reject(error);
+      };
+      
+      audioElement.load();
+    });
+  }, []);
+
   // Convert video items to clips when items change
   const [editorTracks, setEditorTracks] = useState([[], []]);
+  const [editorAudioTracks, setEditorAudioTracks] = useState([]);
   const [isConvertingVideos, setIsConvertingVideos] = useState(false);
   
   useEffect(() => {
     if (items.length === 0) {
       setEditorTracks([[], []]);
+      setEditorAudioTracks([]);
       return;
     }
     
@@ -257,7 +457,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       setIsConvertingVideos(true);
       try {
         const clips = [];
+        const audioClips = [];
+        
         for (const item of items) {
+          // Convert video URL to clip
           if (item.url) {
             try {
               const clip = await convertVideoUrlToClip(item);
@@ -267,16 +470,118 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             }
           }
         }
+        
+        // Now process audio URLs from scenes (per scene) and video-level fallback
+        console.log('🎵 Processing audio tracks for', items.length, 'items');
+        let accumulatedTime = 0;
+        
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const currentVideoClip = clips[i];
+          
+          // Calculate start time for this video's scenes
+          let sceneStartTime = accumulatedTime;
+          
+          // Process audio from scenes first (per scene audio)
+          if (item.scenes && Array.isArray(item.scenes) && item.scenes.length > 0) {
+            console.log(`🎵 Item ${i + 1} has ${item.scenes.length} scenes`);
+            
+            // Calculate duration per scene if we have a video clip
+            let sceneDuration = 0;
+            if (currentVideoClip && item.scenes.length > 0) {
+              const videoDuration = (currentVideoClip.trimEnd - currentVideoClip.trimStart) / (currentVideoClip.speed || 1.0);
+              sceneDuration = videoDuration / item.scenes.length;
+            }
+            
+            for (let sceneIdx = 0; sceneIdx < item.scenes.length; sceneIdx++) {
+              const scene = item.scenes[sceneIdx];
+              
+              if (scene.audioUrl) {
+                try {
+                  const sceneTitle = scene.sceneTitle || scene.description || `Scene ${scene.sceneNumber || sceneIdx + 1}`;
+                  console.log(`🎵 Converting audio URL for scene ${sceneIdx + 1} of item ${i + 1}:`, scene.audioUrl);
+                  
+                  const audioClip = await convertAudioUrlToClip(
+                    scene.audioUrl, 
+                    `${item.id}-scene-${sceneIdx}`, 
+                    `${item.title} - ${sceneTitle}`
+                  );
+                  
+                  if (audioClip) {
+                    audioClip.startTime = sceneStartTime + (sceneIdx * sceneDuration);
+                    audioClips.push(audioClip);
+                    
+                    console.log(`✅ Audio clip created for scene:`, {
+                      name: audioClip.name,
+                      startTime: audioClip.startTime,
+                      duration: audioClip.duration,
+                      url: audioClip.url,
+                      sceneIndex: sceneIdx
+                    });
+                  }
+                } catch (error) {
+                  console.error(`Failed to convert audio for scene ${sceneIdx + 1} of item ${i + 1}:`, error);
+                }
+              } else {
+                console.log(`⚠️ Scene ${sceneIdx + 1} of item ${i + 1} has no audioUrl`);
+              }
+            }
+          }
+          
+          // Fallback: Use video-level audio URL if no scene-level audio found
+          if (item.audioUrl && (!item.scenes || item.scenes.length === 0 || !item.scenes.some(s => s.audioUrl))) {
+            try {
+              console.log(`🎵 Converting video-level audio URL for item ${i + 1}:`, item.audioUrl);
+              const audioClip = await convertAudioUrlToClip(item.audioUrl, item.id, item.title);
+              if (audioClip) {
+                audioClip.startTime = accumulatedTime;
+                audioClips.push(audioClip);
+                console.log(`✅ Audio clip created from video-level:`, {
+                  name: audioClip.name,
+                  startTime: audioClip.startTime,
+                  duration: audioClip.duration,
+                  url: audioClip.url
+                });
+              }
+            } catch (error) {
+              console.error(`Failed to convert video-level audio ${item.id}:`, error);
+            }
+          }
+          
+          // Update accumulated time for next video
+          if (currentVideoClip) {
+            const trimmedDuration = (currentVideoClip.trimEnd - currentVideoClip.trimStart) / (currentVideoClip.speed || 1.0);
+            accumulatedTime += trimmedDuration;
+          }
+        }
+        
+        console.log(`🎵 Total audio clips created: ${audioClips.length}`, audioClips);
+        
+        console.log('📊 Final results:', {
+          videoClips: clips.length,
+          audioClips: audioClips.length,
+          audioClipsDetails: audioClips.map(ac => ({
+            name: ac.name,
+            url: ac.url,
+            startTime: ac.startTime,
+            duration: ac.duration
+          }))
+        });
+        
         setEditorTracks(prev => [clips, prev[1]]);
+        setEditorAudioTracks(audioClips);
+        
+        // Force a re-render by logging state update
+        console.log('✅ State updated - editorAudioTracks set to:', audioClips.length, 'tracks');
       } catch (error) {
-        console.error('Error converting videos to clips:', error);
+        console.error('Error converting videos/audio to clips:', error);
       } finally {
         setIsConvertingVideos(false);
       }
     };
     
     convertAllVideos();
-  }, [items, convertVideoUrlToClip]);
+  }, [items, convertVideoUrlToClip, convertAudioUrlToClip]);
 
   // Close transition menu when clicking outside
   useEffect(() => {
@@ -332,16 +637,47 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       // Transform transitions to API format
       // transitions object: { 0: "fade", 1: "slideleft" } means transition between video[0] and video[1], video[1] and video[2]
       // API expects: [{ from: 1, to: 2, type: "fade", duration: 0.5 }] (1-indexed)
+      console.log('🎬 Preparing transitions for API:', {
+        itemsCount: items.length,
+        transitionsState: transitions,
+        transitionsKeys: Object.keys(transitions),
+        transitionsValues: Object.values(transitions)
+      });
+      
       const transitionsArray = [];
       for (let i = 0; i < items.length - 1; i++) {
-        const transitionType = transitions[i] || 'fade'; // Default to 'fade' if not set
-        transitionsArray.push({
-          from: i + 1, // 1-indexed
-          to: i + 2,   // 1-indexed
-          type: transitionType,
-          duration: 0.5
-        });
+        // Check if transition exists for this index (as string key or number)
+        const transitionType = transitions[i] !== undefined ? transitions[i] : (transitions[String(i)] !== undefined ? transitions[String(i)] : null);
+        
+        if (transitionType && transitionType !== 'none' && transitionType !== null && transitionType !== undefined) {
+          transitionsArray.push({
+            from: i + 1, // 1-indexed
+            to: i + 2,   // 1-indexed
+            type: transitionType,
+            duration: transitionDuration || 0.5 // Transition duration in seconds (can be adjusted)
+          });
+          console.log(`✅ Added transition ${i}:`, { from: i + 1, to: i + 2, type: transitionType });
+        } else {
+          // Add default fade if no transition is explicitly set
+          transitionsArray.push({
+            from: i + 1,
+            to: i + 2,
+            type: 'fade',
+            duration: transitionDuration || 0.5
+          });
+          console.log(`⚠️ No transition set for index ${i}, using default 'fade'`);
+        }
       }
+      
+      console.log('🎬 Final transitions array being sent to API:', {
+        transitionsCount: transitionsArray.length,
+        transitions: transitionsArray,
+        requestBody: {
+          session_id,
+          user_id: user_id ? '***' : null,
+          transitions: transitionsArray
+        }
+      });
 
       const requestBody = {
         session_id,
@@ -435,7 +771,26 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         {/* Video Editor - Full Section */}
         {editorTracks[0].length > 0 && !isConvertingVideos ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <VideoEditor initialTracks={editorTracks} />
+            {(() => {
+              console.log('📹 Passing to VideoEditor:', {
+                videoClips: editorTracks[0].length,
+                audioClips: editorAudioTracks.length,
+                audioTracks: editorAudioTracks,
+                firstAudioTrack: editorAudioTracks[0],
+                allAudioTracks: editorAudioTracks
+              });
+              return null;
+            })()}
+            <VideoEditor 
+              key={`editor-${editorTracks[0].length}-${editorAudioTracks.length}`}
+              initialTracks={editorTracks} 
+              initialAudioTracks={editorAudioTracks}
+              externalTransitions={transitions}
+              onTransitionsChange={handleTransitionsChange}
+              transitionOptions={Object.keys(TRANSITION_MAP)}
+              transitionDuration={transitionDuration}
+              onTransitionDurationChange={setTransitionDuration}
+            />
           </div>
         ) : isConvertingVideos ? (
           <div className="flex-1 flex items-center justify-center">
