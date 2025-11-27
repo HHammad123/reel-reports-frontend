@@ -686,16 +686,89 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         playerContainer.className = `player-container relative shadow-2xl shadow-black/50 group transition-all ${currentTransitionEffect || ''}`;
       }
 
-      // --- Source Swap Logic ---
+      // --- Preload Next Clip (when close to end) ---
+      // Preload next clip when within 1 second of the end to ensure seamless transition
+      const timeUntilEnd = (activeClip.trimEnd - localTime) / (activeClip.speed || 1.0);
+      if (nextClipExists && nextClipExists.type === 'video' && timeUntilEnd <= 1.0) {
+        // Create a hidden preload element
+        let preloadVideo = document.getElementById(`preload-${nextClipExists.id}`);
+        if (!preloadVideo) {
+          preloadVideo = document.createElement('video');
+          preloadVideo.id = `preload-${nextClipExists.id}`;
+          preloadVideo.crossOrigin = 'anonymous';
+          preloadVideo.preload = 'auto';
+          preloadVideo.style.display = 'none';
+          document.body.appendChild(preloadVideo);
+        }
+        
+        // Only set src if it's different to avoid unnecessary reloads
+        if (preloadVideo.src !== nextClipExists.url) {
+          preloadVideo.src = nextClipExists.url;
+          preloadVideo.load();
+          
+          // Preload the next clip's start time
+          preloadVideo.addEventListener('loadeddata', () => {
+            preloadVideo.currentTime = nextClipExists.trimStart || 0;
+          }, { once: true });
+        }
+      }
+
+      // --- Source Swap Logic with Seamless Transition ---
       const currentSrc = videoElement.getAttribute('src'); 
       if (currentSrc !== activeClip.url) {
         // Set crossOrigin before setting src to prevent canvas tainting
         if (!videoElement.crossOrigin) {
           videoElement.crossOrigin = 'anonymous';
         }
-        videoElement.src = activeClip.url;
-        if (playerContainer) {
+        
+        // Preload the video before switching to prevent black screen
+        videoElement.preload = 'auto';
+        
+        // Store the target time and clip for when video is ready
+        const targetTime = localTime;
+        const targetClip = activeClip;
+        
+        // Wait for video to be ready before switching if playing
+        const handleCanPlay = () => {
+          // Set the correct time once video is ready
+          if (Math.abs(videoElement.currentTime - targetTime) > 0.1) {
+            videoElement.currentTime = targetTime;
+          }
+          
+          // If playing, ensure it continues playing
+          if (isPlaying && videoElement.paused) {
+            videoElement.play().catch(e => console.log("V1 Play after load interrupted"));
+          }
+          
+          if (playerContainer) {
             playerContainer.className = `player-container relative shadow-2xl shadow-black/50 group`;
+          }
+          videoElement.removeEventListener('canplay', handleCanPlay);
+        };
+        
+        // Also handle loadeddata for faster switching
+        const handleLoadedData = () => {
+          if (Math.abs(videoElement.currentTime - targetTime) > 0.1) {
+            videoElement.currentTime = targetTime;
+          }
+          videoElement.removeEventListener('loadeddata', handleLoadedData);
+        };
+        
+        videoElement.addEventListener('canplay', handleCanPlay, { once: true });
+        videoElement.addEventListener('loadeddata', handleLoadedData, { once: true });
+        
+        // Set src and load
+        videoElement.src = activeClip.url;
+        videoElement.load(); // Force load to start buffering
+        
+        // If not playing, set the time immediately (video might already be cached)
+        if (!isPlaying) {
+          // Use a small timeout to ensure src is set
+          setTimeout(() => {
+            if (videoElement.readyState >= 1) { // HAVE_METADATA
+              videoElement.currentTime = localTime;
+            }
+          }, 10);
         }
       }
 
@@ -706,12 +779,31 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
          if (Math.abs(videoElement.playbackRate - speed) > 0.01) {
            videoElement.playbackRate = speed;
          }
-         if (Math.abs(videoElement.currentTime - localTime) > 0.3) {
-            videoElement.currentTime = localTime;
+         
+         // Only update currentTime if video is ready and src matches
+         // Use a smaller threshold to prevent gaps
+         if (videoElement.readyState >= 2 && videoElement.src === activeClip.url) { // HAVE_CURRENT_DATA or higher
+           const timeDiff = Math.abs(videoElement.currentTime - localTime);
+           // Use smaller threshold (0.1s) for more precise sync, but only update if significantly off
+           if (timeDiff > 0.1 && timeDiff < videoElement.duration) {
+              videoElement.currentTime = localTime;
+           }
          }
+         
          // Play if playing 
          if (isPlaying && videoElement.paused) {
-             videoElement.play().catch(e => console.log("V1 Play interrupted"));
+             // Wait for video to be ready before playing
+             if (videoElement.readyState >= 2 && videoElement.src === activeClip.url) {
+               videoElement.play().catch(e => console.log("V1 Play interrupted"));
+             } else {
+               const handleCanPlayThrough = () => {
+                 if (isPlaying && videoElement.paused && videoElement.src === activeClip.url) {
+                   videoElement.play().catch(e => console.log("V1 Play interrupted"));
+                 }
+                 videoElement.removeEventListener('canplaythrough', handleCanPlayThrough);
+               };
+               videoElement.addEventListener('canplaythrough', handleCanPlayThrough, { once: true });
+             }
          } else if (!isPlaying && !videoElement.paused) {
              videoElement.pause();
          }
@@ -806,11 +898,54 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       }
 
       // Create canvas for capturing the player container
+      // Use minimum 720p resolution (1280x720) for better quality
       const canvas = document.createElement('canvas');
       const rect = playerContainer.getBoundingClientRect();
-      canvas.width = rect.width || 1920;
-      canvas.height = rect.height || 1080;
+      
+      // Calculate aspect ratio from container
+      const containerAspect = rect.width / rect.height;
+      
+      // Set minimum dimensions for 720p (1280x720)
+      const MIN_WIDTH = 1280;
+      const MIN_HEIGHT = 720;
+      
+      // Calculate dimensions maintaining aspect ratio, but ensuring minimum 720p
+      let canvasWidth = Math.max(rect.width || MIN_WIDTH, MIN_WIDTH);
+      let canvasHeight = Math.max(rect.height || MIN_HEIGHT, MIN_HEIGHT);
+      
+      // If container is smaller than 720p, scale up while maintaining aspect ratio
+      if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT) {
+        if (containerAspect > 16/9) {
+          // Wider than 16:9, use width as base
+          canvasWidth = MIN_WIDTH;
+          canvasHeight = Math.round(MIN_WIDTH / containerAspect);
+          // Ensure height is at least MIN_HEIGHT
+          if (canvasHeight < MIN_HEIGHT) {
+            canvasHeight = MIN_HEIGHT;
+            canvasWidth = Math.round(MIN_HEIGHT * containerAspect);
+          }
+        } else {
+          // Taller or equal to 16:9, use height as base
+          canvasHeight = MIN_HEIGHT;
+          canvasWidth = Math.round(MIN_HEIGHT * containerAspect);
+          // Ensure width is at least MIN_WIDTH
+          if (canvasWidth < MIN_WIDTH) {
+            canvasWidth = MIN_WIDTH;
+            canvasHeight = Math.round(MIN_WIDTH / containerAspect);
+          }
+        }
+      }
+      
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
       const ctx = canvas.getContext('2d');
+      
+      console.log('📐 Canvas dimensions set to:', {
+        width: canvas.width,
+        height: canvas.height,
+        aspectRatio: (canvas.width / canvas.height).toFixed(2),
+        containerSize: { width: rect.width, height: rect.height }
+      });
       
       exportCanvasRef.current = canvas;
       
@@ -956,11 +1091,17 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       const recordingAudioElements = audioElements;
       
       // Use RecordRTC with combined stream for reliable WebM recording with audio
+      // Calculate bitrate based on resolution for better quality
+      // For 720p: ~8-10 Mbps, for 1080p: ~15-20 Mbps
+      const pixelCount = canvas.width * canvas.height;
+      const isHD = pixelCount >= 1280 * 720; // 720p or higher
+      const videoBitrate = isHD ? 10000000 : 8000000; // 10 Mbps for HD, 8 Mbps for lower
+      
       const recorder = new RecordRTC(combinedStream, {
         type: 'video',
         mimeType: selectedMimeType,
-        videoBitsPerSecond: 5000000, // 5 Mbps
-        audioBitsPerSecond: 128000, // 128 kbps for audio
+        videoBitsPerSecond: videoBitrate, // Higher bitrate for better quality
+        audioBitsPerSecond: 192000, // 192 kbps for better audio quality
         frameRate: 30,
         disableLogs: false,
         timeSlice: 200, // Collect data every 200ms
@@ -971,7 +1112,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         mimeType: selectedMimeType,
         width: canvas.width,
         height: canvas.height,
-        frameRate: 30
+        resolution: `${canvas.width}x${canvas.height}`,
+        frameRate: 30,
+        videoBitrate: `${(videoBitrate / 1000000).toFixed(1)} Mbps`,
+        audioBitrate: '192 kbps',
+        quality: canvas.height >= 720 ? 'HD (720p+)' : 'Standard'
       });
 
       mediaRecorderRef.current = recorder;
@@ -2204,7 +2349,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                       {/* Transition Node (Connector) - Only on Primary Track */}
                       {isPrimaryTrack && nextClip && (
                         <div 
-                          className="relative w-8 flex items-center justify-center z-30 -ml-1 -mr-1 group"
+                          className="relative w-12 h-full flex items-center justify-center z-30 -ml-2 -mr-2 group transition-all"
                           onMouseEnter={() => setHoveredTransitionId(transitionId)}
                           onMouseLeave={() => {
                             if (activeTransitionId !== transitionId) {
@@ -2212,27 +2357,40 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                             }
                           }}
                         >
-                           {/* Transition Button - Show on Hover */}
-                           {(hoveredTransitionId === transitionId || activeTransitionId === transitionId) && (
-                             <button 
-                               onMouseDown={(e) => e.stopPropagation()}
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 setActiveTab('transitions');
-                                 setActiveTransitionId(transitionId);
-                                 setSelectedClipId(null);
-                               }}
-                               className={`
-                                 w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all transform hover:scale-110 shadow-lg
-                                 ${hasTransition 
-                                    ? 'bg-[#13008B] border-[#13008B] text-white shadow-[#13008B]/50' 
-                                    : 'bg-white border-gray-400 text-gray-600 hover:bg-[#13008B] hover:border-[#13008B] hover:text-white'}
-                               `}
-                               title={hasTransition ? `Edit transition: ${transitions[transitionId]}` : 'Add transition'}
-                             >
-                               {hasTransition ? <Zap size={14} /> : <Plus size={14} />}
-                             </button>
-                           )}
+                           {/* Always visible transition indicator line */}
+                           <div 
+                             className={`
+                               absolute left-1/2 top-0 bottom-0 w-0.5 transition-all
+                               ${hoveredTransitionId === transitionId || activeTransitionId === transitionId
+                                 ? 'bg-[#13008B] opacity-100'
+                                 : hasTransition
+                                 ? 'bg-[#13008B] opacity-30'
+                                 : 'bg-gray-300 opacity-20'}
+                             `}
+                             style={{ transform: 'translateX(-50%)' }}
+                           />
+                           
+                           {/* Transition Button - Always visible but more prominent on hover */}
+                           <button 
+                             onMouseDown={(e) => e.stopPropagation()}
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setActiveTab('transitions');
+                               setActiveTransitionId(transitionId);
+                               setSelectedClipId(null);
+                             }}
+                             className={`
+                               relative w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all transform shadow-lg
+                               ${hoveredTransitionId === transitionId || activeTransitionId === transitionId
+                                 ? 'scale-110 bg-[#13008B] border-[#13008B] text-white shadow-[#13008B]/50'
+                                 : hasTransition
+                                 ? 'scale-100 bg-[#13008B]/80 border-[#13008B]/80 text-white shadow-[#13008B]/30 opacity-70 hover:opacity-100'
+                                 : 'scale-90 bg-white/80 border-gray-300 text-gray-500 shadow-gray-300/20 opacity-50 hover:opacity-100 hover:bg-[#13008B] hover:border-[#13008B] hover:text-white'}
+                             `}
+                             title={hasTransition ? `Edit transition: ${transitions[transitionId]}` : 'Add transition'}
+                           >
+                             {hasTransition ? <Zap size={16} /> : <Plus size={16} />}
+                           </button>
                         </div>
                       )}
                     </React.Fragment>

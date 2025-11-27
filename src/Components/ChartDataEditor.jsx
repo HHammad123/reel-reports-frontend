@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
   const [localChartData, setLocalChartData] = useState(null);
@@ -38,121 +38,22 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     return true;
   };
 
-
-  // Transform chart data between formats when chart type changes
-  const transformChartData = (data, targetChartType) => {
-    if (!data || !data.series) return data;
-    
-    const isPieDonut = targetChartType === 'pie' || targetChartType === 'donut';
-    const series = data.series;
-    
-    // Check if data format already matches the target chart type
-    const hasLabels = series.labels && Array.isArray(series.labels) && series.labels.length > 0;
-    const hasValues = series.data && series.data[0] && series.data[0].values && Array.isArray(series.data[0].values);
-    const hasX = series.x && Array.isArray(series.x) && series.x.length > 0;
-    const hasY = series.data && series.data[0] && series.data[0].y && Array.isArray(series.data[0].y);
-    
-    // If data format already matches target type, don't transform
-    if (isPieDonut && hasLabels && hasValues) {
-      return data; // Already in pie/donut format
-    }
-    if (!isPieDonut && hasX && hasY) {
-      return data; // Already in standard format
-    }
-    
-    // Only transform if format doesn't match
-    // If converting from pie/donut to other chart types
-    if (!isPieDonut && hasLabels && hasValues) {
-      // Convert pie format to standard format
-      const labels = Array.isArray(series.labels) ? series.labels : [];
-      const values = Array.isArray(series.data[0].values) ? series.data[0].values : [];
-      
-      // Preserve all series if there are multiple
-      const dataArray = Array.isArray(series.data) ? series.data : [];
-      const convertedData = dataArray.map((entry, idx) => {
-        if (idx === 0 && entry.values) {
-          return {
-            name: entry.name || 'Series 1',
-            y: Array.isArray(entry.values) ? entry.values : []
-          };
-        } else if (entry.y) {
-          return entry; // Already in correct format
-        }
-        return {
-          name: entry.name || `Series ${idx + 1}`,
-          y: []
-        };
-      });
-      
-      return {
-        ...data,
-        series: {
-          x: labels,
-          data: convertedData.length > 0 ? convertedData : [{
-            name: 'Series 1',
-            y: values
-          }]
-        }
-      };
-    }
-    
-    // If converting from standard format to pie/donut
-    if (isPieDonut && hasX && hasY) {
-      // Convert standard format to pie format
-      const x = Array.isArray(series.x) ? series.x : [];
-      const yValues = Array.isArray(series.data[0].y) ? series.data[0].y : [];
-      
-      return {
-        ...data,
-        series: {
-          labels: x,
-          data: [{
-            name: series.data[0].name || 'Series 1',
-            values: yValues
-          }]
-        }
-      };
-    }
-    
-    // If no transformation needed, return as-is
-    return data;
+  // Check if data has changed
+  const hasChanges = () => {
+    if (!localChartData || !originalChartData) return false;
+    return !deepEqual(localChartData, originalChartData);
   };
 
-  // Use ref to track if we should update from props (prevent re-initialization when onDataChange updates parent)
-  const isInternalUpdateRef = useRef(false);
-  const lastChartDataRef = useRef(null);
-  
   useEffect(() => {
-    // Skip if this update was triggered by our own onDataChange
-    if (isInternalUpdateRef.current) {
-      isInternalUpdateRef.current = false;
-      return;
-    }
-    
-    // Skip if chartData hasn't actually changed (compare serialized strings)
-    const currentDataString = chartData ? (typeof chartData === 'string' ? chartData : JSON.stringify(chartData)) : '';
-    if (lastChartDataRef.current === currentDataString) {
-      return;
-    }
-    lastChartDataRef.current = currentDataString;
-    
     // Initialize local state from props
     if (chartData) {
       try {
         const parsed = typeof chartData === 'string' ? JSON.parse(chartData) : chartData;
-        
-        // Only transform if chartType is provided and data format doesn't match
-        let transformed = parsed;
-        if (chartType && chartType.trim()) {
-          transformed = transformChartData(parsed, chartType);
-        }
-        
-        const cloned = JSON.parse(JSON.stringify(transformed));
+        const cloned = JSON.parse(JSON.stringify(parsed));
         setLocalChartData(cloned);
         setOriginalChartData(JSON.parse(JSON.stringify(cloned)));
         setError('');
       } catch (e) {
-        console.error('[ChartDataEditor] Error parsing chartData:', e);
         setError('Invalid chart data: ' + e.message);
         setLocalChartData(null);
         setOriginalChartData(null);
@@ -161,7 +62,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       setLocalChartData(null);
       setOriginalChartData(null);
     }
-  }, [chartData, chartType]);
+  }, [chartData]);
 
   // Update cell value
   const updateCell = (path, value) => {
@@ -203,9 +104,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
-    // Always call onDataChange when data is updated
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -236,8 +134,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -268,8 +164,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -311,8 +205,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -344,8 +236,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -377,8 +267,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -406,8 +294,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
     
     setLocalChartData(newData);
-    // Mark that this is an internal update to prevent re-initialization
-    isInternalUpdateRef.current = true;
     if (onDataChange) {
       onDataChange(newData);
     }
@@ -440,40 +326,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Standard table (bar, column, line, stacked)
   const renderStandardTable = () => {
-    if (!localChartData || !localChartData.series) {
-      return (
-        <div style={{padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '16px'}}>
-          📋 No chart data available
-        </div>
-      );
-    }
-
-    const series = localChartData.series;
-    // Handle both pie format (labels/values) and standard format (x/data)
-    let x, data;
-    
-    if (series.labels && series.data && series.data[0] && series.data[0].values) {
-      // Pie format - convert to standard format for display
-      x = Array.isArray(series.labels) ? series.labels : [];
-      const values = Array.isArray(series.data[0].values) ? series.data[0].values : [];
-      data = [{
-        name: 'Series 1',
-        y: values
-      }];
-    } else {
-      // Standard format
-      x = Array.isArray(series.x) ? series.x : [];
-      data = Array.isArray(series.data) ? series.data : [];
-    }
-
-    // Safety check - if still no valid data, show error
-    if (!x || !Array.isArray(x) || x.length === 0 || !data || !Array.isArray(data) || data.length === 0) {
-      return (
-        <div style={{padding: '40px', textAlign: 'center', color: '#ef4444', fontSize: '16px'}}>
-          ⚠️ Chart data format is invalid for this chart type. Please regenerate the chart.
-        </div>
-      );
-    }
+    const { x, data } = localChartData.series;
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -494,34 +347,26 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                       value={series.name}
                       onChange={(e) => updateCell(['series', 'data', idx, 'name'], e.target.value)}
                       style={{...inputStyle, flex: 1, width: '100%'}}
-                      onFocus={() => setHoveredCol(idx)}
-                      onBlur={() => setTimeout(() => setHoveredCol(null), 200)}
                     />
-                    <button
-                      onClick={() => removeColumn(idx)}
-                      style={{
-                        ...removeHeaderButtonStyle,
-                        opacity: hoveredCol === idx ? 1 : 0,
-                        pointerEvents: hoveredCol === idx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Remove column"
-                    >
-                      ×
-                    </button>
+                    {hoveredCol === idx && (
+                      <button
+                        onClick={() => removeColumn(idx)}
+                        style={removeHeaderButtonStyle}
+                        title="Remove column"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
-                  <button
-                    onClick={() => insertColumn(idx + 1)}
-                    style={{
-                      ...insertColBetweenButtonStyle,
-                      opacity: hoveredCol === idx ? 1 : 0,
-                      pointerEvents: hoveredCol === idx ? 'auto' : 'none',
-                      transition: 'opacity 0.15s ease-in-out'
-                    }}
-                    title="Insert column after"
-                  >
-                    +
-                  </button>
+                  {hoveredCol === idx && (
+                    <button
+                      onClick={() => insertColumn(idx + 1)}
+                      style={insertColBetweenButtonStyle}
+                      title="Insert column after"
+                    >
+                      +
+                    </button>
+                  )}
                 </th>
               ))}
               <th 
@@ -529,18 +374,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                 onMouseEnter={() => setHoveredCol(data.length)}
                 onMouseLeave={() => setHoveredCol(null)}
               >
-                <button
-                  onClick={addColumn}
-                  style={{
-                    ...insertColBetweenButtonStyle,
-                    opacity: hoveredCol === data.length ? 1 : 0,
-                    pointerEvents: hoveredCol === data.length ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Add column at end"
-                >
-                  +
-                </button>
+                {hoveredCol === data.length && (
+                  <button
+                    onClick={addColumn}
+                    style={insertColBetweenButtonStyle}
+                    title="Add column at end"
+                  >
+                    +
+                  </button>
+                )}
               </th>
             </tr>
           </thead>
@@ -559,34 +401,26 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                         value={label}
                         onChange={(e) => updateCell(['series', 'x', rowIdx], e.target.value)}
                         style={{...inputStyle, flex: 1, width: '100%'}}
-                        onFocus={() => setHoveredRow(rowIdx)}
-                        onBlur={() => setTimeout(() => setHoveredRow(null), 200)}
                       />
-                      <button
-                        onClick={() => removeRow(rowIdx)}
-                        style={{
-                          ...removeHeaderButtonStyle,
-                          opacity: hoveredRow === rowIdx ? 1 : 0,
-                          pointerEvents: hoveredRow === rowIdx ? 'auto' : 'none',
-                          transition: 'opacity 0.15s ease-in-out'
-                        }}
-                        title="Remove row"
-                      >
-                        ×
-                      </button>
+                      {hoveredRow === rowIdx && (
+                        <button
+                          onClick={() => removeRow(rowIdx)}
+                          style={removeHeaderButtonStyle}
+                          title="Remove row"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
-                    <button
-                      onClick={() => insertRow(rowIdx)}
-                      style={{
-                        ...insertRowButtonStyle,
-                        opacity: hoveredRow === rowIdx ? 1 : 0,
-                        pointerEvents: hoveredRow === rowIdx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row above"
-                    >
-                      +
-                    </button>
+                    {hoveredRow === rowIdx && (
+                      <button
+                        onClick={() => insertRow(rowIdx)}
+                        style={insertRowButtonStyle}
+                        title="Insert row above"
+                      >
+                        +
+                      </button>
+                    )}
                   </td>
                   {data.map((series, colIdx) => (
                     <td key={colIdx} style={cellStyle}>
@@ -600,22 +434,19 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                   ))}
                   <td style={cellStyle}></td>
                 </tr>
-                <tr style={{height: '2px', position: 'relative'}}>
-                  <td colSpan={data.length + 2} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
-                    <button
-                      onClick={() => insertRow(rowIdx + 1)}
-                      style={{
-                        ...insertRowBetweenButtonStyle,
-                        opacity: hoveredRow === rowIdx ? 1 : 0,
-                        pointerEvents: hoveredRow === rowIdx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row below"
-                    >
-                      +
-                    </button>
-                  </td>
-                </tr>
+                {hoveredRow === rowIdx && (
+                  <tr style={{height: '2px', position: 'relative'}}>
+                    <td colSpan={data.length + 2} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                      <button
+                        onClick={() => insertRow(rowIdx + 1)}
+                        style={insertRowBetweenButtonStyle}
+                        title="Insert row below"
+                      >
+                        +
+                      </button>
+                    </td>
+                  </tr>
+                )}
               </React.Fragment>
             ))}
             <tr
@@ -623,18 +454,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
               onMouseLeave={() => setHoveredRow(null)}
             >
               <td style={{...rowHeaderStyle, position: 'relative'}}>
-                <button
-                  onClick={addRow}
-                  style={{
-                    ...insertRowButtonStyle,
-                    opacity: hoveredRow === x.length ? 1 : 0,
-                    pointerEvents: hoveredRow === x.length ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Add row at end"
-                >
-                  +
-                </button>
+                {hoveredRow === x.length && (
+                  <button
+                    onClick={addRow}
+                    style={insertRowButtonStyle}
+                    title="Add row at end"
+                  >
+                    +
+                  </button>
+                )}
               </td>
               {data.map((_, colIdx) => (
                 <td key={colIdx} style={cellStyle}></td>
@@ -649,28 +477,8 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Pie/Donut table
   const renderPieTable = () => {
-    if (!localChartData || !localChartData.series) {
-      return (
-        <div style={{padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '16px'}}>
-          📋 No chart data available
-        </div>
-      );
-    }
-    
-    const series = localChartData.series;
-    const labels = Array.isArray(series.labels) ? series.labels : [];
-    const dataArray = Array.isArray(series.data) ? series.data : [];
-    const firstDataEntry = dataArray[0];
-    const values = Array.isArray(firstDataEntry?.values) ? firstDataEntry.values : [];
-    
-    // Safety check - if no valid data, show error
-    if (labels.length === 0 || values.length === 0) {
-      return (
-        <div style={{padding: '40px', textAlign: 'center', color: '#ef4444', fontSize: '16px'}}>
-          ⚠️ Chart data format is invalid for pie/donut chart. Expected labels and values arrays.
-        </div>
-      );
-    }
+    const { labels, data } = localChartData.series;
+    const values = data[0].values;
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -696,34 +504,26 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                         value={label}
                         onChange={(e) => updateCell(['series', 'labels', idx], e.target.value)}
                         style={{...inputStyle, flex: 1, width: '100%'}}
-                        onFocus={() => setHoveredRow(idx)}
-                        onBlur={() => setTimeout(() => setHoveredRow(null), 200)}
                       />
-                      <button
-                        onClick={() => removeRow(idx)}
-                        style={{
-                          ...removeHeaderButtonStyle,
-                          opacity: hoveredRow === idx ? 1 : 0,
-                          pointerEvents: hoveredRow === idx ? 'auto' : 'none',
-                          transition: 'opacity 0.15s ease-in-out'
-                        }}
-                        title="Remove row"
-                      >
-                        ×
-                      </button>
+                      {hoveredRow === idx && (
+                        <button
+                          onClick={() => removeRow(idx)}
+                          style={removeHeaderButtonStyle}
+                          title="Remove row"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
-                    <button
-                      onClick={() => insertRow(idx)}
-                      style={{
-                        ...insertRowButtonStyle,
-                        opacity: hoveredRow === idx ? 1 : 0,
-                        pointerEvents: hoveredRow === idx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row above"
-                    >
-                      +
-                    </button>
+                    {hoveredRow === idx && (
+                      <button
+                        onClick={() => insertRow(idx)}
+                        style={insertRowButtonStyle}
+                        title="Insert row above"
+                      >
+                        +
+                      </button>
+                    )}
                   </td>
                   <td style={cellStyle}>
                     <input
@@ -734,22 +534,19 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     />
                   </td>
                 </tr>
-                <tr style={{height: '2px', position: 'relative'}}>
-                  <td colSpan={2} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
-                    <button
-                      onClick={() => insertRow(idx + 1)}
-                      style={{
-                        ...insertRowBetweenButtonStyle,
-                        opacity: hoveredRow === idx ? 1 : 0,
-                        pointerEvents: hoveredRow === idx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row below"
-                    >
-                      +
-                    </button>
-                  </td>
-                </tr>
+                {hoveredRow === idx && (
+                  <tr style={{height: '2px', position: 'relative'}}>
+                    <td colSpan={2} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                      <button
+                        onClick={() => insertRow(idx + 1)}
+                        style={insertRowBetweenButtonStyle}
+                        title="Insert row below"
+                      >
+                        +
+                      </button>
+                    </td>
+                  </tr>
+                )}
               </React.Fragment>
             ))}
             <tr
@@ -757,18 +554,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
               onMouseLeave={() => setHoveredRow(null)}
             >
               <td style={{...rowHeaderStyle, position: 'relative'}}>
-                <button
-                  onClick={addRow}
-                  style={{
-                    ...insertRowButtonStyle,
-                    opacity: hoveredRow === labels.length ? 1 : 0,
-                    pointerEvents: hoveredRow === labels.length ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Add row at end"
-                >
-                  +
-                </button>
+                {hoveredRow === labels.length && (
+                  <button
+                    onClick={addRow}
+                    style={insertRowButtonStyle}
+                    title="Add row at end"
+                  >
+                    +
+                  </button>
+                )}
               </td>
               <td style={cellStyle}></td>
             </tr>
@@ -808,34 +602,26 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                         value={label}
                         onChange={(e) => updateCell(['series', 'x', idx], e.target.value)}
                         style={{...inputStyle, flex: 1, width: '100%'}}
-                        onFocus={() => setHoveredRow(idx)}
-                        onBlur={() => setTimeout(() => setHoveredRow(null), 200)}
                       />
-                      <button
-                        onClick={() => removeRow(idx)}
-                        style={{
-                          ...removeHeaderButtonStyle,
-                          opacity: hoveredRow === idx ? 1 : 0,
-                          pointerEvents: hoveredRow === idx ? 'auto' : 'none',
-                          transition: 'opacity 0.15s ease-in-out'
-                        }}
-                        title="Remove row"
-                      >
-                        ×
-                      </button>
+                      {hoveredRow === idx && (
+                        <button
+                          onClick={() => removeRow(idx)}
+                          style={removeHeaderButtonStyle}
+                          title="Remove row"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
-                    <button
-                      onClick={() => insertRow(idx)}
-                      style={{
-                        ...insertRowButtonStyle,
-                        opacity: hoveredRow === idx ? 1 : 0,
-                        pointerEvents: hoveredRow === idx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row above"
-                    >
-                      +
-                    </button>
+                    {hoveredRow === idx && (
+                      <button
+                        onClick={() => insertRow(idx)}
+                        style={insertRowButtonStyle}
+                        title="Insert row above"
+                      >
+                        +
+                      </button>
+                    )}
                   </td>
                   <td style={cellStyle}>
                     <input
@@ -857,22 +643,19 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     </select>
                   </td>
                 </tr>
-                <tr style={{height: '2px', position: 'relative'}}>
-                  <td colSpan={3} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
-                    <button
-                      onClick={() => insertRow(idx + 1)}
-                      style={{
-                        ...insertRowBetweenButtonStyle,
-                        opacity: hoveredRow === idx ? 1 : 0,
-                        pointerEvents: hoveredRow === idx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row below"
-                    >
-                      +
-                    </button>
-                  </td>
-                </tr>
+                {hoveredRow === idx && (
+                  <tr style={{height: '2px', position: 'relative'}}>
+                    <td colSpan={3} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                      <button
+                        onClick={() => insertRow(idx + 1)}
+                        style={insertRowBetweenButtonStyle}
+                        title="Insert row below"
+                      >
+                        +
+                      </button>
+                    </td>
+                  </tr>
+                )}
               </React.Fragment>
             ))}
             <tr
@@ -880,18 +663,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
               onMouseLeave={() => setHoveredRow(null)}
             >
               <td style={{...rowHeaderStyle, position: 'relative'}}>
-                <button
-                  onClick={addRow}
-                  style={{
-                    ...insertRowButtonStyle,
-                    opacity: hoveredRow === x.length ? 1 : 0,
-                    pointerEvents: hoveredRow === x.length ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Add row at end"
-                >
-                  +
-                </button>
+                {hoveredRow === x.length && (
+                  <button
+                    onClick={addRow}
+                    style={insertRowButtonStyle}
+                    title="Add row at end"
+                  >
+                    +
+                  </button>
+                )}
               </td>
               <td style={cellStyle}></td>
               <td style={cellStyle}></td>
@@ -927,50 +707,41 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                       onChange={(e) => updateCell(['series', 'data', idx, 'name'], e.target.value)}
                       style={{...inputStyle, flex: 1, width: '100%'}}
                     />
-                  <button
-                    onClick={() => removeColumn(idx)}
-                    style={{
-                      ...removeHeaderButtonStyle,
-                      opacity: hoveredCol === idx ? 1 : 0,
-                      pointerEvents: hoveredCol === idx ? 'auto' : 'none',
-                      transition: 'opacity 0.15s ease-in-out'
-                    }}
-                    title="Remove column"
-                  >
-                    ×
-                  </button>
-                </div>
-                <button
-                  onClick={() => insertColumn(idx + 1)}
-                  style={{
-                    ...insertColBetweenButtonStyle,
-                    opacity: hoveredCol === idx ? 1 : 0,
-                    pointerEvents: hoveredCol === idx ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Insert column after"
-                >
-                  +
-                </button>
-              </th>
-            ))}
+                    {hoveredCol === idx && (
+                      <button
+                        onClick={() => removeColumn(idx)}
+                        style={removeHeaderButtonStyle}
+                        title="Remove column"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                  {hoveredCol === idx && (
+                    <button
+                      onClick={() => insertColumn(idx + 1)}
+                      style={insertColBetweenButtonStyle}
+                      title="Insert column after"
+                    >
+                      +
+                    </button>
+                  )}
+                </th>
+              ))}
               <th 
                 style={{...cellStyle, position: 'relative', minWidth: '40px'}}
                 onMouseEnter={() => setHoveredCol(data.length)}
                 onMouseLeave={() => setHoveredCol(null)}
               >
-                <button
-                  onClick={addColumn}
-                  style={{
-                    ...insertColBetweenButtonStyle,
-                    opacity: hoveredCol === data.length ? 1 : 0,
-                    pointerEvents: hoveredCol === data.length ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Add column at end"
-                >
-                  +
-                </button>
+                {hoveredCol === data.length && (
+                  <button
+                    onClick={addColumn}
+                    style={insertColBetweenButtonStyle}
+                    title="Add column at end"
+                  >
+                    +
+                  </button>
+                )}
               </th>
             </tr>
             <tr style={{backgroundColor: '#f9fafb'}}>
@@ -998,34 +769,26 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                         value={label}
                         onChange={(e) => updateCell(['series', 'x', rowIdx], e.target.value)}
                         style={{...inputStyle, flex: 1, width: '100%'}}
-                        onFocus={() => setHoveredRow(rowIdx)}
-                        onBlur={() => setTimeout(() => setHoveredRow(null), 200)}
                       />
-                      <button
-                        onClick={() => removeRow(rowIdx)}
-                        style={{
-                          ...removeHeaderButtonStyle,
-                          opacity: hoveredRow === rowIdx ? 1 : 0,
-                          pointerEvents: hoveredRow === rowIdx ? 'auto' : 'none',
-                          transition: 'opacity 0.15s ease-in-out'
-                        }}
-                        title="Remove row"
-                      >
-                        ×
-                      </button>
+                      {hoveredRow === rowIdx && (
+                        <button
+                          onClick={() => removeRow(rowIdx)}
+                          style={removeHeaderButtonStyle}
+                          title="Remove row"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
-                    <button
-                      onClick={() => insertRow(rowIdx)}
-                      style={{
-                        ...insertRowButtonStyle,
-                        opacity: hoveredRow === rowIdx ? 1 : 0,
-                        pointerEvents: hoveredRow === rowIdx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row above"
-                    >
-                      +
-                    </button>
+                    {hoveredRow === rowIdx && (
+                      <button
+                        onClick={() => insertRow(rowIdx)}
+                        style={insertRowButtonStyle}
+                        title="Insert row above"
+                      >
+                        +
+                      </button>
+                    )}
                   </td>
                   {data.map((series, colIdx) => (
                     <React.Fragment key={colIdx}>
@@ -1051,22 +814,19 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     </React.Fragment>
                   ))}
                 </tr>
-                <tr style={{height: '2px', position: 'relative'}}>
-                  <td colSpan={data.length * 2 + 1} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
-                    <button
-                      onClick={() => insertRow(rowIdx + 1)}
-                      style={{
-                        ...insertRowBetweenButtonStyle,
-                        opacity: hoveredRow === rowIdx ? 1 : 0,
-                        pointerEvents: hoveredRow === rowIdx ? 'auto' : 'none',
-                        transition: 'opacity 0.15s ease-in-out'
-                      }}
-                      title="Insert row below"
-                    >
-                      +
-                    </button>
-                  </td>
-                </tr>
+                {hoveredRow === rowIdx && (
+                  <tr style={{height: '2px', position: 'relative'}}>
+                    <td colSpan={data.length * 2 + 1} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                      <button
+                        onClick={() => insertRow(rowIdx + 1)}
+                        style={insertRowBetweenButtonStyle}
+                        title="Insert row below"
+                      >
+                        +
+                      </button>
+                    </td>
+                  </tr>
+                )}
               </React.Fragment>
             ))}
             <tr
@@ -1074,18 +834,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
               onMouseLeave={() => setHoveredRow(null)}
             >
               <td style={{...rowHeaderStyle, position: 'relative'}}>
-                <button
-                  onClick={addRow}
-                  style={{
-                    ...insertRowButtonStyle,
-                    opacity: hoveredRow === x.length ? 1 : 0,
-                    pointerEvents: hoveredRow === x.length ? 'auto' : 'none',
-                    transition: 'opacity 0.15s ease-in-out'
-                  }}
-                  title="Add row at end"
-                >
-                  +
-                </button>
+                {hoveredRow === x.length && (
+                  <button
+                    onClick={addRow}
+                    style={insertRowButtonStyle}
+                    title="Add row at end"
+                  >
+                    +
+                  </button>
+                )}
               </td>
               {data.map((_, colIdx) => (
                 <React.Fragment key={colIdx}>
@@ -1190,10 +947,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
-    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-    pointerEvents: 'auto',
-    opacity: 1,
-    transition: 'opacity 0.1s ease-in-out'
+    boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
   };
 
   const insertColBetweenButtonStyle = {
@@ -1215,10 +969,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
-    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-    pointerEvents: 'auto',
-    opacity: 1,
-    transition: 'opacity 0.1s ease-in-out'
+    boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
   };
 
   const removeHeaderButtonStyle = {
@@ -1259,55 +1010,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
   };
 
-  // Use useMemo to prevent unnecessary recalculations - must be called before any early returns
-  // Use refs to cache serialized strings and comparison result to prevent flickering
-  const localDataSerializedRef = useRef('');
-  const originalDataSerializedRef = useRef('');
-  const hasChangesRef = useRef(false);
-  
-  // Serialize data for stable comparison
-  const localDataSerialized = useMemo(() => {
-    try {
-      const serialized = localChartData ? JSON.stringify(localChartData) : '';
-      localDataSerializedRef.current = serialized;
-      return serialized;
-    } catch {
-      localDataSerializedRef.current = '';
-      return '';
-    }
-  }, [localChartData]);
-  
-  const originalDataSerialized = useMemo(() => {
-    try {
-      const serialized = originalChartData ? JSON.stringify(originalChartData) : '';
-      originalDataSerializedRef.current = serialized;
-      return serialized;
-    } catch {
-      originalDataSerializedRef.current = '';
-      return '';
-    }
-  }, [originalChartData]);
-  
-  // Compare serialized strings for stable results - only recalculate when strings actually change
-  const hasChangesMemo = useMemo(() => {
-    if (!localChartData || !originalChartData) {
-      const result = !!localChartData;
-      hasChangesRef.current = result;
-      return result;
-    }
-    
-    // Only recalculate if serialized strings have changed
-    if (localDataSerializedRef.current !== localDataSerialized || 
-        originalDataSerializedRef.current !== originalDataSerialized) {
-      const result = localDataSerialized !== originalDataSerialized;
-      hasChangesRef.current = result;
-      return result;
-    }
-    
-    // Return cached result if strings haven't changed
-    return hasChangesRef.current;
-  }, [localChartData, originalChartData, localDataSerialized, originalDataSerialized]);
-
   if (error) {
     return (
       <div style={{padding: '20px', color: '#ef4444', backgroundColor: '#fee2e2', borderRadius: '8px', marginBottom: '10px'}}>
@@ -1320,17 +1022,13 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     <div style={{width: '100%'}}>
       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
         <h3 style={{margin: 0, fontSize: '16px', fontWeight: '600'}}>Chart Data Editor</h3>
-        {onSave && hasChangesMemo && (
+        {onSave && hasChanges() && (
           <button
             onClick={async () => {
-              if (onSave && localChartData) {
-                try {
-                  await onSave(localChartData);
-                  // Update original data after successful save
-                  setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
-                } catch (err) {
-                  console.error('Failed to save chart data:', err);
-                }
+              if (onSave) {
+                await onSave(localChartData);
+                // Update original data after successful save
+                setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
               }
             }}
             style={{
@@ -1341,11 +1039,8 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
               borderRadius: '6px',
               cursor: 'pointer',
               fontWeight: '600',
-              fontSize: '14px',
-              transition: 'background-color 0.2s ease-in-out'
+              fontSize: '14px'
             }}
-            onMouseEnter={(e) => e.target.style.backgroundColor = '#059669'}
-            onMouseLeave={(e) => e.target.style.backgroundColor = '#10b981'}
           >
             💾 Save Changes
           </button>

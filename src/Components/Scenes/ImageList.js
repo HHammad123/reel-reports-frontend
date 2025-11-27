@@ -2711,12 +2711,41 @@ const getOrderedRefs = useCallback((row) => {
         scenes: scenesPayload,
       };
 
-      // 🔕 TEMPORARILY DISABLE generate-videos-queue API
-      // The API call below is intentionally commented out for now.
-      // We only save all frames and skip queueing video generation.
-      console.log('⚠️ Skipping /v1/generate-videos-queue API call (temporarily disabled).');
-      console.log('📦 Prepared videos/regenerate payload (not sent):', JSON.stringify(body, null, 2));
-      return null;
+      // Call generate-videos-queue API
+      console.log('📡 Calling /v1/generate-videos-queue API...');
+      console.log('📦 Request payload:', JSON.stringify(body, null, 2));
+      
+      const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        responseData = responseText;
+      }
+
+      if (!response.ok) {
+        throw new Error(`generate-videos-queue failed: ${response.status} ${JSON.stringify(responseData)}`);
+      }
+
+      console.log('✅ generate-videos-queue API response:', responseData);
+      
+      // Extract job ID from response
+      const jobId = responseData?.job_id || responseData?.jobId || responseData?.id || null;
+      
+      if (jobId) {
+        console.log('✅ Video generation job queued with ID:', jobId);
+        return jobId;
+      } else {
+        console.warn('⚠️ No job ID returned from API');
+        return null;
+      }
     } catch (error) {
       setVideoGenProgress((prev) => ({
         ...prev,
@@ -2811,15 +2840,55 @@ const getOrderedRefs = useCallback((row) => {
             message: ''
           }));
 
-          // NOTE:
-          // For now we stop after save-all-frames succeeds and DO NOT call
-          // the generate-videos-queue API. Video generation / redirection
-          // is intentionally skipped as requested.
-          console.log('✅ Process completed successfully - all frames saved (video queue API skipped)');
+          // Step 3: Call generate-videos-queue API
+          console.log('📦 Step 3: Calling generate-videos-queue API...');
+          setVideoGenProgress((prev) => ({
+            ...prev,
+            visible: true,
+            percent: Math.max(prev.percent, 50),
+            status: 'queueing',
+            step: 'queueing',
+            message: ''
+          }));
+
+          const jobId = await callVideosRegenerateAPI();
+          
+          if (jobId) {
+            console.log('✅ Video generation job queued successfully:', jobId);
+            setVideoGenProgress((prev) => ({
+              ...prev,
+              visible: true,
+              percent: Math.max(prev.percent, 60),
+              status: 'queued',
+              step: 'queued',
+              jobId: jobId,
+              message: ''
+            }));
+
+            // Start video redirect flow with job ID
+            startVideoRedirectFlow(jobId);
+          } else {
+            console.warn('⚠️ No job ID returned from generate-videos-queue API');
+            setVideoGenProgress((prev) => ({
+              ...prev,
+              visible: true,
+              percent: Math.max(prev.percent, 60),
+              status: 'queued',
+              step: 'queued',
+              message: 'Job queued but no job ID returned'
+            }));
+          }
 
         } catch (apiError) {
-          console.error('❌ Error in save-all-frames or regenerate API:', apiError);
+          console.error('❌ Error in save-all-frames or generate-videos-queue API:', apiError);
           setError('API upload failed: ' + apiError.message);
+          setVideoGenProgress((prev) => ({
+            ...prev,
+            visible: true,
+            status: 'error',
+            step: 'error',
+            message: apiError?.message || 'Failed to queue video generation'
+          }));
           // No alert - just set error state
         }
         
@@ -2854,7 +2923,7 @@ const getOrderedRefs = useCallback((row) => {
     
     // Prevent any navigation or reload
     return false;
-  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI]);
+  }, [isPreparingDownloads, mergeAndDownloadAllImages, callSaveAllFramesAPI, callVideosRegenerateAPI, startVideoRedirectFlow]);
 
   // Track natural dimensions of loaded images to align overlays more precisely
   const handleNaturalSize = React.useCallback((url, imgEl) => {

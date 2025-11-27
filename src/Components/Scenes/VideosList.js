@@ -94,6 +94,18 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       entry?.blobLink?.video_link ||
       entry?.url;
 
+    // Get chart video URL (for PLOTLY model overlay)
+    const getChartVideoUrlFromEntry = (entry = {}) =>
+      entry?.chart_video_url ||
+      entry?.chartVideoUrl ||
+      entry?.chart_video?.url ||
+      entry?.chart?.video_url ||
+      entry?.videos?.v1?.chart_video_url ||
+      entry?.videos?.chart_video_url ||
+      entry?.video?.v1?.chart_video_url ||
+      entry?.video?.chart_video_url ||
+      null;
+
     // Get audio URL (prefer audio_only_url, especially from videos.v1 for SORA/PLOTLY)
     const getAudioUrlFromEntry = (entry = {}) => {
       // First check videos.v1.audio_only_url (for SORA/PLOTLY scenes)
@@ -208,6 +220,11 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
 
           const audioUrl = getAudioUrlFromEntry(videoEntry);
           
+          // Extract chart_video_url for PLOTLY model
+          const modelUpper = String(videoEntry?.model || videoEntry?.mode || '').toUpperCase();
+          const isPlotly = modelUpper === 'PLOTLY';
+          const chartVideoUrl = isPlotly ? getChartVideoUrlFromEntry(videoEntry) : null;
+          
           // Debug logging for audio URL extraction
           if (audioUrl) {
             console.log(`✅ Found audio URL for video ${videoIndex + 1}:`, audioUrl);
@@ -241,6 +258,11 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             });
           }
 
+          // Debug logging for chart_video_url
+          if (isPlotly && chartVideoUrl) {
+            console.log(`📊 Found chart_video_url for PLOTLY video ${videoIndex + 1}:`, chartVideoUrl);
+          }
+
           return {
             id: videoEntry?.id || videoEntry?.video_id || `video-${videoIndex}`,
             title: videoEntry?.title || videoEntry?.name || `Video ${videoIndex + 1}`,
@@ -249,9 +271,27 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             narration: videoEntry?.narration || '',
             audioUrl: audioUrl,
             scenes,
+            sceneNumber: videoEntry?.scene_number || videoEntry?.sceneNumber || videoEntry?.scene_no || null,
+            model: modelUpper,
+            chartVideoUrl: chartVideoUrl, // Store chart_video_url for PLOTLY models
           };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort((a, b) => {
+          // Sort by scene_number if available
+          const aSceneNum = a.sceneNumber;
+          const bSceneNum = b.sceneNumber;
+          
+          // If both have scene numbers, sort numerically
+          if (aSceneNum != null && bSceneNum != null) {
+            return Number(aSceneNum) - Number(bSceneNum);
+          }
+          // If only one has scene number, prioritize it
+          if (aSceneNum != null && bSceneNum == null) return -1;
+          if (aSceneNum == null && bSceneNum != null) return 1;
+          // If neither has scene number, maintain original order
+          return 0;
+        });
     };
 
     const load = async () => {
@@ -274,34 +314,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           setStatus('succeeded');
           setSelectedIndex(0);
         }
-
-        const fetchFinalVideos = async () => {
-          try {
-            setShowVideoLoader(true);
-            const vidsResp = await fetch(
-              `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`
-            );
-            const vidsText = await vidsResp.text();
-            let vidsData;
-            try {
-              vidsData = JSON.parse(vidsText);
-            } catch (_) {
-              vidsData = vidsText;
-            }
-            if (!vidsResp.ok) throw new Error(`videos fetch failed: ${vidsResp.status} ${vidsText}`);
-            const parsed = parseVideosPayload(vidsData);
-            if (!cancelled) {
-              setItems(parsed);
-              setStatus(parsed.length ? 'succeeded' : status);
-              if (parsed.length) setSelectedIndex(0);
-            }
-          } catch (err) {
-            console.error('❌ Error fetching final videos:', err);
-            if (!cancelled) setError(err?.message || 'Failed to fetch videos');
-          } finally {
-            if (!cancelled) setShowVideoLoader(false);
-          }
-        };
 
         // If we have a jobId and no session videos yet, poll job API until succeeded
         const id = jobId || localStorage.getItem('current_video_job_id');
@@ -330,7 +342,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             if (!cancelled && !(phase === 'done' && percent >= 100)) {
               timeoutId = setTimeout(poll, 3000);
             } else {
-              await fetchFinalVideos();
               if (!cancelled) {
                 setIsLoading(false);
                 setShowVideoLoader(false);
@@ -457,14 +468,63 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       setIsConvertingVideos(true);
       try {
         const clips = [];
+        const overlayClips = []; // For chart_video_url overlays (PLOTLY)
         const audioClips = [];
         
-        for (const item of items) {
+        let overlayAccumulatedTime = 0; // Track accumulated time for overlay positioning
+        
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          
           // Convert video URL to clip
           if (item.url) {
             try {
               const clip = await convertVideoUrlToClip(item);
-              if (clip) clips.push(clip);
+              if (clip) {
+                clips.push(clip);
+                
+                // Convert chart_video_url to overlay clip for PLOTLY models
+                if (item.chartVideoUrl && item.model === 'PLOTLY') {
+                  try {
+                    console.log(`📊 Converting chart_video_url to overlay for PLOTLY video ${item.id}:`, item.chartVideoUrl);
+                    const chartClip = await convertVideoUrlToClip({
+                      id: `${item.id}-chart-overlay`,
+                      url: item.chartVideoUrl,
+                      title: `${item.title} - Chart Overlay`,
+                      name: `${item.title} - Chart Overlay`
+                    });
+                    
+                    if (chartClip) {
+                      // Calculate the trimmed duration of the primary clip
+                      const primaryClipDuration = (clip.trimEnd - clip.trimStart) / (clip.speed || 1.0);
+                      
+                      // Set overlay clip to match primary clip timing
+                      chartClip.trimStart = 0;
+                      chartClip.trimEnd = Math.min(chartClip.duration, primaryClipDuration);
+                      chartClip.startTime = overlayAccumulatedTime; // Start at the same time as primary clip
+                      
+                      // Store reference to primary clip index for tracking
+                      chartClip.primaryClipIndex = clips.length - 1;
+                      
+                      overlayClips.push(chartClip);
+                      console.log(`✅ Chart overlay clip created:`, {
+                        id: chartClip.id,
+                        url: chartClip.url,
+                        duration: chartClip.duration,
+                        startTime: chartClip.startTime,
+                        primaryClipIndex: chartClip.primaryClipIndex,
+                        primaryClipDuration: primaryClipDuration
+                      });
+                    }
+                  } catch (error) {
+                    console.error(`Failed to convert chart_video_url for ${item.id}:`, error);
+                  }
+                }
+                
+                // Update accumulated time for next clip
+                const trimmedDuration = (clip.trimEnd - clip.trimStart) / (clip.speed || 1.0);
+                overlayAccumulatedTime += trimmedDuration;
+              }
             } catch (error) {
               console.error(`Failed to convert video ${item.id}:`, error);
             }
@@ -559,7 +619,15 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         
         console.log('📊 Final results:', {
           videoClips: clips.length,
+          overlayClips: overlayClips.length,
           audioClips: audioClips.length,
+          overlayClipsDetails: overlayClips.map(oc => ({
+            id: oc.id,
+            name: oc.name,
+            url: oc.url,
+            duration: oc.duration,
+            primaryClipIndex: oc.primaryClipIndex
+          })),
           audioClipsDetails: audioClips.map(ac => ({
             name: ac.name,
             url: ac.url,
@@ -568,7 +636,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           }))
         });
         
-        setEditorTracks(prev => [clips, prev[1]]);
+        // Set tracks: [0] = primary clips, [1] = overlay clips (chart_video_url for PLOTLY)
+        setEditorTracks([clips, overlayClips]);
         setEditorAudioTracks(audioClips);
         
         // Force a re-render by logging state update
