@@ -5,7 +5,7 @@ import {
   Layers, Download, Upload, Settings, 
   Monitor, ArrowRightLeft, Move, GripVertical, 
   Film, Plus, Trash2, X, Clock, Zap, Square,
-  ArrowLeft, ArrowRight
+  ArrowLeft, ArrowRight, RefreshCcw
 } from 'lucide-react';
 import RecordRTC from 'recordrtc';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
@@ -121,6 +121,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   const [sessionData, setSessionData] = useState({ session_id: '', user_id: '' });
   const [isFetchingSession, setIsFetchingSession] = useState(false);
   
+  // Regenerate video state
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [showRegeneratePopup, setShowRegeneratePopup] = useState(false);
+  const [regenerateJobId, setRegenerateJobId] = useState('');
+  const [regenerateStatus, setRegenerateStatus] = useState('');
+  const [regenerateError, setRegenerateError] = useState('');
+  const [regenerateProgress, setRegenerateProgress] = useState({ percent: 0, phase: '' });
+  
   // Load FFmpeg.wasm
   useEffect(() => {
     const loadFFmpeg = async () => {
@@ -156,13 +164,28 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             useToBlob: true
           },
           {
+            name: 'jsDelivr CDN (alternative)',
+            baseURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
+            useToBlob: false
+          },
+          {
             name: 'unpkg CDN',
             baseURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
             useToBlob: true
           },
           {
+            name: 'unpkg CDN (alternative)',
+            baseURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+            useToBlob: false
+          },
+          {
             name: 'esm.sh CDN',
             baseURL: 'https://esm.sh/@ffmpeg/core@0.12.6/dist/esm',
+            useToBlob: true
+          },
+          {
+            name: 'skypack CDN',
+            baseURL: 'https://cdn.skypack.dev/@ffmpeg/core@0.12.6/dist/esm',
             useToBlob: true
           }
         ];
@@ -174,6 +197,8 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           try {
             console.log(`🔄 Trying ${source.name}...`);
             
+            // Add timeout for each source (30 seconds)
+            const loadPromise = (async () => {
             let coreURL, wasmURL;
             
             if (source.useToBlob) {
@@ -196,30 +221,55 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               coreURL,
               wasmURL,
             });
+            })();
+            
+            // Race between load and timeout
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout after 30 seconds')), 30000)
+            );
+            
+            await Promise.race([loadPromise, timeoutPromise]);
+            
             console.log(`✅ Loaded FFmpeg from ${source.name}`);
             loaded = true;
             break;
           } catch (error) {
-            console.warn(`⚠️ Failed to load from ${source.name}:`, error.message);
+            const errorMsg = error.message || 'Unknown error';
+            console.warn(`⚠️ Failed to load from ${source.name}:`, errorMsg);
             lastError = error;
             // Continue to next source
           }
         }
         
         if (!loaded) {
-          throw new Error(`Failed to load FFmpeg from all sources. Last error: ${lastError?.message || 'Unknown error'}`);
+          // Don't throw - just log and continue without FFmpeg
+          // FFmpeg is only needed for certain transitions, not critical for basic functionality
+          console.warn('⚠️ FFmpeg.wasm could not be loaded from any source. Some advanced features may be unavailable.');
+          console.warn('Last error:', lastError?.message || 'Unknown error');
+          if (lastError) {
+            console.warn('Error details:', {
+              message: lastError.message,
+              stack: lastError.stack,
+              name: lastError.name
+            });
+          }
+          // Set to null so we know it failed, but don't block the app
+          ffmpegRef.current = null;
+          setIsFFmpegLoaded(false);
+          return; // Exit early, don't set as loaded
         }
         
         setIsFFmpegLoaded(true);
         console.log('✅ FFmpeg.wasm loaded successfully and ready to use');
       } catch (error) {
-        console.error('❌ Failed to load FFmpeg.wasm:', error);
-        console.error('Error details:', {
+        // Catch any unexpected errors during loading
+        console.warn('⚠️ Error during FFmpeg.wasm loading:', error.message);
+        console.warn('Error details:', {
           message: error.message,
           stack: error.stack,
           name: error.name
         });
-        // Set to null so we know it failed
+        // Set to null so we know it failed, but don't block the app
         ffmpegRef.current = null;
         setIsFFmpegLoaded(false);
       }
@@ -357,6 +407,20 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
 
   // Backward compatibility: v2ClipInfo for existing code
   const v2ClipInfo = activeOverlayClips[0] || null;
+
+  // Compute selectedClip from selectedClipId
+  const selectedClip = useMemo(() => {
+    if (!selectedClipId) return null;
+    // Search in all tracks
+    for (const track of tracks) {
+      const clip = track.find(c => c.id === selectedClipId);
+      if (clip) return clip;
+    }
+    // Also check audio tracks
+    const audioClip = audioTracks.find(a => a.id === selectedClipId);
+    if (audioClip) return audioClip;
+    return null;
+  }, [selectedClipId, tracks, audioTracks]);
 
   // Set total duration based on V1 track length
   useEffect(() => {
@@ -740,9 +804,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             videoElement.play().catch(e => console.log("V1 Play after load interrupted"));
           }
           
-          if (playerContainer) {
+        if (playerContainer) {
             playerContainer.className = `player-container relative shadow-2xl shadow-black/50 group`;
-          }
+        }
           videoElement.removeEventListener('canplay', handleCanPlay);
         };
         
@@ -786,15 +850,15 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
            const timeDiff = Math.abs(videoElement.currentTime - localTime);
            // Use smaller threshold (0.1s) for more precise sync, but only update if significantly off
            if (timeDiff > 0.1 && timeDiff < videoElement.duration) {
-              videoElement.currentTime = localTime;
-           }
+            videoElement.currentTime = localTime;
+         }
          }
          
          // Play if playing 
          if (isPlaying && videoElement.paused) {
              // Wait for video to be ready before playing
              if (videoElement.readyState >= 2 && videoElement.src === activeClip.url) {
-               videoElement.play().catch(e => console.log("V1 Play interrupted"));
+             videoElement.play().catch(e => console.log("V1 Play interrupted"));
              } else {
                const handleCanPlayThrough = () => {
                  if (isPlaying && videoElement.paused && videoElement.src === activeClip.url) {
@@ -1743,18 +1807,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     }
   };
 
-  const selectedClip = useMemo(() => {
-    // Check video/image tracks
-    for (const track of tracks) {
-        const clip = track.find(c => c.id === selectedClipId);
-        if (clip) return clip;
-    }
-    // Check audio tracks
-    const audioClip = audioTracks.find(a => a.id === selectedClipId);
-    if (audioClip) return audioClip;
-    return null;
-  }, [selectedClipId, tracks, audioTracks]);
-
   const activeTransitionDuration = activeTransitionId ? (transitionDurations[activeTransitionId] || DEFAULT_TRANSITION_DURATION) : DEFAULT_TRANSITION_DURATION;
 
   const normalizeTransitionForPlayback = (id) => {
@@ -2371,26 +2423,26 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                            />
                            
                            {/* Transition Button - Always visible but more prominent on hover */}
-                           <button 
-                             onMouseDown={(e) => e.stopPropagation()}
-                             onClick={(e) => {
-                               e.stopPropagation();
-                               setActiveTab('transitions');
-                               setActiveTransitionId(transitionId);
-                               setSelectedClipId(null);
-                             }}
-                             className={`
+                             <button 
+                               onMouseDown={(e) => e.stopPropagation()}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 setActiveTab('transitions');
+                                 setActiveTransitionId(transitionId);
+                                 setSelectedClipId(null);
+                               }}
+                               className={`
                                relative w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all transform shadow-lg
                                ${hoveredTransitionId === transitionId || activeTransitionId === transitionId
                                  ? 'scale-110 bg-[#13008B] border-[#13008B] text-white shadow-[#13008B]/50'
                                  : hasTransition
                                  ? 'scale-100 bg-[#13008B]/80 border-[#13008B]/80 text-white shadow-[#13008B]/30 opacity-70 hover:opacity-100'
                                  : 'scale-90 bg-white/80 border-gray-300 text-gray-500 shadow-gray-300/20 opacity-50 hover:opacity-100 hover:bg-[#13008B] hover:border-[#13008B] hover:text-white'}
-                             `}
-                             title={hasTransition ? `Edit transition: ${transitions[transitionId]}` : 'Add transition'}
-                           >
+                               `}
+                               title={hasTransition ? `Edit transition: ${transitions[transitionId]}` : 'Add transition'}
+                             >
                              {hasTransition ? <Zap size={16} /> : <Plus size={16} />}
-                           </button>
+                             </button>
                         </div>
                       )}
                     </React.Fragment>
@@ -2722,6 +2774,304 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     );
   };
 
+  // Handle regenerate video
+  const handleRegenerateVideo = useCallback(async () => {
+    if (!selectedClip) {
+      alert('Please select a video clip to regenerate');
+      return;
+    }
+
+    try {
+      setIsRegenerating(true);
+      setShowRegeneratePopup(true);
+      setRegenerateError('');
+      setRegenerateStatus('preparing');
+      setRegenerateProgress({ percent: 0, phase: 'preparing' });
+
+      // Fetch session data
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      
+      if (!session_id || !user_id) {
+        throw new Error('Missing session or user information. Please ensure you are logged in.');
+      }
+
+      // Fetch full session data to get scene information
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id, session_id })
+      });
+
+      const sessionText = await sessionResp.text();
+      let sessionData;
+      try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+
+      if (!sessionResp.ok) {
+        throw new Error(`Failed to fetch session data: ${sessionResp.status} ${sessionText}`);
+      }
+
+      const sdata = sessionData?.session_data || {};
+      
+      // Get aspect ratio from session
+      const aspectRatio = sdata?.aspect_ratio || sdata?.aspectRatio || '16:9';
+      const subtitles = sdata?.subtitles || false;
+
+      // Get scenes from session - check multiple possible locations
+      let scenesData = [];
+      
+      // Try different locations where scenes might be stored
+      if (Array.isArray(sdata?.scenes)) {
+        scenesData = sdata.scenes;
+      } else if (Array.isArray(sdata?.images?.scenes)) {
+        scenesData = sdata.images.scenes;
+      } else if (Array.isArray(sdata?.images)) {
+        // If images is an array, treat each item as a scene
+        scenesData = sdata.images;
+      } else if (sdata?.images && typeof sdata.images === 'object') {
+        // If images is an object with a scenes property
+        if (Array.isArray(sdata.images.scenes)) {
+          scenesData = sdata.images.scenes;
+        } else if (Array.isArray(sdata.images.v1)) {
+          // Sometimes scenes are in images.v1 array
+          scenesData = sdata.images.v1;
+        }
+      }
+      
+      // If still no scenes found, try to reconstruct from videos array
+      if ((!Array.isArray(scenesData) || scenesData.length === 0) && Array.isArray(sdata?.videos)) {
+        // Use videos array as scenes (they contain scene information)
+        scenesData = sdata.videos.map((video, idx) => ({
+          scene_number: video.scene_number || video.sceneNumber || (idx + 1),
+          model: video.model || video.mode || 'VEO3',
+          transitions: video.transitions || [],
+          veo3_prompt_template: video.veo3_prompt_template || video.veo3PromptTemplate || {},
+          logo_url: video.logo_url || video.logoUrl || ''
+        }));
+      }
+      
+      if (!Array.isArray(scenesData) || scenesData.length === 0) {
+        console.error('Session data structure:', {
+          hasScenes: !!sdata?.scenes,
+          hasImages: !!sdata?.images,
+          imagesType: typeof sdata?.images,
+          imagesIsArray: Array.isArray(sdata?.images),
+          imagesScenes: !!sdata?.images?.scenes,
+          hasVideos: !!sdata?.videos,
+          videosIsArray: Array.isArray(sdata?.videos),
+          videosLength: Array.isArray(sdata?.videos) ? sdata.videos.length : 0,
+          sessionDataKeys: Object.keys(sdata || {})
+        });
+        throw new Error('No scenes found in session data. Please ensure videos have been generated first.');
+      }
+
+      // Find the scene corresponding to the selected clip
+      // Try to match by scene number if available, otherwise by index
+      let targetScene = null;
+      const clipIndex = tracks[0].findIndex(clip => clip.id === selectedClip.id);
+      
+      if (clipIndex >= 0 && clipIndex < scenesData.length) {
+        targetScene = scenesData[clipIndex];
+      } else {
+        // Try to find by scene_number if clips have that metadata
+        const sceneNumber = selectedClip.sceneNumber;
+        if (sceneNumber != null) {
+          targetScene = scenesData.find(s => (s.scene_number || s.sceneNumber) === sceneNumber);
+        }
+      }
+
+      if (!targetScene) {
+        // Fallback: use the first scene or the scene at clip index
+        targetScene = scenesData[clipIndex] || scenesData[0];
+      }
+
+      if (!targetScene) {
+        throw new Error('Could not find matching scene for selected clip');
+      }
+
+      // Check if logo is needed - check if scene has logo_url
+      const sessionAssets = sdata?.assets || {};
+      const hasLogoAsset = !!sessionAssets.logo_url;
+      const sceneLogoUrl = targetScene?.logo_url || targetScene?.logoUrl;
+      // Logo is true if there's a logo asset and the scene uses it
+      const logo = hasLogoAsset && !!sceneLogoUrl;
+
+      // Build scene payload for regenerate request
+      const sceneNumber = targetScene.scene_number || targetScene.sceneNumber || clipIndex + 1;
+      const model = targetScene.model || targetScene.mode || 'VEO3';
+      const modelUpper = String(model).toUpperCase();
+
+      // Build transitions array from scene data
+      // Ensure transitions match the API spec structure
+      let transitions = [];
+      if (targetScene.transitions && Array.isArray(targetScene.transitions)) {
+        transitions = targetScene.transitions.map(trans => {
+          // Ensure transition has the correct structure
+          if (trans.is_preset !== undefined) {
+            return {
+              is_preset: trans.is_preset || false,
+              userQuery: trans.userQuery || '',
+              parameters: {
+                name: trans.parameters?.name || '',
+                preservation_notes: {
+                  camera_specifications: trans.parameters?.preservation_notes?.camera_specifications || '',
+                  subject_description: trans.parameters?.preservation_notes?.subject_description || '',
+                  action_specification: trans.parameters?.preservation_notes?.action_specification || '',
+                  scene_description: trans.parameters?.preservation_notes?.scene_description || '',
+                  lighting: trans.parameters?.preservation_notes?.lighting || '',
+                  style_mood: trans.parameters?.preservation_notes?.style_mood || '',
+                  geometric_preservation: trans.parameters?.preservation_notes?.geometric_preservation || '',
+                  transition_type: trans.parameters?.preservation_notes?.transition_type || '',
+                  content_modification: trans.parameters?.preservation_notes?.content_modification || ''
+                },
+                prompt_description: trans.parameters?.prompt_description || ''
+              },
+              savecustom: trans.savecustom || false,
+              custom_name: trans.custom_name || ''
+            };
+          }
+          return trans;
+        });
+      } else if (targetScene.transition && typeof targetScene.transition === 'object') {
+        // Handle single transition object
+        const trans = targetScene.transition;
+        transitions = [{
+          is_preset: trans.is_preset || false,
+          userQuery: trans.userQuery || '',
+          parameters: {
+            name: trans.parameters?.name || '',
+            preservation_notes: {
+              camera_specifications: trans.parameters?.preservation_notes?.camera_specifications || '',
+              subject_description: trans.parameters?.preservation_notes?.subject_description || '',
+              action_specification: trans.parameters?.preservation_notes?.action_specification || '',
+              scene_description: trans.parameters?.preservation_notes?.scene_description || '',
+              lighting: trans.parameters?.preservation_notes?.lighting || '',
+              style_mood: trans.parameters?.preservation_notes?.style_mood || '',
+              geometric_preservation: trans.parameters?.preservation_notes?.geometric_preservation || '',
+              transition_type: trans.parameters?.preservation_notes?.transition_type || '',
+              content_modification: trans.parameters?.preservation_notes?.content_modification || ''
+            },
+            prompt_description: trans.parameters?.prompt_description || ''
+          },
+          savecustom: trans.savecustom || false,
+          custom_name: trans.custom_name || ''
+        }];
+      }
+
+      // Build scene payload
+      const scenePayload = {
+        scene_number: sceneNumber,
+        model: modelUpper,
+        transitions: transitions
+      };
+
+      // Add VEO3 prompt template if model is VEO3
+      if (modelUpper === 'VEO3') {
+        const veo3Template = targetScene.veo3_prompt_template || targetScene.veo3PromptTemplate || {};
+        if (Object.keys(veo3Template).length > 0) {
+          scenePayload.veo3_prompt_template = {
+            style: veo3Template.style || '',
+            action: veo3Template.action || '',
+            camera: veo3Template.camera || '',
+            subject: veo3Template.subject || '',
+            ambiance: veo3Template.ambiance || '',
+            background: veo3Template.background || '',
+            composition: veo3Template.composition || '',
+            focus_and_lens: veo3Template.focus_and_lens || veo3Template.focusAndLens || ''
+          };
+        }
+      }
+
+      // Build regenerate request body
+      const requestBody = {
+        session_id,
+        user_id,
+        aspect_ratio: aspectRatio,
+        subtitles: subtitles,
+        logo: logo,
+        scenes: [scenePayload]
+      };
+
+      console.log('🔄 Regenerating video with request:', requestBody);
+
+      // Call regenerate API
+      const regenerateResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+
+      const regenerateText = await regenerateResp.text();
+      let regenerateData;
+      try { regenerateData = JSON.parse(regenerateText); } catch (_) { regenerateData = regenerateText; }
+
+      if (!regenerateResp.ok) {
+        throw new Error(`Regenerate failed: ${regenerateResp.status} ${regenerateText}`);
+      }
+
+      const jobId = regenerateData?.job_id || regenerateData?.jobId || regenerateData?.id;
+      if (!jobId) {
+        throw new Error('No job ID returned from regenerate API');
+      }
+
+      setRegenerateJobId(jobId);
+      setRegenerateStatus('queued');
+      setRegenerateProgress({ percent: 0, phase: 'queued' });
+
+      // Poll for job status
+      const pollStatus = async () => {
+        try {
+          const statusResp = await fetch(
+            `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/regenerate/${encodeURIComponent(jobId)}/status`
+          );
+          const statusText = await statusResp.text();
+          let statusData;
+          try { statusData = JSON.parse(statusText); } catch (_) { statusData = statusText; }
+
+          if (!statusResp.ok) {
+            throw new Error(`Status check failed: ${statusResp.status} ${statusText}`);
+          }
+
+          const status = String(statusData?.status || '').toLowerCase();
+          const progress = statusData?.progress || {};
+          const percent = Number(progress?.percent) || 0;
+          const phase = String(progress?.phase || progress?.stage || status).toLowerCase();
+
+          setRegenerateStatus(status);
+          setRegenerateProgress({ percent, phase });
+
+          if (status === 'succeeded' || status === 'completed' || (phase === 'done' && percent >= 100)) {
+            // Success - close popup and refresh videos
+            setShowRegeneratePopup(false);
+            setIsRegenerating(false);
+            alert('Video regenerated successfully! The video list will be updated.');
+            // Optionally reload the page or refresh video data
+            window.location.reload();
+          } else if (status === 'failed' || status === 'error') {
+            // Failed - show error
+            const errorMessage = statusData?.error || statusData?.message || 'Video regeneration failed';
+            setRegenerateError(errorMessage);
+            setRegenerateStatus('failed');
+          } else {
+            // Still processing - poll again
+            setTimeout(pollStatus, 3000);
+          }
+        } catch (err) {
+          console.error('Error polling regenerate status:', err);
+          setRegenerateError(err.message || 'Failed to check regeneration status');
+          setRegenerateStatus('error');
+        }
+      };
+
+      // Start polling
+      setTimeout(pollStatus, 2000);
+    } catch (error) {
+      console.error('Error regenerating video:', error);
+      setRegenerateError(error.message || 'Failed to regenerate video');
+      setRegenerateStatus('error');
+      setIsRegenerating(false);
+    }
+  }, [selectedClip, tracks]);
 
   return (
      <div className="flex h-full w-full bg-white text-gray-900 overflow-hidden font-sans select-none">
@@ -3247,6 +3597,27 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                          Effective Duration: {((selectedClip.trimEnd - selectedClip.trimStart) / (selectedClip.speed || 1.0)).toFixed(2)}s
                       </div>
                     </div>
+
+                    {/* Regenerate Video Button - Only for V1 (primary track) clips */}
+                    {selectedClip && tracks[0].some(clip => clip.id === selectedClip.id) && (
+                      <div className="bg-gray-50 p-4 rounded-xl border border-gray-300">
+                        <h3 className="text-xs font-semibold text-gray-700 mb-2 uppercase flex items-center gap-2"><RefreshCcw size={12}/> Regenerate Video</h3>
+                        <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+                          Regenerate this video scene with the current settings.
+                        </p>
+                        <button
+                          onClick={handleRegenerateVideo}
+                          disabled={isRegenerating}
+                          className={`w-full py-2 px-4 rounded-lg text-sm font-medium transition-all ${
+                            isRegenerating
+                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              : 'bg-[#13008B] hover:bg-[#0f0069] text-white'
+                          }`}
+                        >
+                          {isRegenerating ? 'Regenerating...' : 'Regenerate Video'}
+                        </button>
+                      </div>
+                    )}
                     
                     {/* V2 Transform Display (Read-Only values) */}
                     {selectedClip.transform && (
@@ -3360,6 +3731,76 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
 
         </div>
       </div>
+
+      {/* Regenerate Video Popup Modal */}
+      {showRegeneratePopup && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 relative">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-800">Regenerating Video</h3>
+                {!isRegenerating && (
+                  <button
+                    onClick={() => {
+                      setShowRegeneratePopup(false);
+                      setRegenerateError('');
+                      setRegenerateStatus('');
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <X size={20} />
+                  </button>
+                )}
+              </div>
+
+              {regenerateError ? (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <X size={32} className="text-red-600" />
+                  </div>
+                  <h4 className="text-lg font-semibold text-red-600 mb-2">Regeneration Failed</h4>
+                  <p className="text-sm text-gray-600 mb-4">{regenerateError}</p>
+                  <button
+                    onClick={() => {
+                      setShowRegeneratePopup(false);
+                      setRegenerateError('');
+                      setRegenerateStatus('');
+                      setIsRegenerating(false);
+                    }}
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium"
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                  <h4 className="text-lg font-semibold text-gray-800 mb-2">
+                    {regenerateStatus === 'queued' ? 'Queued for Regeneration' :
+                     regenerateStatus === 'processing' ? 'Processing...' :
+                     regenerateStatus === 'succeeded' ? 'Regeneration Complete!' :
+                     'Regenerating Video'}
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-4">
+                    {regenerateProgress.phase ? `Phase: ${regenerateProgress.phase}` : 'Please wait...'}
+                  </p>
+                  {regenerateProgress.percent > 0 && (
+                    <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                      <div
+                        className="bg-[#13008B] h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${regenerateProgress.percent}%` }}
+                      />
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500">
+                    {regenerateProgress.percent > 0 ? `${regenerateProgress.percent}%` : 'Initializing...'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

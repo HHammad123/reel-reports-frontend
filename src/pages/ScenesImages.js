@@ -92,7 +92,7 @@ const ScenesImages = () => {
   return (
     <div className='flex h-screen bg-[#E5E2FF]'>
       <Sidebar />
-      <div className="w-full mx-[2rem] mt-[1rem]">
+      <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
         <Topbar />
         <div className='h-[87vh] rounded-lg overflow-y-auto scrollbar-hide my-2 p-4'>
           <div className="mb-4">

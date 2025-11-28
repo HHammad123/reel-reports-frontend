@@ -106,9 +106,295 @@ const Icon = ({ name, size = 18 }) => {
           <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
         </svg>
       )
+    case 'layers':
+      return (
+        <svg {...commonProps}>
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+          <polyline points="2 12 12 17 22 12" />
+        </svg>
+      )
+    case 'type':
+      return (
+        <svg {...commonProps}>
+          <polyline points="4 7 4 4 20 4 20 7" />
+          <line x1="9" y1="20" x2="15" y2="20" />
+          <line x1="12" y1="4" x2="12" y2="20" />
+        </svg>
+      )
+    case 'chevronUp':
+      return (
+        <svg {...commonProps}>
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      )
+    case 'chevronDown':
+      return (
+        <svg {...commonProps}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      )
+    case 'eye':
+      return (
+        <svg {...commonProps}>
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      )
+    case 'eyeOff':
+      return (
+        <svg {...commonProps}>
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+          <line x1="1" y1="1" x2="23" y2="23" />
+        </svg>
+      )
     default:
       return <div>?</div>
   }
+}
+
+// TEXT PRESETS CONFIGURATION - Canva-style font combinations
+const TEXT_PRESETS = [
+  {
+    id: 'quick-win',
+    name: 'Quick Win',
+    preview: {
+      line1: { text: 'quick', fontSize: 32, fontFamily: 'Georgia', fontWeight: 'normal', fontStyle: 'italic', color: '#000000' },
+      line2: { text: 'WIN', fontSize: 48, fontFamily: 'Arial', fontWeight: 'bold', color: '#2563eb', letterSpacing: '8px' }
+    },
+    config: {
+      fontSize: 48,
+      fontFamily: 'Arial',
+      fontWeight: 'bold',
+      color: '#2563eb',
+      textAlign: 'center',
+      textShadow: 'drop'
+    }
+  },
+  {
+    id: 'team-sync',
+    name: 'Team Sync',
+    preview: {
+      line1: { text: '><', fontSize: 36, fontFamily: 'Arial', fontWeight: 'bold', color: '#475569' },
+      line2: { text: 'team', fontSize: 28, fontFamily: 'Georgia', fontWeight: 'normal', color: '#475569' },
+      line3: { text: 'sync', fontSize: 32, fontFamily: 'Georgia', fontWeight: 'bold', color: '#475569' }
+    },
+    config: {
+      fontSize: 32,
+      fontFamily: 'Georgia',
+      fontWeight: 'bold',
+      color: '#475569',
+      textAlign: 'center'
+    }
+  },
+  {
+    id: 'tech-stack',
+    name: 'Tech Stack',
+    preview: {
+      line1: { text: 'TECH', fontSize: 42, fontFamily: 'Arial', fontWeight: 'bold', color: '#64748b', letterSpacing: '2px', transform: 'skewX(-5deg)' },
+      line2: { text: 'STACK', fontSize: 36, fontFamily: 'Georgia', fontWeight: 'normal', fontStyle: 'italic', color: '#1e293b' }
+    },
+    config: {
+      fontSize: 42,
+      fontFamily: 'Arial',
+      fontWeight: 'bold',
+      color: '#64748b',
+      textAlign: 'left'
+    }
+  },
+  {
+    id: 'big-strategy',
+    name: 'Big Strategy',
+    preview: {
+      line1: { text: 'BIG', fontSize: 44, fontFamily: 'Arial', fontWeight: 'bold', color: '#3b82f6', letterSpacing: '6px', textStroke: '2px #3b82f6', textFill: 'transparent' },
+      line2: { text: 'strategy', fontSize: 38, fontFamily: 'Georgia', fontWeight: 'normal', fontStyle: 'italic', color: '#4f46e5' }
+    },
+    config: {
+      fontSize: 44,
+      fontFamily: 'Arial',
+      fontWeight: 'bold',
+      color: '#3b82f6',
+      textAlign: 'center',
+      wordArt: 'outline'
+    }
+  },
+  {
+    id: 'modern-minimal',
+    name: 'Modern Minimal',
+    preview: {
+      line1: { text: 'MODERN', fontSize: 36, fontFamily: 'Helvetica', fontWeight: '300', color: '#000000', letterSpacing: '12px' },
+      line2: { text: 'design', fontSize: 24, fontFamily: 'Georgia', fontWeight: 'normal', fontStyle: 'italic', color: '#666666' }
+    },
+    config: {
+      fontSize: 36,
+      fontFamily: 'Helvetica',
+      fontWeight: '300',
+      color: '#000000',
+      textAlign: 'center'
+    }
+  },
+  {
+    id: 'bold-impact',
+    name: 'Bold Impact',
+    preview: {
+      line1: { text: 'BOLD', fontSize: 52, fontFamily: 'Impact', fontWeight: 'bold', color: '#dc2626', letterSpacing: '4px' },
+      line2: { text: 'MESSAGE', fontSize: 28, fontFamily: 'Arial', fontWeight: 'normal', color: '#991b1b' }
+    },
+    config: {
+      fontSize: 52,
+      fontFamily: 'Impact',
+      fontWeight: 'bold',
+      color: '#dc2626',
+      textAlign: 'center',
+      textShadow: 'hard'
+    }
+  },
+  {
+    id: 'elegant-script',
+    name: 'Elegant Script',
+    preview: {
+      line1: { text: 'Elegant', fontSize: 42, fontFamily: 'Georgia', fontWeight: 'normal', fontStyle: 'italic', color: '#8b5cf6' },
+      line2: { text: 'DESIGN', fontSize: 24, fontFamily: 'Arial', fontWeight: '300', color: '#6d28d9', letterSpacing: '8px' }
+    },
+    config: {
+      fontSize: 42,
+      fontFamily: 'Georgia',
+      fontWeight: 'normal',
+      fontStyle: 'italic',
+      color: '#8b5cf6',
+      textAlign: 'center'
+    }
+  },
+  {
+    id: 'retro-vibe',
+    name: 'Retro Vibe',
+    preview: {
+      line1: { text: 'RETRO', fontSize: 46, fontFamily: 'Courier New', fontWeight: 'bold', color: '#f59e0b', textShadow: '3px 3px 0px #dc2626' },
+      line2: { text: 'style', fontSize: 32, fontFamily: 'Courier New', fontWeight: 'normal', fontStyle: 'italic', color: '#ea580c' }
+    },
+    config: {
+      fontSize: 46,
+      fontFamily: 'Courier New',
+      fontWeight: 'bold',
+      color: '#f59e0b',
+      textAlign: 'center',
+      textShadow: 'hard'
+    }
+  },
+  {
+    id: 'gradient-pop',
+    name: 'Gradient Pop',
+    preview: {
+      line1: { text: 'GRADIENT', fontSize: 40, fontFamily: 'Arial', fontWeight: 'bold', color: '#ec4899', letterSpacing: '4px' },
+      line2: { text: 'effect', fontSize: 28, fontFamily: 'Georgia', fontWeight: 'normal', fontStyle: 'italic', color: '#8b5cf6' }
+    },
+    config: {
+      fontSize: 40,
+      fontFamily: 'Arial',
+      fontWeight: 'bold',
+      color: '#ec4899',
+      textAlign: 'center',
+      textGlow: 'soft'
+    }
+  },
+  {
+    id: 'corporate-clean',
+    name: 'Corporate Clean',
+    preview: {
+      line1: { text: 'PROFESSIONAL', fontSize: 34, fontFamily: 'Helvetica', fontWeight: 'bold', color: '#1f2937', letterSpacing: '3px' },
+      line2: { text: 'Business', fontSize: 26, fontFamily: 'Times New Roman', fontWeight: 'normal', color: '#4b5563' }
+    },
+    config: {
+      fontSize: 34,
+      fontFamily: 'Helvetica',
+      fontWeight: 'bold',
+      color: '#1f2937',
+      textAlign: 'left'
+    }
+  }
+];
+
+// Preset Preview Component
+const PresetPreview = ({ preset, onClick }) => {
+  const { preview } = preset
+  const previewLines = Object.values(preview)
+  
+  return (
+    <div 
+      className="preset-card"
+      onClick={() => onClick(preset)}
+      style={{
+        cursor: 'pointer',
+        padding: '20px',
+        backgroundColor: '#f8f9fa',
+        borderRadius: '12px',
+        border: '2px solid #e2e8f0',
+        transition: 'all 0.3s ease',
+        minHeight: '140px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: '4px',
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = '#7c3aed'
+        e.currentTarget.style.backgroundColor = '#faf5ff'
+        e.currentTarget.style.transform = 'translateY(-4px)'
+        e.currentTarget.style.boxShadow = '0 8px 16px rgba(124, 58, 237, 0.2)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = '#e2e8f0'
+        e.currentTarget.style.backgroundColor = '#f8f9fa'
+        e.currentTarget.style.transform = 'translateY(0)'
+        e.currentTarget.style.boxShadow = 'none'
+      }}
+    >
+      {previewLines.map((line, index) => (
+        <div
+          key={index}
+          style={{
+            fontSize: `${(line.fontSize || 24) * 0.6}px`,
+            fontFamily: line.fontFamily || 'Arial',
+            fontWeight: line.fontWeight || 'normal',
+            fontStyle: line.fontStyle || 'normal',
+            color: line.color || '#000000',
+            letterSpacing: line.letterSpacing || 'normal',
+            textShadow: line.textShadow || 'none',
+            transform: line.transform || 'none',
+            WebkitTextStroke: line.textStroke && line.textFill === 'transparent' ? line.textStroke : 'none',
+            WebkitTextFillColor: line.textFill || 'currentColor',
+            lineHeight: 1.2,
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {line.text}
+        </div>
+      ))}
+      
+      {/* Hover overlay */}
+      <div 
+        style={{
+          position: 'absolute',
+          bottom: '8px',
+          right: '8px',
+          fontSize: '10px',
+          fontWeight: '600',
+          color: '#7c3aed',
+          backgroundColor: 'white',
+          padding: '4px 8px',
+          borderRadius: '4px',
+          opacity: 0,
+          transition: 'opacity 0.2s'
+        }}
+        className="preset-label"
+      >
+        Click to apply
+      </div>
+    </div>
+  )
 }
 
 const BOUNDING_BOX_NORMALIZED_THRESHOLD = 1.05
@@ -155,6 +441,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [isResizing, setIsResizing] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [layerStart, setLayerStart] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  const [dragThresholdMet, setDragThresholdMet] = useState(false) // Track if drag threshold is met
   const [jsonInput, setJsonInput] = useState('')
   const [imageScale, setImageScale] = useState(1)
   const [overlayImageFile, setOverlayImageFile] = useState(null)
@@ -187,6 +474,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   )
 
   const [activePanel, setActivePanel] = useState(null)
+  const [layerOrder, setLayerOrder] = useState([]) // Unified layer ordering: [{type: 'text'|'shape', id: number, visible: boolean}]
   const [shapeLayers, setShapeLayers] = useState([])
   const [selectedShape, setSelectedShape] = useState(null)
   const [isDraggingShape, setIsDraggingShape] = useState(false)
@@ -208,13 +496,33 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     () => (aspectRatioCss && typeof aspectRatioCss === 'string' ? aspectRatioCss : '16 / 9'),
     [aspectRatioCss]
   )
-  const editorCanvasStyle = useMemo(() => ({
-    aspectRatio: normalizedAspectRatio,
-    width: 'min(100%, 860px)',
-    maxWidth: '860px',
-    maxHeight: '72vh',
-    minHeight: '200px'
-  }), [normalizedAspectRatio])
+  const editorCanvasStyle = useMemo(() => {
+    // Check if this is a 9:16 (portrait) aspect ratio
+    const isPortrait9x16 = normalizedAspectRatio === '9 / 16' || normalizedAspectRatio === '9:16' || normalizedAspectRatio === '9/16';
+    
+    if (isPortrait9x16) {
+      // For 9:16 images, match the image container size from ImageList (500px width)
+      // Let the aspect ratio determine the height naturally without maxHeight constraint
+      // This ensures the full image is visible and not cut off
+      return {
+        aspectRatio: normalizedAspectRatio,
+        width: '500px',
+        maxWidth: '500px',
+        height: 'auto',
+        minHeight: '200px'
+        // Removed maxHeight to allow full image height
+      };
+    }
+    
+    // For other aspect ratios, use the original sizing
+    return {
+      aspectRatio: normalizedAspectRatio,
+      width: 'min(100%, 860px)',
+      maxWidth: '860px',
+      maxHeight: '72vh',
+      minHeight: '200px'
+    };
+  }, [normalizedAspectRatio])
 
   // Sync ref with state
   useEffect(() => {
@@ -1163,6 +1471,220 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setImageUrl(originalImageUrl)
   }
 
+  // Unified Layer Management - Sync layerOrder with text/shape layers
+  useEffect(() => {
+    // Build unified layer order if it's empty or doesn't match current layers
+    const currentIds = new Set([
+      ...textLayers.map(l => `text-${l.id}`),
+      ...shapeLayers.map(s => `shape-${s.id}`)
+    ])
+    
+    const orderIds = new Set(layerOrder.map(l => `${l.type}-${l.id}`))
+    
+    // Check if sync is needed
+    if (currentIds.size !== orderIds.size || ![...currentIds].every(id => orderIds.has(id))) {
+      // Rebuild layer order preserving existing order where possible
+      const newOrder = []
+      
+      // Add existing layers that are still present
+      layerOrder.forEach(item => {
+        const key = `${item.type}-${item.id}`
+        if (currentIds.has(key)) {
+          newOrder.push(item)
+          currentIds.delete(key)
+        }
+      })
+      
+      // Add new layers at the end
+      textLayers.forEach(layer => {
+        const key = `text-${layer.id}`
+        if (currentIds.has(key)) {
+          newOrder.push({ type: 'text', id: layer.id, visible: true })
+        }
+      })
+      
+      shapeLayers.forEach(shape => {
+        const key = `shape-${shape.id}`
+        if (currentIds.has(key)) {
+          newOrder.push({ type: 'shape', id: shape.id, visible: true })
+        }
+      })
+      
+      setLayerOrder(newOrder)
+    }
+  }, [textLayers, shapeLayers, layerOrder])
+
+  // Get all layers in render order
+  const getAllLayers = useMemo(() => {
+    return layerOrder.map(item => {
+      if (item.type === 'text') {
+        const layer = textLayers.find(l => l.id === item.id)
+        return layer ? { ...layer, type: 'text', visible: item.visible } : null
+      } else if (item.type === 'shape') {
+        const shape = shapeLayers.find(s => s.id === item.id)
+        return shape ? { ...shape, type: 'shape', visible: item.visible } : null
+      }
+      return null
+    }).filter(Boolean)
+  }, [layerOrder, textLayers, shapeLayers])
+
+  // Unified layer ordering functions
+  const moveLayerUp = (type, id) => {
+    const index = layerOrder.findIndex(l => l.type === type && l.id === id)
+    if (index < layerOrder.length - 1) {
+      const newOrder = [...layerOrder]
+      const temp = newOrder[index]
+      newOrder[index] = newOrder[index + 1]
+      newOrder[index + 1] = temp
+      setLayerOrder(newOrder)
+    }
+  }
+
+  const moveLayerDown = (type, id) => {
+    const index = layerOrder.findIndex(l => l.type === type && l.id === id)
+    if (index > 0) {
+      const newOrder = [...layerOrder]
+      const temp = newOrder[index]
+      newOrder[index] = newOrder[index - 1]
+      newOrder[index - 1] = temp
+      setLayerOrder(newOrder)
+    }
+  }
+
+  const moveLayerToTop = (type, id) => {
+    const item = layerOrder.find(l => l.type === type && l.id === id)
+    if (item) {
+      const newOrder = layerOrder.filter(l => !(l.type === type && l.id === id))
+      newOrder.push(item)
+      setLayerOrder(newOrder)
+    }
+  }
+
+  const moveLayerToBottom = (type, id) => {
+    const item = layerOrder.find(l => l.type === type && l.id === id)
+    if (item) {
+      const newOrder = layerOrder.filter(l => !(l.type === type && l.id === id))
+      newOrder.unshift(item)
+      setLayerOrder(newOrder)
+    }
+  }
+
+  const toggleLayerVisibility = (type, id) => {
+    const newOrder = layerOrder.map(l =>
+      l.type === type && l.id === id ? { ...l, visible: !l.visible } : l
+    )
+    setLayerOrder(newOrder)
+  }
+
+  const deleteLayer = (type, id) => {
+    if (type === 'text') {
+      const newLayers = textLayers.filter(l => l.id !== id)
+      setTextLayers(newLayers)
+      if (selectedLayer?.id === id) setSelectedLayer(null)
+    } else if (type === 'shape') {
+      const newShapes = shapeLayers.filter(s => s.id !== id)
+      setShapeLayers(newShapes)
+      if (selectedShape?.id === id) setSelectedShape(null)
+    }
+    // layerOrder will auto-sync via useEffect
+  }
+
+  const selectLayer = (type, id) => {
+    if (type === 'text') {
+      const layer = textLayers.find(l => l.id === id)
+      if (layer) {
+        setSelectedLayer(layer)
+        setSelectedShape(null)
+        setActivePanel('text')
+      }
+    } else if (type === 'shape') {
+      const shape = shapeLayers.find(s => s.id === id)
+      if (shape) {
+        setSelectedShape(shape)
+        setSelectedLayer(null)
+        setActivePanel('shapes')
+      }
+    }
+  }
+
+  // Layer ordering functions
+  const bringLayerForward = () => {
+    if (!selectedLayer) return
+    const currentIndex = textLayers.findIndex(l => l.id === selectedLayer.id)
+    if (currentIndex < textLayers.length - 1) {
+      const newLayers = [...textLayers]
+      const temp = newLayers[currentIndex]
+      newLayers[currentIndex] = newLayers[currentIndex + 1]
+      newLayers[currentIndex + 1] = temp
+      setTextLayers(newLayers)
+    }
+  }
+
+  const sendLayerBackward = () => {
+    if (!selectedLayer) return
+    const currentIndex = textLayers.findIndex(l => l.id === selectedLayer.id)
+    if (currentIndex > 0) {
+      const newLayers = [...textLayers]
+      const temp = newLayers[currentIndex]
+      newLayers[currentIndex] = newLayers[currentIndex - 1]
+      newLayers[currentIndex - 1] = temp
+      setTextLayers(newLayers)
+    }
+  }
+
+  const bringLayerToFront = () => {
+    if (!selectedLayer) return
+    const newLayers = textLayers.filter(l => l.id !== selectedLayer.id)
+    newLayers.push(selectedLayer)
+    setTextLayers(newLayers)
+  }
+
+  const sendLayerToBack = () => {
+    if (!selectedLayer) return
+    const newLayers = textLayers.filter(l => l.id !== selectedLayer.id)
+    newLayers.unshift(selectedLayer)
+    setTextLayers(newLayers)
+  }
+
+  // Shape ordering functions
+  const bringShapeForward = () => {
+    if (!selectedShape) return
+    const currentIndex = shapeLayers.findIndex(s => s.id === selectedShape.id)
+    if (currentIndex < shapeLayers.length - 1) {
+      const newShapes = [...shapeLayers]
+      const temp = newShapes[currentIndex]
+      newShapes[currentIndex] = newShapes[currentIndex + 1]
+      newShapes[currentIndex + 1] = temp
+      setShapeLayers(newShapes)
+    }
+  }
+
+  const sendShapeBackward = () => {
+    if (!selectedShape) return
+    const currentIndex = shapeLayers.findIndex(s => s.id === selectedShape.id)
+    if (currentIndex > 0) {
+      const newShapes = [...shapeLayers]
+      const temp = newShapes[currentIndex]
+      newShapes[currentIndex] = newShapes[currentIndex - 1]
+      newShapes[currentIndex - 1] = temp
+      setShapeLayers(newShapes)
+    }
+  }
+
+  const bringShapeToFront = () => {
+    if (!selectedShape) return
+    const newShapes = shapeLayers.filter(s => s.id !== selectedShape.id)
+    newShapes.push(selectedShape)
+    setShapeLayers(newShapes)
+  }
+
+  const sendShapeToBack = () => {
+    if (!selectedShape) return
+    const newShapes = shapeLayers.filter(s => s.id !== selectedShape.id)
+    newShapes.unshift(selectedShape)
+    setShapeLayers(newShapes)
+  }
+
   // Text layer management
   const handleAddText = () => {
     if (newText.trim()) {
@@ -1203,13 +1725,108 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     }
   }
 
+  // Apply text preset function
+  const applyTextPreset = (preset) => {
+    const previousLayers = [...textLayers]
+    const previousSelected = selectedLayer
+    
+    // Create MULTIPLE text layers - one for each line in the preview
+    // Position them tightly together with auto-sized boxes
+    const previewLines = Object.values(preset.preview)
+    const newLayers = []
+    const baseTimestamp = Date.now()
+    const groupId = `preset-${baseTimestamp}` // Unique group ID for this preset
+    const baseX = 10
+    let yOffset = 10
+    
+    // Canvas dimensions for percentage calculations
+    const baseCanvasWidth = 1280
+    const baseCanvasHeight = 720
+    
+    previewLines.forEach((line, index) => {
+      const fontSize = line.fontSize || 24
+      
+      // Calculate text width more accurately based on font properties
+      // Account for bold text (wider), italic (slightly wider), letter spacing
+      let charWidth = fontSize * 0.55 // Base character width
+      
+      // Adjust for font weight
+      if (line.fontWeight === 'bold' || line.fontWeight === '700' || line.fontWeight === '800') {
+        charWidth *= 1.15
+      }
+      
+      // Adjust for italic
+      if (line.fontStyle === 'italic') {
+        charWidth *= 1.05
+      }
+      
+      // Parse letter spacing
+      const letterSpacingPx = line.letterSpacing && line.letterSpacing !== 'normal' ? 
+        (typeof line.letterSpacing === 'string' && line.letterSpacing.includes('px') ? 
+          parseFloat(line.letterSpacing) : 
+          parseFloat(line.letterSpacing) || 0
+        ) : 0
+      
+      // Calculate total width: (chars * charWidth) + letter spacing
+      const estimatedWidth = (line.text.length * charWidth) + (line.text.length * letterSpacingPx * 0.08)
+      
+      // Convert pixel width to percentage
+      const textWidth = Math.max((estimatedWidth / baseCanvasWidth) * 100, 8) // Min 8%
+      
+      // Height as percentage of canvas
+      const textHeight = Math.max(((fontSize * 1.3) / baseCanvasHeight) * 100, 3) // Min 3%
+      
+      const newLayer = {
+        id: baseTimestamp + index,
+        text: line.text,
+        x: baseX,
+        y: yOffset,
+        width: textWidth,
+        height: textHeight,
+        fontSize: fontSize,
+        fontFamily: line.fontFamily || 'Arial',
+        color: line.color || '#000000',
+        fontWeight: line.fontWeight || 'normal',
+        fontStyle: line.fontStyle || 'normal',
+        textAlign: preset.config.textAlign || 'center',
+        textShadow: line.textShadow || preset.config.textShadow || 'none',
+        textGlow: preset.config.textGlow || 'none',
+        wordArt: preset.config.wordArt || 'none',
+        backgroundColor: '',
+        textDecoration: 'none',
+        letterSpacing: line.letterSpacing || 'normal',
+        groupId: groupId // Add group ID for synchronized movement
+      }
+      
+      newLayers.push(newLayer)
+      // Increment Y position for next line - tight spacing
+      yOffset += ((fontSize * 1.05) / baseCanvasHeight) * 100
+    })
+    
+    const updatedLayers = [...textLayers, ...newLayers]
+    setTextLayers(updatedLayers)
+    // Select the first layer of the preset
+    setSelectedLayer(newLayers[0])
+    
+    // Save to history
+    saveToHistory('text_add', {
+      previousLayers,
+      previousSelected,
+      newLayers: updatedLayers,
+      newSelected: newLayers[0]
+    })
+  }
+
   const [newText, setNewText] = useState('')
 
   const handleLayerClick = (layer) => {
-    setSelectedLayer(layer)
-    setSelectedShape(null)
-    // Don't auto-open text panel on click - only show hover toolbar
-    // User can click "More Options" in hover toolbar to open main panel
+    // Toggle selection: if clicking on already selected layer, keep it selected
+    // If clicking on new layer, select it
+    if (selectedLayer?.id !== layer.id) {
+      setSelectedLayer(layer)
+      setSelectedShape(null)
+    }
+    // Don't auto-open text panel on click - user can manually open it from toolbar
   }
 
   const handleStyleChange = (property, value) => {
@@ -1859,8 +2476,21 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     
     if (action === 'drag') {
       setIsDragging(true)
+      setDragThresholdMet(false) // Reset threshold
       setDragStart({ x: e.clientX, y: e.clientY })
-      setLayerStart({ x: layer.x, y: layer.y })
+      
+      // Store initial position for the clicked layer
+      // If layer has a groupId, store all grouped layers' positions
+      if (layer.groupId) {
+        const groupedLayers = textLayers.filter(l => l.groupId === layer.groupId)
+        setLayerStart({ 
+          x: layer.x, 
+          y: layer.y,
+          groupedLayers: groupedLayers.map(l => ({ id: l.id, x: l.x, y: l.y }))
+        })
+      } else {
+        setLayerStart({ x: layer.x, y: layer.y })
+      }
     } else if (action === 'resize') {
       setIsResizing(true)
       setDragStart({ x: e.clientX, y: e.clientY })
@@ -1874,18 +2504,53 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     const currentDragStart = isDraggingOverlay || isResizingOverlay ? overlayDragStart : dragStart
     const deltaX = e.clientX - currentDragStart.x
     const deltaY = e.clientY - currentDragStart.y
+    
+    // Drag threshold: only start dragging if mouse moved more than 5px
+    const DRAG_THRESHOLD = 5
+    if (isDragging && !dragThresholdMet) {
+      const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
+      if (distance > DRAG_THRESHOLD) {
+        setDragThresholdMet(true)
+      } else {
+        return // Don't move until threshold is met
+      }
+    }
+    
     const { scaleX, scaleY } = getImageScale()
     const deltaXPct = pxDeltaToPercent(deltaX, 'x')
     const deltaYPct = pxDeltaToPercent(deltaY, 'y')
 
-    if (isDragging && selectedLayer) {
+    if (isDragging && selectedLayer && dragThresholdMet) {
       const tentativeX = layerStart.x + deltaXPct
       const tentativeY = layerStart.y + deltaYPct
       const newX = clampPercentValue(Math.max(0, Math.min(100 - selectedLayer.width, tentativeX)))
       const newY = clampPercentValue(Math.max(0, Math.min(100 - selectedLayer.height, tentativeY)))
-      const updatedLayers = textLayers.map(layer =>
-        layer.id === selectedLayer.id ? { ...layer, x: newX, y: newY } : layer
-      )
+      
+      // If layer is grouped, move all layers in the group together
+      let updatedLayers
+      if (selectedLayer.groupId && layerStart.groupedLayers) {
+        // Calculate the delta from the clicked layer's start position
+        const deltaFromStart = { x: deltaXPct, y: deltaYPct }
+        
+        updatedLayers = textLayers.map(layer => {
+          if (layer.groupId === selectedLayer.groupId) {
+            // Find this layer's original position
+            const originalPos = layerStart.groupedLayers.find(l => l.id === layer.id)
+            if (originalPos) {
+              const newLayerX = clampPercentValue(Math.max(0, Math.min(100 - layer.width, originalPos.x + deltaFromStart.x)))
+              const newLayerY = clampPercentValue(Math.max(0, Math.min(100 - layer.height, originalPos.y + deltaFromStart.y)))
+              return { ...layer, x: newLayerX, y: newLayerY }
+            }
+          }
+          return layer
+        })
+      } else {
+        // Single layer movement (no group)
+        updatedLayers = textLayers.map(layer =>
+          layer.id === selectedLayer.id ? { ...layer, x: newX, y: newY } : layer
+        )
+      }
+      
       setTextLayers(updatedLayers)
       setSelectedLayer({ ...selectedLayer, x: newX, y: newY })
     } else if (isResizing && selectedLayer) {
@@ -2010,7 +2675,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     }
-  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, overlayResizeMode, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale])
+  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, overlayResizeMode, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale, dragThresholdMet])
 
   const handleOverlayMouseDown = (e, action, resizeMode = null) => {
     e.preventDefault()
@@ -2048,6 +2713,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setIsDraggingOverlay(false)
     setIsResizingOverlay(false)
     setOverlayResizeMode(null)
+    setDragThresholdMet(false) // Reset drag threshold
     
     // Save overlay changes to history if they occurred
     if (overlayChangeStart && (isDraggingOverlay || isResizingOverlay)) {
@@ -2918,8 +3584,12 @@ const handleTemplateJsonLoad = () => {
   if (!isOpen) return null;
 
   const outerClasses = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
-  const innerClasses = 'relative max-w-[1500px] h-[98vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col';
-  const workspaceBaseClasses = 'flex-1 relative overflow-hidden flex items-center justify-center transition-all duration-300';
+  const innerClasses = 'relative w-[90vw] h-[90vh] rounded-lg bg-white shadow-2xl overflow-hidden flex flex-col';
+  // For 9:16 images, allow overflow to show full height and align from top
+  const isPortrait9x16 = normalizedAspectRatio === '9 / 16' || normalizedAspectRatio === '9:16' || normalizedAspectRatio === '9/16';
+  const workspaceBaseClasses = isPortrait9x16 
+    ? 'flex-1 relative overflow-auto flex items-start justify-center transition-all duration-300'
+    : 'flex-1 relative overflow-hidden flex items-center justify-center transition-all duration-300';
   const workspaceChromeClasses = `bg-white m-4 rounded-lg p-6 shadow-lg ${isToolbarOpen ? 'mt-2' : 'mt-4'}`;
   const workspaceContainerClasses = `${workspaceBaseClasses} ${workspaceChromeClasses}`.trim();
   const canvasWrapperBase = 'relative cursor-crosshair overflow-hidden';
@@ -3142,6 +3812,15 @@ const handleTemplateJsonLoad = () => {
                 title="Overlay Images"
               >
                 <Icon name="image" size={18} />
+              </button>
+
+              {/* Layers Panel */}
+              <button
+                className={`w-10 h-10 flex items-center justify-center rounded-md transition-all ${activePanel === 'layers' ? 'bg-purple-600 text-white' : 'text-gray-600 hover:bg-gray-200'}`}
+                onClick={() => togglePanel('layers')}
+                title="Layers"
+              >
+                <Icon name="layers" size={18} />
               </button>
 
               {/* Image Editor Panel */}
@@ -3607,6 +4286,13 @@ const handleTemplateJsonLoad = () => {
                   )}
                   <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
                     {shapeLayers.map((shape) => {
+                      // Get z-index from layer order
+                      const layerOrderIndex = layerOrder.findIndex(l => l.type === 'shape' && l.id === shape.id)
+                      const layerData = layerOrder.find(l => l.type === 'shape' && l.id === shape.id)
+                      const isVisible = layerData?.visible !== false
+                      
+                      if (!isVisible) return null // Hide if visibility is off
+                      
                       const { scaleX, scaleY } = getImageScale()
                       const widthPx = Math.max(shape.width * scaleX, 1)
                       const baseHeight = shape.type === 'line' ? Math.max(shape.borderWidth || 1, shape.height || 1) : shape.height
@@ -3624,7 +4310,7 @@ const handleTemplateJsonLoad = () => {
                         transform: `rotate(${shape.rotation || 0}deg)`,
                         transformOrigin: 'center center',
                         opacity: shape.opacity ?? 1,
-                        zIndex: 50,
+                        zIndex: 50 + layerOrderIndex, // Use layer order for z-index
                         pointerEvents: 'auto'
                       }
 
@@ -3728,19 +4414,38 @@ const handleTemplateJsonLoad = () => {
                       )
                     })}
                     {textLayers.map((layer) => {
+                      // Get z-index from layer order
+                      const layerOrderIndex = layerOrder.findIndex(l => l.type === 'text' && l.id === layer.id)
+                      const layerData = layerOrder.find(l => l.type === 'text' && l.id === layer.id)
+                      const isVisible = layerData?.visible !== false
+                      
+                      if (!isVisible) return null // Hide if visibility is off
+                      
                       const leftPx = percentToDisplayPx(layer.x, 'x')
                       const topPx = percentToDisplayPx(layer.y, 'y')
                       const widthPx = percentToDisplayPx(layer.width, 'x')
                       const heightPx = percentToDisplayPx(layer.height, 'y')
+                      
+                      // Check if this layer is part of a selected group
+                      const isSelected = selectedLayer?.id === layer.id
+                      const isInSelectedGroup = selectedLayer?.groupId && layer.groupId === selectedLayer.groupId && layer.id !== selectedLayer.id
+                      
                       return (
                         <div
                           key={layer.id}
-                          className={`absolute cursor-move p-1 ${selectedLayer?.id === layer.id ? 'border-2 border-purple-600 bg-purple-100' : 'border-2 border-transparent'}`}
+                          className={`absolute cursor-move p-1 ${
+                            isSelected 
+                              ? 'border-2 border-purple-600 bg-purple-100' 
+                              : isInSelectedGroup 
+                                ? 'border-2 border-purple-400 bg-purple-50' 
+                                : 'border-2 border-transparent'
+                          }`}
                           style={{
                             left: `${clampPercentValue(layer.x)}%`,
                             top: `${clampPercentValue(layer.y)}%`,
                             width: `${clampPercentValue(layer.width)}%`,
                             height: `${clampPercentValue(layer.height)}%`,
+                            zIndex: 50 + layerOrderIndex, // Use layer order for z-index
                             pointerEvents: 'auto'
                           }}
                           onClick={() => handleLayerClick(layer)}
@@ -3785,6 +4490,20 @@ const handleTemplateJsonLoad = () => {
                               onMouseDown={(e) => handleMouseDown(e, layer.id, 'resize')}
                             />
                           )}
+                          {/* Group indicator badge */}
+                          {layer.groupId && (
+                            <div
+                              className="absolute -top-1 -left-1 w-5 h-5 bg-blue-500 border-2 border-white rounded-full flex items-center justify-center z-10 shadow-sm"
+                              title="Grouped text - moves together"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="white" stroke="none">
+                                <circle cx="8" cy="8" r="2"/>
+                                <circle cx="16" cy="8" r="2"/>
+                                <circle cx="8" cy="16" r="2"/>
+                                <circle cx="16" cy="16" r="2"/>
+                              </svg>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -3804,8 +4523,172 @@ const handleTemplateJsonLoad = () => {
             </div>
           </div>
 
-          {/* Flyout Panel */}
-          {activePanel && (
+          {/* Left Flyout Panel - Layers */}
+          {activePanel === 'layers' && (
+            <div className="absolute top-0 left-0 w-96 h-full bg-gradient-to-b from-white to-gray-50 shadow-2xl z-10 flex flex-col transform transition-transform duration-400 ease-out border-r border-gray-200">
+              <div className="px-8 pt-8 pb-6 border-b border-gray-200 flex justify-between items-center bg-gradient-to-br from-white to-gray-50 relative">
+                <h3 className="m-0 text-xl font-extrabold text-gray-800 uppercase tracking-wide">Layers</h3>
+                <button 
+                  className="absolute top-6 right-6 w-8 h-8 border-none bg-gray-200 text-gray-600 rounded-full cursor-pointer flex items-center justify-center transition-all text-base hover:bg-red-500 hover:text-white hover:scale-110" 
+                  onClick={() => setActivePanel(null)}
+                >
+                  <FaTimes size={16} />
+                </button>
+              </div>
+              <div className="flex-1 px-8 py-8 overflow-y-auto flex flex-col gap-6">
+                {/* Layers Panel Content */}
+                <div className="control-group">
+                  <label className="text-lg font-bold text-gray-800 mb-4 block">
+                    ALL LAYERS
+                    <span className="block w-16 h-0.5 bg-purple-600 mt-1"></span>
+                  </label>
+                  
+                  {getAllLayers.length === 0 ? (
+                    <p className="text-sm text-gray-500 text-center py-8">
+                      No layers yet. Add text or shapes to see them here.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {getAllLayers.slice().reverse().map((layer, index) => {
+                        const actualIndex = getAllLayers.length - 1 - index
+                        const isSelected = (layer.type === 'text' && selectedLayer?.id === layer.id) || 
+                                         (layer.type === 'shape' && selectedShape?.id === layer.id)
+                        const layerName = layer.type === 'text' 
+                          ? layer.text.substring(0, 20) + (layer.text.length > 20 ? '...' : '')
+                          : `${layer.type.charAt(0).toUpperCase() + layer.type.slice(1)}`
+                        
+                        return (
+                          <div
+                            key={`${layer.type}-${layer.id}`}
+                            className={`p-3 rounded-lg border-2 transition-all cursor-pointer ${
+                              isSelected 
+                                ? 'bg-purple-100 border-purple-600' 
+                                : 'bg-white border-gray-200 hover:border-purple-300 hover:bg-purple-50'
+                            }`}
+                            onClick={() => selectLayer(layer.type, layer.id)}
+                          >
+                            <div className="flex items-center gap-2">
+                              {/* Layer Type Icon */}
+                              <div className="flex-shrink-0">
+                                <Icon 
+                                  name={layer.type === 'text' ? 'type' : 'shape'} 
+                                  size={16} 
+                                />
+                              </div>
+                              
+                              {/* Layer Name */}
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-gray-800 truncate">
+                                  {layerName}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {layer.type === 'text' ? 'Text Layer' : `Shape: ${layer.type}`}
+                                </div>
+                              </div>
+                              
+                              {/* Layer Controls */}
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {/* Visibility Toggle */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    toggleLayerVisibility(layer.type, layer.id)
+                                  }}
+                                  className="w-6 h-6 flex items-center justify-center rounded hover:bg-white transition-colors"
+                                  title={layer.visible !== false ? 'Hide' : 'Show'}
+                                >
+                                  <Icon name={layer.visible !== false ? 'eye' : 'eyeOff'} size={14} />
+                                </button>
+                                
+                                {/* Move Up */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    moveLayerUp(layer.type, layer.id)
+                                  }}
+                                  disabled={actualIndex === getAllLayers.length - 1}
+                                  className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+                                    actualIndex === getAllLayers.length - 1 
+                                      ? 'text-gray-300 cursor-not-allowed' 
+                                      : 'hover:bg-white text-gray-700'
+                                  }`}
+                                  title="Move Up"
+                                >
+                                  <Icon name="chevronUp" size={14} />
+                                </button>
+                                
+                                {/* Move Down */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    moveLayerDown(layer.type, layer.id)
+                                  }}
+                                  disabled={actualIndex === 0}
+                                  className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+                                    actualIndex === 0 
+                                      ? 'text-gray-300 cursor-not-allowed' 
+                                      : 'hover:bg-white text-gray-700'
+                                  }`}
+                                  title="Move Down"
+                                >
+                                  <Icon name="chevronDown" size={14} />
+                                </button>
+                                
+                                {/* Delete */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    deleteLayer(layer.type, layer.id)
+                                  }}
+                                  className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-100 text-red-600 transition-colors"
+                                  title="Delete"
+                                >
+                                  <Icon name="trash" size={14} />
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {/* Quick Actions Row */}
+                            <div className="mt-2 flex gap-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  moveLayerToTop(layer.type, layer.id)
+                                }}
+                                className="flex-1 px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                                title="To Front"
+                              >
+                                To Front
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  moveLayerToBottom(layer.type, layer.id)
+                                }}
+                                className="flex-1 px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                                title="To Back"
+                              >
+                                To Back
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  
+                  <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs text-blue-800">
+                      💡 <strong>Tip:</strong> Layers at the top appear in front. Drag items up/down to reorder across all types (text, shapes, overlays).
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Right Flyout Panel - Other Panels */}
+          {activePanel && activePanel !== 'layers' && (
             <div className={`absolute top-0 right-0 w-96 h-full bg-gradient-to-b from-white to-gray-50 shadow-2xl z-10 flex flex-col transform transition-transform duration-400 ease-out border-l border-gray-200 ${activePanel ? 'translate-x-0' : 'translate-x-full'}`}>
               <div className="px-8 pt-8 pb-6 border-b border-gray-200 flex justify-between items-center bg-gradient-to-br from-white to-gray-50 relative">
                 <h3 className="m-0 text-xl font-extrabold text-gray-800 uppercase tracking-wide">{activePanel.charAt(0).toUpperCase() + activePanel.slice(1)}</h3>
@@ -3844,6 +4727,59 @@ const handleTemplateJsonLoad = () => {
                   onChange={(e) => handleStyleChange('text', e.target.value)}
                             className="text-input"
                 />
+              </div>
+
+              {/* Layer Ordering Controls */}
+              <div className="control-group">
+                <label style={{ marginBottom: '0.5rem', display: 'block' }}>Layer Order</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
+                  <button
+                    onClick={bringLayerToFront}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                    title="Bring to Front"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="5" y="11" width="14" height="10" rx="2"/>
+                      <path d="M9 11V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-4"/>
+                    </svg>
+                    To Front
+                  </button>
+                  <button
+                    onClick={bringLayerForward}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                    title="Bring Forward"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="18 15 12 9 6 15"/>
+                    </svg>
+                    Forward
+                  </button>
+                  <button
+                    onClick={sendLayerBackward}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                    title="Send Backward"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                    Backward
+                  </button>
+                  <button
+                    onClick={sendLayerToBack}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                    title="Send to Back"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="3" width="14" height="10" rx="2"/>
+                      <path d="M15 13v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4"/>
+                    </svg>
+                    To Back
+                  </button>
+                </div>
               </div>
 
               <div className="control-group">
@@ -4148,6 +5084,45 @@ const handleTemplateJsonLoad = () => {
                         </div>
                       </>
                     )}
+
+                    {/* NEW: Text Presets Section - Canva-style (Always visible) */}
+                    <div className="control-group" style={{ marginTop: '2rem' }}>
+                      <label style={{ 
+                        fontSize: '1.125rem', 
+                        fontWeight: 'bold', 
+                        color: '#1f2937',
+                        marginBottom: '1rem',
+                        display: 'block'
+                      }}>
+                        TEXT PRESETS
+                        <span style={{
+                          display: 'block',
+                          width: '4rem',
+                          height: '2px',
+                          backgroundColor: '#7c3aed',
+                          marginTop: '0.25rem'
+                        }}></span>
+                      </label>
+                      
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, 1fr)',
+                        gap: '1rem'
+                      }}>
+                        {TEXT_PRESETS.map((preset) => (
+                          <PresetPreview key={preset.id} preset={preset} onClick={applyTextPreset} />
+                        ))}
+                      </div>
+                      
+                      <p style={{
+                        fontSize: '0.75rem',
+                        color: '#6b7280',
+                        marginTop: '1rem',
+                        textAlign: 'center'
+                      }}>
+                        Click any preset to add it to your canvas
+                      </p>
+                    </div>
                     </>
                   )}
                   
@@ -4301,6 +5276,59 @@ const handleTemplateJsonLoad = () => {
                           <div className="selected-shape-type">{selectedShape.type}</div>
                         </div> */}
 
+                        {/* Layer Ordering Controls for Shapes */}
+                        <div className="control-group">
+                          <label style={{ marginBottom: '0.5rem', display: 'block' }}>Layer Order</label>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
+                            <button
+                              onClick={bringShapeToFront}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                              title="Bring to Front"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <rect x="5" y="11" width="14" height="10" rx="2"/>
+                                <path d="M9 11V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-4"/>
+                              </svg>
+                              To Front
+                            </button>
+                            <button
+                              onClick={bringShapeForward}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                              title="Bring Forward"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="18 15 12 9 6 15"/>
+                              </svg>
+                              Forward
+                            </button>
+                            <button
+                              onClick={sendShapeBackward}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                              title="Send Backward"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="6 9 12 15 18 9"/>
+                              </svg>
+                              Backward
+                            </button>
+                            <button
+                              onClick={sendShapeToBack}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.75rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
+                              title="Send to Back"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <rect x="9" y="3" width="14" height="10" rx="2"/>
+                                <path d="M15 13v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4"/>
+                              </svg>
+                              To Back
+                            </button>
+                          </div>
+                        </div>
+
                         {selectedShape.type !== 'line' && (
                           <div className="control-group">
                             <label>Fill Color</label>
@@ -4414,13 +5442,108 @@ const handleTemplateJsonLoad = () => {
                 {activePanel === 'overlay' && (
                   <>
                     <div className="control-group">
-                      <label>Upload Overlay Image</label>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleOverlayImageUpload}
-                        className="file-input"
-                      />
+                      <label className="text-lg font-bold text-gray-800 mb-4 block">
+                        OVERLAY IMAGE
+                        <span className="block w-16 h-0.5 bg-purple-600 mt-1"></span>
+                      </label>
+                      
+                      {/* Beautiful Upload Box with + Icon */}
+                      <div 
+                        className="relative"
+                        onClick={() => document.getElementById('overlay-file-input').click()}
+                      >
+                        <div
+                          style={{
+                            border: '2px dashed #d1d5db',
+                            borderRadius: '16px',
+                            padding: '2rem',
+                            backgroundColor: '#f9fafb',
+                            cursor: 'pointer',
+                            transition: 'all 0.3s ease',
+                            minHeight: '180px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '1rem',
+                            position: 'relative',
+                            overflow: 'hidden'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = '#7c3aed'
+                            e.currentTarget.style.backgroundColor = '#faf5ff'
+                            e.currentTarget.style.transform = 'translateY(-2px)'
+                            e.currentTarget.style.boxShadow = '0 8px 16px rgba(124, 58, 237, 0.15)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = '#d1d5db'
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                            e.currentTarget.style.transform = 'translateY(0)'
+                            e.currentTarget.style.boxShadow = 'none'
+                          }}
+                        >
+                          {/* Large + Icon */}
+                          <div style={{
+                            width: '64px',
+                            height: '64px',
+                            borderRadius: '50%',
+                            backgroundColor: '#7c3aed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: '0 4px 12px rgba(124, 58, 237, 0.3)'
+                          }}>
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round">
+                              <line x1="12" y1="5" x2="12" y2="19" />
+                              <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                          </div>
+                          
+                          {/* Upload Text */}
+                          <div style={{ textAlign: 'center' }}>
+                            <h4 style={{ 
+                              fontSize: '1rem', 
+                              fontWeight: '600', 
+                              color: '#1f2937',
+                              marginBottom: '0.25rem'
+                            }}>
+                              Add Overlay Image
+                            </h4>
+                            <p style={{ 
+                              fontSize: '0.875rem', 
+                              color: '#6b7280'
+                            }}>
+                              Click to browse or drag & drop
+                            </p>
+                            <p style={{ 
+                              fontSize: '0.75rem', 
+                              color: '#9ca3af',
+                              marginTop: '0.5rem'
+                            }}>
+                              PNG, JPG, WEBP up to 10MB
+                            </p>
+                          </div>
+                          
+                          {/* Hidden File Input */}
+                          <input
+                            id="overlay-file-input"
+                            type="file"
+                            accept="image/*"
+                            onChange={handleOverlayImageUpload}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                      </div>
+                      
+                      {overlayImageUrl && !overlayVisible && (
+                        <button 
+                          onClick={() => setOverlayVisible(true)}
+                          className="btn btn-primary"
+                          style={{ marginTop: '1rem', width: '100%' }}
+                        >
+                          Show Overlay on Canvas
+                        </button>
+                      )}
                     </div>
                     {overlayVisible && overlayImage && (
                       <>
@@ -4765,6 +5888,13 @@ const handleTemplateJsonLoad = () => {
         </div>
       </div>
     </div>
+    
+    {/* Styles for text presets */}
+    <style jsx>{`
+      .preset-card:hover .preset-label {
+        opacity: 1 !important;
+      }
+    `}</style>
     </>
   )
 }

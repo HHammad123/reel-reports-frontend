@@ -1,35 +1,347 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import Sidebar from '../Components/Sidebar';
 import Topbar from '../Components/Topbar';
-import { SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal, Play, Pause, Volume2, VolumeX, Maximize2, Minimize2 } from 'lucide-react';
 import { selectVideoJob, updateJobStatus, setJob } from '../redux/slices/videoJobSlice';
 
-// Section expects an array of items: { id, url, created_at }
+// Video Player Component
+const VideoPlayer = ({ videoUrl, videoName }) => {
+  const videoRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const controlsTimeoutRef = useRef(null);
 
-const Section = ({ title, items, onItemClick }) => {
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const updateTime = () => setCurrentTime(video.currentTime);
+    const updateDuration = () => setDuration(video.duration);
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => setIsPlaying(false);
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setCurrentTime(0);
+    };
+
+    video.addEventListener('timeupdate', updateTime);
+    video.addEventListener('loadedmetadata', updateDuration);
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('ended', handleEnded);
+
+    return () => {
+      video.removeEventListener('timeupdate', updateTime);
+      video.removeEventListener('loadedmetadata', updateDuration);
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('ended', handleEnded);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.volume = volume;
+      setIsMuted(volume === 0);
+    }
+  }, [volume]);
+
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    if (isPlaying) {
+      video.pause();
+    } else {
+      video.play().catch(() => {});
+    }
+  };
+
+  const handleProgressClick = (e) => {
+    const video = videoRef.current;
+    if (!video || !duration) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    video.currentTime = percentage * duration;
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    if (isMuted) {
+      setVolume(1);
+    } else {
+      setVolume(0);
+    }
+  };
+
+  const toggleFullscreen = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (!isFullscreen) {
+      if (video.requestFullscreen) {
+        video.requestFullscreen();
+      } else if (video.webkitRequestFullscreen) {
+        video.webkitRequestFullscreen();
+      } else if (video.mozRequestFullScreen) {
+        video.mozRequestFullScreen();
+      } else if (video.msRequestFullscreen) {
+        video.msRequestFullscreen();
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      } else if (document.mozCancelFullScreen) {
+        document.mozCancelFullScreen();
+      } else if (document.msExitFullscreen) {
+        document.msExitFullscreen();
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      ));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+
+  const formatTime = (seconds) => {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleMouseMove = () => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    controlsTimeoutRef.current = setTimeout(() => {
+      if (isPlaying) {
+        setShowControls(false);
+      }
+    }, 3000);
+  };
+
+  const handleMouseLeave = () => {
+    if (controlsTimeoutRef.current) {
+      clearTimeout(controlsTimeoutRef.current);
+    }
+    if (isPlaying) {
+      setShowControls(false);
+    }
+  };
+
+  return (
+    <div 
+      className="relative w-full bg-black rounded-xl overflow-hidden group"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <video
+        ref={videoRef}
+        src={videoUrl}
+        className="w-full h-auto max-h-[700px] object-contain"
+        preload="metadata"
+        onClick={togglePlay}
+      />
+      
+      {/* Controls Overlay */}
+      <div 
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${
+          showControls ? 'opacity-100' : 'opacity-0'
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Progress Bar */}
+        <div 
+          className="w-full h-1 bg-white/30 rounded-full mb-3 cursor-pointer"
+          onClick={handleProgressClick}
+        >
+          <div 
+            className="h-full bg-[#13008B] rounded-full transition-all"
+            style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+          />
+        </div>
+
+        {/* Controls */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            {/* Play/Pause Button */}
+            <button
+              onClick={togglePlay}
+              className="text-white hover:text-[#13008B] transition-colors"
+            >
+              {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+            </button>
+
+            {/* Volume Control */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleMute}
+                className="text-white hover:text-[#13008B] transition-colors"
+              >
+                {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={volume}
+                onChange={(e) => setVolume(parseFloat(e.target.value))}
+                className="w-20 h-1 bg-white/30 rounded-full appearance-none cursor-pointer accent-[#13008B]"
+              />
+            </div>
+
+            {/* Time Display */}
+            <span className="text-white text-sm">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+          </div>
+
+          {/* Fullscreen Button */}
+          <button
+            onClick={toggleFullscreen}
+            className="text-white hover:text-[#13008B] transition-colors"
+          >
+            {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Video Thumbnail Component - shows first frame and expands to player on click
+const VideoThumbnail = ({ videoUrl, videoName }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const thumbnailVideoRef = useRef(null);
+  const [thumbnailReady, setThumbnailReady] = useState(false);
+
+  useEffect(() => {
+    const video = thumbnailVideoRef.current;
+    if (!video) return;
+
+    const handleLoadedData = () => {
+      video.currentTime = 0.1; // Seek to first frame
+      setThumbnailReady(true);
+    };
+
+    video.addEventListener('loadeddata', handleLoadedData);
+    video.load();
+
+    return () => {
+      video.removeEventListener('loadeddata', handleLoadedData);
+    };
+  }, [videoUrl]);
+
+  if (isExpanded) {
+    return (
+      <div className="w-full">
+        <button
+          onClick={() => setIsExpanded(false)}
+          className="mb-2 text-sm text-gray-600 hover:text-gray-900"
+        >
+          ← Back to thumbnail
+        </button>
+        <VideoPlayer videoUrl={videoUrl} videoName={videoName} />
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className="relative w-full bg-black rounded-xl overflow-hidden border border-gray-200 shadow-sm cursor-pointer group"
+      onClick={() => setIsExpanded(true)}
+    >
+      <video
+        ref={thumbnailVideoRef}
+        src={videoUrl}
+        className="w-full h-auto object-contain max-h-[400px]"
+        preload="metadata"
+        muted
+        playsInline
+      />
+      {/* Play button overlay */}
+      <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors pointer-events-none">
+        <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+          <Play size={32} className="text-black ml-1" fill="black" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Section expects an array of items: { id, url, name, created_at, type }
+
+const Section = ({ title, items }) => {
   return (
     <div className="mb-10">
       <h2 className="text-2xl font-semibold text-gray-900 mb-4">{title}</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-5">
-        {items.map((item, i) => (
-          <div key={i} className="relative group cursor-pointer" onClick={() => onItemClick && onItemClick(item)}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {items.map((item, i) => {
+          const isVideo = item?.type === 'video';
+          
+          return (
+            <div key={item.id || i} className="w-full">
+              {isVideo && item?.url ? (
+                <VideoThumbnail videoUrl={item.url} videoName={item.name} />
+              ) : item?.thumb || item?.url ? (
             <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-black">
-              {item?.thumb ? (
-                <img src={item.thumb} alt={item.id || `media-${i}`} className="w-full h-40 object-cover" />
+                  <img 
+                    src={item.thumb || item.url} 
+                    alt={item.id || `media-${i}`} 
+                    className="w-full h-auto object-contain" 
+                  />
+                </div>
               ) : (
-                <div className="w-full h-40 flex items-center justify-center text-white/70 text-sm">No preview</div>
+                <div className="w-full h-40 flex items-center justify-center text-white/70 text-sm bg-gray-100 rounded-xl">
+                  No preview
+                </div>
+              )}
+              {/* Video/Image title below */}
+              {item?.name && (
+                <div className="mt-3">
+                  <p className="text-base font-semibold text-gray-900" title={item.name}>
+                    {item.name}
+                  </p>
+                </div>
               )}
             </div>
-            <div className="absolute inset-0 rounded-xl ring-2 ring-transparent group-hover:ring-blue-500 pointer-events-none"></div>
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-10 h-10 rounded-full bg-white/70 flex items-center justify-center">
-                <div className="w-0 h-0 border-l-[10px] border-l-black border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent ml-1"></div>
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -46,6 +358,8 @@ const MyMedia = () => {
   const [showShortPopup, setShowShortPopup] = useState(false);
   const [webmConversionJobId, setWebmConversionJobId] = useState(null);
   const [webmConversionStatus, setWebmConversionStatus] = useState(null);
+  // State for final videos
+  const [finalVideos, setFinalVideos] = useState([]);
 
   // Initialize Redux job from localStorage if user hit this page via redirect
   useEffect(() => {
@@ -273,69 +587,113 @@ const MyMedia = () => {
     }
   };
 
-  const data = useMemo(() => ({
-    today: library.today || [],
-    week: library.week || [],
-    month: library.month || [],
-    year: library.year || [],
-    all: library.all || [],
-  }), [library]);
+  // Get all media items from final videos
+  const getAllMedia = useCallback(() => {
+    // Return all final videos directly
+    return finalVideos || [];
+  }, [finalVideos]);
 
-  // Fetch user's videos and group by time buckets
+  // Get all media data (videos and images from all aspect ratios)
+  const data = useMemo(() => {
+    const allMedia = getAllMedia();
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = (() => { 
+      const d = new Date(startOfDay); 
+      const day = d.getDay(); 
+      const diff = (day + 6) % 7; 
+      d.setDate(d.getDate() - diff); 
+      return d; 
+    })();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const inRange = (ts, from) => (new Date(ts)).getTime() >= from.getTime();
+
+    const today = allMedia.filter(v => inRange(v.created_at, startOfDay));
+    const week = allMedia.filter(v => inRange(v.created_at, startOfWeek) && !inRange(v.created_at, startOfDay));
+    const month = allMedia.filter(v => inRange(v.created_at, startOfMonth) && !inRange(v.created_at, startOfWeek));
+    const year = allMedia.filter(v => inRange(v.created_at, startOfYear) && !inRange(v.created_at, startOfMonth));
+
+    return { today, week, month, year, all: allMedia };
+  }, [getAllMedia]);
+
+  // Fetch user's final videos (videos and images) organized by aspect ratio
   useEffect(() => {
-    const fetchVideos = async () => {
+    const fetchMedia = async () => {
       try {
-        setIsLoadingLib(true); setLibError('');
+        setIsLoadingLib(true); 
+        setLibError('');
         const user_id = localStorage.getItem('token') || '';
-        const session_id = localStorage.getItem('session_id') || '';
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/videos', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
+        
+        if (!user_id) {
+          setLibError('User ID not found. Please sign in again.');
+          setIsLoadingLib(false);
+          return;
+        }
+
+        const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
+        const resp = await fetch(`${apiBase}/v1/users/user/${encodeURIComponent(user_id)}/final-videos`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
         });
+        
         const text = await resp.text();
-        let json; try { json = JSON.parse(text); } catch (_) { json = text; }
-        if (!resp.ok) throw new Error(`users/videos failed: ${resp.status} ${text}`);
+        let json; 
+        try { 
+          json = JSON.parse(text); 
+        } catch (_) { 
+          json = text; 
+        }
+        
+        if (!resp.ok) {
+          throw new Error(`final-videos failed: ${resp.status} ${text}`);
+        }
 
-        const content = json?.content || json || {};
-        const videos = Array.isArray(content?.videos) ? content.videos : (Array.isArray(json?.videos) ? json.videos : []);
-        const normalized = videos.map(v => ({
-          id: v?.id || v?.video_id || v?.job_id || Math.random().toString(36).slice(2),
-          url: v?.final_video_url || v?.result_url || '',
-          thumb: v?.thumbnail_url || v?.thumb_url || v?.poster || v?.preview_image_url || '',
-          created_at: v?.created_at || v?.updated_at || new Date().toISOString(),
-        }));
+        // Parse the response structure: { final_videos: [{ name, url }, ...] }
+        const videosArray = Array.isArray(json?.final_videos) ? json.final_videos : [];
+        
+        // Normalize videos to consistent format
+        const normalizedVideos = videosArray
+          .filter(v => v && v.url && typeof v.url === 'string' && v.url.trim())
+          .map((video, index) => ({
+            id: video.id || `video-${index}-${Date.now()}`,
+            url: video.url.trim(),
+            thumb: video.thumbnail_url || video.thumb_url || video.url.trim(), // Use video URL as thumbnail if no thumbnail
+            name: video.name || `Video ${index + 1}`,
+            created_at: video.created_at || video.updated_at || new Date().toISOString(),
+            type: 'video'
+          }));
 
-        const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const startOfWeek = (() => { const d = new Date(startOfDay); const day = d.getDay(); const diff = (day + 6) % 7; d.setDate(d.getDate() - diff); return d; })();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        const inRange = (ts, from) => (new Date(ts)).getTime() >= from.getTime();
+        // Store final videos
+        setFinalVideos(normalizedVideos);
 
-        const today = normalized.filter(v => inRange(v.created_at, startOfDay));
-        const week = normalized.filter(v => inRange(v.created_at, startOfWeek) && !inRange(v.created_at, startOfDay));
-        const month = normalized.filter(v => inRange(v.created_at, startOfMonth) && !inRange(v.created_at, startOfWeek));
-        const year = normalized.filter(v => inRange(v.created_at, startOfYear) && !inRange(v.created_at, startOfMonth));
-
-        setLibrary({ today, week, month, year, all: normalized });
+        // Initialize library with empty arrays (time buckets will be calculated in useMemo)
+        setLibrary({ today: [], week: [], month: [], year: [], all: [] });
       } catch (e) {
         setLibError(e?.message || 'Failed to load media');
-      } finally { setIsLoadingLib(false); }
+        console.error('Error fetching final videos:', e);
+      } finally { 
+        setIsLoadingLib(false); 
+      }
     };
-    fetchVideos();
+    fetchMedia();
   }, []);
 
   return (
     <div className='flex h-screen bg-[#E5E2FF]'>
       <Sidebar />
-      <div className="w-full mx-[2rem] mt-[1rem]">
+      <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
         <Topbar />
         <div className="h-[85vh] my-2 overflow-y-auto scrollbar-hide">
           <div className="bg-white rounded-2xl p-5">
             <div className="flex items-center justify-end mb-4 gap-2">
+              {/* Sort buttons */}
+              <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 text-gray-700"><SlidersHorizontal className="w-4 h-4" /></div>
               <button onClick={() => setSortMode('type')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode==='type' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by File Type</button>
               <button onClick={() => setSortMode('timeline')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode==='timeline' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by Timeline</button>
-              {/* Generate button moved to Home Videos section */}
+              </div>
             </div>
 
             {/* In-progress video card at top if a job exists */}
@@ -381,11 +739,45 @@ const MyMedia = () => {
 
             {isLoadingLib && (<div className="mb-4 text-sm text-gray-600">Loading your videos…</div>)}
             {libError && (<div className="mb-4 text-sm text-red-600">{libError}</div>)}
-            {data.today.length > 0 && (<Section title="Today" items={data.today} onItemClick={(it)=>navigate(`/result/${encodeURIComponent(it.id)}`)} />)}
-            {data.week.length > 0 && (<Section title="This Week" items={data.week} onItemClick={(it)=>navigate(`/result/${encodeURIComponent(it.id)}`)} />)}
-            {data.month.length > 0 && (<Section title="This Month" items={data.month} onItemClick={(it)=>navigate(`/result/${encodeURIComponent(it.id)}`)} />)}
-            {data.year.length > 0 && (<Section title="This Year" items={data.year} onItemClick={(it)=>navigate(`/result/${encodeURIComponent(it.id)}`)} />)}
-            {data.all.length > 0 && (<Section title="All Videos" items={data.all} onItemClick={(it)=>navigate(`/result/${encodeURIComponent(it.id)}`)} />)}
+            
+            {/* Show message if no videos found */}
+            {!isLoadingLib && !libError && data.all.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-lg font-medium mb-2">No videos found</p>
+                <p className="text-sm">No videos available.</p>
+              </div>
+            )}
+            
+            {data.today.length > 0 && (
+              <Section 
+                title="Today" 
+                items={data.today} 
+              />
+            )}
+            {data.week.length > 0 && (
+              <Section 
+                title="This Week" 
+                items={data.week} 
+              />
+            )}
+            {data.month.length > 0 && (
+              <Section 
+                title="This Month" 
+                items={data.month} 
+              />
+            )}
+            {data.year.length > 0 && (
+              <Section 
+                title="This Year" 
+                items={data.year} 
+              />
+            )}
+            {data.all.length > 0 && (
+              <Section 
+                title="All Videos" 
+                items={data.all} 
+              />
+            )}
           </div>
         </div>
       </div>

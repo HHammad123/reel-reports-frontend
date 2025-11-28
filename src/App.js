@@ -4,6 +4,7 @@ import { Routes, Route } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import "./App.css"
 import { selectIsAuthenticated, selectUser } from './redux/slices/userSlice';
+import { SidebarProvider } from './Contexts/SidebarContext';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Main from './pages/Main';
@@ -40,6 +41,7 @@ function App() {
 
   return (
     <div className="App">
+      <SidebarProvider>
        <Routes>
          {/* Public routes */}
          <Route path="/login" element={<Login/>} />
@@ -141,6 +143,7 @@ function App() {
            </ProtectedRoute>
          } />
        </Routes>
+      </SidebarProvider>
     </div>
   );
 }

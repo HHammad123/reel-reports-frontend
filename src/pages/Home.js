@@ -1174,7 +1174,7 @@ const Home = () => {
         </div>
       )}
       <Sidebar/>
-      <div className="w-full mx-[2rem] mt-[1rem] overflow-x-hidden">
+      <div className="flex-1 mx-[2rem] mt-[1rem] overflow-x-hidden min-w-0">
         <Topbar/>
         <Typetabs onChangeVideoType={handleVideoTypeTabChange} />
         {/* Step-based component rendering */}

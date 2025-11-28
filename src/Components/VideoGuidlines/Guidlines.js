@@ -63,6 +63,63 @@ const Guidlines = () => {
     return `Voice ${index + 1}`
   }, [])
 
+  // Normalize color to lowercase hex format for consistent comparison
+  const normalizeColor = useCallback((color) => {
+    if (!color) return null
+    // If it's an object, try to extract the color value
+    if (typeof color === 'object' && color !== null) {
+      const colorValue = color.color || color.value || color.hex || color.code || color
+      if (typeof colorValue === 'string') {
+        color = colorValue
+      } else {
+        return null
+      }
+    }
+    if (typeof color !== 'string') return null
+    // Remove whitespace and convert to lowercase
+    const trimmed = color.trim().toLowerCase()
+    // If it's already a hex color, return it
+    if (/^#[0-9a-f]{6}$/i.test(trimmed)) {
+      return trimmed
+    }
+    // If it's a 3-digit hex, expand it
+    if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+      return '#' + trimmed.slice(1).split('').map(c => c + c).join('')
+    }
+    // If it's a valid hex without #, add it
+    if (/^[0-9a-f]{6}$/i.test(trimmed)) {
+      return '#' + trimmed
+    }
+    // Try to parse as hex if it's a number
+    if (/^[0-9a-f]{3}$/i.test(trimmed)) {
+      return '#' + trimmed.split('').map(c => c + c).join('')
+    }
+    return trimmed
+  }, [])
+
+  // Check if a color is selected by comparing all possible variations
+  const isColorSelected = useCallback((color) => {
+    if (!color || !selectedColors || selectedColors.size === 0) return false
+    
+    // Normalize the color we're checking
+    const normalized = normalizeColor(color) || color
+    
+    // Check direct matches
+    if (selectedColors.has(color) || selectedColors.has(normalized)) {
+      return true
+    }
+    
+    // Check all colors in selectedColors against this color
+    for (const selectedColor of selectedColors) {
+      const normalizedSelected = normalizeColor(selectedColor) || selectedColor
+      if (normalizedSelected === normalized || normalizedSelected === color || selectedColor === color) {
+        return true
+      }
+    }
+    
+    return false
+  }, [selectedColors, normalizeColor])
+
   // If brand assets are present later, auto-enable related toggles
   useEffect(() => {
     try {
@@ -82,6 +139,9 @@ const Guidlines = () => {
       }
     } catch (_) { /* noop */ }
   }, [brandLogos, selectedFonts, selectedColors])
+
+  // Ensure selected colors that aren't in presetColors are added to customColors
+  // Note: This useEffect is defined before presetColors, so we'll move it after presetColors is defined
 
   // Presenter options (for Avatar/Hybrid video types)
   const PRESENTER_OPTIONS = [
@@ -153,6 +213,43 @@ const Guidlines = () => {
     '#4169E1', '#00008B', '#4B0082', '#483D8B', '#6A5ACD', '#8A2BE2', '#9400D3', '#C71585',
     '#708090', '#778899', '#B0C4DE', '#ADD8E6', '#87CEEB', '#87CEFA', '#B0E0E6', '#AFEEEE'
   ]
+
+  // Ensure selected colors that aren't in presetColors are added to customColors
+  useEffect(() => {
+    if (!selectedColors || selectedColors.size === 0) return
+    
+    const selectedColorsArray = Array.from(selectedColors)
+    const allColors = [...presetColors, ...customColors]
+    const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
+    
+    const missingColors = selectedColorsArray.filter(selectedColor => {
+      const normalized = normalizeColor(selectedColor) || selectedColor
+      // Check if it's in presetColors
+      if (normalizedPreset.includes(normalized) || presetColors.includes(selectedColor)) {
+        return false
+      }
+      // Check if it's already in customColors
+      const normalizedCustom = customColors.map(c => normalizeColor(c) || c)
+      if (normalizedCustom.includes(normalized) || customColors.includes(selectedColor)) {
+        return false
+      }
+      return true
+    })
+    
+    if (missingColors.length > 0) {
+      setCustomColors(prev => {
+        const existing = prev.map(c => normalizeColor(c) || c)
+        const newColors = missingColors.filter(c => {
+          const normalized = normalizeColor(c) || c
+          return !existing.includes(normalized) && !existing.includes(c)
+        })
+        if (newColors.length > 0) {
+          return [...prev, ...newColors]
+        }
+        return prev
+      })
+    }
+  }, [selectedColors, customColors, normalizeColor])
 
   const handleVoice = (voiceId) => {
     setSelectedVoice(voiceId)
@@ -243,9 +340,31 @@ const Guidlines = () => {
       try {
         const bi = assets?.brand_identity || {}
         const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
-        const colors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+        const rawColors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+        // Normalize colors to ensure they match the format used in the UI
+        const colors = rawColors
+          .map(color => normalizeColor(color))
+          .filter(color => color !== null && color !== undefined)
         if (fonts.length) setSelectedFonts(fonts)
-        if (colors.length) setSelectedColors(new Set(colors))
+        if (colors.length) {
+          setSelectedColors(new Set(colors))
+          // Add brand colors that aren't in presetColors to customColors so they show in the list
+          const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
+          const colorsToAdd = colors.filter(color => {
+            const normalized = normalizeColor(color) || color
+            return !normalizedPreset.includes(normalized) && !normalizedPreset.includes(color)
+          })
+          if (colorsToAdd.length > 0) {
+            setCustomColors(prev => {
+              const existing = prev.map(c => normalizeColor(c) || c)
+              const newColors = colorsToAdd.filter(c => {
+                const normalized = normalizeColor(c) || c
+                return !existing.includes(normalized) && !existing.includes(c)
+              })
+              return [...prev, ...newColors]
+            })
+          }
+        }
       } catch (_) { /* noop */ }
       try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch {}
       setPendingVoiceBlobs([])
@@ -317,7 +436,11 @@ const Guidlines = () => {
         try {
           const bi = assets?.brand_identity || {}
           const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
-          const colors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+          const rawColors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+          // Normalize colors to ensure they match the format used in the UI
+          const colors = rawColors
+            .map(color => normalizeColor(color))
+            .filter(color => color !== null && color !== undefined)
           if (fonts.length) {
             setSelectedFonts(fonts)
             // Auto-enable Font styles when brand fonts exist
@@ -327,6 +450,22 @@ const Guidlines = () => {
             setSelectedColors(new Set(colors))
             // Auto-enable Specific color schemes when brand colors exist
             setSelectedColor((prev) => (prev === 'yes' ? prev : 'yes'))
+            // Add brand colors that aren't in presetColors to customColors so they show in the list
+            const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
+            const colorsToAdd = colors.filter(color => {
+              const normalized = normalizeColor(color) || color
+              return !normalizedPreset.includes(normalized) && !normalizedPreset.includes(color)
+            })
+            if (colorsToAdd.length > 0) {
+              setCustomColors(prev => {
+                const existing = prev.map(c => normalizeColor(c) || c)
+                const newColors = colorsToAdd.filter(c => {
+                  const normalized = normalizeColor(c) || c
+                  return !existing.includes(normalized) && !existing.includes(c)
+                })
+                return [...prev, ...newColors]
+              })
+            }
           }
           // Auto-enable Logo inclusion and preselect first logo when brand logos exist
           if (Array.isArray(logos) && logos.length > 0) {
@@ -356,18 +495,41 @@ const Guidlines = () => {
   }
 
   const toggleColor = (hex) => {
+    // Normalize color for consistent storage
+    const normalizedHex = normalizeColor(hex) || hex
     const next = new Set(selectedColors)
-    if (next.has(hex)) {
-      next.delete(hex)
+    // Check both normalized and original format
+    if (next.has(normalizedHex) || next.has(hex)) {
+      next.delete(normalizedHex)
+      next.delete(hex) // Also remove original if it exists
     } else {
-      next.add(hex)
+      next.add(normalizedHex)
+      // If color is not in presetColors or customColors, add it to customColors
+      const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
+      const isInPreset = normalizedPreset.includes(normalizedHex) || presetColors.includes(hex)
+      if (!isInPreset) {
+        setCustomColors((prev) => {
+          const normalizedPrev = prev.map(c => normalizeColor(c) || c)
+          if (normalizedPrev.includes(normalizedHex) || prev.includes(hex)) return prev
+          return [...prev, normalizedHex]
+        })
+      }
     }
     setSelectedColors(next)
   }
 
   const addCurrentColor = () => {
-    setCustomColors((prev) => (prev.includes(currentColor) ? prev : [...prev, currentColor]))
-    setSelectedColors((prev) => new Set(prev).add(currentColor))
+    const normalizedColor = normalizeColor(currentColor) || currentColor
+    setCustomColors((prev) => {
+      const normalizedPrev = prev.map(c => normalizeColor(c) || c)
+      if (normalizedPrev.includes(normalizedColor) || prev.includes(currentColor)) return prev
+      return [...prev, normalizedColor]
+    })
+    setSelectedColors((prev) => {
+      const next = new Set(prev)
+      next.add(normalizedColor)
+      return next
+    })
   }
 
   const openColorPicker = () => {
@@ -376,10 +538,17 @@ const Guidlines = () => {
 
   const handlePickCustomColor = (e) => {
     const newColor = e.target.value
-    setCurrentColor(newColor)
-    if (!presetColors.includes(newColor) && !customColors.includes(newColor)) {
-      setCustomColors(prev => [...prev, newColor])
-      setSelectedColors(prev => new Set(prev).add(newColor))
+    const normalizedColor = normalizeColor(newColor) || newColor
+    setCurrentColor(normalizedColor)
+    const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
+    const normalizedCustom = customColors.map(c => normalizeColor(c) || c)
+    if (!normalizedPreset.includes(normalizedColor) && !normalizedCustom.includes(normalizedColor)) {
+      setCustomColors(prev => [...prev, normalizedColor])
+      setSelectedColors(prev => {
+        const next = new Set(prev)
+        next.add(normalizedColor)
+        return next
+      })
     }
   }
 
@@ -1283,25 +1452,71 @@ const Guidlines = () => {
                     <div>
                       <div className="w-full border border-gray-200 rounded-xl p-4 mb-4">
                         <div className="grid grid-cols-8 gap-2">
-                          {[...presetColors, ...customColors].map((color) => {
-                            const isSelected = selectedColors.has(color);
-                            return (
-                              <button
-                                key={color}
-                                onClick={() => toggleColor(color)}
-                                className={`w-8 h-8 rounded-full border-2 ${isSelected
-                                  ? "border-blue-500 ring-2 ring-blue-300"
-                                  : "border-gray-300"
-                                  } flex items-center justify-center transition-all duration-150`}
-                                style={{ backgroundColor: color }}
-                                title={color}
-                              >
-                                {isSelected && (
-                                  <span className="text-white text-xs">✓</span>
-                                )}
-                              </button>
-                            );
-                          })}
+                          {(() => {
+                            // Get all available colors (preset + custom)
+                            const allColors = [...presetColors, ...customColors];
+                            
+                            // Get all selected colors that might not be in the list yet
+                            const selectedColorsArray = Array.from(selectedColors || []);
+                            const missingSelectedColors = selectedColorsArray.filter(selectedColor => {
+                              const normalized = normalizeColor(selectedColor) || selectedColor;
+                              return !allColors.some(color => {
+                                const normalizedColor = normalizeColor(color) || color;
+                                return normalizedColor === normalized || color === selectedColor;
+                              });
+                            });
+                            
+                            // Combine: selected colors first (from allColors + missing), then unselected
+                            const selectedInList = allColors.filter(color => isColorSelected(color));
+                            const unselectedInList = allColors.filter(color => !isColorSelected(color));
+                            
+                            // Remove duplicates from missingSelectedColors and selectedInList
+                            const seen = new Set();
+                            const uniqueSelected = [];
+                            
+                            // Add missing selected colors first (from brand identity)
+                            missingSelectedColors.forEach(color => {
+                              const normalized = normalizeColor(color) || color;
+                              if (!seen.has(normalized) && !seen.has(color)) {
+                                seen.add(normalized);
+                                seen.add(color);
+                                uniqueSelected.push(color);
+                              }
+                            });
+                            
+                            // Then add selected colors from the list
+                            selectedInList.forEach(color => {
+                              const normalized = normalizeColor(color) || color;
+                              if (!seen.has(normalized) && !seen.has(color)) {
+                                seen.add(normalized);
+                                seen.add(color);
+                                uniqueSelected.push(color);
+                              }
+                            });
+                            
+                            // Final array: selected first, then unselected
+                            const sortedColors = [...uniqueSelected, ...unselectedInList];
+                            
+                            return sortedColors.map((color) => {
+                              const isSelected = isColorSelected(color);
+                              return (
+                                <button
+                                  key={color}
+                                  onClick={() => toggleColor(color)}
+                                  className={`w-8 h-8 rounded-full border-2 ${isSelected
+                                    ? "border-blue-500 ring-2 ring-blue-300"
+                                    : "border-gray-300"
+                                    } flex items-center justify-center transition-all duration-150`}
+                                  style={{ backgroundColor: color }}
+                                  title={color}
+                                >
+                                  {isSelected && (
+                                    <span className="text-white text-xs">✓</span>
+                                  )}
+                                </button>
+                              );
+                            });
+                          })()}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">

@@ -830,6 +830,9 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
   const [assetsTab, setAssetsTab] = useState('preset_templates');
   const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  // Generated images state
+  const [generatedImagesData, setGeneratedImagesData] = useState({ generated_images: {}, generated_videos: {} });
+  const [isLoadingGeneratedImages, setIsLoadingGeneratedImages] = useState(false);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   // Multi-select support for Templates in assets modal
   const [selectedTemplateUrls, setSelectedTemplateUrls] = useState([]);
@@ -1031,6 +1034,57 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       }
     })();
     return () => { cancelled = true; setIsLoadingTemplates(false); };
+  }, [showAssetsModal, assetsTab]);
+
+  // Fetch generated images when the generated_images tab is selected
+  useEffect(() => {
+    if (!showAssetsModal || assetsTab !== 'generated_images') {
+      setIsLoadingGeneratedImages(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingGeneratedImages(true);
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (!token) {
+          if (!cancelled) {
+            setGeneratedImagesData({ generated_images: {}, generated_videos: {} });
+            setIsLoadingGeneratedImages(false);
+          }
+          return;
+        }
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(token)}/generated-media`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = null; }
+        if (cancelled) return;
+        if (!resp.ok || !data || typeof data !== 'object') {
+          if (!cancelled) {
+            setGeneratedImagesData({ generated_images: {}, generated_videos: {} });
+            setIsLoadingGeneratedImages(false);
+          }
+          return;
+        }
+        if (!cancelled) {
+          setGeneratedImagesData({
+            generated_images: data.generated_images || {},
+            generated_videos: data.generated_videos || {}
+          });
+          setIsLoadingGeneratedImages(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGeneratedImagesData({ generated_images: {}, generated_videos: {} });
+          setIsLoadingGeneratedImages(false);
+          try { console.warn('Failed to load generated images:', err); } catch (_) { /* noop */ }
+        }
+      }
+    })();
+    return () => { cancelled = true; setIsLoadingGeneratedImages(false); };
   }, [showAssetsModal, assetsTab]);
   useEffect(() => {
     if (!enablePresenterOptions) {
@@ -2117,7 +2171,11 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     getUserProfile();
   }, [scriptRows]);
 
+  // Track previous avatar values to detect avatar-specific changes
+  const prevAvatarRef = React.useRef({ sceneIndex: -1, avatar: null, avatar_urls: null });
+
   // Load avatars from brand assets API when avatar section is shown
+  // Only trigger when scene changes or avatar-related fields change, not when description or other fields change
   React.useEffect(() => {
     const loadAvatars = async () => {
       try {
@@ -2125,10 +2183,35 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         const m = String(scene?.model || scene?.mode || '').toUpperCase();
         const isAvatarish = (m === 'VEO3' || m === 'ANCHOR');
         
-        if (!isAvatarish) return;
+        if (!isAvatarish) {
+          prevAvatarRef.current = { sceneIndex: currentSceneIndex, avatar: null, avatar_urls: null };
+          return;
+        }
+        
+        // Extract avatar-related fields
+        const currentAvatar = scene?.avatar || null;
+        const currentAvatarUrls = Array.isArray(scene?.avatar_urls) ? scene.avatar_urls : null;
+        const avatarUrlsKey = currentAvatarUrls ? currentAvatarUrls.join(',') : null;
+        
+        // Check if avatar-related fields actually changed or scene changed
+        const sceneChanged = prevAvatarRef.current.sceneIndex !== currentSceneIndex;
+        const avatarChanged = prevAvatarRef.current.avatar !== currentAvatar;
+        const avatarUrlsChanged = prevAvatarRef.current.avatar_urls !== avatarUrlsKey;
+        
+        // Only proceed if scene changed or avatar-related fields changed
+        if (!sceneChanged && !avatarChanged && !avatarUrlsChanged) {
+          return; // No avatar-related changes, don't reload
+        }
+        
+        // Update ref with current values
+        prevAvatarRef.current = {
+          sceneIndex: currentSceneIndex,
+          avatar: currentAvatar,
+          avatar_urls: avatarUrlsKey
+        };
         
         // Check if avatar is already selected for this scene
-        const hasSelectedAvatar = scene?.avatar || selectedAvatar;
+        const hasSelectedAvatar = currentAvatar || (currentAvatarUrls && currentAvatarUrls.length > 0) || selectedAvatar;
         
         // If avatar is already selected, try to load from cache only
         if (hasSelectedAvatar) {
@@ -3273,8 +3356,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           if (currentNormalized !== avatarToSet) {
             setSelectedAvatar(avatarToSet);
           }
+        } else {
+          // Reset to null if scene doesn't have an avatar - don't preserve from previous scene
+          setSelectedAvatar(null);
         }
-        // Don't reset to null - preserve user selection if scene doesn't have avatar data yet
       } else {
         // Reset for non-avatar scenes
         setSelectedAvatar(null);
@@ -3506,19 +3591,19 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     // Check if there's document summary or scene content from suggestion
     const hasContent = (regenDocSummary && regenDocSummary.trim()) || (regenSceneContent && regenSceneContent.trim());
     
-    // Validation: user must either select a suggestion OR enter a description
+    // Validation: user must either select a suggestion OR enter a description OR have document summary
     if (!hasSelectedSuggestion && !hasManualDescription && !hasContent) {
-      alert('Please select a suggested scene or enter a description in the description box before regenerating.');
+      alert('Please select a suggested scene, enter a description, or upload a document before regenerating.');
       return;
     }
     
-    // Use selected suggestion content, manual description, or document summary
+    // Use selected suggestion content, manual description, or document summary (priority: suggestion > doc summary > description)
     const content = hasSelectedSuggestion 
       ? (regenSceneContent && regenSceneContent.trim()) || (regenDocSummary && regenDocSummary.trim()) || ''
-      : (hasManualDescription ? regenQuery.trim() : (regenDocSummary && regenDocSummary.trim()) || '');
+      : (hasContent ? (regenDocSummary && regenDocSummary.trim()) || (regenSceneContent && regenSceneContent.trim()) || '' : (regenQuery && regenQuery.trim()) || '');
     
     if (!content) { 
-      alert('Please select a suggested scene or enter a description in the description box before regenerating.'); 
+      alert('Please select a suggested scene, enter a description, or upload a document before regenerating.'); 
       return; 
     }
     
@@ -4374,8 +4459,15 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const addSceneToRows = async () => {
     try {
       if (isAddingScene) return;
-      const content = (newSceneDocSummary && newSceneDocSummary.trim()) || (newSceneContent && newSceneContent.trim()) || '';
-      if (!content) { alert('Please select a suggested scene or upload a document to provide scene content.'); return; }
+      // Allow content from: selected suggestion, document summary, or description
+      const content = (newSceneDocSummary && newSceneDocSummary.trim()) 
+        || (newSceneContent && newSceneContent.trim()) 
+        || (newSceneDescription && newSceneDescription.trim()) 
+        || '';
+      if (!content) { 
+        alert('Please select a suggested scene, enter a description, or upload a document to provide scene content.'); 
+        return; 
+      }
       await addSceneViaAPI(content);
     } catch (e) {
       console.error('Add scene failed:', e);
@@ -6733,14 +6825,30 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         console.log('[regenerateChart] API response:', {
           status: resp.status,
           hasScript: !!(data?.script || data?.scriptArray),
+          hasChartType: !!(data?.chart_type || data?.chartType),
+          hasChartData: !!(data?.chart_data || data?.chartData),
           sceneNumber,
-          chartType,
+          requestedChartType: chartType,
+          responseKeys: Object.keys(data || {}),
           responseData: data
         });
+        
+        // Check if the response has the scene data directly
+        if (data?.script && Array.isArray(data.script) && data.script[sceneIdx]) {
+          const sceneInResponse = data.script[sceneIdx];
+          console.log('[regenerateChart] Scene in response:', {
+            sceneIdx,
+            chart_type: sceneInResponse?.chart_type || sceneInResponse?.chartType,
+            has_chart_data: !!(sceneInResponse?.chart_data || sceneInResponse?.chartData)
+          });
+        }
       } catch(_) {}
 
       // Update local state with the response
       // The response should contain updated script data
+      let finalChartType = chartType; // Default to requested type
+      let preservedChartData = null; // Will preserve transformed chart_data
+      
       if (data?.script || data?.scriptArray) {
         const scriptArray = data.script || data.scriptArray;
         const container = { script: scriptArray };
@@ -6751,22 +6859,61 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         const updatedScene = newRows[sceneIdx];
         if (updatedScene) {
           try {
-            const sceneChartType = (updatedScene.chart_type || updatedScene.chartType || chartType || '').toLowerCase();
+            // Extract chart type from response (prefer response value over parameter)
+            // Check multiple possible locations
+            let responseChartType = updatedScene.chart_type || updatedScene.chartType;
+            
+            // Also check the raw script array item
+            if (!responseChartType && Array.isArray(scriptArray) && scriptArray[sceneIdx]) {
+              const rawScene = scriptArray[sceneIdx];
+              responseChartType = rawScene?.chart_type || rawScene?.chartType;
+            }
+            
+            // Also check top-level response
+            if (!responseChartType) {
+              responseChartType = data.chart_type || data.chartType;
+            }
+            
+            if (responseChartType) {
+              finalChartType = String(responseChartType).toLowerCase().trim();
+              console.log('[regenerateChart] Extracted chart type from response:', finalChartType);
+            } else {
+              console.warn('[regenerateChart] No chart type found in response, using requested:', chartType);
+            }
+            const sceneChartType = finalChartType;
             const sceneChartData = updatedScene.chart_data || updatedScene.chartData;
             
             console.log('[regenerateChart] Updated scene data:', {
               sceneIdx,
               chart_type: sceneChartType,
               requested_chart_type: chartType,
+              response_chart_type: responseChartType,
               has_chart_data: !!sceneChartData,
-              chart_data_structure: sceneChartData
+              chart_data_type: typeof sceneChartData
             });
             
             // Ensure chart_data format matches the chart_type
             if (sceneChartData && sceneChartType) {
               const isPieDonut = sceneChartType === 'pie' || sceneChartType === 'donut';
-              const parsedData = typeof sceneChartData === 'string' ? JSON.parse(sceneChartData) : sceneChartData;
               
+              // Safely parse chart data
+              let parsedData;
+              try {
+                if (typeof sceneChartData === 'string') {
+                  parsedData = JSON.parse(sceneChartData);
+                } else if (typeof sceneChartData === 'object' && sceneChartData !== null) {
+                  parsedData = sceneChartData;
+                } else {
+                  console.warn('[regenerateChart] Invalid chart_data type:', typeof sceneChartData);
+                  parsedData = null;
+                }
+              } catch (parseError) {
+                console.error('[regenerateChart] Error parsing chart_data:', parseError);
+                parsedData = null;
+              }
+              
+              if (parsedData && parsedData.series) {
+                try {
               // Check if data format matches chart type
               const hasLabels = parsedData?.series?.labels && Array.isArray(parsedData.series.labels);
               const hasValues = parsedData?.series?.data?.[0]?.values && Array.isArray(parsedData.series.data[0].values);
@@ -6775,33 +6922,130 @@ const [textEditorFormat, setTextEditorFormat] = useState({
               
               // If format doesn't match, transform it
               if (isPieDonut && (hasX || hasY) && !(hasLabels && hasValues)) {
-                // Convert from standard format to pie format
-                const x = parsedData.series.x || [];
-                const yValues = parsedData.series.data?.[0]?.y || [];
-                parsedData.series = {
-                  labels: x,
-                  data: [{ values: yValues }]
-                };
+                    // Convert from standard format (bar/line) to pie/donut format
+                    try {
+                      const x = Array.isArray(parsedData.series.x) ? parsedData.series.x : [];
+                      let yValues = [];
+                      
+                      // Try to get y values from different possible locations
+                      if (Array.isArray(parsedData.series.data?.[0]?.y)) {
+                        yValues = parsedData.series.data[0].y;
+                      } else if (Array.isArray(parsedData.series.data?.[0]?.values)) {
+                        yValues = parsedData.series.data[0].values;
+                      } else if (Array.isArray(parsedData.series.y)) {
+                        yValues = parsedData.series.y;
+                      } else if (Array.isArray(parsedData.series.values)) {
+                        yValues = parsedData.series.values;
+                      }
+                      
+                      // Ensure arrays have data and same length
+                      if (x.length > 0 && yValues.length > 0) {
+                        // If lengths don't match, use the minimum length
+                        const minLength = Math.min(x.length, yValues.length);
+                        const transformedData = {
+                          ...parsedData,
+                          series: {
+                            labels: x.slice(0, minLength).map(v => String(v || '')),
+                            data: [{ values: yValues.slice(0, minLength).map(v => Number(v) || 0) }]
+                          }
+                        };
+                        newRows[sceneIdx].chart_data = transformedData;
+                        newRows[sceneIdx].chartData = transformedData;
+                        console.log('[regenerateChart] Transformed chart_data from bar/line to pie/donut format', {
+                          originalLength: { x: x.length, y: yValues.length },
+                          transformedLength: minLength
+                        });
+                      } else {
+                        console.warn('[regenerateChart] Cannot transform: empty or invalid data arrays', {
+                          xLength: x.length,
+                          yLength: yValues.length,
+                          seriesStructure: Object.keys(parsedData.series || {})
+                        });
+                        // Still store the parsed data even if transformation fails
                 newRows[sceneIdx].chart_data = parsedData;
                 newRows[sceneIdx].chartData = parsedData;
-                console.log('[regenerateChart] Transformed chart_data to pie format');
+                      }
+                    } catch (transformErr) {
+                      console.error('[regenerateChart] Error transforming to pie/donut format:', transformErr);
+                      // Store original data on error
+                      newRows[sceneIdx].chart_data = parsedData;
+                      newRows[sceneIdx].chartData = parsedData;
+                    }
               } else if (!isPieDonut && (hasLabels && hasValues) && !(hasX && hasY)) {
-                // Convert from pie format to standard format
-                const labels = parsedData.series.labels || [];
-                const values = parsedData.series.data?.[0]?.values || [];
-                parsedData.series = {
-                  x: labels,
-                  data: [{ name: 'Series 1', y: values }]
-                };
+                    // Convert from pie/donut format to standard format (bar/line)
+                    const labels = Array.isArray(parsedData.series.labels) ? parsedData.series.labels : [];
+                    const values = Array.isArray(parsedData.series.data?.[0]?.values) 
+                      ? parsedData.series.data[0].values 
+                      : [];
+                    
+                    // Ensure arrays have data and same length
+                    if (labels.length > 0 && values.length > 0) {
+                      const minLength = Math.min(labels.length, values.length);
+                      const transformedData = {
+                        ...parsedData,
+                        series: {
+                          x: labels.slice(0, minLength),
+                          data: [{ name: 'Series 1', y: values.slice(0, minLength) }]
+                        }
+                      };
+                      newRows[sceneIdx].chart_data = transformedData;
+                      newRows[sceneIdx].chartData = transformedData;
+                      console.log('[regenerateChart] Transformed chart_data from pie/donut to bar/line format', {
+                        originalLength: { labels: labels.length, values: values.length },
+                        transformedLength: minLength
+                      });
+                    } else {
+                      console.warn('[regenerateChart] Cannot transform: empty or invalid data arrays', {
+                        labelsLength: labels.length,
+                        valuesLength: values.length
+                      });
+                      // Still store the parsed data even if transformation fails
                 newRows[sceneIdx].chart_data = parsedData;
                 newRows[sceneIdx].chartData = parsedData;
-                console.log('[regenerateChart] Transformed chart_data to standard format');
+                    }
+                  } else {
+                    // Data format is correct, just ensure it's stored properly
+                    newRows[sceneIdx].chart_data = parsedData;
+                    newRows[sceneIdx].chartData = parsedData;
+                    console.log('[regenerateChart] Chart data format is already correct for', sceneChartType);
+                  }
+                } catch (transformError) {
+                  console.error('[regenerateChart] Error during data transformation:', transformError);
+                  // Store the original parsed data even if transformation fails
+                  newRows[sceneIdx].chart_data = parsedData;
+                  newRows[sceneIdx].chartData = parsedData;
+                }
+              } else if (parsedData) {
+                // If parsedData exists but doesn't have series, store it as-is
+                console.warn('[regenerateChart] Chart data does not have series structure, storing as-is');
+                newRows[sceneIdx].chart_data = parsedData;
+                newRows[sceneIdx].chartData = parsedData;
               }
             }
+            
+            // Update chart type in the row (always use finalChartType which comes from response if available)
+            newRows[sceneIdx].chart_type = finalChartType;
+            newRows[sceneIdx].chartType = finalChartType;
           } catch(e) {
             console.error('[regenerateChart] Error processing scene data:', e);
+            // Even if there's an error, ensure chart type is updated
+            if (newRows[sceneIdx]) {
+              newRows[sceneIdx].chart_type = finalChartType;
+              newRows[sceneIdx].chartType = finalChartType;
+            }
+            // Don't throw - continue with update even if transformation fails
+          }
+        } else {
+          // If updatedScene is null, still try to update chart type if row exists
+          if (newRows[sceneIdx]) {
+            newRows[sceneIdx].chart_type = finalChartType;
+            newRows[sceneIdx].chartType = finalChartType;
+            console.warn('[regenerateChart] Updated scene not found, but setting chart type on row');
           }
         }
+        
+        // Preserve transformed chart_data before reloading
+        preservedChartData = newRows[sceneIdx]?.chart_data || newRows[sceneIdx]?.chartData || null;
         
         setScriptRows(newRows);
         try {
@@ -6817,14 +7061,117 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             console.log('[regenerateChart] Updated chart_data directly from response');
           } catch(_) {}
         }
+        
+        // Also check if chart_type is in the response
+        if (data?.chart_type || data?.chartType) {
+          finalChartType = String(data.chart_type || data.chartType).toLowerCase();
+        }
       }
 
-      // Update local chart type
-      handleSceneUpdate(sceneIdx, 'chart_type', chartType);
+      // If we didn't get chart_data from script response, try to get it from current scene
+      if (!preservedChartData) {
+        const currentRows = Array.isArray(scriptRows) ? scriptRows : [];
+        if (currentRows[sceneIdx]) {
+          preservedChartData = currentRows[sceneIdx].chart_data || currentRows[sceneIdx].chartData;
+        }
+      }
+      
+      // Update local chart type with the final value (from response if available, otherwise requested)
+      handleSceneUpdate(sceneIdx, 'chart_type', finalChartType);
+      
+      // Reload script from session to ensure we have the latest version
+      try {
+        const sessionId = localStorage.getItem('session_id');
+        const token = localStorage.getItem('token');
+        if (sessionId && token) {
+          const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: token, session_id: sessionId })
+          });
+          
+          if (sessResp.ok) {
+            const sessText = await sessResp.text();
+            let sessData;
+            try { sessData = JSON.parse(sessText); } catch(_) { sessData = sessText; }
+            
+            const sessionData = sessData?.session_data || {};
+            const script = sessionData?.script || sessionData?.scriptArray || [];
+            
+            if (Array.isArray(script) && script.length > 0) {
+              const container = { script };
+              const normalized = normalizeScriptToRows(container);
+              const reloadedRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+              
+              // Apply persisted refs to maintain user selections
+              const rowsWithPersistedRefs = applyPersistedRefsToRows(reloadedRows);
+              
+              // Ensure the regenerated scene has the correct chart type and chart_data
+              if (rowsWithPersistedRefs[sceneIdx]) {
+                if (finalChartType) {
+                  rowsWithPersistedRefs[sceneIdx].chart_type = finalChartType;
+                  rowsWithPersistedRefs[sceneIdx].chartType = finalChartType;
+                  console.log('[regenerateChart] Set chart type in reloaded rows:', finalChartType);
+                }
+                
+                // Preserve the transformed chart_data from API response if available
+                if (preservedChartData) {
+                  rowsWithPersistedRefs[sceneIdx].chart_data = preservedChartData;
+                  rowsWithPersistedRefs[sceneIdx].chartData = preservedChartData;
+                  console.log('[regenerateChart] Preserved transformed chart_data in reloaded rows');
+                } else {
+                  // If no preserved data, check if session has chart_data and ensure it's in correct format
+                  const sessionChartData = rowsWithPersistedRefs[sceneIdx].chart_data || rowsWithPersistedRefs[sceneIdx].chartData;
+                  if (sessionChartData && finalChartType) {
+                    // ChartDataEditor will handle transformation, but we ensure it's set
+                    rowsWithPersistedRefs[sceneIdx].chart_data = sessionChartData;
+                    rowsWithPersistedRefs[sceneIdx].chartData = sessionChartData;
+                    console.log('[regenerateChart] Using chart_data from session');
+                  }
+                }
+              }
+              
+              // Update script rows with latest data from session
+              setScriptRows(rowsWithPersistedRefs);
+              
+              // Update localStorage with latest script structure
+              try {
+                localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+              } catch(_) {}
+              
+              console.log('[regenerateChart] Reloaded script from session after regeneration', {
+                sceneIdx,
+                chartType: rowsWithPersistedRefs[sceneIdx]?.chart_type || rowsWithPersistedRefs[sceneIdx]?.chartType,
+                hasChartData: !!(rowsWithPersistedRefs[sceneIdx]?.chart_data || rowsWithPersistedRefs[sceneIdx]?.chartData),
+                finalChartType
+              });
+            }
+          }
+        }
+      } catch (reloadError) {
+        console.warn('[regenerateChart] Failed to reload script from session:', reloadError);
+        // Don't throw - we already updated from the API response
+      }
     } catch(e) {
       console.error('regenerateChart failed:', e);
-      alert('Failed to regenerate chart. Please try again.');
+      const errorMessage = e?.message || 'Unknown error';
+      
+      // If the API call itself failed, throw the error
+      // But if it's a data processing error, we might still want to update chart type
+      if (errorMessage.includes('regenerate-chart failed') || errorMessage.includes('Missing session')) {
+        alert(`Failed to regenerate chart: ${errorMessage}. Please try again.`);
       throw e;
+      } else {
+        // For other errors (like data processing), log but don't block
+        console.warn('Non-critical error during chart regeneration:', errorMessage);
+        // Still update chart type even if data processing had issues
+        try {
+          handleSceneUpdate(sceneIdx, 'chart_type', chartType);
+        } catch (updateError) {
+          console.error('Failed to update chart type after error:', updateError);
+        }
+        // Don't throw - allow the UI to update
+      }
     } finally {
       setIsRegeneratingChart(false);
     }
@@ -7759,19 +8106,135 @@ const saveAnchorPromptTemplate = async () => {
                 )}
               </div>
               )}
-              {showSuggestionSection && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
-                <>
+              {/* Description field - always visible when suggestions section is shown */}
+              {showSuggestionSection && !isSuggestingScenes && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description <span className="text-xs text-gray-500 font-normal">(Optional - if you don't select a suggestion)</span>
+                  </label>
                     <textarea
                       value={newSceneDescription}
-                      onChange={(e) => setNewSceneDescription(e.target.value)}
+                    onChange={(e) => {
+                      setNewSceneDescription(e.target.value);
+                      // Clear selected suggestion when user types manually
+                      if (e.target.value.trim()) {
+                        setNewSceneSelectedIdx(-1);
+                        setNewSceneContent('');
+                      }
+                    }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
                       rows={4}
-                      placeholder="Enter scene description"
+                    placeholder="Enter scene description or query"
                     />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enter a description to use as the scene content. This will be used if no suggestion is selected.
+                  </p>
                   </div>
-                </>
+              )}
+              {/* Document upload for all model types when suggestions section is shown (except Financial which has its own in step 2) */}
+              {showSuggestionSection && !isSuggestingScenes && newSceneVideoType !== 'Financial' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Upload Document (to summarize)</label>
+                  <input 
+                    type="file" 
+                    accept=".pdf,.doc,.docx,.txt" 
+                    disabled={isUploadingNewSceneDoc} 
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]; 
+                      if (!file) return; 
+                      setIsUploadingNewSceneDoc(true);
+                      try {
+                        const userId = localStorage.getItem('token');
+                        const sessionId = localStorage.getItem('session_id');
+                        if (!userId || !sessionId) throw new Error('Missing session');
+                        // Extract
+                        const form = new FormData(); 
+                        form.append('files', file); 
+                        form.append('user_id', userId); 
+                        form.append('session_id', sessionId);
+                        const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
+                        const ex = await fetch(extractUrl, { method: 'POST', body: form }); 
+                        const tx = await ex.text();
+                        if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
+                        // Summarize: requires { session, documents } using rich session object
+                        let exJson; 
+                        try { exJson = JSON.parse(tx); } catch(_) { exJson = {}; }
+                        let documents = [];
+                        if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                        else if (Array.isArray(exJson)) documents = exJson;
+                        else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
+                        else if (Array.isArray(exJson?.data)) documents = exJson.data; 
+                        else documents = [];
+                        // Build session from user-session-data (align with other summarize flow)
+                        let sessionObj = { session_id: sessionId, user_id: userId };
+                        try {
+                          const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: sessionId })
+                          });
+                          const st = await sResp.text();
+                          let sj; try { sj = JSON.parse(st); } catch(_) { sj = {}; }
+                          const sd = sj?.session_data || sj?.session || {};
+                          sessionObj = {
+                            session_id: sd.session_id || sessionId,
+                            user_id: sd.user_id || userId,
+                            content: Array.isArray(sd.content) ? sd.content : [],
+                            document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                            video_duration: String(sd.video_duration || sd.videoduration || '60'),
+                            created_at: sd.created_at || new Date().toISOString(),
+                            totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
+                            messages: Array.isArray(sd.messages) ? sd.messages : [],
+                            scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+                            videos: Array.isArray(sd.videos) ? sd.videos : [],
+                            images: Array.isArray(sd.images) ? sd.images : [],
+                            final_link: sd.final_link || '',
+                            videoType: sd.videoType || sd.video_type || '',
+                            additionalProp1: sd.additionalProp1 || {}
+                          };
+                        } catch(_) { /* keep minimal sessionObj */ }
+                        const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
+                        const sum = await fetch(summaryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: sessionObj, documents }) });
+                        const ts = await sum.text(); 
+                        let js; try { js = JSON.parse(ts); } catch(_) { js = {}; }
+                        if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
+                        // Prefer the first summary object/string from response
+                        let firstSummary = '';
+                        try {
+                          const arr = Array.isArray(js?.summaries)
+                            ? js.summaries
+                            : (Array.isArray(js?.summary)
+                              ? js.summary
+                              : (Array.isArray(js?.total_summary) ? js.total_summary : []));
+                          if (Array.isArray(arr) && arr.length > 0) {
+                            const item = arr[0];
+                            firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item));
+                          } else if (typeof js?.summary === 'string') {
+                            firstSummary = js.summary;
+                          } else if (typeof js?.total_summary === 'string') {
+                            firstSummary = js.total_summary;
+                          }
+                        } catch(_) { /* noop */ }
+                        if (firstSummary) {
+                          setNewSceneDocSummary(String(firstSummary));
+                          // Clear selected suggestion when document summary is set
+                          setNewSceneSelectedIdx(-1);
+                          setNewSceneContent('');
+                        }
+                      } catch(err) { 
+                        alert(err?.message || 'Upload failed'); 
+                      } finally { 
+                        setIsUploadingNewSceneDoc(false); 
+                        e.target.value = ''; 
+                      }
+                    }} 
+                  />
+                  {isUploadingNewSceneDoc && (<div className="text-xs text-gray-500 mt-1">Processing document…</div>)}
+                  {(!isUploadingNewSceneDoc && newSceneDocSummary) && (
+                    <div className="mt-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Document Summary</label>
+                      <div className="max-h-40 overflow-auto p-3 border rounded bg-white text-sm text-gray-800 whitespace-pre-wrap">{newSceneDocSummary}</div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
@@ -7868,7 +8331,7 @@ const saveAnchorPromptTemplate = async () => {
                   {isSuggestingScenes ? 'Loading…' : 'Next'}
                 </button>
               )}
-              {showSuggestionSection && (!isSuggestingScenes && Array.isArray(sceneSuggestions) && sceneSuggestions.length > 0) && (
+              {showSuggestionSection && !isSuggestingScenes && (
                 <button
                   onClick={addSceneToRows}
                   disabled={isAddingScene}
@@ -8401,7 +8864,7 @@ const saveAnchorPromptTemplate = async () => {
                     <ChevronLeft className="w-4 h-4" />
                   </button>
                 )}
-                <h3 className="text-lg font-semibold text-[#13008B]">Generate Script</h3>
+                <h3 className="text-lg font-semibold text-[#000000]">Generate Script</h3>
               </div>
               {/* Right: Generate Images + kebab menu */}
               <div className="relative flex items-center gap-2">
@@ -8861,16 +9324,32 @@ const saveAnchorPromptTemplate = async () => {
                              };
                              
                              if (isEditingScene) {
+                               const wordCount = (sceneNarration || '').trim().split(/\s+/).filter(word => word.length > 0).length;
+                               const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
                                return (
                                  <>
                            <label className="block text-sm font-medium text-gray-700 mb-2">Narration</label>
                                <textarea
                                      value={sceneNarration}
                                  onChange={(e) => handleSceneUpdate(currentSceneIndex, 'narration', e.target.value)}
-                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                                     className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${
+                                       isOptimalWordCount 
+                                         ? 'border-green-500 bg-green-50' 
+                                         : 'border-red-300 bg-red-50'
+                                     }`}
                                  rows={3}
                                  placeholder="Enter narration text"
                                />
+                               <div className="mt-2 flex items-center justify-between">
+                                 <p className="text-xs text-gray-500 italic">
+                                   Keep 18-20 words for a perfect 10 second audio
+                                 </p>
+                                 <p className={`text-xs font-medium ${
+                                   isOptimalWordCount ? 'text-green-600' : 'text-red-600'
+                                 }`}>
+                                   {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                 </p>
+                               </div>
                                  </>
                                );
                              }
@@ -8919,19 +9398,42 @@ const saveAnchorPromptTemplate = async () => {
                                      <p className="text-xs text-gray-500">Double-click the narration to edit.</p>
                            )}
                          </div>
+                                 {(() => {
+                                   const currentNarrationText = isInlineEditingNarration ? pendingNarration : sceneNarration;
+                                   const wordCount = (currentNarrationText || '').trim().split(/\s+/).filter(word => word.length > 0).length;
+                                   const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                                   return (
+                                     <>
                                  <textarea
-                                   value={isInlineEditingNarration ? pendingNarration : sceneNarration}
+                                         value={currentNarrationText}
                                    onChange={(e) => setPendingNarration(e.target.value)}
                                    onDoubleClick={startInlineEditingNarration}
                                    readOnly={!isInlineEditingNarration || isSavingNarration}
                                    className={`w-full px-3 py-2 rounded-lg border ${
                                      isInlineEditingNarration
-                                       ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
+                                             ? isOptimalWordCount
+                                               ? 'border-green-500 bg-green-50 focus:ring-2 focus:ring-green-500'
+                                               : 'border-red-300 bg-red-50 focus:ring-2 focus:ring-red-500'
                                        : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
                                    } ${isSavingNarration ? 'opacity-60' : ''}`}
                                    rows={3}
                                    placeholder="Double-click to edit narration"
                                  />
+                                       {isInlineEditingNarration && (
+                                         <div className="mt-2 flex items-center justify-between">
+                                           <p className="text-xs text-gray-500 italic">
+                                             Keep 18-20 words for a perfect 10 second audio
+                                           </p>
+                                           <p className={`text-xs font-medium ${
+                                             isOptimalWordCount ? 'text-green-600' : 'text-red-600'
+                                           }`}>
+                                             {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                           </p>
+                               </div>
+                                       )}
+                                     </>
+                                   );
+                                 })()}
                                </div>
                              );
                            })()}
@@ -8982,8 +9484,11 @@ const saveAnchorPromptTemplate = async () => {
                               await regenerateChart(currentSceneIndex, pendingChartTypeValue);
                               setIsChartTypeEditing(false);
                               setChartTypeSceneIndex(null);
+                              // State is already updated in regenerateChart, no need to force re-render
                             } catch (e) {
                               console.error('Failed to save chart type:', e);
+                              const errorMessage = e?.message || 'Failed to regenerate chart';
+                              alert(`Error: ${errorMessage}. Please try again.`);
                               // Keep editing mode open on error so user can retry
                             }
                           };
@@ -9727,31 +10232,64 @@ const saveAnchorPromptTemplate = async () => {
                         // Add session avatars last (but only if not already in list)
                         sessionAvatarUrls.forEach(addIfNotSeen);
                         
+                        // Get the current scene's avatar (what's actually saved for this scene)
+                        const sceneAvatar = scene?.avatar || (Array.isArray(scene?.avatar_urls) && scene.avatar_urls.length > 0 ? scene.avatar_urls[0] : null);
+                        const normalizedSceneAvatar = sceneAvatar ? String(sceneAvatar).trim() : null;
+                        
                         // Normalize selectedAvatar for comparison (trim whitespace)
                         const normalizedSelectedAvatar = selectedAvatar ? String(selectedAvatar).trim() : null;
                         
                         // Helper function to compare avatar URLs (normalized)
+                        // Check against the scene's actual avatar, not just selectedAvatar state
                         const isAvatarSelected = (url) => {
-                          if (!normalizedSelectedAvatar || !url) return false;
+                          if (!url) return false;
                           const normalizedUrl = String(url).trim();
-                          return normalizedSelectedAvatar === normalizedUrl;
+                          // If selectedAvatar exists and matches, it's selected (user just clicked it)
+                          if (normalizedSelectedAvatar && normalizedSelectedAvatar === normalizedUrl) {
+                            return true;
+                          }
+                          // Otherwise, check if it matches the scene's saved avatar
+                          if (normalizedSceneAvatar && normalizedSceneAvatar === normalizedUrl) {
+                            return true;
+                          }
+                          return false;
                         };
+                        
+                        // Show save button when any avatar is selected (user clicked on one)
+                        const shouldShowSaveButton = !!normalizedSelectedAvatar;
+                        // Use selectedAvatar for saving
+                        const avatarToSave = normalizedSelectedAvatar;
                         
                         return (
                        <>
                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                          <div className="flex items-center justify-between mb-4">
                            <h4 className="text-lg font-semibold text-gray-800">Select an Avatar</h4>
-                           {!!selectedAvatar && (
+                           {shouldShowSaveButton && (
                              <button
                                type="button"
                                className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                               disabled={isSavingAvatar}
+                               disabled={isSavingAvatar || !avatarToSave}
                                onClick={async () => {
                                  try {
-                                   if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex] || !selectedAvatar) return;
+                                   if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex] || !avatarToSave) return;
                                    setIsSavingAvatar(true);
-                                   await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: selectedAvatar });
+                                   
+                                   // Update local scriptRows state
+                                   const rows = [...scriptRows];
+                                   const scene = { ...rows[currentSceneIndex] };
+                                   scene.avatar = avatarToSave;
+                                   // Also update avatar_urls array for ANCHOR/VEO3
+                                   if (Array.isArray(scene.avatar_urls)) {
+                                     scene.avatar_urls = [avatarToSave];
+                                   } else {
+                                     scene.avatar_urls = [avatarToSave];
+                                   }
+                                   rows[currentSceneIndex] = scene;
+                                   setScriptRows(rows);
+                                   
+                                   // Call API to save avatar
+                                   await updateSceneGenImageFlag(currentSceneIndex, { avatarUrl: avatarToSave });
                                    // Check if the API call was successful (status 200)
                                    // The updateSceneGenImageFlag function will throw if not ok
                                    setIsSavingAvatar(false);
@@ -9793,22 +10331,8 @@ const saveAnchorPromptTemplate = async () => {
                                    key={index}
                                   onClick={() => {
                                      try {
+                                       // Only update selectedAvatar state, don't modify scriptRows or call API
                                        setSelectedAvatar(trimmedUrl);
-                                       if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
-                                         const rows = [...scriptRows];
-                                         const scene = { ...rows[currentSceneIndex] };
-                                         scene.avatar = trimmedUrl;
-                                         // Also update avatar_urls array for ANCHOR/VEO3
-                                         if (Array.isArray(scene.avatar_urls)) {
-                                           scene.avatar_urls = [trimmedUrl];
-                                         } else {
-                                           scene.avatar_urls = [trimmedUrl];
-                                         }
-                                         rows[currentSceneIndex] = scene;
-                                         setScriptRows(rows);
-                                        // Don't call API here - only update local state
-                                        // API will be called when user clicks Save button
-                                       }
                                      } catch (_) { /* noop */ }
                                    }}
                                    className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
@@ -11017,7 +11541,8 @@ const saveAnchorPromptTemplate = async () => {
                   { key: 'preset_templates', label: 'Preset Templates' },
                   { key: 'uploaded_templates', label: 'Uploaded Templates' },
                   { key: 'uploaded_images', label: 'Uploaded Images' },
-                  { key: 'documents_images', label: 'Documents' }
+                  { key: 'documents_images', label: 'Documents' },
+                  { key: 'generated_images', label: 'Generated Images' }
                 ].map(tab => (
                   <button
                     key={tab.key}
@@ -11088,12 +11613,14 @@ const saveAnchorPromptTemplate = async () => {
               }}
             />
             <div className="p-4 overflow-y-auto">
-              {(isAssetsLoading || (['preset_templates', 'uploaded_templates'].includes(assetsTab) && isLoadingTemplates)) ? (
+              {(isAssetsLoading || (['preset_templates', 'uploaded_templates'].includes(assetsTab) && isLoadingTemplates) || (assetsTab === 'generated_images' && isLoadingGeneratedImages)) ? (
                 <div className="flex items-center justify-center py-16">
                   <div className="flex flex-col items-center gap-3">
                     <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
                     <span className="text-sm text-gray-600">
-                      {['preset_templates', 'uploaded_templates'].includes(assetsTab) && isLoadingTemplates ? 'Loading templates by aspect ratio...' : 'Loading assets...'}
+                      {assetsTab === 'generated_images' && isLoadingGeneratedImages ? 'Loading generated images...' 
+                        : ['preset_templates', 'uploaded_templates'].includes(assetsTab) && isLoadingTemplates ? 'Loading templates by aspect ratio...' 
+                        : 'Loading assets...'}
                     </span>
                   </div>
                 </div>
@@ -11369,6 +11896,40 @@ const saveAnchorPromptTemplate = async () => {
                       assetType: assetsTab
                     };
                   }).filter(Boolean);
+                } else if (assetsTab === 'generated_images') {
+                  // For generated images, filter by aspect ratio
+                  const generatedImages = generatedImagesData.generated_images || {};
+                  const allGeneratedImages = [];
+                  
+                  // Collect all images from all aspect ratios
+                  Object.entries(generatedImages).forEach(([aspectRatio, urls]) => {
+                    if (Array.isArray(urls)) {
+                      urls.forEach((url, idx) => {
+                        if (typeof url === 'string' && url.trim()) {
+                          allGeneratedImages.push({
+                            id: `generated-${aspectRatio}-${idx}`,
+                            imageUrl: url.trim(),
+                            aspect: normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified',
+                            label: `Generated Image ${idx + 1}`,
+                            assetType: 'generated_images'
+                          });
+                        }
+                      });
+                    }
+                  });
+                  
+                  // Filter by target aspect ratio if specified
+                  if (normalizedTargetAspect && normalizedTargetAspect !== 'Unspecified') {
+                    list = allGeneratedImages.filter(item => {
+                      return matchesAspectValue(item.aspect, normalizedTargetAspect);
+                    });
+                    // Fallback: show all if filtered list is empty
+                    if (list.length === 0) {
+                      list = allGeneratedImages;
+                    }
+                  } else {
+                    list = allGeneratedImages;
+                  }
                 }
                 const emptyMessage = list.length === 0 
                   ? `No ${assetsTab.replace('_', ' ')} found.`
@@ -11382,7 +11943,7 @@ const saveAnchorPromptTemplate = async () => {
                       </div>
                     )}
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                      {currentUploadType && !isSummarySceneActive && assetsTab !== 'documents_images' && (
+                      {currentUploadType && !isSummarySceneActive && assetsTab !== 'documents_images' && assetsTab !== 'generated_images' && (
                         <button
                           type="button"
                           onClick={() => { 

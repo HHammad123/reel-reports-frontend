@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ChevronDown, Pencil, RefreshCw } from 'lucide-react';
+import { ChevronDown, Pencil, RefreshCw, Upload } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
@@ -63,6 +63,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [regenerateUserQuery, setRegenerateUserQuery] = useState('');
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
+  // Upload background state
+  const [showUploadBackgroundPopup, setShowUploadBackgroundPopup] = useState(false);
+  const [uploadedBackgroundFile, setUploadedBackgroundFile] = useState(null);
+  const [uploadedBackgroundPreview, setUploadedBackgroundPreview] = useState(null);
+  const [isUploadingBackground, setIsUploadingBackground] = useState(false);
+  const [uploadingBackgroundSceneNumber, setUploadingBackgroundSceneNumber] = useState(null);
   const [imageNaturalDims, setImageNaturalDims] = useState({});
   const [isSceneUpdating, setIsSceneUpdating] = useState(false);
   const [showChartEditor, setShowChartEditor] = useState(false);
@@ -71,6 +77,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [chartEditorError, setChartEditorError] = useState('');
   // State for session assets (logo and voiceover)
   const [sessionAssets, setSessionAssets] = useState({ logo_url: '', voice_urls: {} });
+  // State for brand assets
+  const [brandAssets, setBrandAssets] = useState(null);
+  // State for script tone (for matching voiceovers)
+  const [scriptTone, setScriptTone] = useState('');
   // State for transition presets
   const [transitionPresets, setTransitionPresets] = useState([]);
   // State for scene-specific advanced options
@@ -497,6 +507,53 @@ const getOrderedRefs = useCallback((row) => {
       .filter(Boolean)
   }
 
+  // Function to fetch brand assets
+  const fetchBrandAssets = React.useCallback(async () => {
+    try {
+      const user_id = localStorage.getItem('token');
+      if (!user_id) {
+        console.warn('⚠️ No user_id found, skipping brand assets fetch');
+        return;
+      }
+
+      console.log('📦 Fetching brand assets for user:', user_id);
+      const apiUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(user_id)}`;
+      console.log('📡 API URL:', apiUrl);
+      
+      const brandAssetsResp = await fetch(apiUrl);
+      console.log('📡 Response status:', brandAssetsResp.status);
+      
+      const brandAssetsText = await brandAssetsResp.text();
+      console.log('📡 Response text:', brandAssetsText);
+      
+      let brandAssetsData;
+      try {
+        brandAssetsData = JSON.parse(brandAssetsText);
+      } catch (parseError) {
+        console.error('❌ Failed to parse brand assets JSON:', parseError);
+        brandAssetsData = null;
+      }
+
+      if (brandAssetsResp.ok && brandAssetsData) {
+        setBrandAssets(brandAssetsData);
+        console.log('✅ Brand assets loaded successfully:', {
+          fullData: brandAssetsData,
+          hasVoiceover: !!brandAssetsData.voiceover,
+          isVoiceoverArray: Array.isArray(brandAssetsData.voiceover),
+          voiceoverCount: brandAssetsData.voiceover?.length || 0,
+          voiceovers: brandAssetsData.voiceover
+        });
+      } else {
+        console.warn('⚠️ Failed to load brand assets:', {
+          status: brandAssetsResp.status,
+          statusText: brandAssetsResp.statusText,
+          responseText: brandAssetsText
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error fetching brand assets:', error);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -570,14 +627,14 @@ const getOrderedRefs = useCallback((row) => {
           return '';
         };
         return {
-          final_prompt: getFirstString(raw, ['final_prompt','finalPrompt','prompt','final']),
-          image_summary: getFirstString(raw, ['image_summary','imageSummary','summary']),
-          main_subject_details: getFirstString(raw, ['main_subject_details','mainSubjectDetails','main_subject','subject_details','subject']),
-          pose_or_action: getFirstString(raw, ['pose_or_action','poseOrAction','pose','action']),
-          secondary_elements: getFirstString(raw, ['secondary_elements','secondaryElements','secondaries','secondary']),
-          lighting_and_atmosphere: getFirstString(raw, ['lighting_and_atmosphere','lightingAndAtmosphere','lighting','atmosphere','mood']),
-          framing_and_composition: getFirstString(raw, ['framing_and_composition','framingAndComposition','framing','composition']),
-          technical_enhancers: getFirstString(raw, ['technical_enhancers','technicalEnhancers','technical','enhancers'])
+          final_prompt: getFirstString(raw, ['final_prompt', 'finalPrompt', 'prompt', 'final']),
+          image_summary: getFirstString(raw, ['image_summary', 'imageSummary', 'summary']),
+          main_subject_details: getFirstString(raw, ['main_subject_details', 'mainSubjectDetails', 'main_subject', 'subject_details', 'subject']),
+          pose_or_action: getFirstString(raw, ['pose_or_action', 'poseOrAction', 'pose', 'action']),
+          secondary_elements: getFirstString(raw, ['secondary_elements', 'secondaryElements', 'secondaries', 'secondary']),
+          lighting_and_atmosphere: getFirstString(raw, ['lighting_and_atmosphere', 'lightingAndAtmosphere', 'lighting', 'atmosphere', 'mood']),
+          framing_and_composition: getFirstString(raw, ['framing_and_composition', 'framingAndComposition', 'framing', 'composition']),
+          technical_enhancers: getFirstString(raw, ['technical_enhancers', 'technicalEnhancers', 'technical', 'enhancers'])
         };
       };
       const pushRow = (num, title, refs, meta = {}) => {
@@ -629,7 +686,7 @@ const getOrderedRefs = useCallback((row) => {
 	            });
             return mapped;
           }
-        } catch(_){}
+        } catch (_) { }
       }
       if (Array.isArray(imagesRoot)) {
         if (imagesRoot.every(it => typeof it === 'string')) {
@@ -992,6 +1049,39 @@ const getOrderedRefs = useCallback((row) => {
         const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
         const currentScript = scripts[0] || null;
         const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+        
+        // Extract tone from script for matching voiceovers
+        // Path: userquery[0].guidelines.purpose_and_audience.tone
+        console.log('🔍 Extracting tone from script:', {
+          currentScript,
+          hasUserQuery: !!currentScript?.userquery,
+          isUserQueryArray: Array.isArray(currentScript?.userquery)
+        });
+        
+        const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
+        const firstUserQuery = userQueryArr[0] || {};
+        console.log('📋 First user query:', firstUserQuery);
+        
+        // Check both paths: direct and under guidelines
+        const guidelines = firstUserQuery?.guidelines || {};
+        console.log('📜 Guidelines:', guidelines);
+        
+        const purposeAndAudience = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
+                                   firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
+        console.log('👥 Purpose and Audience:', purposeAndAudience);
+        
+        const tone = (purposeAndAudience?.tone || '').toLowerCase().trim();
+        console.log('🎵 Extracted tone:', tone);
+        
+        if (tone) {
+          setScriptTone(tone);
+          console.log('✅ Script tone set:', tone);
+        } else {
+          console.warn('⚠️ No tone found in script. Checked paths:', {
+            'guidelines.purpose_and_audience.tone': guidelines?.purpose_and_audience?.tone,
+            'purpose_and_audience.tone': firstUserQuery?.purpose_and_audience?.tone
+          });
+        }
         // Index VEO3 script scenes by scene number so we can use avatar_urls for scenes missing image arrays
         const veo3ScriptScenesByNumber = {};
         airesponse.forEach((scene, index) => {
@@ -1061,6 +1151,9 @@ const getOrderedRefs = useCallback((row) => {
                   });
                   console.log('✅ Session assets loaded:', assetsData);
                 }
+
+                // Call brand assets API
+                await fetchBrandAssets();
                 
                 // Call transition presets API
                 const presetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/transition-presets/${encodeURIComponent(user_id)}`);
@@ -1134,19 +1227,53 @@ const getOrderedRefs = useCallback((row) => {
             if (!resp.ok) throw new Error(`job-status failed: ${resp.status} ${text}`);
             const status = String(data?.status || data?.job_status || '').toLowerCase();
             if (status === 'succeeded' || status === 'success' || status === 'completed') {
-              try { localStorage.removeItem('images_generate_pending'); } catch(_){}
+              try { localStorage.removeItem('images_generate_pending'); } catch (_) { }
               // Reload session images now that job is done
               try {
                 const sr = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
                   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
                 });
                 const st = await sr.text();
-                let sd; try { sd = JSON.parse(st); } catch(_) { sd = {}; }
+                let sd; try { sd = JSON.parse(st); } catch (_) { sd = {}; }
                     // Extract VEO3 script scenes (avatar_urls) from scripts
                     const sessionData = sd?.session_data || sd?.session || {};
                     const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
                     const currentScript = scripts[0] || null;
                     const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+                
+                // Extract tone from script for matching voiceovers
+                // Path: userquery[0].guidelines.purpose_and_audience.tone
+                console.log('🔍 [After Polling] Extracting tone from script:', {
+                  currentScript,
+                  hasUserQuery: !!currentScript?.userquery,
+                  isUserQueryArray: Array.isArray(currentScript?.userquery)
+                });
+                
+                const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
+                const firstUserQuery = userQueryArr[0] || {};
+                console.log('📋 [After Polling] First user query:', firstUserQuery);
+                
+                // Check both paths: direct and under guidelines
+                const guidelines = firstUserQuery?.guidelines || {};
+                console.log('📜 [After Polling] Guidelines:', guidelines);
+                
+                const purposeAndAudience = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
+                                           firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
+                console.log('👥 [After Polling] Purpose and Audience:', purposeAndAudience);
+                
+                const tone = (purposeAndAudience?.tone || '').toLowerCase().trim();
+                console.log('🎵 [After Polling] Extracted tone:', tone);
+                
+                if (tone) {
+                  setScriptTone(tone);
+                  console.log('✅ [After Polling] Script tone set:', tone);
+                } else {
+                  console.warn('⚠️ [After Polling] No tone found in script. Checked paths:', {
+                    'guidelines.purpose_and_audience.tone': guidelines?.purpose_and_audience?.tone,
+                    'purpose_and_audience.tone': firstUserQuery?.purpose_and_audience?.tone
+                  });
+                }
+                
                     const veo3ScriptScenesByNumber = {};
                     airesponse.forEach((scene, index) => {
                       if (!scene || typeof scene !== 'object') return;
@@ -1192,7 +1319,7 @@ const getOrderedRefs = useCallback((row) => {
                         });
                   }
                 }
-              } catch(_) { /* ignore */ }
+              } catch (_) { /* ignore */ }
               
               // Call APIs for VEO3/SORA/ANCHOR models after successful image creation
               if (!cancelled) {
@@ -1220,6 +1347,9 @@ const getOrderedRefs = useCallback((row) => {
                       });
                       console.log('✅ Session assets loaded:', assetsData);
                     }
+
+                    // Call brand assets API
+                    await fetchBrandAssets();
                     
                     // Call transition presets API
                     const presetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/transition-presets/${encodeURIComponent(user_id)}`);
@@ -1414,14 +1544,14 @@ const getOrderedRefs = useCallback((row) => {
             return '';
           };
           return {
-            final_prompt: getFirstString(raw, ['final_prompt','finalPrompt','prompt','final']),
-            image_summary: getFirstString(raw, ['image_summary','imageSummary','summary']),
-            main_subject_details: getFirstString(raw, ['main_subject_details','mainSubjectDetails','main_subject','subject_details','subject']),
-            pose_or_action: getFirstString(raw, ['pose_or_action','poseOrAction','pose','action']),
-            secondary_elements: getFirstString(raw, ['secondary_elements','secondaryElements','secondaries','secondary']),
-            lighting_and_atmosphere: getFirstString(raw, ['lighting_and_atmosphere','lightingAndAtmosphere','lighting','atmosphere','mood']),
-            framing_and_composition: getFirstString(raw, ['framing_and_composition','framingAndComposition','framing','composition']),
-            technical_enhancers: getFirstString(raw, ['technical_enhancers','technicalEnhancers','technical','enhancers'])
+            final_prompt: getFirstString(raw, ['final_prompt', 'finalPrompt', 'prompt', 'final']),
+            image_summary: getFirstString(raw, ['image_summary', 'imageSummary', 'summary']),
+            main_subject_details: getFirstString(raw, ['main_subject_details', 'mainSubjectDetails', 'main_subject', 'subject_details', 'subject']),
+            pose_or_action: getFirstString(raw, ['pose_or_action', 'poseOrAction', 'pose', 'action']),
+            secondary_elements: getFirstString(raw, ['secondary_elements', 'secondaryElements', 'secondaries', 'secondary']),
+            lighting_and_atmosphere: getFirstString(raw, ['lighting_and_atmosphere', 'lightingAndAtmosphere', 'lighting', 'atmosphere', 'mood']),
+            framing_and_composition: getFirstString(raw, ['framing_and_composition', 'framingAndComposition', 'framing', 'composition']),
+            technical_enhancers: getFirstString(raw, ['technical_enhancers', 'technicalEnhancers', 'technical', 'enhancers'])
           };
         };
         const pushRow = (num, title, refs, meta = {}) => {
@@ -1943,6 +2073,77 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, [regenerateUserQuery, regeneratingSceneNumber, refreshLoad]);
 
+  // Handle upload background API call
+  const handleUploadBackground = React.useCallback(async () => {
+    try {
+      setIsUploadingBackground(true);
+      setError('');
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+
+      if (!session_id || !user_id) {
+        setError('Missing session or user');
+        setIsUploadingBackground(false);
+        return;
+      }
+
+      if (!uploadingBackgroundSceneNumber) {
+        setError('Missing scene number');
+        setIsUploadingBackground(false);
+        return;
+      }
+
+      if (!uploadedBackgroundFile) {
+        setError('Please select an image to upload');
+        setIsUploadingBackground(false);
+        return;
+      }
+
+      const aspectRatio = await getAspectRatio();
+
+      // Create FormData for file upload
+      const formData = new FormData();
+      formData.append('action', 'upload');
+      formData.append('aspect_ratio', aspectRatio);
+      formData.append('frames_to_regenerate', JSON.stringify([]));
+      formData.append('model', 'SORA');
+      formData.append('save_as_new_version', 'false');
+      formData.append('scene_number', String(uploadingBackgroundSceneNumber));
+      formData.append('session_id', session_id);
+      formData.append('user_id', user_id);
+      formData.append('background_image', uploadedBackgroundFile);
+
+      // Call upload API endpoint (same as regenerate but with action: upload and file)
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
+        method: 'POST',
+        body: formData
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Upload background failed: ${response.status} ${text}`);
+      }
+
+      // Close popup and refresh the image list after upload
+      setShowUploadBackgroundPopup(false);
+      setUploadedBackgroundFile(null);
+      setUploadedBackgroundPreview(null);
+      setUploadingBackgroundSceneNumber(null);
+      await refreshLoad();
+    } catch (e) {
+      setError(e?.message || 'Failed to upload background');
+    } finally {
+      setIsUploadingBackground(false);
+    }
+  }, [uploadedBackgroundFile, uploadingBackgroundSceneNumber, refreshLoad]);
+
   // Reset active image tab when scene changes
   useEffect(() => {
     setActiveImageTab(0);
@@ -2102,10 +2303,18 @@ const getOrderedRefs = useCallback((row) => {
 
       const imgEl = await loadImageElement(imgUrl);
       const baseDims = base?.image_dimensions || base?.imageDimensions || fallbackDimensions || {};
-      const baseWidth = Number(baseDims?.width) ? Number(baseDims.width) : (imgEl.naturalWidth || imgEl.width || 0);
-      const baseHeight = Number(baseDims?.height) ? Number(baseDims.height) : (imgEl.naturalHeight || imgEl.height || 0);
-      const width = imgEl.naturalWidth || imgEl.width || baseWidth || 1280;
-      const height = imgEl.naturalHeight || imgEl.height || baseHeight || 720;
+      // Prefer the explicit image_dimensions from the backend so the canvas
+      // size matches the original render exactly (width/height in pixels).
+      const baseWidth =
+        (Number(baseDims?.width) || 0) > 0
+          ? Number(baseDims.width)
+          : imgEl.naturalWidth || imgEl.width || 1280;
+      const baseHeight =
+        (Number(baseDims?.height) || 0) > 0
+          ? Number(baseDims.height)
+          : imgEl.naturalHeight || imgEl.height || 720;
+      const width = baseWidth;
+      const height = baseHeight;
 
       const canvas = document.createElement('canvas');
       canvas.width = width;
@@ -2139,6 +2348,89 @@ const getOrderedRefs = useCallback((row) => {
       }
 
       return canvas.toDataURL('image/png');
+    },
+    []
+  );
+
+  // Download helper for a single frame (base image + text + overlays)
+  const downloadFrameImage = React.useCallback(
+    async ({
+      sceneNumber,
+      imageIndex,
+      imageUrl
+    }) => {
+      try {
+        const row = rows.find(
+          (r, idx) =>
+            (r?.scene_number || idx + 1) === sceneNumber
+        );
+        if (!row) return;
+
+        const frames = Array.isArray(row.imageFrames)
+          ? row.imageFrames
+          : [];
+        const fallbackDims =
+          row?.imageDimensions || row?.image_dimensions || null;
+
+        let frame = null;
+        if (frames.length > 0) {
+          frame =
+            findFrameForImage(frames, imageUrl, imageIndex) ||
+            frames[imageIndex] ||
+            frames[0] ||
+            null;
+        }
+
+        let dataUrl = null;
+        if (frame) {
+          dataUrl = await mergeFrameToDataUrl(frame, fallbackDims, {
+            includeOverlays: true
+          });
+        } else {
+          // Fallback: just render the raw image at its natural size
+          const imgEl = await loadImageElement(imageUrl);
+          const width = imgEl.naturalWidth || imgEl.width || 1280;
+          const height = imgEl.naturalHeight || imgEl.height || 720;
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(imgEl, 0, 0, width, height);
+          dataUrl = canvas.toDataURL('image/png');
+        }
+
+        if (!dataUrl) return;
+
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (err) {
+        console.error('Failed to export frame image:', err);
+      }
+    },
+    [rows, findFrameForImage, mergeFrameToDataUrl]
+  );
+
+  // Prefer exporting exactly what the user sees on screen by snapshotting
+  // the DOM container for the active image (base + text + overlays).
+  const exportVisibleImageFromDom = React.useCallback(
+    async ({ sceneNumber, imageIndex }) => {
+      try {
+        const dataUrl = await captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex);
+        if (!dataUrl) return;
+
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (err) {
+        console.error('Failed to export visible image from DOM:', err);
+      }
     },
     []
   );
@@ -2201,6 +2493,36 @@ const getOrderedRefs = useCallback((row) => {
     return await res.blob();
   }, []);
 
+
+  // Shared helper: capture the on-screen image (base + overlays + text) for a
+  // given scene/image index using consistent html2canvas settings.
+  async function captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex) {
+    const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
+    const node = document.querySelector(selector);
+    if (!node) {
+      console.warn('⚠️ captureSceneImageWithHtml2Canvas: no node for', selector);
+      return null;
+    }
+    try {
+      console.log('📸 captureSceneImageWithHtml2Canvas: capturing DOM snapshot for', {
+        sceneNumber,
+        imageIndex,
+        selector
+      });
+      const canvas = await html2canvas(node, {
+        useCORS: true,
+        logging: false,
+        backgroundColor: null,
+        // Use device pixel ratio or 1 to keep file size under API limits.
+        scale: window.devicePixelRatio || 1
+      });
+      return canvas.toDataURL('image/png');
+    } catch (err) {
+      console.warn('⚠️ captureSceneImageWithHtml2Canvas failed, returning null', err);
+      return null;
+    }
+  }
+
   const blobToDataUrl = React.useCallback((blob) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2215,7 +2537,7 @@ const getOrderedRefs = useCallback((row) => {
     let saved = 0;
 
     try {
-      console.log('🎬 Starting image save process using frame data (no DOM capture)...');
+      console.log('🎬 Starting image save process using frame data / DOM capture...');
       console.log(`📊 Total scenes: ${rows.length}`);
 
       if (rows.length === 0) {
@@ -2241,7 +2563,7 @@ const getOrderedRefs = useCallback((row) => {
           images.map((img, idx) => `Image ${idx + 1}: ${img ? '✅' : '❌'}`).join(', ')
         );
 
-        // Process each image in this scene by rendering from frame data
+        // Process each image in this scene
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const imageUrl = images[imageIndex];
 
@@ -2251,13 +2573,76 @@ const getOrderedRefs = useCallback((row) => {
           }
 
           try {
+            let dataUrl = null;
+
+            // CRITICAL: For ALL non-Plotly images, we MUST switch to that scene + image tab
+            // and capture the LIVE DOM using html2canvas, exactly as Export does.
+            if (!isPlotly) {
+              console.log(`🔄 Switching UI to Scene ${sceneNumber}, Image ${imageIndex + 1} for DOM capture...`);
+              
+              // 1) Switch to this scene
+              const currentSceneNumber = selected?.sceneNumber || selected?.scene_number;
+              if (String(currentSceneNumber) !== String(sceneNumber)) {
+                const targetRow = rows.find((r, idx) => (r?.scene_number || idx + 1) === sceneNumber);
+                if (targetRow) {
+                  const imgs = isVeo3 ? getVeo3ImageTabImages(targetRow) : getSceneImages(targetRow);
+                  const imageEntries = buildImageEntries(imgs, targetRow?.imageFrames);
+                  const firstImg = imgs[0] || '';
+                  setSelected({
+                    index: sceneIndex,
+                    imageUrl: firstImg,
+                    images: imageEntries,
+                    title: targetRow.scene_title || 'Untitled',
+                    sceneNumber: targetRow.scene_number,
+                    description: targetRow?.description || '',
+                    narration: targetRow?.narration || '',
+                    textToBeIncluded: targetRow?.textToBeIncluded || '',
+                    model: modelUpper,
+                    prompts: targetRow?.prompts || { opening_frame: {}, closing_frame: {} },
+                    imageDimensions: targetRow?.imageDimensions || null,
+                    textElements: Array.isArray(targetRow?.textElements) ? targetRow.textElements : [],
+                    imageVersionData: targetRow?.imageVersionData || null,
+                    imageFrames: Array.isArray(targetRow?.imageFrames) ? targetRow.imageFrames : [],
+                    isEditable: !!targetRow?.isEditable
+                  });
+                  // Wait for React to render this scene
+                  await new Promise(resolve => setTimeout(resolve, 400));
+                }
+              }
+
+              // 2) Switch to the correct image tab (0 for Image 1, 1 for Image 2)
+              if (activeImageTab !== imageIndex) {
+                setActiveImageTab(imageIndex);
+                // Wait for React to render this tab's DOM container
+                await new Promise(resolve => setTimeout(resolve, 400));
+              }
+
+              // 3) Now capture the DOM with html2canvas (same as Export)
+              dataUrl = await captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex);
+              if (dataUrl) {
+                console.log('✅ Captured DOM snapshot (same as Export) for save-all-frames', {
+                  sceneNumber,
+                  imageIndex
+                });
+              } else {
+                console.warn('⚠️ DOM snapshot failed, falling back to frame-based rendering.', {
+                  sceneNumber,
+                  imageIndex
+                });
+              }
+            }
+
+            // 2) If DOM snapshot was not used or failed, fall back to frame-based rendering.
+            if (!dataUrl) {
             // Find the corresponding frame for this image (if any)
             let frame = null;
             if (frames.length > 0) {
-              frame = findFrameForImage(frames, imageUrl, imageIndex) || frames[imageIndex] || frames[0] || null;
-            }
-
-            let dataUrl = null;
+                frame =
+                  findFrameForImage(frames, imageUrl, imageIndex) ||
+                  frames[imageIndex] ||
+                  frames[0] ||
+                  null;
+              }
 
             if (frame) {
               console.log(
@@ -2266,16 +2651,24 @@ const getOrderedRefs = useCallback((row) => {
               // Use frame data + base image dimensions to build the canvas at the correct size.
               // For PLOTLY, do NOT bake overlay images into the saved frame; overlays stay visual-only.
               dataUrl = await mergeFrameToDataUrl(frame, fallbackDims, {
-                includeOverlays: !isPlotly,
+                  includeOverlays: !isPlotly
               });
             } else {
               console.log(
-                `🖼️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No frame data, using raw image dimensions`
+                  `🖼️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No frame data, using image_dimensions or raw image size`
               );
-              // Fallback: load the raw image and render it to a canvas with its natural size
+                // Fallback: load the raw image and render it to a canvas sized
+                // according to image_dimensions when available.
               const imgEl = await loadImageElement(imageUrl);
-              const width = imgEl.naturalWidth || imgEl.width || 1280;
-              const height = imgEl.naturalHeight || imgEl.height || 720;
+                const baseDims = fallbackDims || {};
+                const width =
+                  (Number(baseDims?.width) || 0) > 0
+                    ? Number(baseDims.width)
+                    : imgEl.naturalWidth || imgEl.width || 1280;
+                const height =
+                  (Number(baseDims?.height) || 0) > 0
+                    ? Number(baseDims.height)
+                    : imgEl.naturalHeight || imgEl.height || 720;
 
               const canvas = document.createElement('canvas');
               canvas.width = width;
@@ -2284,6 +2677,7 @@ const getOrderedRefs = useCallback((row) => {
               ctx.drawImage(imgEl, 0, 0, width, height);
 
               dataUrl = canvas.toDataURL('image/png');
+              }
             }
 
             if (!dataUrl) {
@@ -2367,8 +2761,8 @@ const getOrderedRefs = useCallback((row) => {
       const frameMetadata = [];
       let fileIndex = 0;
       const fileMap = {}; // Map scene-image to file index
-      
       const sceneImagesByIndex = [];
+      const sceneMetaByScene = new Map(); // scene_number -> metadata (for ANCHOR binaries)
       
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
         const row = rows[sceneIndex];
@@ -2376,7 +2770,7 @@ const getOrderedRefs = useCallback((row) => {
         const model = row?.model || 'VEO3';
         const modelUpper = String(model).toUpperCase();
         const isVeo3 = modelUpper === 'VEO3';
-        const orderedRefs = getOrderedRefs(row);
+        const isAnchor = modelUpper === 'ANCHOR';
         const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
         const images = isVeo3 ? veo3ImageRefs : getSceneImages(row);
         sceneImagesByIndex[sceneIndex] = images;
@@ -2392,16 +2786,25 @@ const getOrderedRefs = useCallback((row) => {
           const fileKey = `file_${fileIndex}`;
           fileMap[fileName] = fileKey;
           
-          if (isVeo3) {
-            // VEO3 uses background_frame (single source)
+          if (isAnchor) {
+            // For ANCHOR, backend expects opening_frame / closing_frame only.
+            if (imageIndex === 0) {
+              sceneMetadata.opening_frame = fileKey;
+            }
+            // If we only have one image, use it for both opening and closing.
+            if (imageIndex === 1 || (images.length === 1 && imageIndex === 0)) {
+              sceneMetadata.closing_frame = fileKey;
+            }
+          } else if (isVeo3) {
+            // For VEO3, keep using background_frame.
             if (!sceneMetadata.background_frame) {
               sceneMetadata.background_frame = fileKey;
             }
           } else if (images.length === 1) {
-            // Single image scene - use background_frame
+            // Non-VEO3 single image scene - use background_frame
             sceneMetadata.background_frame = fileKey;
           } else {
-            // Multiple images - use opening_frame and closing_frame
+            // Non-VEO3 multiple images - use opening_frame and closing_frame
             if (imageIndex === 0) {
               sceneMetadata.opening_frame = fileKey;
             }
@@ -2414,6 +2817,7 @@ const getOrderedRefs = useCallback((row) => {
         }
         
         frameMetadata.push(sceneMetadata);
+        sceneMetaByScene.set(sceneNumber, sceneMetadata);
       }
       
       console.log('📋 Frame metadata:', JSON.stringify(frameMetadata, null, 2));
@@ -2423,7 +2827,6 @@ const getOrderedRefs = useCallback((row) => {
       const formData = new FormData();
       formData.append('user_id', userId);
       formData.append('session_id', sessionId);
-      formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
       // WORKAROUND: Read images from browser memory instead of server temp folder
       console.log('📂 Reading images from browser memory...');
@@ -2434,6 +2837,7 @@ const getOrderedRefs = useCallback((row) => {
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
         const isVeo3 = modelUpper === 'VEO3';
+        const isAnchor = modelUpper === 'ANCHOR';
         const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
         const images = sceneImagesByIndex[sceneIndex] || (isVeo3 ? veo3ImageRefs : getSceneImages(row));
         
@@ -2451,9 +2855,9 @@ const getOrderedRefs = useCallback((row) => {
               continue;
             }
 
-            // Convert blob to base64 data URL so we can inspect the exact image being sent
+            // Optional: log data URL for debugging only (do not send as image_binary)
             const base64Url = await blobToDataUrl(blob);
-            console.log('🖼️ Base64 image for save-all-frames:', {
+            console.log('🖼️ Base64 image for save-all-frames (debug only):', {
               sceneIndex,
               sceneNumber,
               imageIndex,
@@ -2478,6 +2882,9 @@ const getOrderedRefs = useCallback((row) => {
       if (imageFiles.length === 0) {
         throw new Error('No images found in temp folder');
       }
+
+      // Attach frame metadata (including any ANCHOR mappings) after it has been fully populated.
+      formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
       console.log(`📤 Uploading ${imageFiles.length} images to API...`);
       
@@ -2714,7 +3121,7 @@ const getOrderedRefs = useCallback((row) => {
       // Call generate-videos-queue API
       console.log('📡 Calling /v1/generate-videos-queue API...');
       console.log('📦 Request payload:', JSON.stringify(body, null, 2));
-      
+
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -2735,16 +3142,16 @@ const getOrderedRefs = useCallback((row) => {
       }
 
       console.log('✅ generate-videos-queue API response:', responseData);
-      
+
       // Extract job ID from response
       const jobId = responseData?.job_id || responseData?.jobId || responseData?.id || null;
-      
+
       if (jobId) {
         console.log('✅ Video generation job queued with ID:', jobId);
         return jobId;
       } else {
         console.warn('⚠️ No job ID returned from API');
-        return null;
+      return null;
       }
     } catch (error) {
       setVideoGenProgress((prev) => ({
@@ -3126,7 +3533,7 @@ const getOrderedRefs = useCallback((row) => {
 
       <div className="p-4 space-y-4 overflow-y-auto overflow-x-hidden">
       
-        {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)}
+        {/* {error && (<div className="text-sm text-red-600 mb-2">{error}</div>)} */}
 
         {/* Only show selected image details when not polling */}
         {selected?.imageUrl && (!isPolling || rows.length > 0) && (
@@ -3143,8 +3550,7 @@ const getOrderedRefs = useCallback((row) => {
                     handleEditChartsClick();
                   }}
                   disabled={chartEditorLoading}
-                  className={`px-3 py-1.5 rounded-lg border border-[#13008B] text-[#13008B] bg-white hover:bg-blue-50 transition-colors flex items-center gap-2 ${
-                    chartEditorLoading ? 'opacity-60 cursor-not-allowed' : ''
+                    className={`px-3 py-1.5 rounded-lg border border-[#13008B] text-[#13008B] bg-white hover:bg-blue-50 transition-colors flex items-center gap-2 ${chartEditorLoading ? 'opacity-60 cursor-not-allowed' : ''
                   }`}
                   title="Edit Charts"
                 >
@@ -3155,8 +3561,9 @@ const getOrderedRefs = useCallback((row) => {
                 </button>
               )}
             </div>
-            <div>
+              <div className="flex gap-2">
               {selected?.isEditable && (
+                  <>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -3170,6 +3577,24 @@ const getOrderedRefs = useCallback((row) => {
                   <RefreshCw className="w-4 h-4" />
                   <span className="text-sm font-medium">Regenerate</span>
                 </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const sceneNum = selected?.sceneNumber || selected?.scene_number || 1;
+                        setUploadingBackgroundSceneNumber(sceneNum);
+                        setUploadedBackgroundFile(null);
+                        setUploadedBackgroundPreview(null);
+                        setError('');
+                        setShowUploadBackgroundPopup(true);
+                      }}
+                      className="bg-[#13008B] hover:bg-blue-800 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2"
+                      title="Upload Background"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span className="text-sm font-medium">Upload Background</span>
+                    </button>
+                  </>
               )}
             </div>
           </div>
@@ -3323,8 +3748,7 @@ const getOrderedRefs = useCallback((row) => {
                         <button
                           type="button"
                           onClick={() => setActiveImageTab(0)}
-                          className={`px-4 py-2 text-sm font-medium transition-colors ${
-                            activeImageTab === 0
+                        className={`px-4 py-2 text-sm font-medium transition-colors ${activeImageTab === 0
                               ? 'text-[#13008B] border-b-2 border-[#13008B]'
                               : 'text-gray-600 hover:text-gray-900'
                           }`}
@@ -3334,8 +3758,7 @@ const getOrderedRefs = useCallback((row) => {
                         <button
                           type="button"
                           onClick={() => setActiveImageTab(1)}
-                          className={`px-4 py-2 text-sm font-medium transition-colors ${
-                            activeImageTab === 1
+                        className={`px-4 py-2 text-sm font-medium transition-colors ${activeImageTab === 1
                               ? 'text-[#13008B] border-b-2 border-[#13008B]'
                               : 'text-gray-600 hover:text-gray-900'
                           }`}
@@ -3354,6 +3777,7 @@ const getOrderedRefs = useCallback((row) => {
                       data-image-container
                       data-scene-number={activeSceneNumber}
                       data-image-index="0"
+                        data-image-url={primaryImg}
                       style={{
                         aspectRatio: cssAspectRatio,
                         ...(isPortrait9x16
@@ -3475,7 +3899,7 @@ const getOrderedRefs = useCallback((row) => {
                         )}
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
-                          // If this scene is not editable (e.g., fallback background/avatar image only), hide edit
+                                // If this scene is not editable (e.g., fallback background/avatar image only), hide edit/export
                           if (!selected?.isEditable) {
                             return null;
                           }
@@ -3487,12 +3911,15 @@ const getOrderedRefs = useCallback((row) => {
                           const verObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
                           const genImage = verObj?.gen_image !== false; // Default to true if not specified
                           
-                          // Hide edit button for VEO3 with gen_image=false
+                                // Hide edit/export buttons for VEO3 with gen_image=false
                           if (isVEO3 && !genImage) {
                             return null;
                           }
+
+                                const sceneNo = selected?.sceneNumber || selected?.scene_number || 1;
                           
                           return (
+                                  <div className="absolute right-0 top-[50px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 flex flex-col gap-1 z-10">
                             <button
                               type="button"
                               onClick={() => {
@@ -3511,16 +3938,31 @@ const getOrderedRefs = useCallback((row) => {
                                     model: selectedModel
                                   };
                                   setEditingImageFrame(frameData);
-                                  setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
+                                          setEditingSceneNumber(sceneNo);
                                   setEditingImageIndex(primaryFrameIndex); // Track actual image index
                                   setShowImageEdit(true);
                                 }
                               }}
-                              className="absolute right-0 top-[20px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] z-10"
+                                      className="bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] flex items-center justify-center"
                               title="Edit Image"
                             >
                               <Pencil className="w-4 h-4" />
                             </button>
+                                    {/* <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!primaryImg) return;
+                                        exportVisibleImageFromDom({
+                                          sceneNumber: sceneNo,
+                                          imageIndex: 0
+                                        });
+                                      }}
+                                      className="bg-white text-[#13008B] p-2 rounded-l-lg border border-[#13008B] hover:bg-blue-50 flex items-center justify-center"
+                                      title="Export Image"
+                                    >
+                                      ⬇
+                                    </button> */}
+                                  </div>
                           );
                         })()}
                         {Array.isArray(effectiveTextEls1) && effectiveTextEls1.length > 0 && (
@@ -3543,8 +3985,7 @@ const getOrderedRefs = useCallback((row) => {
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
-                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${
-                                      shadow.color || 'rgba(0,0,0,0.5)'
+                                        ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'
                                     }`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
@@ -3637,6 +4078,7 @@ const getOrderedRefs = useCallback((row) => {
                       data-image-container
                       data-scene-number={activeSceneNumber}
                       data-image-index="1"
+                        data-image-url={secondaryImg}
                       style={{
                         aspectRatio: cssAspectRatio,
                         ...(isPortrait9x16
@@ -3754,7 +4196,7 @@ const getOrderedRefs = useCallback((row) => {
                         )}
                         {/* Edit button on hover - slides in from right (hidden for VEO3 with gen_image=false) */}
                         {(() => {
-                          // If this scene is not editable (e.g., fallback background/avatar image only), hide edit
+                                // If this scene is not editable (e.g., fallback background/avatar image only), hide edit/export
                           if (!selected?.isEditable) {
                             return null;
                           }
@@ -3766,12 +4208,15 @@ const getOrderedRefs = useCallback((row) => {
                           const verObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
                           const genImage = verObj?.gen_image !== false; // Default to true if not specified
                           
-                          // Hide edit button for VEO3 with gen_image=false
+                                // Hide edit/export buttons for VEO3 with gen_image=false
                           if (isVEO3 && !genImage) {
                             return null;
                           }
+
+                                const sceneNo = selected?.sceneNumber || selected?.scene_number || 1;
                           
                           return (
+                                  <div className="absolute right-0 top-[50px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 flex flex-col gap-1 z-10">
                             <button
                               type="button"
                               onClick={() => {
@@ -3790,16 +4235,31 @@ const getOrderedRefs = useCallback((row) => {
                                     model: selectedModel
                                   };
                                   setEditingImageFrame(frameData);
-                                  setEditingSceneNumber(selected?.sceneNumber || selected?.scene_number || 1);
+                                          setEditingSceneNumber(sceneNo);
                                   setEditingImageIndex(secondaryFrameIndex); // Track actual image index
                                   setShowImageEdit(true);
                                 }
                               }}
-                              className="absolute right-0 top-[20px] -translate-y-1/2 translate-x-full group-hover:translate-x-0 transition-transform duration-300 bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] z-10"
+                                      className="bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] flex items-center justify-center"
                               title="Edit Image"
                             >
                               <Pencil className="w-4 h-4" />
                             </button>
+                                    {/* <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!secondaryImg) return;
+                                        exportVisibleImageFromDom({
+                                          sceneNumber: sceneNo,
+                                          imageIndex: 1
+                                        });
+                                      }}
+                                      className="bg-white text-[#13008B] p-2 rounded-l-lg border border-[#13008B] hover:bg-blue-50 flex items-center justify-center"
+                                      title="Export Image"
+                                    >
+                                      ⬇
+                                    </button> */}
+                                  </div>
                           );
                         })()}
                         {Array.isArray(effectiveTextEls2) && effectiveTextEls2.length > 0 && (
@@ -3822,8 +4282,7 @@ const getOrderedRefs = useCallback((row) => {
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
-                                  ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${
-                                      shadow.color || 'rgba(0,0,0,0.5)'
+                                        ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'
                                     }`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
@@ -4129,45 +4588,153 @@ const getOrderedRefs = useCallback((row) => {
                               <div>
                                 <label className="text-sm font-medium text-gray-700 mb-2 block">Voice URL</label>
                                 <div className="space-y-2">
-                                  {Object.keys(sessionAssets.voice_urls || {}).length > 0 ? (
-                                    Object.entries(sessionAssets.voice_urls).map(([key, url]) => (
-                                      <label key={key} className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                          type="radio"
-                                          name={`voice-${sceneNumber}`}
-                                          checked={sceneOptions.voiceUrl === url}
-                                          onChange={() => {
+                                  {(() => {
+                                    // Get all voiceovers from brand assets
+                                    const brandVoiceovers = [];
+                                    
+                                    if (brandAssets && Array.isArray(brandAssets.voiceover)) {
+                                      console.log('🎤 Brand voiceovers available:', brandAssets.voiceover.length);
+                                      brandVoiceovers.push(...brandAssets.voiceover);
+                                    }
+                                    
+                                    // Filter voiceovers that match the tone
+                                    const matchingVoiceovers = [];
+                                    
+                                    if (scriptTone && brandVoiceovers.length > 0) {
+                                      brandVoiceovers.forEach(vo => {
+                                        if (!vo || typeof vo !== 'object') return;
+                                        const voType = String(vo.type || '').toLowerCase().trim();
+                                        const tone = String(scriptTone || '').toLowerCase().trim();
+                                        
+                                        if (voType === tone) {
+                                          matchingVoiceovers.push(vo);
+                                        }
+                                      });
+                                      console.log(`✅ Found ${matchingVoiceovers.length} voiceover(s) matching tone "${scriptTone}"`);
+                                      if (matchingVoiceovers.length === 0) {
+                                        console.warn(`⚠️ No voiceovers match tone "${scriptTone}". Available types:`, 
+                                          brandVoiceovers.map(vo => vo.type).join(', '));
+                                      }
+                                    } else if (!scriptTone) {
+                                      console.warn('⚠️ No script tone available for voiceover filtering');
+                                    }
+                                    
+                                    const hasSessionVoices = Object.keys(sessionAssets.voice_urls || {}).length > 0;
+                                    const hasMatchingVoices = matchingVoiceovers.length > 0;
+                                    const sessionVoicesCount = hasSessionVoices ? Object.keys(sessionAssets.voice_urls).length : 0;
+                                    
+                                    // Log summary
+                                    console.log('📊 Voiceover Summary:', {
+                                      brandVoiceovers: matchingVoiceovers.length,
+                                      sessionVoiceovers: sessionVoicesCount,
+                                      tone: scriptTone
+                                    });
+                                    
+                                    return (
+                                      <>
+                                        {/* Circular Button Style Voiceover Selection */}
+                                        <div className="flex flex-wrap gap-4">
+                                          {/* Brand Asset Voiceovers (filtered by tone) */}
+                                          {matchingVoiceovers.map((vo, idx) => (
+                                            <div key={`brand-match-${idx}`} className="flex flex-col items-center">
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  updateSceneOption('voiceUrl', vo.url);
+                                                  updateSceneOption('voiceOption', vo.name || vo.type || 'custom');
+                                                }}
+                                                className={`w-16 h-16 rounded-full flex flex-col items-center justify-center transition-all ${
+                                                  sceneOptions.voiceUrl === vo.url
+                                                    ? 'bg-[#4A90E2] text-white border-4 border-[#4A90E2] shadow-lg scale-105'
+                                                    : 'bg-white text-[#4A90E2] border-2 border-[#4A90E2] hover:bg-blue-50 hover:scale-105'
+                                                }`}
+                                                title={`${vo.name || 'Unnamed'} (Brand Asset - ${vo.type})`}
+                                              >
+                                                {/* Microphone Icon */}
+                                                <svg 
+                                                  width="24" 
+                                                  height="24" 
+                                                  viewBox="0 0 24 24" 
+                                                  fill="none" 
+                                                  stroke="currentColor" 
+                                                  strokeWidth="2" 
+                                                  strokeLinecap="round" 
+                                                  strokeLinejoin="round"
+                                                >
+                                                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                                                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                                  <line x1="12" y1="19" x2="12" y2="22"/>
+                                                  <line x1="8" y1="22" x2="16" y2="22"/>
+                                                </svg>
+                                              </button>
+                                              <span className="text-xs text-gray-700 mt-1.5 text-center font-medium">
+                                                {vo.name || vo.type}
+                                              </span>
+                                            </div>
+                                          ))}
+                                          
+                                          {/* Session Asset Voiceovers */}
+                                          {hasSessionVoices && (
+                                            <>
+                                              {Object.entries(sessionAssets.voice_urls).map(([key, url]) => (
+                                                <div key={key} className="flex flex-col items-center">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
                                             updateSceneOption('voiceUrl', url);
-                                            // Keep voiceOption as the key (could be "male", "female", etc.)
                                             updateSceneOption('voiceOption', key);
                                           }}
-                                          disabled={!hasVoiceAssets}
-                                          className="w-4 h-4 text-[#13008B]"
-                                        />
-                                        <span className="text-sm text-gray-700">{key}: {url}</span>
-                                      </label>
-                                    ))
-                                  ) : (
-                                    <p className="text-xs text-gray-500">No voice URLs available</p>
-                                  )}
-                                  <label className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                      type="radio"
-                                      name={`voice-${sceneNumber}`}
-                                      checked={!hasVoiceAssets || sceneOptions.voiceUrl === ''}
-                                      onChange={() => {
-                                        updateSceneOption('voiceUrl', '');
-                                        updateSceneOption('voiceOption', '');
-                                      }}
-                                      className="w-4 h-4 text-[#13008B]"
-                                    />
-                                    <span className="text-sm text-gray-700">None</span>
-                                  </label>
+                                                    className={`w-16 h-16 rounded-full flex flex-col items-center justify-center transition-all ${
+                                                      sceneOptions.voiceUrl === url
+                                                        ? 'bg-[#4A90E2] text-white border-4 border-[#4A90E2] shadow-lg scale-105'
+                                                        : 'bg-white text-[#4A90E2] border-2 border-[#4A90E2] hover:bg-blue-50 hover:scale-105'
+                                                    }`}
+                                                    title={`${key} (Session Asset)`}
+                                                  >
+                                                    {/* Microphone Icon */}
+                                                    <svg 
+                                                      width="24" 
+                                                      height="24" 
+                                                      viewBox="0 0 24 24" 
+                                                      fill="none" 
+                                                      stroke="currentColor" 
+                                                      strokeWidth="2" 
+                                                      strokeLinecap="round" 
+                                                      strokeLinejoin="round"
+                                                    >
+                                                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                                                      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                                      <line x1="12" y1="19" x2="12" y2="22"/>
+                                                      <line x1="8" y1="22" x2="16" y2="22"/>
+                                                    </svg>
+                                                  </button>
+                                                  <span className="text-xs text-gray-700 mt-1.5 text-center font-medium">
+                                                    {key}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                            </>
+                                          )}
+                                        </div>
+
+                                        
+                                        {/* Info message if no voiceovers available */}
+                                        {!hasMatchingVoices && !hasSessionVoices && (
+                                          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                                            <p className="text-xs text-amber-800">
+                                              {scriptTone 
+                                                ? `⚠️ No voiceovers found matching tone "${scriptTone}"`
+                                                : '⚠️ No voiceovers available'}
+                                            </p>
+                                          </div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                               
-                              {/* Voice Option (Female / Male) - only when no specific voice URL selected */}
-                              {!sceneOptions.voiceUrl && (
+                              {/* Voice Option (Female / Male) - always visible */}
                                 <div>
                                   <label className="text-sm font-medium text-gray-700 mb-2 block">Voice Option</label>
                                   <div className="flex gap-4">
@@ -4193,7 +4760,7 @@ const getOrderedRefs = useCallback((row) => {
                                     </label>
                                   </div>
                                 </div>
-                              )}
+
                             </div>
                           )}
                         </div>
@@ -4256,8 +4823,7 @@ const getOrderedRefs = useCallback((row) => {
                                                 updateSceneOption('transitionPreset', preset);
                                                 updateSceneOption('transitionCustom', null);
                                               }}
-                                              className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                                                isSelected
+                                              className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${isSelected
                                                   ? 'bg-[#13008B] text-white shadow-md'
                                                   : 'bg-white text-gray-700 border border-gray-300 hover:border-[#13008B] hover:bg-[#F6F4FF]'
                                               }`}
@@ -4334,8 +4900,7 @@ const getOrderedRefs = useCallback((row) => {
                                         <button
                                           type="button"
                                           onClick={() => setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'describe' }))}
-                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                                            (designYourOwnTab[sceneNumber] || 'describe') === 'describe'
+                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${(designYourOwnTab[sceneNumber] || 'describe') === 'describe'
                                               ? 'border-[#13008B] text-[#13008B]'
                                               : 'border-transparent text-gray-500 hover:text-gray-700'
                                           }`}
@@ -4345,8 +4910,7 @@ const getOrderedRefs = useCallback((row) => {
                                         <button
                                           type="button"
                                           onClick={() => setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'fill' }))}
-                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                                            designYourOwnTab[sceneNumber] === 'fill'
+                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${designYourOwnTab[sceneNumber] === 'fill'
                                               ? 'border-[#13008B] text-[#13008B]'
                                               : 'border-transparent text-gray-500 hover:text-gray-700'
                                           }`}
@@ -4586,7 +5150,8 @@ const getOrderedRefs = useCallback((row) => {
                       return (
                         <div
                           className={`grid ${gridCols} gap-0 w-full bg-black`}
-                          style={{ aspectRatio: cssAspectRatio,
+                            style={{
+                              aspectRatio: cssAspectRatio,
                           ...(isPortrait9x16
                             ? { height: '268px' }
                             : {})
@@ -4764,6 +5329,141 @@ const getOrderedRefs = useCallback((row) => {
                     </>
                   ) : (
                     'Generate Image'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Background Popup */}
+      {showUploadBackgroundPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Close Button - Circle at top right */}
+            <button
+              onClick={() => {
+                if (!isUploadingBackground) {
+                  setShowUploadBackgroundPopup(false);
+                  setUploadedBackgroundFile(null);
+                  setUploadedBackgroundPreview(null);
+                  setUploadingBackgroundSceneNumber(null);
+                }
+              }}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Close"
+              disabled={isUploadingBackground}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+
+            {/* Popup Content */}
+            <div className="flex-1 p-6 overflow-y-auto relative">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Upload Background</h3>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select background image to upload
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setUploadedBackgroundFile(file);
+                      // Create preview
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        setUploadedBackgroundPreview(reader.result);
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                  disabled={isUploadingBackground}
+                />
+                {uploadedBackgroundPreview && (
+                  <div className="mt-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Preview:</p>
+                    <img
+                      src={uploadedBackgroundPreview}
+                      alt="Background preview"
+                      className="max-w-full max-h-64 rounded-lg border border-gray-300"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                  {error}
+                </div>
+              )}
+
+              {/* Loading Overlay */}
+              {isUploadingBackground && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                    <div className="relative w-16 h-16">
+                      <svg className="w-16 h-16" viewBox="0 0 100 100">
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          stroke="#E5E7EB"
+                          strokeWidth="8"
+                          fill="none"
+                        />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          stroke="#13008B"
+                          strokeWidth="8"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeDasharray="283"
+                          strokeDashoffset="70"
+                          className="animate-spin"
+                          style={{
+                            transformOrigin: '50% 50%',
+                            animation: 'spin 1.5s linear infinite'
+                          }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+                      </div>
+                    </div>
+                    <p className="text-lg font-semibold text-[#13008B]">Uploading Background...</p>
+                    <p className="text-sm text-gray-600">Please wait while we upload your background image...</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Save Button - Bottom Right */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleUploadBackground}
+                  disabled={isUploadingBackground || !uploadedBackgroundFile}
+                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isUploadingBackground ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Uploading...
+                    </>
+                  ) : (
+                    'Save'
                   )}
                 </button>
               </div>

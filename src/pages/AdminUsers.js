@@ -144,7 +144,7 @@ const AdminUsers = () => {
   return (
     <div className="flex h-screen bg-[#E5E2FF] overflow-hidden">
       <Sidebar />
-      <div className="w-full mx-[2rem] mt-[1rem] flex flex-col overflow-hidden min-h-0">
+      <div className="flex-1 mx-[2rem] mt-[1rem] flex flex-col overflow-hidden min-h-0 min-w-0">
         <Topbar />
 
         <div className="flex-1 my-2 overflow-hidden min-h-0">

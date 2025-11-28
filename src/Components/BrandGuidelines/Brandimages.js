@@ -486,6 +486,14 @@ const Brandimages = () => {
   const [colorsError, setColorsError] = useState('')
   const [draggedColorIndex, setDraggedColorIndex] = useState(null)
   const [isRegeneratingTemplates, setIsRegeneratingTemplates] = useState(false)
+  // Generated Assets state
+  const [generatedAssets, setGeneratedAssets] = useState({
+    generated_images: {},
+    generated_videos: {}
+  })
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState('16:9')
+  const [isLoadingGeneratedAssets, setIsLoadingGeneratedAssets] = useState(false)
+  const [generatedAssetsError, setGeneratedAssetsError] = useState('')
   const [isLoadingTemplateDetails, setIsLoadingTemplateDetails] = useState(false)
   // Sync states for base/pair image
   const [syncEnabled, setSyncEnabled] = useState(true)
@@ -2905,6 +2913,64 @@ const Brandimages = () => {
     })()
   }, [])
 
+  // Fetch generated assets
+  useEffect(() => {
+    const fetchGeneratedAssets = async () => {
+      const userId = localStorage.getItem('token') || ''
+      if (!userId) return
+
+      setIsLoadingGeneratedAssets(true)
+      setGeneratedAssetsError('')
+      
+      try {
+        const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
+        const resp = await fetch(`${apiBase}/v1/users/user/${encodeURIComponent(userId)}/generated-media`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        })
+        
+        const text = await resp.text()
+        let json
+        try {
+          json = JSON.parse(text)
+        } catch (_) {
+          json = text
+        }
+        
+        if (!resp.ok) {
+          throw new Error(`generated-media failed: ${resp.status} ${text}`)
+        }
+
+        const generatedImages = json?.generated_images || {}
+        const generatedVideos = json?.generated_videos || {}
+
+        setGeneratedAssets({
+          generated_images: generatedImages,
+          generated_videos: generatedVideos
+        })
+
+        // Set default aspect ratio if available
+        const availableRatios = Object.keys(generatedImages).concat(Object.keys(generatedVideos))
+        if (availableRatios.length > 0 && !availableRatios.includes(selectedAspectRatio)) {
+          if (availableRatios.includes('16:9')) {
+            setSelectedAspectRatio('16:9')
+          } else if (availableRatios.includes('9:16')) {
+            setSelectedAspectRatio('9:16')
+          } else {
+            setSelectedAspectRatio(availableRatios[0])
+          }
+        }
+      } catch (e) {
+        setGeneratedAssetsError(e?.message || 'Failed to load generated assets')
+        console.error('Error fetching generated assets:', e)
+      } finally {
+        setIsLoadingGeneratedAssets(false)
+      }
+    }
+
+    fetchGeneratedAssets()
+  }, [])
+
   const handleSelectProfile = async (pid) => {
     try {
       setSelectedProfileId(pid)
@@ -3493,6 +3559,58 @@ const Brandimages = () => {
               }) : '—'}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Generated Assets */}
+      <section className="rounded-xl border border-gray-200 bg-white">
+        <div className="flex items-center justify-between px-5 py-4">
+          <p className="text-gray-800 font-medium">Generated Assets</p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-600">Aspect Ratio:</label>
+            <select
+              value={selectedAspectRatio}
+              onChange={(e) => setSelectedAspectRatio(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+            >
+              <option value="9:16">9:16</option>
+              <option value="16:9">16:9</option>
+            </select>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          {isLoadingGeneratedAssets ? (
+            <div className="text-sm text-gray-500 py-4">Loading generated assets...</div>
+          ) : generatedAssetsError ? (
+            <div className="text-sm text-red-600 py-4">{generatedAssetsError}</div>
+          ) : (
+            (() => {
+              const images = Array.isArray(generatedAssets.generated_images?.[selectedAspectRatio])
+                ? generatedAssets.generated_images[selectedAspectRatio]
+                : []
+              
+              if (images.length === 0) {
+                return <p className="text-sm text-gray-500">No images for {selectedAspectRatio} aspect ratio.</p>
+              }
+              
+              return (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {images.map((url, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={url}
+                        alt={`Generated image ${idx + 1}`}
+                        className="w-full h-auto object-contain rounded border border-gray-200"
+                        onError={(e) => {
+                          e.target.style.display = 'none'
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )
+            })()
+          )}
         </div>
       </section>
 

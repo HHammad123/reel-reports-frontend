@@ -1,14 +1,15 @@
 import React from 'react'
 import { useCallback, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { FaImage, FaPlay, FaThLarge, FaDollarSign, FaUsers, FaUserPlus } from "react-icons/fa";
+import { FaImage, FaPlay, FaThLarge, FaDollarSign, FaUsers, FaUserPlus, FaBars } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
+import { useSidebar } from '../Contexts/SidebarContext';
 import LogoImage from "../asset/mainLogo.png"
 
 const Sidebar = () => {
-   const [sidebarOpen, setSidebarOpen] = useState(false);
+   const { sidebarOpen, setSidebarOpen } = useSidebar();
    const location = useLocation();
    const navigate = useNavigate();
    const dispatch = useDispatch();
@@ -88,9 +89,10 @@ const Sidebar = () => {
     return () => window.removeEventListener('session-title-updated', onTitleUpdated);
   }, [fetchSessions]);
 
-  React.useEffect(() => {
-    setSidebarOpen(false);
-  }, [pathname]);
+  // Don't auto-close sidebar on pathname change since it's now always partially visible
+  // React.useEffect(() => {
+  //   setSidebarOpen(false);
+  // }, [pathname]);
 
   const createSessionAndNavigate = async () => {
     try {
@@ -134,7 +136,6 @@ const Sidebar = () => {
       if (!newId) throw new Error('Session ID missing in response');
       try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
       navigate(`/chat/${newId}`);
-      setSidebarOpen(false);
     } catch (e) {
       console.error('Failed to create new session:', e);
       alert('Unable to start a new chat. Please try again.');
@@ -162,7 +163,6 @@ const Sidebar = () => {
       if (!newId) throw new Error('Session ID missing in response');
       try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
       navigate(`/buildreel/${newId}`);
-      setSidebarOpen(false);
     } catch (e) {
       console.error('Failed to create build reel session:', e);
       alert('Unable to open Build Reel. Please try again.');
@@ -192,9 +192,9 @@ const Sidebar = () => {
     <>
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 flex h-full w-72 transform flex-col text-white transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className={`relative flex h-full flex-col text-white transition-all duration-300 ease-in-out min-w-0 ${
+          sidebarOpen ? 'w-72' : 'w-0'
+        } overflow-hidden`}
         style={{
           background: `linear-gradient(
             to bottom,
@@ -206,105 +206,113 @@ const Sidebar = () => {
       >
         {/* Scrollable container for entire sidebar content */}
         <div className="flex h-full flex-col overflow-hidden">
+          {/* Logo */}
+          <div className="flex-shrink-0 flex items-center p-6 border-b border-white/10">
+            <Link to="/" className="block">
+              <img src={LogoImage} alt="Logo" />
+            </Link>
+          </div>
+
           {/* Scrollable content area */}
           <div className="flex-1 min-h-0 overflow-y-auto">
-            {/* Logo */}
-            <div className="p-6">
-              <Link to="/" className="block">
-                <img src={LogoImage} alt="Logo" />
-              </Link>
-            </div>
-
             {/* Main Navigation */}
             <div className="mb-2 px-6">
-              <button
-                onClick={createSessionAndNavigate}
-                className={splitLocation[1] === 'chat' ? activeClass : inactiveClass}
-              >
-                <FaPlay className="h-5 w-5" />
-                <span>Generate Reel</span>
-              </button>
-              <button
-                onClick={createSessionAndGoBuildReel}
-                className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
-              >
-                <FaThLarge className="h-5 w-5" />
-                <span>Build Reel</span>
-              </button>
-              <button
-                onClick={() => navigate('/media')}
-                className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
-              >
-                <FaImage className="h-5 w-5" />
-                <span>My Media</span>
-              </button>
-              <button
-                onClick={() => navigate('/price-guidelines')}
-                className={splitLocation[1] === 'price-guidelines' ? activeClass : inactiveClass}
-              >
-                <FaDollarSign className="h-5 w-5" />
-                <span>Price Guidelines</span>
-              </button>
+                <button
+                  onClick={createSessionAndNavigate}
+                  className={splitLocation[1] === 'chat' ? activeClass : inactiveClass}
+                >
+                  <FaPlay className="h-5 w-5" />
+                  <span>Generate Reel</span>
+                </button>
+                <button
+                  onClick={createSessionAndGoBuildReel}
+                  className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
+                >
+                  <FaThLarge className="h-5 w-5" />
+                  <span>Build Reel</span>
+                </button>
+                <button
+                  onClick={() => navigate('/media')}
+                  className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
+                >
+                  <FaImage className="h-5 w-5" />
+                  <span>My Media</span>
+                </button>
+                <button
+                  onClick={() => navigate('/price-guidelines')}
+                  className={splitLocation[1] === 'price-guidelines' ? activeClass : inactiveClass}
+                >
+                  <FaDollarSign className="h-5 w-5" />
+                  <span>Price Guidelines</span>
+                </button>
 
-              {isAdmin && (
-                <div className="mt-8">
-                  <p className="mb-3 text-xs uppercase tracking-wide text-white/70">Admin</p>
-                  <button
-                    onClick={() => navigate('/admin/users')}
-                    className={
-                      pathname.startsWith('/admin/users') && !pathname.includes('/create')
-                        ? activeClass
-                        : inactiveClass
-                    }
-                  >
-                    <FaUsers className="h-5 w-5" />
-                    <span>All Users</span>
-                  </button>
-                  <button
-                    onClick={() => navigate('/admin/users/create')}
-                    className={pathname === '/admin/users/create' ? activeClass : inactiveClass}
-                  >
-                    <FaUserPlus className="h-5 w-5" />
-                    <span>Create User</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Chat History */}
-            <div className="px-6 pb-4">
-              <div className="mb-5">
-                <h2 className="mb-3 text-sm uppercase tracking-wide text-white/70">Chats History</h2>
-                <div className="space-y-2">
-                  {isLoadingSessions && <div className="text-xs text-purple-100/80">Loading…</div>}
-                  {!isLoadingSessions && sessionsError && sessions.length === 0 && (
-                    <div className="text-xs text-red-100">{sessionsError}</div>
-                  )}
-                  {!isLoadingSessions && sessions.length === 0 && !sessionsError && (
-                    <div className="text-xs text-purple-100/80">No sessions yet</div>
-                  )}
-                  {sessions.map((s, index) => {
-                    const id = s?.id || s?.session_id || '';
-                    const label = s?.title || 'New Chat';
-                    return (
-                      <button
-                        key={id || index}
-                        type="button"
-                        className="w-full truncate rounded-lg bg-white/10 px-3 py-2 text-left text-sm text-white transition hover:bg-white/20"
-                        onClick={() => {
-                          if (!id) return;
-                          try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
-                          navigate(`/chat/${id}`);
-                          setSidebarOpen(false);
-                        }}
-                        title={label}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
+                {isAdmin && (
+                  <div className="mt-8">
+                    <p className="mb-3 text-xs uppercase tracking-wide text-white/70">Admin</p>
+                    <button
+                      onClick={() => navigate('/admin/users')}
+                      className={
+                        pathname.startsWith('/admin/users') && !pathname.includes('/create')
+                          ? activeClass
+                          : inactiveClass
+                      }
+                    >
+                      <FaUsers className="h-5 w-5" />
+                      <span>All Users</span>
+                    </button>
+                    <button
+                      onClick={() => navigate('/admin/users/create')}
+                      className={pathname === '/admin/users/create' ? activeClass : inactiveClass}
+                    >
+                      <FaUserPlus className="h-5 w-5" />
+                      <span>Create User</span>
+                    </button>
+                  </div>
+                )}
               </div>
+
+              {/* Chat History */}
+              <div className="px-6 pb-4">
+                <div className="mb-5">
+                  <h2 className="mb-3 text-sm uppercase tracking-wide text-white/70">Chats History</h2>
+                  <div className="space-y-2">
+                    {isLoadingSessions && <div className="text-xs text-purple-100/80">Loading…</div>}
+                    {!isLoadingSessions && sessionsError && sessions.length === 0 && (
+                      <div className="text-xs text-red-100">{sessionsError}</div>
+                    )}
+                    {!isLoadingSessions && sessions.length === 0 && !sessionsError && (
+                      <div className="text-xs text-purple-100/80">No sessions yet</div>
+                    )}
+                    {sessions.map((s, index) => {
+                      const id = s?.id || s?.session_id || '';
+                      const label = s?.title || 'New Chat';
+                      // Extract session ID from URL (e.g., /chat/{sessionId} or /buildreel/{sessionId})
+                      const urlSessionId = pathname.split('/').length > 2 ? pathname.split('/')[2] : null;
+                      // Also check localStorage as fallback
+                      const localStorageSessionId = localStorage.getItem('session_id');
+                      const isActive = id && (id === urlSessionId || id === localStorageSessionId);
+                      return (
+                        <button
+                          key={id || index}
+                          type="button"
+                          className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white transition ${
+                            isActive 
+                              ? 'bg-white/25 shadow-lg shadow-black/10 font-medium' 
+                              : 'bg-white/10 hover:bg-white/20'
+                          }`}
+                          onClick={() => {
+                            if (!id) return;
+                            try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
+                            navigate(`/chat/${id}`);
+                          }}
+                          title={label}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
             </div>
           </div>
 
@@ -320,15 +328,6 @@ const Sidebar = () => {
           </div>
         </div>
       </aside>
-
-      {sidebarOpen && (
-        <button
-          type="button"
-          aria-label="Close navigation"
-          className="fixed inset-0 z-20 bg-[#0a0333]/60 backdrop-blur-sm lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
     </>
   )
 }

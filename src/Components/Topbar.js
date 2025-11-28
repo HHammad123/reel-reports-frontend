@@ -5,11 +5,13 @@ import { useSelector, useDispatch } from 'react-redux';
 import { FaBars, FaPlus, FaSignOutAlt } from "react-icons/fa";
 import { selectUser, selectIsAuthenticated, logoutUser } from '../redux/slices/userSlice';
 import { selectVideoJob } from '../redux/slices/videoJobSlice';
+import { useSidebar } from '../Contexts/SidebarContext';
 
 const Topbar = () => {
      const dispatch = useDispatch();
      const navigate = useNavigate();
      const videoJob = useSelector(selectVideoJob);
+     const { sidebarOpen, toggleSidebar } = useSidebar();
      // Redux selectors
      const user = useSelector(selectUser);
      const isAuthenticated = useSelector(selectIsAuthenticated);
@@ -27,18 +29,14 @@ const Topbar = () => {
        <header className="sticky  z-20 mb-2 flex items-center justify-between rounded-3xl border border-white/60 bg-white/90 px-4 py-4 shadow-[0_18px_45px_rgba(19,0,139,0.12)] backdrop-blur-lg transition-all lg:px-8">
          <div className="flex items-center gap-4">
            <button
-             className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E4E1FF] bg-white text-[#13008B] shadow-sm transition hover:border-[#c2bbff] hover:text-[#0F006B] lg:hidden"
-             onClick={() => {
-               if (typeof window !== 'undefined') {
-                 window.dispatchEvent(new CustomEvent('sidebar-toggle'));
-               }
-             }}
+             className="flex h-10 w-10 items-center justify-center rounded-full border border-[#E4E1FF] bg-white text-[#13008B] shadow-sm transition hover:border-[#c2bbff] hover:text-[#0F006B]"
+             onClick={toggleSidebar}
              type="button"
-             aria-label="Open navigation"
+             aria-label="Toggle navigation"
            >
              <FaBars className="h-4 w-4" />
            </button>
-           <h1 className="text-lg font-semibold text-[#13008B] lg:text-xl">Welcome to Reel Reports</h1>
+           <h1 className="text-lg font-semibold text-[#000000] lg:text-xl">Welcome to Reel Reports</h1>
          </div>
 
          <div className="flex items-center gap-3">
@@ -76,7 +74,7 @@ const Topbar = () => {
                </Link>
                <button
                  onClick={handleLogout}
-                 className="flex items-center gap-2 rounded-xl border border-transparent bg-white px-3 py-2 text-sm font-medium text-[#4B3CC4] transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                 className="flex items-center gap-2 rounded-xl border border-transparent bg-white px-3 py-2 text-sm font-medium text-[#080808] transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                  title="Logout"
                  type="button"
                >
@@ -93,7 +91,7 @@ const Topbar = () => {
                  </button>
                </Link>
                <Link to="/login">
-                 <button className="rounded-xl border border-[#D8D3FF] bg-white px-4 py-2 text-sm font-semibold text-[#13008B] shadow-sm transition hover:border-[#13008B]/40 hover:text-[#0f006b]">
+                 <button className="rounded-xl border border-[#D8D3FF] bg-white px-4 py-2 text-sm font-semibold text-[#000000] shadow-sm transition hover:border-[#13008B]/40 hover:text-[#0f006b]">
                    Login
                  </button>
                </Link>

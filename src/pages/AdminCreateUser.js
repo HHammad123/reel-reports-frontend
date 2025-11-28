@@ -80,7 +80,7 @@ const AdminCreateUser = () => {
   return (
     <div className="flex h-screen bg-[#E5E2FF] overflow-hidden">
       <Sidebar />
-      <div className="w-full mx-[2rem] mt-[1rem] flex flex-col overflow-hidden">
+      <div className="flex-1 mx-[2rem] mt-[1rem] flex flex-col overflow-hidden min-w-0">
         <Topbar />
 
         <div className="flex-1 my-2 overflow-auto rounded-3xl bg-white/95 px-6 py-6 shadow-xl backdrop-blur">

@@ -17,7 +17,7 @@ const BrandGuidelines = () => {
   return (
     <div className='flex h-screen bg-[#E5E2FF]'>
     <Sidebar/>
-    <div className="w-full mx-[2rem] mt-[1rem]">
+    <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
       <Topbar/>
     <div className='h-[77vh] my-2 flex items-start justify-start'>
     <ProfileSidebar />

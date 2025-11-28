@@ -149,7 +149,7 @@ const Result = () => {
   return (
     <div className='flex h-screen bg-[#E5E2FF]'>
       <Sidebar/>
-      <div className="w-full mx-[2rem] mt-[1rem]">
+      <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
         <Topbar/>
         <div className='h-[85vh] my-2 overflow-y-auto scrollbar-hide space-y-3 pr-1'>
           {isLoading && (<div className='p-4 text-gray-600'>Loading video…</div>)}

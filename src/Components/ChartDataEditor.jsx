@@ -46,14 +46,103 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   useEffect(() => {
     // Initialize local state from props
+    // Re-initialize when chartData or chartType changes
     if (chartData) {
       try {
         const parsed = typeof chartData === 'string' ? JSON.parse(chartData) : chartData;
-        const cloned = JSON.parse(JSON.stringify(parsed));
+        let processedData = JSON.parse(JSON.stringify(parsed));
+        
+        // Ensure data structure matches the chart type
+        if (processedData && processedData.series && chartType) {
+          const isPieDonut = chartType === 'pie' || chartType === 'donut';
+          const series = processedData.series || {};
+          
+          // Check current structure
+          const hasLabels = Array.isArray(series.labels);
+          const hasValues = Array.isArray(series.data?.[0]?.values);
+          const hasX = Array.isArray(series.x);
+          const hasY = Array.isArray(series.data?.[0]?.y);
+          
+          // Transform if needed
+          if (isPieDonut) {
+            // Pie/Donut needs labels and values
+            if ((hasX || hasY) && !(hasLabels && hasValues)) {
+              // Convert from bar/line format to pie/donut format
+              const x = Array.isArray(series.x) ? series.x : [];
+              let yValues = [];
+              
+              if (Array.isArray(series.data?.[0]?.y)) {
+                yValues = series.data[0].y;
+              } else if (Array.isArray(series.data?.[0]?.values)) {
+                yValues = series.data[0].values;
+              } else if (Array.isArray(series.y)) {
+                yValues = series.y;
+              } else if (Array.isArray(series.values)) {
+                yValues = series.values;
+              }
+              
+              if (x.length > 0 && yValues.length > 0) {
+                const minLength = Math.min(x.length, yValues.length);
+                processedData = {
+                  ...processedData,
+                  series: {
+                    ...series,
+                    labels: x.slice(0, minLength).map(v => String(v || '')),
+                    data: [{ values: yValues.slice(0, minLength).map(v => Number(v) || 0) }]
+                  }
+                };
+                console.log('[ChartDataEditor] Transformed data to pie/donut format');
+              }
+            } else if (!hasLabels || !hasValues) {
+              // Initialize empty structure if missing
+              processedData = {
+                ...processedData,
+                series: {
+                  ...series,
+                  labels: hasLabels ? series.labels : [],
+                  data: hasValues ? series.data : [{ values: [] }]
+                }
+              };
+            }
+          } else {
+            // Bar/Line needs x and y
+            if ((hasLabels && hasValues) && !(hasX && hasY)) {
+              // Convert from pie/donut format to bar/line format
+              const labels = Array.isArray(series.labels) ? series.labels : [];
+              const values = Array.isArray(series.data?.[0]?.values) ? series.data[0].values : [];
+              
+              if (labels.length > 0 && values.length > 0) {
+                const minLength = Math.min(labels.length, values.length);
+                processedData = {
+                  ...processedData,
+                  series: {
+                    ...series,
+                    x: labels.slice(0, minLength).map(v => String(v || '')),
+                    data: [{ name: 'Series 1', y: values.slice(0, minLength).map(v => Number(v) || 0) }]
+                  }
+                };
+                console.log('[ChartDataEditor] Transformed data to bar/line format');
+              }
+            } else if (!hasX || !hasY) {
+              // Initialize empty structure if missing
+              processedData = {
+                ...processedData,
+                series: {
+                  ...series,
+                  x: hasX ? series.x : [],
+                  data: hasY ? series.data : [{ name: 'Series 1', y: [] }]
+                }
+              };
+            }
+          }
+        }
+        
+        const cloned = JSON.parse(JSON.stringify(processedData));
         setLocalChartData(cloned);
         setOriginalChartData(JSON.parse(JSON.stringify(cloned)));
         setError('');
       } catch (e) {
+        console.error('[ChartDataEditor] Error processing chart data:', e);
         setError('Invalid chart data: ' + e.message);
         setLocalChartData(null);
         setOriginalChartData(null);
@@ -62,7 +151,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       setLocalChartData(null);
       setOriginalChartData(null);
     }
-  }, [chartData]);
+  }, [chartData, chartType]);
 
   // Update cell value
   const updateCell = (path, value) => {
@@ -326,7 +415,10 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Standard table (bar, column, line, stacked)
   const renderStandardTable = () => {
-    const { x, data } = localChartData.series;
+    // Safely extract x and data with fallbacks
+    const series = localChartData?.series || {};
+    const x = Array.isArray(series.x) ? series.x : [];
+    const data = Array.isArray(series.data) ? series.data : [];
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -477,8 +569,11 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Pie/Donut table
   const renderPieTable = () => {
-    const { labels, data } = localChartData.series;
-    const values = data[0].values;
+    // Safely extract labels and data with fallbacks
+    const series = localChartData?.series || {};
+    const labels = Array.isArray(series.labels) ? series.labels : [];
+    const data = Array.isArray(series.data) ? series.data : [];
+    const values = Array.isArray(data[0]?.values) ? data[0].values : [];
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -528,7 +623,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                   <td style={cellStyle}>
                     <input
                       type="number"
-                      value={values[idx]}
+                      value={values[idx] ?? ''}
                       onChange={(e) => updateCell(['series', 'data', 0, 'values', idx], e.target.value)}
                       style={inputStyle}
                     />
@@ -574,8 +669,13 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Waterfall table
   const renderWaterfallTable = () => {
-    const { x, data } = localChartData.series;
-    const series = data[0];
+    // Safely extract x and data with fallbacks
+    const seriesObj = localChartData?.series || {};
+    const x = Array.isArray(seriesObj.x) ? seriesObj.x : [];
+    const data = Array.isArray(seriesObj.data) ? seriesObj.data : [];
+    const seriesData = data[0] || {};
+    const y = Array.isArray(seriesData.y) ? seriesData.y : [];
+    const measure = Array.isArray(seriesData.measure) ? seriesData.measure : [];
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -626,14 +726,14 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                   <td style={cellStyle}>
                     <input
                       type="number"
-                      value={series.y[idx]}
+                      value={y[idx] ?? ''}
                       onChange={(e) => updateCell(['series', 'data', 0, 'y', idx], e.target.value)}
                       style={inputStyle}
                     />
                   </td>
                   <td style={cellStyle}>
                     <select
-                      value={series.measure[idx]}
+                      value={measure[idx] ?? 'absolute'}
                       onChange={(e) => updateCell(['series', 'data', 0, 'measure', idx], e.target.value)}
                       style={selectStyle}
                     >
