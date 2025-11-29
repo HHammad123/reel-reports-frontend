@@ -63,22 +63,40 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [regenerateUserQuery, setRegenerateUserQuery] = useState('');
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regeneratingSceneNumber, setRegeneratingSceneNumber] = useState(null);
+  // New regenerate options
+  const [regenerateFrames, setRegenerateFrames] = useState(['opening', 'closing']); // For SORA: ['opening'], ['closing'], or both
+  const [regenerateSaveAsNewVersion, setRegenerateSaveAsNewVersion] = useState(false);
+  // VEO3 Avatar management
+  const [showAvatarManager, setShowAvatarManager] = useState(false);
+  const [managingAvatarSceneNumber, setManagingAvatarSceneNumber] = useState(null);
+  const [avatarUrls, setAvatarUrls] = useState(['', '']); // Array of avatar URLs
+  const [isUpdatingAvatars, setIsUpdatingAvatars] = useState(false);
   // Upload background state
   const [showUploadBackgroundPopup, setShowUploadBackgroundPopup] = useState(false);
   const [uploadedBackgroundFile, setUploadedBackgroundFile] = useState(null);
   const [uploadedBackgroundPreview, setUploadedBackgroundPreview] = useState(null);
   const [isUploadingBackground, setIsUploadingBackground] = useState(false);
   const [uploadingBackgroundSceneNumber, setUploadingBackgroundSceneNumber] = useState(null);
+  const [uploadFrames, setUploadFrames] = useState(['background']); // For upload: ['opening'], ['closing'], ['background'], or combinations
   const [imageNaturalDims, setImageNaturalDims] = useState({});
   const [isSceneUpdating, setIsSceneUpdating] = useState(false);
+  // Edit description/narration state
+  const [editingField, setEditingField] = useState(null); // 'description' | 'narration' | null
+  const [editedDescription, setEditedDescription] = useState('');
+  const [editedNarration, setEditedNarration] = useState('');
+  const [isSavingField, setIsSavingField] = useState(false);
+  // Track if regenerate popup is for editing description
+  const [isRegenerateForDescription, setIsRegenerateForDescription] = useState(false);
   const [showChartEditor, setShowChartEditor] = useState(false);
   const [chartEditorData, setChartEditorData] = useState(null);
   const [chartEditorLoading, setChartEditorLoading] = useState(false);
   const [chartEditorError, setChartEditorError] = useState('');
   // State for session assets (logo and voiceover)
-  const [sessionAssets, setSessionAssets] = useState({ logo_url: '', voice_urls: {} });
+  const [sessionAssets, setSessionAssets] = useState({ logo_url: '', voice_url: '', voice_urls: {} });
   // State for brand assets
   const [brandAssets, setBrandAssets] = useState(null);
+  // State for scripts data (to access when scene is selected)
+  const [scriptsData, setScriptsData] = useState([]);
   // State for script tone (for matching voiceovers)
   const [scriptTone, setScriptTone] = useState('');
   // State for transition presets
@@ -121,6 +139,32 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const imageStorageRef = useRef(new Map());
   const selectedModel = String(selected?.model || selected?.mode || '').toUpperCase();
   const isAnchorModel = selectedModel === 'ANCHOR';
+  
+  // Helper functions for model detection and frame management
+  const getSceneModel = useCallback((sceneNumber) => {
+    const scene = rows.find(r => (r.scene_number || r.sceneNumber) === sceneNumber);
+    const model = String(scene?.model || scene?.mode || '').toUpperCase();
+    // If model is not found, try to use the currently selected scene's model as fallback
+    if (!model && selected && (selected.sceneNumber === sceneNumber || selected.scene_number === sceneNumber)) {
+      return String(selected?.model || selected?.mode || 'SORA').toUpperCase();
+    }
+    // Default to SORA if still not found
+    return model || 'SORA';
+  }, [rows, selected]);
+  
+  const isVEO3Model = useCallback((model) => model === 'VEO3', []);
+  const isSORAModel = useCallback((model) => model === 'SORA', []);
+  const isANCHORModel = useCallback((model) => model === 'ANCHOR', []);
+  
+  const getFramesForModel = useCallback((model) => {
+    if (isSORAModel(model)) {
+      return { hasOpening: true, hasClosing: true, hasBackground: false };
+    } else if (isVEO3Model(model) || isANCHORModel(model)) {
+      return { hasOpening: false, hasClosing: false, hasBackground: true };
+    }
+    return { hasOpening: false, hasClosing: false, hasBackground: false };
+  }, [isSORAModel, isVEO3Model, isANCHORModel]);
+  
   // State for active image tab (0 for Image 1/Avatar, 1 for Image 2/Image)
   const [activeImageTab, setActiveImageTab] = useState(0);
   // Cache-busting value for chart overlays - updates when scene changes to ensure fresh chart images
@@ -161,7 +205,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       try {
         localStorage.setItem('current_video_job_id', jobId);
       } catch (err) {
-        console.warn('Unable to persist video job id:', err);
       }
       setPendingVideoJobId(jobId);
       setVideoRedirectCountdown(5);
@@ -276,55 +319,122 @@ const getSelectedImageUrl = (images, index = 0) => {
   return entry?.image_url || ''
 }
 
-const getOrderedRefs = useCallback((row) => {
-  const baseRefs = Array.isArray(row?.refs) ? row.refs.filter(Boolean) : []
-  const modelUpper = String(row?.model || '').toUpperCase()
+const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    console.log(`⚠️ ${fieldName?.toUpperCase?.() || fieldName} | scene ${sceneNumber} | no sources provided`)
+    return ''
+  }
+
+  for (const source of sources) {
+    const rawValue = typeof source?.value === 'string' ? source.value : ''
+    if (rawValue && rawValue.trim()) {
+      console.log(
+        `✅ ${fieldName?.toUpperCase?.() || fieldName} | scene ${sceneNumber} | path: ${source.path}`,
+        rawValue
+      )
+      return rawValue.trim()
+    }
+  }
+
+  console.log(
+    `⚠️ ${fieldName?.toUpperCase?.() || fieldName} | scene ${sceneNumber} | no value found. Paths checked:`,
+    sources.map((src) => src.path)
+  )
+  return ''
+}
+
+// Helper function to extract avatar URLs from current version of image object
+const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) => {
+  const modelUpper = String(model || '').toUpperCase();
+  const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
+  
+  if (!isVEO3 || !imageVersionData) {
+    return [];
+  }
+  
+  // Extract avatar URLs from session data images structure (same as list area)
+  // Structure: it.images[current_version].avatar_urls
+  if (typeof imageVersionData === 'object' && !Array.isArray(imageVersionData)) {
+    // Get the current version key
+    const versionKey = currentVersion || imageVersionData?.current_version || imageVersionData?.currentVersion || 'v1';
     
-    // For ANCHOR model, get base image from frame structure
-    if (modelUpper === 'ANCHOR') {
-      const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
-      if (frames.length > 0) {
-        const frame = frames[0]
-        const base = frame?.base_image || frame?.baseImage || {}
-        const baseUrl = base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || ''
-        const finalUrl =
-          frame?.image_url ||
-          frame?.imageUrl ||
-          frame?.imageurl ||
-          frame?.url ||
-          frame?.src ||
-          ''
-        const normalizedBase = normalizeImageUrl(baseUrl)
-        const normalizedFinal = normalizeImageUrl(finalUrl)
-        const anchorUrls = []
-        // Always add baseUrl if it exists
-        if (normalizedBase) anchorUrls.push(baseUrl)
-        // Always add finalUrl if it exists (even if same as baseUrl to show two tabs)
-        if (normalizedFinal) anchorUrls.push(finalUrl)
-        // If we have at least one URL, ensure we have two items for two tabs
-        if (anchorUrls.length > 0) {
-          // If only one URL exists, duplicate it to show two tabs with same image
-          if (anchorUrls.length === 1) {
-            anchorUrls.push(anchorUrls[0])
-          }
-          return anchorUrls
-        }
-      }
-      // Fallback to refs if no base or final image found in frame
-      // For ANCHOR model, ensure we have two items in array for two tabs
-      if (baseRefs.length > 0) {
-        // If only one ref exists, duplicate it to show two tabs with same image
-        if (baseRefs.length === 1) {
-          return [...baseRefs, baseRefs[0]]
-        }
-        return baseRefs
-      }
-      return baseRefs
+    // Get the version object (same as: imagesContainer[versionKey] in list area)
+    const versionObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
+    
+    console.log(`🔍 getAvatarUrlsFromImageVersion: versionKey=${versionKey}`);
+    console.log(`🔍 Version object keys:`, Object.keys(versionObj));
+    
+    // Extract avatar_urls from current version (same as: verObj?.avatar_urls in list area)
+    let avatarUrls = versionObj?.avatar_urls;
+    
+    console.log(`🔍 Avatar URLs from version object (${versionKey}):`, avatarUrls);
+    
+    // If not found in version object, check root level (fallback)
+    if (!avatarUrls || !Array.isArray(avatarUrls) || avatarUrls.length === 0) {
+      avatarUrls = imageVersionData?.avatar_urls;
+      console.log(`🔍 Avatar URLs from root level (fallback):`, avatarUrls);
     }
     
-    if (modelUpper !== 'PLOTLY') return baseRefs
-    const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
-    if (!frames.length) return baseRefs
+    if (Array.isArray(avatarUrls) && avatarUrls.length > 0) {
+      // Map avatar URLs exactly as done in list area (lines 2117-2129)
+      const extracted = avatarUrls.map((av) => {
+        if (typeof av === 'string') return av.trim();
+        return (
+          av?.imageurl ||
+          av?.imageUrl ||
+          av?.image_url ||
+          av?.url ||
+          av?.src ||
+          av?.link ||
+          av?.avatar_url ||
+          ''
+        );
+      }).filter(url => url && typeof url === 'string' && url.trim());
+      
+      console.log(`✅ Extracted avatar URLs from session data images:`, extracted);
+      return extracted;
+    }
+  }
+  
+  console.log(`❌ No avatar URLs found in imageVersionData from session data`);
+  return [];
+}
+
+const getOrderedRefs = useCallback((row) => {
+  const modelUpper = String(row?.model || '').toUpperCase()
+  
+  // ALWAYS prioritize imageFrames from current version
+  const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
+  
+  // For SORA, VEO3, ANCHOR: Extract from imageFrames (current version)
+  if (modelUpper === 'SORA' || modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+    if (frames.length > 0) {
+      const imageUrls = frames
+        .map((frame) => {
+          const base = frame?.base_image || frame?.baseImage || {}
+          return base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || ''
+        })
+        .filter(Boolean)
+      
+      if (imageUrls.length > 0) {
+        // For ANCHOR: ensure we have two items for two tabs
+        if (modelUpper === 'ANCHOR') {
+          if (imageUrls.length === 1) {
+            return [...imageUrls, imageUrls[0]]
+          }
+          return imageUrls.slice(0, 2)
+        }
+        // For SORA/VEO3: return all images from current version
+        return imageUrls
+      }
+    }
+    // If no frames, return empty (don't fallback to old refs)
+    return []
+  }
+  
+  // For PLOTLY: use frames from current version
+  if (modelUpper === 'PLOTLY') {
+    if (!frames.length) return []
     const frameEntries = frames
       .map((frame) => {
         const base = frame?.base_image || frame?.baseImage || {}
@@ -352,7 +462,7 @@ const getOrderedRefs = useCallback((row) => {
         return { url, normalizedUrl, hasText }
       })
       .filter(Boolean)
-    if (!frameEntries.length) return baseRefs
+    if (!frameEntries.length) return []
     const noText = []
     const withText = []
     frameEntries.forEach(({ url, hasText }) => {
@@ -362,27 +472,38 @@ const getOrderedRefs = useCallback((row) => {
         noText.push(url)
       }
     })
-    const frameNormals = frameEntries.map((entry) => entry.normalizedUrl)
-    const fallbackRefs = baseRefs.filter((ref) => {
-      const normalizedRef = normalizeImageUrl(ref)
-      return !frameNormals.includes(normalizedRef)
-    })
-    const ordered = [...noText, ...withText, ...fallbackRefs]
-    return ordered.length > 0 ? ordered : baseRefs
-  }, [normalizeImageUrl])
+    // Return only from current version frames (no fallback to old refs)
+    const ordered = [...noText, ...withText]
+    return ordered.length > 0 ? ordered : []
+  }
+  
+  // For any other model, return empty (no fallback to old refs)
+  return []
+}, [normalizeImageUrl])
 
   const getSceneImages = useCallback(
     (row) => {
       const modelUpper = String(row?.model || '').toUpperCase()
       const isVEO3 = modelUpper === 'VEO3'
       
+      // ALWAYS get images from current version (via getOrderedRefs which uses imageFrames)
       const ordered = getOrderedRefs(row)
-      const imageRefs = ordered.length > 0 ? ordered : (Array.isArray(row?.refs) ? row.refs.filter(Boolean) : [])
+      const imageRefs = ordered.length > 0 ? ordered : []
       
-      // For VEO3 only: combine images and avatar_urls
+      // For VEO3 only: combine images and avatar_urls from current version
       if (isVEO3) {
-        const avatarUrls = Array.isArray(row?.avatar_urls)
-          ? row.avatar_urls.map((av) => {
+        // ALWAYS extract avatar_urls from current version
+        let avatarUrls = []
+        
+        // Priority 1: Extract from imageVersionData current_version
+        if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
+          const imgContainer = row.imageVersionData
+          const vKey = imgContainer.current_version || imgContainer.currentVersion || 'v1'
+          const vObj = imgContainer[vKey] || imgContainer.v1 || {}
+          const versionAvatars = vObj?.avatar_urls
+          
+          if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+            avatarUrls = versionAvatars.map((av) => {
               if (typeof av === 'string') return av.trim()
               return (
                 av?.imageurl ||
@@ -395,14 +516,32 @@ const getOrderedRefs = useCallback((row) => {
                 ''
               )
             }).filter(url => url && typeof url === 'string' && url.trim())
-          : []
+          }
+        }
         
-        // Combine images and avatar_urls, removing duplicates
+        // Priority 2: Extract from row.avatar_urls (should already be from current version)
+        if (avatarUrls.length === 0 && Array.isArray(row?.avatar_urls)) {
+          avatarUrls = row.avatar_urls.map((av) => {
+            if (typeof av === 'string') return av.trim()
+            return (
+              av?.imageurl ||
+              av?.imageUrl ||
+              av?.image_url ||
+              av?.url ||
+              av?.src ||
+              av?.link ||
+              av?.avatar_url ||
+              ''
+            )
+          }).filter(url => url && typeof url === 'string' && url.trim())
+        }
+        
+        // Combine images and avatar_urls from current version, removing duplicates
         const combined = [...new Set([...imageRefs, ...avatarUrls])].filter(Boolean)
         return combined // Return all combined images for VEO3
       }
       
-      // For non-VEO3 models, return only images (max 2)
+      // For non-VEO3 models, return only images from current version (max 2)
       return imageRefs.slice(0, 2)
     },
     [getOrderedRefs]
@@ -512,54 +651,122 @@ const getOrderedRefs = useCallback((row) => {
     try {
       const user_id = localStorage.getItem('token');
       if (!user_id) {
-        console.warn('⚠️ No user_id found, skipping brand assets fetch');
         return;
       }
 
-      console.log('📦 Fetching brand assets for user:', user_id);
       const apiUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(user_id)}`;
-      console.log('📡 API URL:', apiUrl);
       
       const brandAssetsResp = await fetch(apiUrl);
-      console.log('📡 Response status:', brandAssetsResp.status);
       
       const brandAssetsText = await brandAssetsResp.text();
-      console.log('📡 Response text:', brandAssetsText);
       
       let brandAssetsData;
       try {
         brandAssetsData = JSON.parse(brandAssetsText);
       } catch (parseError) {
-        console.error('❌ Failed to parse brand assets JSON:', parseError);
         brandAssetsData = null;
       }
 
       if (brandAssetsResp.ok && brandAssetsData) {
         setBrandAssets(brandAssetsData);
-        console.log('✅ Brand assets loaded successfully:', {
-          fullData: brandAssetsData,
-          hasVoiceover: !!brandAssetsData.voiceover,
-          isVoiceoverArray: Array.isArray(brandAssetsData.voiceover),
-          voiceoverCount: brandAssetsData.voiceover?.length || 0,
-          voiceovers: brandAssetsData.voiceover
-        });
       } else {
-        console.warn('⚠️ Failed to load brand assets:', {
-          status: brandAssetsResp.status,
-          statusText: brandAssetsResp.statusText,
-          responseText: brandAssetsText
-        });
       }
     } catch (error) {
-      console.error('❌ Error fetching brand assets:', error);
     }
   }, []);
+
+  // Auto-select logo and voiceover based on session assets API response
+  useEffect(() => {
+    if (!sessionAssets) return;
+    
+    // Get all scene numbers from rows
+    const sceneNumbers = rows.map(row => row?.scene_number || row?.sceneNumber).filter(Boolean);
+    if (sceneNumbers.length === 0) return;
+    
+    // Normalize URL for comparison (remove query params, trailing slashes, etc.)
+    const normalizeUrl = (url) => {
+      if (!url || typeof url !== 'string') return '';
+      try {
+        const u = new URL(url);
+        return u.origin + u.pathname;
+      } catch {
+        return url.trim().split('?')[0].replace(/\/$/, '');
+      }
+    };
+    
+    // Set logo needed based on whether logo_url exists
+    const sessionLogoUrl = sessionAssets.logo_url;
+    const hasLogo = sessionLogoUrl && typeof sessionLogoUrl === 'string' && sessionLogoUrl.trim().length > 0;
+    
+    setSceneAdvancedOptions(prev => {
+      const updated = { ...prev };
+      let hasChanges = false;
+      
+      sceneNumbers.forEach(sceneNum => {
+        const currentOptions = updated[sceneNum] || {};
+        // Only update if the value is different to avoid unnecessary re-renders
+        if (currentOptions.logoNeeded !== hasLogo) {
+          updated[sceneNum] = {
+            ...currentOptions,
+            logoNeeded: hasLogo
+          };
+          hasChanges = true;
+        }
+      });
+      
+      return hasChanges ? updated : prev;
+    });
+    
+    // Check voiceover match (requires brandAssets)
+    if (brandAssets) {
+      const sessionVoiceUrl = sessionAssets.voice_url || (sessionAssets.voice_urls && Object.values(sessionAssets.voice_urls)[0]);
+      if (sessionVoiceUrl) {
+        const normalizedSessionVoice = normalizeUrl(sessionVoiceUrl);
+        
+        // Get brand voiceovers
+        const brandVoiceovers = Array.isArray(brandAssets.voiceover) 
+          ? brandAssets.voiceover 
+          : Array.isArray(brandAssets.voiceovers) 
+          ? brandAssets.voiceovers 
+          : [];
+        
+        // Find matching voiceover
+        const matchingVoiceover = brandVoiceovers.find(vo => {
+          const voUrl = typeof vo === 'string' ? vo : (vo?.url || vo?.link || '');
+          if (!voUrl) return false;
+          const normalizedVoUrl = normalizeUrl(voUrl);
+          return normalizedVoUrl === normalizedSessionVoice;
+        });
+        
+        // If match found, set voiceUrl for all scenes
+        if (matchingVoiceover) {
+          const matchedUrl = typeof matchingVoiceover === 'string' 
+            ? matchingVoiceover 
+            : (matchingVoiceover?.url || matchingVoiceover?.link || '');
+          
+          if (matchedUrl) {
+            setSceneAdvancedOptions(prev => {
+              const updated = { ...prev };
+              sceneNumbers.forEach(sceneNum => {
+                updated[sceneNum] = {
+                  ...(updated[sceneNum] || {}),
+                  voiceUrl: matchedUrl,
+                  voiceOption: matchingVoiceover?.name || matchingVoiceover?.type || 'custom'
+                };
+              });
+              return updated;
+            });
+          }
+        }
+      }
+    }
+  }, [sessionAssets, brandAssets, rows]);
 
   useEffect(() => {
     let cancelled = false;
     let timeoutId = null;
 
-    const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}) => {
+    const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}, allScriptScenesByNumber = {}) => {
       let mapped = [];
       const usedSceneNumbers = new Set();
       const collectUrls = (node) => {
@@ -670,9 +877,40 @@ const getOrderedRefs = useCallback((row) => {
 	              : Array.isArray(primary?.textElements)
 	              ? primary.textElements
 	              : [];
+	            // Get description and narration from script data only
+              const sceneNumberForRoot = imagesRoot?.scene_number || 1;
+              const scriptSceneForRoot =
+                allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForRoot]
+                  ? allScriptScenesByNumber[sceneNumberForRoot]
+                  : null;
+              const scriptIndexForRoot2 =
+                typeof scriptSceneForRoot?.__aiIndex === 'number'
+                  ? scriptSceneForRoot.__aiIndex
+                  : Math.max(0, Number(sceneNumberForRoot) - 1);
+              const scriptBasePathRoot2 = `scripts[0].airesponse[${scriptIndexForRoot2}]`;
+              const descriptionForRoot = pickFieldWithPath('description', sceneNumberForRoot, [
+                {
+                  value: scriptSceneForRoot?.desc,
+                  path: `${scriptBasePathRoot2}.desc`
+                },
+                {
+                  value: scriptSceneForRoot?.description,
+                  path: `${scriptBasePathRoot2}.description`
+                },
+                {
+                  value: scriptSceneForRoot?.scene_description,
+                  path: `${scriptBasePathRoot2}.scene_description`
+                }
+              ]);
+              const narrationForRoot = pickFieldWithPath('narration', sceneNumberForRoot, [
+                {
+                  value: scriptSceneForRoot?.narration,
+                  path: `${scriptBasePathRoot2}.narration`
+                }
+              ]);
 	            pushRow(1, imagesRoot?.scene_title || 'Images', refs, {
-	              description: imagesRoot?.description || imagesRoot?.scene_description || '',
-	              narration: imagesRoot?.narration || '',
+	              description: descriptionForRoot,
+	              narration: narrationForRoot,
               textToBeIncluded: imagesRoot?.text_to_be_included || '',
               imageDimensions,
               textElements,
@@ -723,9 +961,6 @@ const getOrderedRefs = useCallback((row) => {
               const isSora = modelUpper === 'SORA';
               const sceneNumber = it?.scene_number || idx + 1;
               
-              console.log('🎬 IMAGE SOURCE DEBUG - Scene:', sceneNumber);
-              console.log('  Model:', modelUpper);
-              console.log('  Initial refs (from images.base_image):', refs);
               
                 let finalRefs = refs;
                 let avatarUrlsForMeta = []; // Store avatar_urls for VEO3
@@ -753,7 +988,6 @@ const getOrderedRefs = useCallback((row) => {
                     return trimmed && !backgroundImageUrls.has(trimmed);
                   });
                   
-                  console.log('  Filtered refs (images without background_image):', filteredRefs);
                   
                   // Extract avatar_urls for VEO3 (always, not just as fallback)
                   if (isVEO3) {
@@ -772,14 +1006,11 @@ const getOrderedRefs = useCallback((row) => {
                           );
                         }).filter(url => url && typeof url === 'string' && url.trim())
                       : [];
-                    console.log('  Avatar URLs (for VEO3 - will be shown with images):', avatarUrlsForMeta);
                   }
                   
                   // PRIORITY: Use base_image URLs from image arrays if available
                   if (filteredRefs.length > 0) {
                     finalRefs = filteredRefs;
-                    console.log('  ✅ FINAL refs used (from images.base_image):', finalRefs);
-                    console.log('  Source: images.base_image (prioritized)');
                   } else {
                     // FALLBACK: Only use avatar_urls if no image arrays exist
                     const avatarUrls = Array.isArray(scene?.avatar_urls)
@@ -798,22 +1029,47 @@ const getOrderedRefs = useCallback((row) => {
                         }).filter(url => url && typeof url === 'string' && url.trim())
                       : [];
                     
-                    console.log('  Avatar URLs (from scripts - fallback only):', avatarUrls);
-                    
                     if (avatarUrls.length > 0) {
                       finalRefs = avatarUrls;
-                      console.log('  ✅ FINAL refs used (from avatar_urls - fallback):', finalRefs);
-                      console.log('  Source: avatar_urls (fallback)');
-                    } else {
-                      console.log('  ✅ FINAL refs used (original):', finalRefs);
-                      console.log('  Source: original refs');
                     }
                   }
                 }
                 
+                // Get description and narration from script data only
+                const sceneNumberForIt = it?.scene_number ?? (idx + 1);
+                const scriptSceneForIt =
+                  allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForIt]
+                    ? allScriptScenesByNumber[sceneNumberForIt]
+                    : null;
+                const scriptIndexForIt =
+                  typeof scriptSceneForIt?.__aiIndex === 'number'
+                    ? scriptSceneForIt.__aiIndex
+                    : Math.max(0, Number(sceneNumberForIt) - 1);
+                const scriptBasePathForIt = `scripts[0].airesponse[${scriptIndexForIt}]`;
+                const descriptionForIt = pickFieldWithPath('description', sceneNumberForIt, [
+                  {
+                    value: scriptSceneForIt?.desc,
+                    path: `${scriptBasePathForIt}.desc`
+                  },
+                  {
+                    value: scriptSceneForIt?.description,
+                    path: `${scriptBasePathForIt}.description`
+                  },
+                  {
+                    value: scriptSceneForIt?.scene_description,
+                    path: `${scriptBasePathForIt}.scene_description`
+                  }
+                ]);
+                const narrationForIt = pickFieldWithPath('narration', sceneNumberForIt, [
+                  {
+                    value: scriptSceneForIt?.narration,
+                    path: `${scriptBasePathForIt}.narration`
+                  }
+                ]);
+                
                 const meta = {
-                  description: it?.desc || it?.description || it?.scene_description || '',
-                  narration: it?.narration || it?.voiceover || '',
+                  description: descriptionForIt,
+                  narration: narrationForIt,
                   textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
                   model: modelUpper,
                   imageDimensions,
@@ -855,9 +1111,40 @@ const getOrderedRefs = useCallback((row) => {
                 if (sc?.image_2_url) refs.push(sc.image_2_url);
                 if (Array.isArray(sc?.refs)) refs.push(...sc.refs);
                 if (Array.isArray(sc?.urls)) refs.push(...sc.urls);
+                // Get description and narration from script data only
+                const sceneNumberForSc = sc?.scene_number ?? (j + 1);
+                const scriptSceneForSc =
+                  allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForSc]
+                    ? allScriptScenesByNumber[sceneNumberForSc]
+                    : null;
+                const scriptIndexForSc =
+                  typeof scriptSceneForSc?.__aiIndex === 'number'
+                    ? scriptSceneForSc.__aiIndex
+                    : Math.max(0, Number(sceneNumberForSc) - 1);
+                const scriptBasePathForSc = `scripts[0].airesponse[${scriptIndexForSc}]`;
+                const descriptionForSc = pickFieldWithPath('description', sceneNumberForSc, [
+                  {
+                    value: scriptSceneForSc?.desc,
+                    path: `${scriptBasePathForSc}.desc`
+                  },
+                  {
+                    value: scriptSceneForSc?.description,
+                    path: `${scriptBasePathForSc}.description`
+                  },
+                  {
+                    value: scriptSceneForSc?.scene_description,
+                    path: `${scriptBasePathForSc}.scene_description`
+                  }
+                ]);
+                const narrationForSc = pickFieldWithPath('narration', sceneNumberForSc, [
+                  {
+                    value: scriptSceneForSc?.narration,
+                    path: `${scriptBasePathForSc}.narration`
+                  }
+                ]);
                 const meta = {
-                  description: sc?.desc || sc?.description || sc?.scene_description || '',
-                  narration: sc?.narration || sc?.voiceover || '',
+                  description: descriptionForSc,
+                  narration: narrationForSc,
                   textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || '',
                   model: sc?.model || sc?.mode || '',
                   prompts: {
@@ -874,14 +1161,12 @@ const getOrderedRefs = useCallback((row) => {
               
               let refs = [];
               if (isSoraFallback && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
-                console.log('🔄 SORA FALLBACK: Extracting from images object');
                 const versionKey = it.images.current_version || it.images.currentVersion || 'v1';
                 const verObj = it.images[versionKey] || it.images.v1 || {};
                 const arr = Array.isArray(verObj?.images) ? verObj.images : [];
                 refs = arr
                   .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
                   .filter(Boolean);
-                console.log('  Extracted SORA refs from images.base_image:', refs);
               } else {
                 refs = [...collectUrls(it)];
               if (it?.image_url) refs.push(it.image_url);
@@ -892,9 +1177,41 @@ const getOrderedRefs = useCallback((row) => {
               if (typeof it === 'string') refs.push(it);
               }
               
+              // Get description and narration from script data only
+              const sceneNumberForIt2 = it?.scene_number ?? (idx + 1);
+              const scriptSceneForIt2 =
+                allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForIt2]
+                  ? allScriptScenesByNumber[sceneNumberForIt2]
+                  : null;
+              const scriptIndexForIt2 =
+                typeof scriptSceneForIt2?.__aiIndex === 'number'
+                  ? scriptSceneForIt2.__aiIndex
+                  : Math.max(0, Number(sceneNumberForIt2) - 1);
+              const scriptBasePathForIt2 = `scripts[0].airesponse[${scriptIndexForIt2}]`;
+              const descriptionForIt2 = pickFieldWithPath('description', sceneNumberForIt2, [
+                {
+                  value: scriptSceneForIt2?.desc,
+                  path: `${scriptBasePathForIt2}.desc`
+                },
+                {
+                  value: scriptSceneForIt2?.description,
+                  path: `${scriptBasePathForIt2}.description`
+                },
+                {
+                  value: scriptSceneForIt2?.scene_description,
+                  path: `${scriptBasePathForIt2}.scene_description`
+                }
+              ]);
+              const narrationForIt2 = pickFieldWithPath('narration', sceneNumberForIt2, [
+                {
+                  value: scriptSceneForIt2?.narration,
+                  path: `${scriptBasePathForIt2}.narration`
+                }
+              ]);
+              
               const meta = {
-                description: it?.desc || it?.description || it?.scene_description || '',
-                narration: it?.narration || it?.voiceover || '',
+                description: descriptionForIt2,
+                narration: narrationForIt2,
                 textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
                 model: it?.model || it?.mode || '',
                 prompts: {
@@ -916,9 +1233,40 @@ const getOrderedRefs = useCallback((row) => {
           if (sc?.image_2_url) refs.push(sc.image_2_url);
           if (Array.isArray(sc?.refs)) refs.push(...sc.refs);
           if (Array.isArray(sc?.urls)) refs.push(...sc.urls);
+          // Get description and narration from script data only
+          const sceneNumberForSc2 = sc?.scene_number ?? (j + 1);
+          const scriptSceneForSc2 =
+            allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForSc2]
+              ? allScriptScenesByNumber[sceneNumberForSc2]
+              : null;
+          const scriptIndexForSc2 =
+            typeof scriptSceneForSc2?.__aiIndex === 'number'
+              ? scriptSceneForSc2.__aiIndex
+              : Math.max(0, Number(sceneNumberForSc2) - 1);
+          const scriptBasePathForSc2 = `scripts[0].airesponse[${scriptIndexForSc2}]`;
+          const descriptionForSc2 = pickFieldWithPath('description', sceneNumberForSc2, [
+            {
+              value: scriptSceneForSc2?.desc,
+              path: `${scriptBasePathForSc2}.desc`
+            },
+            {
+              value: scriptSceneForSc2?.description,
+              path: `${scriptBasePathForSc2}.description`
+            },
+            {
+              value: scriptSceneForSc2?.scene_description,
+              path: `${scriptBasePathForSc2}.scene_description`
+            }
+          ]);
+          const narrationForSc2 = pickFieldWithPath('narration', sceneNumberForSc2, [
+            {
+              value: scriptSceneForSc2?.narration,
+              path: `${scriptBasePathForSc2}.narration`
+            }
+          ]);
           const meta = {
-            description: sc?.desc || sc?.description || sc?.scene_description || '',
-            narration: sc?.narration || sc?.voiceover || '',
+            description: descriptionForSc2,
+            narration: narrationForSc2,
             textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || '',
             model: sc?.model || sc?.mode || '',
             prompts: {
@@ -1047,83 +1395,124 @@ const getOrderedRefs = useCallback((row) => {
         // For VEO3: Check scripts data for avatar_urls (for scenes that may not yet have image arrays)
         const sessionData = sdata?.session_data || sdata?.session || {};
         const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+        setScriptsData(scripts); // Store scripts data for console logging
+        // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
         const currentScript = scripts[0] || null;
         const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
         
         // Extract tone from script for matching voiceovers
         // Path: userquery[0].guidelines.purpose_and_audience.tone
-        console.log('🔍 Extracting tone from script:', {
-          currentScript,
-          hasUserQuery: !!currentScript?.userquery,
-          isUserQueryArray: Array.isArray(currentScript?.userquery)
-        });
-        
         const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
         const firstUserQuery = userQueryArr[0] || {};
-        console.log('📋 First user query:', firstUserQuery);
         
         // Check both paths: direct and under guidelines
         const guidelines = firstUserQuery?.guidelines || {};
-        console.log('📜 Guidelines:', guidelines);
         
         const purposeAndAudience = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
                                    firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
-        console.log('👥 Purpose and Audience:', purposeAndAudience);
         
         const tone = (purposeAndAudience?.tone || '').toLowerCase().trim();
-        console.log('🎵 Extracted tone:', tone);
         
         if (tone) {
           setScriptTone(tone);
-          console.log('✅ Script tone set:', tone);
-        } else {
-          console.warn('⚠️ No tone found in script. Checked paths:', {
-            'guidelines.purpose_and_audience.tone': guidelines?.purpose_and_audience?.tone,
-            'purpose_and_audience.tone': firstUserQuery?.purpose_and_audience?.tone
-          });
         }
-        // Index VEO3 script scenes by scene number so we can use avatar_urls for scenes missing image arrays
-        const veo3ScriptScenesByNumber = {};
+        // Index ALL script scenes from airesponse by scene number for description/narration
+        // Also index VEO3 scenes separately for avatar_urls
+        const allScriptScenesByNumber = {}; // For all scenes (description/narration)
+        const veo3ScriptScenesByNumber = {}; // For VEO3 scenes (avatar_urls)
         airesponse.forEach((scene, index) => {
           if (!scene || typeof scene !== 'object') return;
           const model = String(scene?.model || scene?.mode || '').toUpperCase();
-          const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
-          if (!isVEO3) return;
-          const sceneNumber =
+        const sceneNumber =
             scene?.scene_number ||
             scene?.scene_no ||
             scene?.sceneNo ||
             scene?.scene ||
             index + 1;
-          veo3ScriptScenesByNumber[sceneNumber] = {
+          
+          // Index ALL scenes for description/narration
+          allScriptScenesByNumber[sceneNumber] = {
             ...scene,
             scene_number: sceneNumber,
-            model
+            model,
+          __aiIndex: Math.max(0, Number(sceneNumber) - 1)
           };
+          
+          // Also index VEO3/ANCHOR scenes separately for avatar_urls
+          const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
+          if (isVEO3) {
+            veo3ScriptScenesByNumber[sceneNumber] = {
+              ...scene,
+              scene_number: sceneNumber,
+              model,
+              __aiIndex: Math.max(0, Number(sceneNumber) - 1)
+            };
+          }
         });
         
-        const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber);
+        const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber, allScriptScenesByNumber);
         if (!cancelled && sessionImages.length > 0) {
           setRows(sessionImages);
           const initialImages = getSceneImages(sessionImages[0]);
           const first = getPrimaryImage(sessionImages[0]);
           const model0 = String(sessionImages[0]?.model || sessionImages[0]?.mode || '').toUpperCase();
+          const firstScene = sessionImages[0];
+          
+          // Get current version from images object
+          const imageVersionData = firstScene?.imageVersionData || null;
+          const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
+          
+          // Console log current version in images object and scripts array
+          console.log('═══════════════════════════════════════════════════════════');
+          console.log(`🎯 INITIAL SCENE SELECTED: Scene ${firstScene?.scene_number || 1}`);
+          console.log('═══════════════════════════════════════════════════════════');
+          console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
+          console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
+          if (imageVersionData && imagesCurrentVersion) {
+            const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
+            console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
+          }
+          console.log(`📜 Scripts Array:`, scripts);
+          if (scripts && scripts.length > 0) {
+            scripts.forEach((script, idx) => {
+              const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
+              console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
+              if (scriptVersion && script[scriptVersion]) {
+                console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
+              }
+            });
+          }
+          console.log('═══════════════════════════════════════════════════════════');
+          
+          // Get avatar URLs from current version of image object for VEO3 scenes
+          const avatarUrlsFromVersion = getAvatarUrlsFromImageVersion(
+            imageVersionData,
+            firstScene?.current_version || 'v1',
+            model0
+          );
+          const finalAvatarUrls = avatarUrlsFromVersion.length > 0 
+            ? avatarUrlsFromVersion 
+            : (Array.isArray(firstScene?.avatar_urls) ? firstScene.avatar_urls : []);
+          
           setSelected({
             index: 0,
             imageUrl: first,
-            images: buildImageEntries(initialImages, sessionImages[0]?.imageFrames),
-            title: sessionImages[0]?.scene_title || 'Untitled',
-            sceneNumber: sessionImages[0]?.scene_number ?? '',
-            description: sessionImages[0]?.description || '',
-            narration: sessionImages[0]?.narration || '',
-            textToBeIncluded: sessionImages[0]?.textToBeIncluded || '',
+            images: buildImageEntries(initialImages, firstScene?.imageFrames),
+            title: firstScene?.scene_title || 'Untitled',
+            sceneNumber: firstScene?.scene_number ?? '',
+            description: firstScene?.description || '',
+            narration: firstScene?.narration || '',
+            textToBeIncluded: firstScene?.textToBeIncluded || '',
             model: model0,
-            prompts: sessionImages[0]?.prompts || { opening_frame: {}, closing_frame: {} },
-            imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
-            textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
-            imageVersionData: sessionImages[0]?.imageVersionData || null,
-            imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
-            isEditable: !!sessionImages[0]?.isEditable
+            prompts: firstScene?.prompts || { opening_frame: {}, closing_frame: {} },
+            imageDimensions: firstScene?.imageDimensions || firstScene?.image_dimensions || null,
+            textElements: Array.isArray(firstScene?.textElements) ? firstScene.textElements : [],
+            overlayElements: Array.isArray(firstScene?.overlayElements) ? firstScene.overlayElements : [],
+            imageVersionData: imageVersionData,
+            imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
+            avatar_urls: finalAvatarUrls,
+            current_version: firstScene?.current_version || 'v1',
+            isEditable: !!firstScene?.isEditable
           });
           
           // Call APIs for VEO3/SORA/ANCHOR models if images exist
@@ -1142,14 +1531,14 @@ const getOrderedRefs = useCallback((row) => {
                 try {
                   assetsData = JSON.parse(assetsText);
                 } catch (_) {
-                  assetsData = { logo_url: '', voice_urls: {} };
+                  assetsData = { logo_url: '', voice_url: '', voice_urls: {} };
                 }
                 if (assetsResp.ok && assetsData) {
                   setSessionAssets({
                     logo_url: assetsData.logo_url || '',
+                    voice_url: assetsData.voice_url || '', // Handle singular voice_url from API
                     voice_urls: assetsData.voice_urls || {}
                   });
-                  console.log('✅ Session assets loaded:', assetsData);
                 }
 
                 // Call brand assets API
@@ -1185,15 +1574,10 @@ const getOrderedRefs = useCallback((row) => {
                 
                 if (presetsResp.ok && validPresets.length > 0) {
                   setTransitionPresets(validPresets);
-                  console.log('✅ Transition presets loaded:', validPresets.length, 'presets');
-                  console.log('📋 Presets names:', validPresets.map(p => p.name || p.preset_name));
                 } else {
-                  console.warn('⚠️ No valid presets found. Response:', presetsData);
-                  console.warn('⚠️ Presets array:', presetsArray);
                 }
               }
             } catch (apiError) {
-              console.error('❌ Error loading session assets or presets:', apiError);
             }
           }
         }
@@ -1238,84 +1622,126 @@ const getOrderedRefs = useCallback((row) => {
                     // Extract VEO3 script scenes (avatar_urls) from scripts
                     const sessionData = sd?.session_data || sd?.session || {};
                     const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+                    setScriptsData(scripts); // Store scripts data for console logging
+                    // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
                     const currentScript = scripts[0] || null;
                     const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
                 
                 // Extract tone from script for matching voiceovers
                 // Path: userquery[0].guidelines.purpose_and_audience.tone
-                console.log('🔍 [After Polling] Extracting tone from script:', {
-                  currentScript,
-                  hasUserQuery: !!currentScript?.userquery,
-                  isUserQueryArray: Array.isArray(currentScript?.userquery)
-                });
-                
                 const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
                 const firstUserQuery = userQueryArr[0] || {};
-                console.log('📋 [After Polling] First user query:', firstUserQuery);
                 
                 // Check both paths: direct and under guidelines
                 const guidelines = firstUserQuery?.guidelines || {};
-                console.log('📜 [After Polling] Guidelines:', guidelines);
                 
                 const purposeAndAudience = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
-                                           firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
-                console.log('👥 [After Polling] Purpose and Audience:', purposeAndAudience);
+                                   firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
                 
                 const tone = (purposeAndAudience?.tone || '').toLowerCase().trim();
-                console.log('🎵 [After Polling] Extracted tone:', tone);
                 
                 if (tone) {
                   setScriptTone(tone);
-                  console.log('✅ [After Polling] Script tone set:', tone);
-                } else {
-                  console.warn('⚠️ [After Polling] No tone found in script. Checked paths:', {
-                    'guidelines.purpose_and_audience.tone': guidelines?.purpose_and_audience?.tone,
-                    'purpose_and_audience.tone': firstUserQuery?.purpose_and_audience?.tone
-                  });
                 }
                 
-                    const veo3ScriptScenesByNumber = {};
+                    // Index ALL script scenes from airesponse by scene number for description/narration
+                    // Also index VEO3 scenes separately for avatar_urls
+                    const allScriptScenesByNumber = {}; // For all scenes (description/narration)
+                    const veo3ScriptScenesByNumber = {}; // For VEO3 scenes (avatar_urls)
                     airesponse.forEach((scene, index) => {
                       if (!scene || typeof scene !== 'object') return;
                       const model = String(scene?.model || scene?.mode || '').toUpperCase();
-                      const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
-                      if (!isVEO3) return;
                       const sceneNumber =
                         scene?.scene_number ||
                         scene?.scene_no ||
                         scene?.sceneNo ||
                         scene?.scene ||
                         index + 1;
-                      veo3ScriptScenesByNumber[sceneNumber] = {
-                        ...scene,
-                        scene_number: sceneNumber,
-                        model
-                      };
+                      
+                      // Index ALL scenes for description/narration
+                    allScriptScenesByNumber[sceneNumber] = {
+                      ...scene,
+                      scene_number: sceneNumber,
+                      model,
+                      __aiIndex: Math.max(0, Number(sceneNumber) - 1)
+                    };
+                      
+                      // Also index VEO3/ANCHOR scenes separately for avatar_urls
+                      const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
+                      if (isVEO3) {
+                        veo3ScriptScenesByNumber[sceneNumber] = {
+                          ...scene,
+                          scene_number: sceneNumber,
+                          model,
+                          __aiIndex: Math.max(0, Number(sceneNumber) - 1)
+                        };
+                      }
                     });
                     
-                    const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images, veo3ScriptScenesByNumber);
+                    const sessionImages = mapSessionImages(sd?.session_data?.images || sd?.session?.images, veo3ScriptScenesByNumber, allScriptScenesByNumber);
                     if (!cancelled) {
                       setRows(sessionImages);
                       if (sessionImages.length > 0) {
                         const imgs = getSceneImages(sessionImages[0]);
                         const first = imgs[0] || '';
                         const model0 = String(sessionImages[0]?.model || '').toUpperCase();
+                        const firstScene = sessionImages[0];
+                        
+                        // Get current version from images object
+                        const imageVersionData = firstScene?.imageVersionData || null;
+                        const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
+                        
+                        // Console log current version in images object and scripts array
+                        console.log('═══════════════════════════════════════════════════════════');
+                        console.log(`🎯 SCENE SELECTED (After Polling): Scene ${firstScene?.scene_number || 1}`);
+                        console.log('═══════════════════════════════════════════════════════════');
+                        console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
+                        console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
+                        if (imageVersionData && imagesCurrentVersion) {
+                          const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
+                          console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
+                        }
+                        console.log(`📜 Scripts Array:`, scripts);
+                        if (scripts && scripts.length > 0) {
+                          scripts.forEach((script, idx) => {
+                            const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
+                            console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
+                            if (scriptVersion && script[scriptVersion]) {
+                              console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
+                            }
+                          });
+                        }
+                        console.log('═══════════════════════════════════════════════════════════');
+                        
+                      // Get avatar URLs from current version of image object for VEO3 scenes
+                      const avatarUrlsFromVersion2 = getAvatarUrlsFromImageVersion(
+                        imageVersionData,
+                        firstScene?.current_version || 'v1',
+                        model0
+                      );
+                      const finalAvatarUrls2 = avatarUrlsFromVersion2.length > 0 
+                        ? avatarUrlsFromVersion2 
+                        : (Array.isArray(firstScene?.avatar_urls) ? firstScene.avatar_urls : []);
+                        
                       setSelected({
                         index: 0,
                         imageUrl: first,
-                        images: buildImageEntries(imgs, sessionImages[0]?.imageFrames),
-                          title: sessionImages[0]?.scene_title || 'Untitled',
-                          sceneNumber: sessionImages[0]?.scene_number ?? '',
-                          description: sessionImages[0]?.description || '',
-                          narration: sessionImages[0]?.narration || '',
-                          textToBeIncluded: sessionImages[0]?.textToBeIncluded || '',
+                        images: buildImageEntries(imgs, firstScene?.imageFrames),
+                          title: firstScene?.scene_title || 'Untitled',
+                          sceneNumber: firstScene?.scene_number ?? '',
+                          description: firstScene?.description || '',
+                          narration: firstScene?.narration || '',
+                          textToBeIncluded: firstScene?.textToBeIncluded || '',
                           model: model0,
-                          prompts: sessionImages[0]?.prompts || { opening_frame: {}, closing_frame: {} },
-                          imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
-                          textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
-                          imageVersionData: sessionImages[0]?.imageVersionData || null,
-                          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
-                          isEditable: !!sessionImages[0]?.isEditable
+                          prompts: firstScene?.prompts || { opening_frame: {}, closing_frame: {} },
+                          imageDimensions: firstScene?.imageDimensions || firstScene?.image_dimensions || null,
+                          textElements: Array.isArray(firstScene?.textElements) ? firstScene.textElements : [],
+                          overlayElements: Array.isArray(firstScene?.overlayElements) ? firstScene.overlayElements : [],
+                          imageVersionData: imageVersionData,
+                          imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
+                          avatar_urls: finalAvatarUrls2,
+                          current_version: firstScene?.current_version || 'v1',
+                          isEditable: !!firstScene?.isEditable
                         });
                   }
                 }
@@ -1345,7 +1771,6 @@ const getOrderedRefs = useCallback((row) => {
                         logo_url: assetsData.logo_url || '',
                         voice_urls: assetsData.voice_urls || {}
                       });
-                      console.log('✅ Session assets loaded:', assetsData);
                     }
 
                     // Call brand assets API
@@ -1376,15 +1801,10 @@ const getOrderedRefs = useCallback((row) => {
                     
                     if (presetsResp.ok && validPresets.length > 0) {
                       setTransitionPresets(validPresets);
-                      console.log('✅ Transition presets loaded:', validPresets.length, 'presets');
-                      console.log('📋 Presets names:', validPresets.map(p => p.name || p.preset_name));
                     } else {
-                      console.warn('⚠️ No valid presets found. Response:', presetsData);
-                      console.warn('⚠️ Presets array:', presetsArray);
                     }
                   }
                 } catch (apiError) {
-                  console.error('❌ Error loading session assets or presets:', apiError);
                 }
               }
               // Job completed successfully, hide loader
@@ -1453,32 +1873,45 @@ const getOrderedRefs = useCallback((row) => {
       // For VEO3: Check scripts data for avatar_urls (for scenes that may not yet have image arrays)
       const sessionData = sdata?.session_data || sdata?.session || {};
       const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+      // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
       const currentScript = scripts[0] || null;
       const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
       
-      // Index VEO3 script scenes by scene number so we can use avatar_urls for scenes missing image arrays
+      // Index ALL script scenes from airesponse by scene number for description/narration
+      // Also index VEO3 scenes separately for avatar_urls
+      const allScriptScenesByNumber = {};
       const veo3ScriptScenesByNumber = {};
       airesponse.forEach((scene, index) => {
         if (!scene || typeof scene !== 'object') return;
         const model = String(scene?.model || scene?.mode || '').toUpperCase();
-        const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
-        if (!isVEO3) return;
         const sceneNumber =
           scene?.scene_number ||
           scene?.scene_no ||
           scene?.sceneNo ||
           scene?.scene ||
           index + 1;
-        veo3ScriptScenesByNumber[sceneNumber] = {
+        allScriptScenesByNumber[sceneNumber] = {
           ...scene,
           scene_number: sceneNumber,
-          model
+          model,
+          __aiIndex: Math.max(0, Number(sceneNumber) - 1)
         };
+        const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
+        if (isVEO3) {
+          veo3ScriptScenesByNumber[sceneNumber] = {
+            ...scene,
+            scene_number: sceneNumber,
+            model,
+            __aiIndex: Math.max(0, Number(sceneNumber) - 1)
+          };
+        }
       });
       
-      const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}) => {
+      const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}, allScriptScenesByNumber = {}) => {
         let mapped = [];
         const usedSceneNumbers = new Set();
+        // Store the first avatar URL found from any VEO3 scene to use for all VEO3 scenes
+        let globalAvatarUrl = null;
         const collectUrls = (node) => {
           const urls = [];
           const uniqPush = (v) => {
@@ -1573,19 +2006,16 @@ const getOrderedRefs = useCallback((row) => {
             if (arr.length > 0) {
                 const modelUpper = String(imagesRoot?.model || imagesRoot?.mode || '').toUpperCase();
                 const isSora = modelUpper === 'SORA';
-                console.log('📦 EXTRACTING IMAGES FROM images.v1.images array');
-                console.log('  Model:', modelUpper);
-                console.log('  Images array:', arr);
+                console.log(`📦 CURRENT_VERSION for single object:`, version);
+                console.log(`📋 VERSION OBJECT (${version}) for single object:`, JSON.stringify(vObj, null, 2));
               const refs = arr
                   .map((it) => {
                     const url = isSora
                       ? (it?.base_image?.image_url || it?.base_image?.imageUrl || '')
                       : (it?.base_image?.image_url || it?.base_image?.imageUrl || it?.image_url || it?.url || '');
-                    console.log('    Extracted URL from base_image:', url);
                     return url;
                   })
                 .filter(Boolean);
-                console.log('  Extracted refs:', refs);
               const primary = arr[0] || {};
               const baseImage = primary?.base_image || primary?.baseImage || {};
               const imageDimensions =
@@ -1594,26 +2024,69 @@ const getOrderedRefs = useCallback((row) => {
                 primary?.image_dimensions ||
                 primary?.imageDimensions ||
                 null;
+              // Extract text elements from current version
               const textElements = Array.isArray(primary?.text_elements)
                 ? primary.text_elements
                 : Array.isArray(primary?.textElements)
                 ? primary.textElements
                 : [];
+              
+              // Extract overlay elements (charts) from current version
+              const overlayElements = Array.isArray(primary?.overlay_elements)
+                ? primary.overlay_elements
+                : Array.isArray(primary?.overlayElements)
+                ? primary.overlayElements
+                : [];
+              
+              // Get description and narration from script data only
+              const sceneNumberForImagesRoot = imagesRoot?.scene_number || 1;
+              const scriptScene =
+                allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForImagesRoot]
+                  ? allScriptScenesByNumber[sceneNumberForImagesRoot]
+                  : null;
+              const scriptIndexForRoot =
+                typeof scriptScene?.__aiIndex === 'number'
+                  ? scriptScene.__aiIndex
+                  : Math.max(0, Number(sceneNumberForImagesRoot) - 1);
+              const scriptBasePathRoot = `scripts[0].airesponse[${scriptIndexForRoot}]`;
+              const description = pickFieldWithPath('description', sceneNumberForImagesRoot, [
+                {
+                  value: scriptScene?.desc,
+                  path: `${scriptBasePathRoot}.desc`
+                },
+                {
+                  value: scriptScene?.description,
+                  path: `${scriptBasePathRoot}.description`
+                },
+                {
+                  value: scriptScene?.scene_description,
+                  path: `${scriptBasePathRoot}.scene_description`
+                }
+              ]);
+              const narration = pickFieldWithPath('narration', sceneNumberForImagesRoot, [
+                {
+                  value: scriptScene?.narration,
+                  path: `${scriptBasePathRoot}.narration`
+                }
+              ]);
+              
+              
               pushRow(1, imagesRoot?.scene_title || 'Images', refs, {
-                description: imagesRoot?.description || imagesRoot?.scene_description || '',
-                narration: imagesRoot?.narration || '',
+                description,
+                narration,
                 textToBeIncluded: imagesRoot?.text_to_be_included || '',
                 imageDimensions,
                 textElements,
+                overlayElements,
                 imageVersionData: imagesRoot,
                 imageFrames: arr,
                 isEditable: true,
                 model: modelUpper,
-                prompts: normalizePromptFields(imagesRoot?.prompts || {})
+                prompts: normalizePromptFields(vObj?.prompts || imagesRoot?.prompts || {}),
+                current_version: version
               });
             }
           } catch (e) {
-            console.error('Error mapping single object:', e);
           }
         } else if (Array.isArray(imagesRoot)) {
           imagesRoot.forEach((it, idx) => {
@@ -1629,6 +2102,10 @@ const getOrderedRefs = useCallback((row) => {
               const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || 'v1';
               const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
+              
+              console.log(`📌 CURRENT_VERSION:`, versionKey);
+              console.log(`📋 VERSION OBJECT (${versionKey}):`, verObj);
+              
               if (arr.length > 0) {
                 const soraRefs = arr
                   .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
@@ -1641,29 +2118,124 @@ const getOrderedRefs = useCallback((row) => {
                   primary?.image_dimensions ||
                   primary?.imageDimensions ||
                   null;
+                
+                // Extract text elements from current version
                 const textElements = Array.isArray(primary?.text_elements)
                   ? primary.text_elements
                   : Array.isArray(primary?.textElements)
                   ? primary.textElements
                   : [];
+                
+                // Extract overlay elements (charts) from current version
+                const overlayElements = Array.isArray(primary?.overlay_elements)
+                  ? primary.overlay_elements
+                  : Array.isArray(primary?.overlayElements)
+                  ? primary.overlayElements
+                  : [];
+                
+                // Get description and narration from LATEST script's airesponse (scripts[0].airesponse[sceneNumber])
+                // Only use script data, no fallback to image data
+                const scriptScene =
+                  allScriptScenesByNumber && allScriptScenesByNumber[sceneNumber]
+                    ? allScriptScenesByNumber[sceneNumber]
+                    : null;
+                const scriptIndexForScene =
+                  typeof scriptScene?.__aiIndex === 'number'
+                    ? scriptScene.__aiIndex
+                    : Math.max(0, Number(sceneNumber) - 1);
+                const scriptBasePathScene = `scripts[0].airesponse[${scriptIndexForScene}]`;
+                const description = pickFieldWithPath('description', sceneNumber, [
+                  {
+                    value: scriptScene?.desc,
+                    path: `${scriptBasePathScene}.desc`
+                  },
+                  {
+                    value: scriptScene?.description,
+                    path: `${scriptBasePathScene}.description`
+                  },
+                  {
+                    value: scriptScene?.scene_description,
+                    path: `${scriptBasePathScene}.scene_description`
+                  }
+                ]);
+                const narration = pickFieldWithPath('narration', sceneNumber, [
+                  {
+                    value: scriptScene?.narration,
+                    path: `${scriptBasePathScene}.narration`
+                  }
+                ]);
+                
+                
                 pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, soraRefs, {
-                  description: it?.description || it?.scene_description || '',
-                  narration: it?.narration || '',
+                  description,
+                  narration,
                   textToBeIncluded: it?.text_to_be_included || '',
                   imageDimensions,
                   textElements,
+                  overlayElements,
                   imageVersionData: imagesContainer,
                   imageFrames: arr,
                   isEditable: true,
                   model: modelUpper,
-                  prompts: normalizePromptFields(verObj?.prompts || it?.prompts || {})
+                  prompts: normalizePromptFields(verObj?.prompts || it?.prompts || {}),
+                  current_version: versionKey
                 });
                 return;
               }
             }
             
-            let refs = collectUrls(it);
+            // For VEO3/ANCHOR: Check if it has versioned structure like SORA
+            let refs = [];
             let avatarUrlsForMeta = []; // Store avatar_urls for VEO3
+            let hasVersionedImages = false;
+            
+            if (isVEO3 && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
+              // VEO3 with versioned structure
+              const imagesContainer = it.images;
+              const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || 'v1';
+              const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+              const arr = Array.isArray(verObj?.images) ? verObj.images : [];
+              
+              console.log(`📌 CURRENT_VERSION:`, versionKey);
+              console.log(`📋 VERSION OBJECT (${versionKey}):`, verObj);
+              
+              // Explicitly check and log avatar_urls
+              const versionAvatars = verObj?.avatar_urls;
+              
+              if (arr.length > 0) {
+                // Extract images from current_version using base_image.image_url
+                refs = arr
+                  .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
+                  .filter(Boolean);
+                hasVersionedImages = true;
+              }
+              
+              if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+                avatarUrlsForMeta = versionAvatars.map((av) => {
+                  if (typeof av === 'string') return av.trim();
+                  return (
+                    av?.imageurl ||
+                    av?.imageUrl ||
+                    av?.image_url ||
+                    av?.url ||
+                    av?.src ||
+                    av?.link ||
+                    av?.avatar_url ||
+                    ''
+                  );
+                }).filter(url => url && typeof url === 'string' && url.trim());
+                
+                // Store the first avatar URL found to use for all VEO3 scenes
+                if (avatarUrlsForMeta.length > 0 && !globalAvatarUrl) {
+                  globalAvatarUrl = avatarUrlsForMeta[0];
+                }
+              }
+            }
+            
+            // Fallback to collectUrls if no versioned structure
+            if (!hasVersionedImages) {
+              refs = collectUrls(it);
+            }
             
             if (isVEO3 && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
               const scene = veo3ScriptScenesByNumber[sceneNumber];
@@ -1687,22 +2259,35 @@ const getOrderedRefs = useCallback((row) => {
                 return trimmed && !backgroundImageUrls.has(trimmed);
               });
               
-              // Extract avatar_urls for VEO3 (always, not just as fallback)
-              avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
-                ? scene.avatar_urls.map((av) => {
-                    if (typeof av === 'string') return av.trim();
-                    return (
-                      av?.imageurl ||
-                      av?.imageUrl ||
-                      av?.image_url ||
-                      av?.url ||
-                      av?.src ||
-                      av?.link ||
-                      av?.avatar_url ||
-                      ''
-                    );
-                  }).filter(url => url && typeof url === 'string' && url.trim())
-                : [];
+              // Extract avatar_urls for VEO3 from script ONLY if not already extracted from versioned structure
+              if (avatarUrlsForMeta.length === 0) {
+                avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
+                  ? scene.avatar_urls.map((av) => {
+                      if (typeof av === 'string') return av.trim();
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    }).filter(url => url && typeof url === 'string' && url.trim())
+                  : [];
+                
+                // Store the first avatar URL found to use for all VEO3 scenes
+                if (avatarUrlsForMeta.length > 0 && !globalAvatarUrl) {
+                  globalAvatarUrl = avatarUrlsForMeta[0];
+                }
+              }
+              
+              // ALWAYS apply global avatar to all VEO3 scenes (use the same avatar for all scenes)
+              // If we have a global avatar, use it for ALL scenes regardless of what was found
+              if (globalAvatarUrl) {
+                avatarUrlsForMeta = [globalAvatarUrl];
+              }
               
               // PRIORITY: Use base_image URLs from image arrays if available
               if (filteredRefs.length > 0) {
@@ -1714,33 +2299,143 @@ const getOrderedRefs = useCallback((row) => {
                   refs = avatarUrlsForMeta;
                 }
               }
+              
+              // Final summary for VEO3 scene
             }
             
             if (refs.length > 0) {
-              const baseImage = it?.base_image || it?.baseImage || {};
+              // Check if this is a versioned structure
+              let versionData = it;
+              let currentVersionKey = 'v1';
+              let overlayElements = [];
+              
+              if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
+                currentVersionKey = it.images.current_version || it.images.currentVersion || 'v1';
+                versionData = it.images[currentVersionKey] || it.images.v1 || it;
+                
+                console.log(`📌 CURRENT_VERSION:`, currentVersionKey);
+                console.log(`📋 VERSION OBJECT (${currentVersionKey}):`, versionData);
+              }
+              
+              const baseImage = versionData?.base_image || versionData?.baseImage || it?.base_image || it?.baseImage || {};
               const imageDimensions =
                 baseImage?.image_dimensions ||
                 baseImage?.imageDimensions ||
+                versionData?.image_dimensions ||
+                versionData?.imageDimensions ||
                 it?.image_dimensions ||
                 it?.imageDimensions ||
                 null;
-              const textElements = Array.isArray(it?.text_elements)
+              
+              // Extract text elements from current version
+              const textElements = Array.isArray(versionData?.text_elements)
+                ? versionData.text_elements
+                : Array.isArray(versionData?.textElements)
+                ? versionData.textElements
+                : Array.isArray(it?.text_elements)
                 ? it.text_elements
                 : Array.isArray(it?.textElements)
                 ? it.textElements
                 : [];
+              
+              // Extract overlay elements (charts) from current version
+              overlayElements = Array.isArray(versionData?.overlay_elements)
+                ? versionData.overlay_elements
+                : Array.isArray(versionData?.overlayElements)
+                ? versionData.overlayElements
+                : Array.isArray(it?.overlay_elements)
+                ? it.overlay_elements
+                : Array.isArray(it?.overlayElements)
+                ? it.overlayElements
+                : [];
+              
+              // Get updated avatar_urls from current version (VEO3/ANCHOR)
+              if (isVEO3) {
+                // PRIORITY: Extract from current_version first
+                let versionAvatars = versionData?.avatar_urls;
+                
+                // If versioned structure exists, extract from it
+                if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
+                  const imgContainer = it.images;
+                  const vKey = imgContainer.current_version || imgContainer.currentVersion || 'v1';
+                  const vObj = imgContainer[vKey] || imgContainer.v1 || {};
+                  versionAvatars = vObj?.avatar_urls || versionAvatars;
+                  
+                }
+                
+                // Fallback to root level
+                if (!versionAvatars || !Array.isArray(versionAvatars) || versionAvatars.length === 0) {
+                  versionAvatars = it?.avatar_urls;
+                }
+                
+                if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+                  avatarUrlsForMeta = versionAvatars.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim());
+                }
+              }
+              
+              // Get description and narration from LATEST script's airesponse (scripts[0].airesponse[sceneNumber])
+              // Only use script data, no fallback to image data
+              const scriptScene =
+                allScriptScenesByNumber && allScriptScenesByNumber[sceneNumber]
+                  ? allScriptScenesByNumber[sceneNumber]
+                  : null;
+              const scriptIndexForVeo =
+                typeof scriptScene?.__aiIndex === 'number'
+                  ? scriptScene.__aiIndex
+                  : Math.max(0, Number(sceneNumber) - 1);
+              const scriptBasePathVeo = `scripts[0].airesponse[${scriptIndexForVeo}]`;
+              const description = pickFieldWithPath('description', sceneNumber, [
+                {
+                  value: scriptScene?.desc,
+                  path: `${scriptBasePathVeo}.desc`
+                },
+                {
+                  value: scriptScene?.description,
+                  path: `${scriptBasePathVeo}.description`
+                },
+                {
+                  value: scriptScene?.scene_description,
+                  path: `${scriptBasePathVeo}.scene_description`
+                }
+              ]);
+              const narration = pickFieldWithPath('narration', sceneNumber, [
+                {
+                  value: scriptScene?.narration,
+                  path: `${scriptBasePathVeo}.narration`
+                }
+              ]);
+              
+              
+              // For VEO3: ALWAYS use global avatar if available, otherwise use scene-specific avatar
+              const finalAvatarUrls = (isVEO3 && globalAvatarUrl) ? [globalAvatarUrl] : (isVEO3 && avatarUrlsForMeta.length > 0 ? avatarUrlsForMeta : []);
+              
               pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, refs, {
-                description: it?.description || it?.scene_description || '',
-                narration: it?.narration || '',
+                description,
+                narration,
                 textToBeIncluded: it?.text_to_be_included || '',
                 imageDimensions,
                 textElements,
-                imageVersionData: it,
+                overlayElements,
+                imageVersionData: it?.images || it,
                 imageFrames: Array.isArray(it?.images) ? it.images : [it],
                 isEditable: true,
-                // Store avatar_urls in metadata for VEO3 only
-                ...(isVEO3 && avatarUrlsForMeta.length > 0 ? { avatar_urls: avatarUrlsForMeta } : {}),
-                prompts: normalizePromptFields(it?.prompts || {})
+                model: modelUpper,
+                // Store avatar_urls in metadata for VEO3 only - use global avatar if available
+                ...(isVEO3 && finalAvatarUrls.length > 0 ? { avatar_urls: finalAvatarUrls } : {}),
+                prompts: normalizePromptFields(versionData?.prompts || it?.prompts || {}),
+                current_version: currentVersionKey
               });
             }
           });
@@ -1779,7 +2474,7 @@ const getOrderedRefs = useCallback((row) => {
             });
             
             // Get avatar_urls
-            const avatarUrls = Array.isArray(scene?.avatar_urls)
+            let avatarUrls = Array.isArray(scene?.avatar_urls)
               ? scene.avatar_urls.map((av) => {
                   if (typeof av === 'string') return av.trim();
                   return (
@@ -1795,6 +2490,17 @@ const getOrderedRefs = useCallback((row) => {
                 }).filter(url => url && typeof url === 'string' && url.trim())
               : [];
             
+            // Store the first avatar URL found to use for all VEO3 scenes
+            if (avatarUrls.length > 0 && !globalAvatarUrl) {
+              globalAvatarUrl = avatarUrls[0];
+            }
+            
+            // ALWAYS apply global avatar to all VEO3 scenes (use the same avatar for all scenes)
+            // If we have a global avatar, use it for ALL scenes regardless of what was found
+            if (globalAvatarUrl) {
+              avatarUrls = [globalAvatarUrl];
+            }
+            
             // For VEO3: store avatar_urls separately in metadata, combine with collectedUrls in refs
             // For other models: combine as before
             const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
@@ -1803,7 +2509,7 @@ const getOrderedRefs = useCallback((row) => {
               ? [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean)
               : [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
             const meta = {
-              description: scene?.description || scene?.scene_description || '',
+              description: scene?.desc || scene?.description || scene?.scene_description || '',
               narration: scene?.narration || '',
               textToBeIncluded: scene?.text_to_be_included || '',
               imageDimensions: null,
@@ -1819,32 +2525,89 @@ const getOrderedRefs = useCallback((row) => {
             pushRow(num, scene?.scene_title || scene?.title, refs, meta);
           });
         }
+        
+        // Final pass: Apply global avatar to all VEO3 scenes to ensure consistency
+        if (globalAvatarUrl) {
+          mapped = mapped.map((row) => {
+            const modelUpper = String(row?.model || '').toUpperCase();
+            const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
+            if (isVEO3) {
+              return {
+                ...row,
+                avatar_urls: [globalAvatarUrl]
+              };
+            }
+            return row;
+          });
+        }
+        
         return mapped;
       };
       
-      const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber);
+      const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber, allScriptScenesByNumber);
       if (sessionImages.length > 0) {
         setRows(sessionImages);
         const initialImages = getSceneImages(sessionImages[0]);
         const first = initialImages[0] || '';
         const model0 = String(sessionImages[0]?.model || '').toUpperCase();
         const imgs = initialImages;
+        const firstScene = sessionImages[0];
+        
+        // Get current version from images object
+        const imageVersionData = firstScene?.imageVersionData || null;
+        const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
+        
+        // Console log current version in images object and scripts array
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log(`🎯 SCENE SELECTED (Refresh Load): Scene ${firstScene?.scene_number || 1}`);
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
+        console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
+        if (imageVersionData && imagesCurrentVersion) {
+          const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
+          console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
+        }
+        console.log(`📜 Scripts Array:`, scriptsData);
+        if (scriptsData && scriptsData.length > 0) {
+          scriptsData.forEach((script, idx) => {
+            const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
+            console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
+            if (scriptVersion && script[scriptVersion]) {
+              console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
+            }
+          });
+        }
+        console.log('═══════════════════════════════════════════════════════════');
+        
+        // Get avatar URLs from current version of image object for VEO3 scenes
+        const avatarUrlsFromVersion3 = getAvatarUrlsFromImageVersion(
+          imageVersionData,
+          firstScene?.current_version || 'v1',
+          model0
+        );
+        const finalAvatarUrls3 = avatarUrlsFromVersion3.length > 0 
+          ? avatarUrlsFromVersion3 
+          : (Array.isArray(firstScene?.avatar_urls) ? firstScene.avatar_urls : []);
+        
         setSelected({
           index: 0,
           imageUrl: first,
-          images: buildImageEntries(imgs, sessionImages[0]?.imageFrames),
-          title: sessionImages[0]?.scene_title || 'Untitled',
-          sceneNumber: sessionImages[0]?.scene_number ?? '',
-          description: sessionImages[0]?.description || '',
-          narration: sessionImages[0]?.narration || '',
-          textToBeIncluded: sessionImages[0]?.textToBeIncluded || '',
+          images: buildImageEntries(imgs, firstScene?.imageFrames),
+          title: firstScene?.scene_title || 'Untitled',
+          sceneNumber: firstScene?.scene_number ?? '',
+          description: firstScene?.description || '',
+          narration: firstScene?.narration || '',
+          textToBeIncluded: firstScene?.textToBeIncluded || '',
           model: model0,
-          prompts: sessionImages[0]?.prompts || { opening_frame: {}, closing_frame: {} },
-          imageDimensions: sessionImages[0]?.imageDimensions || sessionImages[0]?.image_dimensions || null,
-          textElements: Array.isArray(sessionImages[0]?.textElements) ? sessionImages[0].textElements : [],
-          imageVersionData: sessionImages[0]?.imageVersionData || null,
-          imageFrames: Array.isArray(sessionImages[0]?.imageFrames) ? sessionImages[0].imageFrames : [],
-          isEditable: !!sessionImages[0]?.isEditable
+          prompts: firstScene?.prompts || { opening_frame: {}, closing_frame: {} },
+          imageDimensions: firstScene?.imageDimensions || firstScene?.image_dimensions || null,
+          textElements: Array.isArray(firstScene?.textElements) ? firstScene.textElements : [],
+          overlayElements: Array.isArray(firstScene?.overlayElements) ? firstScene.overlayElements : [],
+          imageVersionData: imageVersionData,
+          imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
+          avatar_urls: finalAvatarUrls3,
+          current_version: firstScene?.current_version || 'v1',
+          isEditable: !!firstScene?.isEditable
         });
       }
       setIsLoading(false);
@@ -1855,14 +2618,6 @@ const getOrderedRefs = useCallback((row) => {
       setIsPolling(false);
     }
   }, []);
-
-  // Handle regenerate image with popup
-  const handleRegenerateClick = (sceneNumber) => {
-    setRegeneratingSceneNumber(sceneNumber);
-    setRegenerateUserQuery('');
-    setError(''); // Clear any previous errors
-    setShowRegeneratePopup(true);
-  };
 
   const handleEditChartsClick = React.useCallback(async () => {
     if (!selected) return;
@@ -1940,6 +2695,7 @@ const getOrderedRefs = useCallback((row) => {
 
       const sessionData = sdata?.session_data || sdata?.session || {};
       const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
+      // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
       const currentScript = scripts[0] || null;
 
       // Helper to safely extract a trimmed string
@@ -2010,6 +2766,30 @@ const getOrderedRefs = useCallback((row) => {
     };
   }, [getAspectRatio]);
 
+  // Handle regenerate image with popup
+  const handleRegenerateClick = useCallback(async (sceneNumber) => {
+    setRegeneratingSceneNumber(sceneNumber);
+    setRegenerateUserQuery('');
+    setError(''); // Clear any previous errors
+    setIsRegenerateForDescription(false); // Mark that this is for regenerate (not edit description)
+    
+    // Get the model for this scene
+    const model = getSceneModel(sceneNumber);
+    
+    // Set default frames based on model
+    if (isVEO3Model(model) || isANCHORModel(model)) {
+      setRegenerateFrames(['background']); // VEO3/ANCHOR always use background
+    } else {
+      // For all other models (SORA, PLOTLY, etc.): default to both frames
+      setRegenerateFrames(['opening', 'closing']);
+    }
+    
+    // Reset save as new version to false
+    setRegenerateSaveAsNewVersion(false);
+    
+    setShowRegeneratePopup(true);
+  }, [getSceneModel, isSORAModel, isVEO3Model, isANCHORModel]);
+
   // Handle regenerate API call
   const handleGenerateImage = React.useCallback(async () => {
     try {
@@ -2030,23 +2810,45 @@ const getOrderedRefs = useCallback((row) => {
         return;
       }
 
+      // Get the model for the current scene
+      const model = getSceneModel(regeneratingSceneNumber);
+      if (!model) {
+        setError('Unable to determine scene model');
+        setIsRegenerating(false);
+        return;
+      }
+
+      // Use the aspect ratio from session
       const aspectRatio = await getAspectRatio();
+
+      // Determine frames to regenerate based on model
+      let framesToRegenerate = [];
+      if (isVEO3Model(model) || isANCHORModel(model)) {
+        // VEO3/ANCHOR: always regenerate background only
+        framesToRegenerate = ['background'];
+      } else {
+        // For all other models (SORA, PLOTLY, etc.): use selected frames (opening, closing, or both)
+        framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
+      }
+
+      // Build request payload
+      const payload = {
+        user_id: user_id,
+        session_id: session_id,
+        scene_number: regeneratingSceneNumber,
+        model: model,
+        action: 'regenerate',
+        user_query: regenerateUserQuery.trim(),
+        frames_to_regenerate: framesToRegenerate,
+        save_as_new_version: regenerateSaveAsNewVersion,
+        aspect_ratio: aspectRatio
+      };
 
       // Call regenerate API endpoint
       const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'regenerate',
-          aspect_ratio: aspectRatio,
-          frames_to_regenerate: ['opening', 'closing'],
-          model: 'SORA',
-          save_as_new_version: false,
-          scene_number: regeneratingSceneNumber,
-          session_id: session_id,
-          user_id: user_id,
-          user_query: regenerateUserQuery.trim()
-        })
+        body: JSON.stringify(payload)
       });
 
       const text = await response.text();
@@ -2061,17 +2863,116 @@ const getOrderedRefs = useCallback((row) => {
         throw new Error(`Regenerate failed: ${response.status} ${text}`);
       }
 
-      // Close popup and refresh the image list after regeneration
-      setShowRegeneratePopup(false);
-      setRegenerateUserQuery('');
-      setRegeneratingSceneNumber(null);
-      await refreshLoad();
+      // Handle successful response
+      if (data && data.success) {
+        
+        // Close popup
+        setShowRegeneratePopup(false);
+        setRegenerateUserQuery('');
+        setRegeneratingSceneNumber(null);
+        setIsRegenerateForDescription(false);
+        // Reset regenerate options to defaults
+        setRegenerateFrames(['opening', 'closing']);
+        setRegenerateSaveAsNewVersion(false);
+        
+        // Reload the page after regenerate API completes
+        window.location.reload();
+      } else {
+        throw new Error('Regenerate API did not return success');
+      }
     } catch (e) {
       setError(e?.message || 'Failed to regenerate image');
-    } finally {
       setIsRegenerating(false);
+      setIsLoading(false);
     }
-  }, [regenerateUserQuery, regeneratingSceneNumber, refreshLoad]);
+  }, [
+    regenerateUserQuery, 
+    regeneratingSceneNumber, 
+    regenerateFrames, 
+    regenerateSaveAsNewVersion,
+    getSceneModel, 
+    isSORAModel, 
+    isVEO3Model, 
+    isANCHORModel, 
+    getAspectRatio, 
+    refreshLoad
+  ]);
+
+
+  // Handle VEO3 avatar management API call
+  const handleUpdateVEO3Avatars = React.useCallback(async () => {
+    try {
+      setIsUpdatingAvatars(true);
+      setError('');
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      
+      if (!session_id || !user_id) {
+        setError('Missing session or user');
+        setIsUpdatingAvatars(false);
+        return;
+      }
+
+      if (!managingAvatarSceneNumber) {
+        setError('Missing scene number');
+        setIsUpdatingAvatars(false);
+        return;
+      }
+
+      // Filter out empty avatar URLs
+      const validAvatarUrls = avatarUrls.filter(url => url && url.trim() !== '');
+
+      if (validAvatarUrls.length === 0) {
+        setError('Please provide at least one valid avatar URL');
+        setIsUpdatingAvatars(false);
+        return;
+      }
+
+      // Build request payload
+      const payload = {
+        user_id: user_id,
+        session_id: session_id,
+        scene_number: managingAvatarSceneNumber,
+        avatar_urls: validAvatarUrls
+      };
+
+      // Call VEO3 avatars API endpoint
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/veo3-avatars', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Avatar update failed: ${response.status} ${text}`);
+      }
+
+      // Handle successful response
+      if (data && data.success) {
+        // Close popup
+        setShowAvatarManager(false);
+        setManagingAvatarSceneNumber(null);
+        setAvatarUrls(['', '']);
+        
+        // Reload the page after VEO3 avatar URL API completes
+        window.location.reload();
+      } else {
+        throw new Error('Avatar update API did not return success');
+      }
+    } catch (e) {
+      setError(e?.message || 'Failed to update avatars');
+      setIsUpdatingAvatars(false);
+      setIsLoading(false);
+    }
+  }, [managingAvatarSceneNumber, avatarUrls, refreshLoad]);
 
   // Handle upload background API call
   const handleUploadBackground = React.useCallback(async () => {
@@ -2099,24 +3000,72 @@ const getOrderedRefs = useCallback((row) => {
         return;
       }
 
+      // Get the model for the current scene (defaults to SORA if not found)
+      const model = getSceneModel(uploadingBackgroundSceneNumber) || 'SORA';
       const aspectRatio = await getAspectRatio();
 
-      // Create FormData for file upload
-      const formData = new FormData();
-      formData.append('action', 'upload');
-      formData.append('aspect_ratio', aspectRatio);
-      formData.append('frames_to_regenerate', JSON.stringify([]));
-      formData.append('model', 'SORA');
-      formData.append('save_as_new_version', 'false');
-      formData.append('scene_number', String(uploadingBackgroundSceneNumber));
-      formData.append('session_id', session_id);
-      formData.append('user_id', user_id);
-      formData.append('background_image', uploadedBackgroundFile);
+      // Step 1: Convert image to base64
+      const base64Image = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result.split(',')[1]; // Remove data:image/...;base64, prefix
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(uploadedBackgroundFile);
+      });
 
-      // Call upload API endpoint (same as regenerate but with action: upload and file)
+      // Step 2: Upload to /v1/bf_remove/upload to get blob URL
+      const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/bf_remove/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64_image: base64Image })
+      });
+
+      const uploadText = await uploadResponse.text();
+      let uploadData;
+      try {
+        uploadData = JSON.parse(uploadText);
+      } catch (_) {
+        uploadData = uploadText;
+      }
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Failed to upload image: ${uploadResponse.status} ${uploadText}`);
+      }
+
+      const uploadImageUrl = uploadData?.image_url || uploadData?.imageUrl || uploadData?.url;
+      if (!uploadImageUrl) {
+        throw new Error('No image URL returned from upload');
+      }
+
+      // Determine frames to upload based on model
+      let framesToUpload = [];
+      if (isVEO3Model(model)) {
+        // VEO3: always use background only (no options)
+        framesToUpload = ['background'];
+      } else {
+        // SORA, ANCHOR, PLOTLY, and others: use selected frames (opening, closing, or both)
+        framesToUpload = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
+      }
+
+      // Step 3: Call regenerate API with JSON body
+      const payload = {
+        user_id: user_id,
+        session_id: session_id,
+        scene_number: uploadingBackgroundSceneNumber,
+        model: model,
+        action: 'upload',
+        upload_image_url: uploadImageUrl,
+        frames_to_regenerate: framesToUpload,
+        save_as_new_version: false,
+        aspect_ratio: aspectRatio
+      };
+
       const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
 
       const text = await response.text();
@@ -2131,18 +3080,23 @@ const getOrderedRefs = useCallback((row) => {
         throw new Error(`Upload background failed: ${response.status} ${text}`);
       }
 
-      // Close popup and refresh the image list after upload
+      // Handle successful upload
+      // Close popup immediately
       setShowUploadBackgroundPopup(false);
       setUploadedBackgroundFile(null);
       setUploadedBackgroundPreview(null);
       setUploadingBackgroundSceneNumber(null);
-      await refreshLoad();
+      
+      // Reload the page after upload API completes
+      window.location.reload();
     } catch (e) {
       setError(e?.message || 'Failed to upload background');
     } finally {
+      // Loader turns off only after everything is complete (including refreshLoad + image display)
       setIsUploadingBackground(false);
+      setIsLoading(false);
     }
-  }, [uploadedBackgroundFile, uploadingBackgroundSceneNumber, refreshLoad]);
+  }, [uploadedBackgroundFile, uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model]);
 
   // Reset active image tab when scene changes
   useEffect(() => {
@@ -2408,7 +3362,6 @@ const getOrderedRefs = useCallback((row) => {
         link.click();
         document.body.removeChild(link);
       } catch (err) {
-        console.error('Failed to export frame image:', err);
       }
     },
     [rows, findFrameForImage, mergeFrameToDataUrl]
@@ -2429,7 +3382,6 @@ const getOrderedRefs = useCallback((row) => {
         link.click();
         document.body.removeChild(link);
       } catch (err) {
-        console.error('Failed to export visible image from DOM:', err);
       }
     },
     []
@@ -2500,15 +3452,9 @@ const getOrderedRefs = useCallback((row) => {
     const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
     const node = document.querySelector(selector);
     if (!node) {
-      console.warn('⚠️ captureSceneImageWithHtml2Canvas: no node for', selector);
       return null;
     }
     try {
-      console.log('📸 captureSceneImageWithHtml2Canvas: capturing DOM snapshot for', {
-        sceneNumber,
-        imageIndex,
-        selector
-      });
       const canvas = await html2canvas(node, {
         useCORS: true,
         logging: false,
@@ -2518,7 +3464,6 @@ const getOrderedRefs = useCallback((row) => {
       });
       return canvas.toDataURL('image/png');
     } catch (err) {
-      console.warn('⚠️ captureSceneImageWithHtml2Canvas failed, returning null', err);
       return null;
     }
   }
@@ -2537,11 +3482,7 @@ const getOrderedRefs = useCallback((row) => {
     let saved = 0;
 
     try {
-      console.log('🎬 Starting image save process using frame data / DOM capture...');
-      console.log(`📊 Total scenes: ${rows.length}`);
-
       if (rows.length === 0) {
-        console.warn('⚠️ No scenes found - nothing to save');
         return failed;
       }
 
@@ -2557,18 +3498,12 @@ const getOrderedRefs = useCallback((row) => {
         const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : [];
         const fallbackDims = row?.imageDimensions || row?.image_dimensions || null;
 
-        console.log(`\n🎬 Processing Scene ${sceneNumber} (${images.length} images)...`);
-        console.log(
-          `📋 Scene ${sceneNumber} images:`,
-          images.map((img, idx) => `Image ${idx + 1}: ${img ? '✅' : '❌'}`).join(', ')
-        );
 
         // Process each image in this scene
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const imageUrl = images[imageIndex];
 
           if (!imageUrl) {
-            console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No URL, skipping`);
             continue;
           }
 
@@ -2578,7 +3513,6 @@ const getOrderedRefs = useCallback((row) => {
             // CRITICAL: For ALL non-Plotly images, we MUST switch to that scene + image tab
             // and capture the LIVE DOM using html2canvas, exactly as Export does.
             if (!isPlotly) {
-              console.log(`🔄 Switching UI to Scene ${sceneNumber}, Image ${imageIndex + 1} for DOM capture...`);
               
               // 1) Switch to this scene
               const currentSceneNumber = selected?.sceneNumber || selected?.scene_number;
@@ -2588,6 +3522,16 @@ const getOrderedRefs = useCallback((row) => {
                   const imgs = isVeo3 ? getVeo3ImageTabImages(targetRow) : getSceneImages(targetRow);
                   const imageEntries = buildImageEntries(imgs, targetRow?.imageFrames);
                   const firstImg = imgs[0] || '';
+                  // Get avatar URLs from current version of image object for VEO3 scenes
+                  const avatarUrlsFromVersion4 = getAvatarUrlsFromImageVersion(
+                    targetRow?.imageVersionData || null,
+                    targetRow?.current_version || 'v1',
+                    modelUpper
+                  );
+                  const finalAvatarUrls4 = avatarUrlsFromVersion4.length > 0 
+                    ? avatarUrlsFromVersion4 
+                    : (Array.isArray(targetRow?.avatar_urls) ? targetRow.avatar_urls : []);
+                  
                   setSelected({
                     index: sceneIndex,
                     imageUrl: firstImg,
@@ -2601,8 +3545,11 @@ const getOrderedRefs = useCallback((row) => {
                     prompts: targetRow?.prompts || { opening_frame: {}, closing_frame: {} },
                     imageDimensions: targetRow?.imageDimensions || null,
                     textElements: Array.isArray(targetRow?.textElements) ? targetRow.textElements : [],
+                    overlayElements: Array.isArray(targetRow?.overlayElements) ? targetRow.overlayElements : [],
                     imageVersionData: targetRow?.imageVersionData || null,
                     imageFrames: Array.isArray(targetRow?.imageFrames) ? targetRow.imageFrames : [],
+                    avatar_urls: finalAvatarUrls4,
+                    current_version: targetRow?.current_version || 'v1',
                     isEditable: !!targetRow?.isEditable
                   });
                   // Wait for React to render this scene
@@ -2620,15 +3567,7 @@ const getOrderedRefs = useCallback((row) => {
               // 3) Now capture the DOM with html2canvas (same as Export)
               dataUrl = await captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex);
               if (dataUrl) {
-                console.log('✅ Captured DOM snapshot (same as Export) for save-all-frames', {
-                  sceneNumber,
-                  imageIndex
-                });
               } else {
-                console.warn('⚠️ DOM snapshot failed, falling back to frame-based rendering.', {
-                  sceneNumber,
-                  imageIndex
-                });
               }
             }
 
@@ -2645,18 +3584,12 @@ const getOrderedRefs = useCallback((row) => {
               }
 
             if (frame) {
-              console.log(
-                `🧩 Scene ${sceneNumber}, Image ${imageIndex + 1}: Rendering from frame data with image dimensions`
-              );
               // Use frame data + base image dimensions to build the canvas at the correct size.
               // For PLOTLY, do NOT bake overlay images into the saved frame; overlays stay visual-only.
               dataUrl = await mergeFrameToDataUrl(frame, fallbackDims, {
                   includeOverlays: !isPlotly
               });
             } else {
-              console.log(
-                  `🖼️ Scene ${sceneNumber}, Image ${imageIndex + 1}: No frame data, using image_dimensions or raw image size`
-              );
                 // Fallback: load the raw image and render it to a canvas sized
                 // according to image_dimensions when available.
               const imgEl = await loadImageElement(imageUrl);
@@ -2681,7 +3614,6 @@ const getOrderedRefs = useCallback((row) => {
             }
 
             if (!dataUrl) {
-              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create data URL`);
               failed += 1;
               continue;
             }
@@ -2689,7 +3621,6 @@ const getOrderedRefs = useCallback((row) => {
             // Convert data URL to blob
             const blob = await dataUrlToBlob(dataUrl);
             if (!blob) {
-              console.warn(`⚠️ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to create blob from data URL`);
               failed += 1;
               continue;
             }
@@ -2699,45 +3630,25 @@ const getOrderedRefs = useCallback((row) => {
 
             // WORKAROUND: Store image in browser memory instead of server temp folder
             // This bypasses the /api/save-temp-image endpoint that's not working
-            console.log(`💾 Scene ${sceneNumber}, Image ${imageIndex + 1}: Storing in browser memory...`);
-            console.log(`   File size: ${(blob.size / 1024).toFixed(2)} KB`);
 
             try {
               // Store the blob in memory using a Map
               imageStorageRef.current.set(fileName, blob);
-              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Stored in browser memory`);
-              console.log(
-                `   Key: ${fileName}, Size: ${(blob.size / 1024).toFixed(2)} KB, Source URL: ${imageUrl}`
-              );
               saved += 1;
             } catch (error) {
-              console.error(
-                `❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to store in memory -`,
-                error
-              );
               failed += 1;
             }
 
             // Small delay between images
             await new Promise((resolve) => setTimeout(resolve, 200));
           } catch (error) {
-            console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Error -`, error);
             failed += 1;
           }
         }
       }
 
-      console.log(`\n✅ Save process complete! Saved: ${saved}, Failed: ${failed}`);
-      console.log(`📊 Total images in browser memory: ${imageStorageRef.current.size}`);
-
       // No alerts - just console logs for background processing
-      if (saved > 0) {
-        console.log(`✅ Successfully stored ${saved} image(s) in browser memory`);
-      } else if (failed > 0) {
-        console.warn(`⚠️ Failed to store ${failed} image(s). Check console for details.`);
-      }
     } catch (error) {
-      console.error('❌ Fatal error in mergeAndDownloadAllImages:', error);
       // No alert - error will be handled by parent function
       throw error;
     }
@@ -2748,7 +3659,6 @@ const getOrderedRefs = useCallback((row) => {
   // Function to call save-all-frames API with temp folder images
   const callSaveAllFramesAPI = React.useCallback(async () => {
     try {
-      console.log('📡 Step 2: Preparing API call to save-all-frames...');
       
       const userId = localStorage.getItem('token');
       const sessionId = localStorage.getItem('session_id');
@@ -2820,8 +3730,6 @@ const getOrderedRefs = useCallback((row) => {
         sceneMetaByScene.set(sceneNumber, sceneMetadata);
       }
       
-      console.log('📋 Frame metadata:', JSON.stringify(frameMetadata, null, 2));
-      console.log('🗺️ File map:', fileMap);
       
       // Create FormData
       const formData = new FormData();
@@ -2829,7 +3737,6 @@ const getOrderedRefs = useCallback((row) => {
       formData.append('session_id', sessionId);
       
       // WORKAROUND: Read images from browser memory instead of server temp folder
-      console.log('📂 Reading images from browser memory...');
       const imageFiles = [];
       
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
@@ -2850,21 +3757,11 @@ const getOrderedRefs = useCallback((row) => {
             const blob = imageStorageRef.current.get(fileName);
             
             if (!blob) {
-              console.warn(`⚠️ Could not find ${fileName} in browser memory`);
-              console.warn(`   Available keys:`, Array.from(imageStorageRef.current.keys()));
               continue;
             }
 
             // Optional: log data URL for debugging only (do not send as image_binary)
             const base64Url = await blobToDataUrl(blob);
-            console.log('🖼️ Base64 image for save-all-frames (debug only):', {
-              sceneIndex,
-              sceneNumber,
-              imageIndex,
-              fileName,
-              fileKey,
-              base64Url,
-            });
              
             const file = new File([blob], fileName, { type: 'image/png' });
              
@@ -2872,9 +3769,7 @@ const getOrderedRefs = useCallback((row) => {
             formData.append('frames', file);
             imageFiles.push(fileName);
             
-            console.log(`✅ Added ${fileName} as ${fileKey} (from browser memory)`);
           } catch (error) {
-            console.error(`❌ Error reading ${fileName} from memory:`, error);
           }
         }
       }
@@ -2886,7 +3781,6 @@ const getOrderedRefs = useCallback((row) => {
       // Attach frame metadata (including any ANCHOR mappings) after it has been fully populated.
       formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
-      console.log(`📤 Uploading ${imageFiles.length} images to API...`);
       
       // Call API
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/save-all-frames';
@@ -2907,28 +3801,19 @@ const getOrderedRefs = useCallback((row) => {
         throw new Error(`API request failed: ${apiResponse.status} ${JSON.stringify(responseData)}`);
       }
       
-      console.log('✅ API call successful:', responseData);
-      
       // WORKAROUND: Clear images from browser memory instead of deleting from server
-      console.log('🗑️ Clearing images from browser memory...');
       for (const fileName of imageFiles) {
         try {
           if (imageStorageRef.current.has(fileName)) {
             imageStorageRef.current.delete(fileName);
-            console.log(`✅ Removed ${fileName} from memory`);
-          } else {
-            console.warn(`⚠️ ${fileName} not found in memory`);
           }
         } catch (error) {
-          console.warn(`⚠️ Error removing ${fileName} from memory:`, error);
         }
       }
       
-      console.log(`✅ All images cleared from memory. Remaining: ${imageStorageRef.current.size}`);
       return { success: true, response: responseData };
       
     } catch (error) {
-      console.error('❌ Error in callSaveAllFramesAPI:', error);
       throw error;
     }
   }, [rows, getSceneImages, getVeo3ImageTabImages, getOrderedRefs, blobToDataUrl]);
@@ -2940,7 +3825,6 @@ const getOrderedRefs = useCallback((row) => {
       const user_id = localStorage.getItem('token');
 
       if (!session_id || !user_id) {
-        console.warn('⚠️ Missing session or user for videos/regenerate');
         return;
       }
 
@@ -3119,8 +4003,6 @@ const getOrderedRefs = useCallback((row) => {
       };
 
       // Call generate-videos-queue API
-      console.log('📡 Calling /v1/generate-videos-queue API...');
-      console.log('📦 Request payload:', JSON.stringify(body, null, 2));
 
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
       const response = await fetch(apiUrl, {
@@ -3141,16 +4023,13 @@ const getOrderedRefs = useCallback((row) => {
         throw new Error(`generate-videos-queue failed: ${response.status} ${JSON.stringify(responseData)}`);
       }
 
-      console.log('✅ generate-videos-queue API response:', responseData);
 
       // Extract job ID from response
       const jobId = responseData?.job_id || responseData?.jobId || responseData?.id || null;
 
       if (jobId) {
-        console.log('✅ Video generation job queued with ID:', jobId);
         return jobId;
       } else {
-        console.warn('⚠️ No job ID returned from API');
       return null;
       }
     } catch (error) {
@@ -3161,7 +4040,6 @@ const getOrderedRefs = useCallback((row) => {
         step: 'error',
         message: error?.message || 'Failed to queue video generation',
       }));
-      console.error('❌ Error in callVideosRegenerateAPI:', error);
       throw error;
     }
   }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getSessionAspectRatioRaw, transitionPresets]);
@@ -3191,11 +4069,9 @@ const getOrderedRefs = useCallback((row) => {
     }
     
     if (isPreparingDownloads) {
-      console.log('⚠️ Already processing, please wait...');
       return false;
     }
     
-    console.log('🎬 Generate Videos button clicked - Starting background process...');
     
     setIsPreparingDownloads(true);
     setVideoGenProgress({
@@ -3219,25 +4095,19 @@ const getOrderedRefs = useCallback((row) => {
           step: 'saving_images',
           message: ''
         }));
-        console.log('📦 Step 1: Saving all images to temp folder...');
         const failedDownloads = await mergeAndDownloadAllImages();
         
         if (failedDownloads > 0) {
-          console.warn(`⚠️ Some images failed to save: ${failedDownloads}`);
           setError('Some images could not be saved to temp folder.');
         } else {
-          console.log('✅ All images saved successfully');
         }
         
         // Wait a bit to ensure all saves are complete
         await new Promise(resolve => setTimeout(resolve, 500));
         
         // Step 2: Call save-all-frames API
-        console.log('📦 Step 2: Calling save-all-frames API...');
         try {
           await callSaveAllFramesAPI();
-          console.log('✅ save-all-frames API completed successfully');
-          console.log('✅ All temp images deleted');
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
@@ -3248,7 +4118,6 @@ const getOrderedRefs = useCallback((row) => {
           }));
 
           // Step 3: Call generate-videos-queue API
-          console.log('📦 Step 3: Calling generate-videos-queue API...');
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
@@ -3261,7 +4130,6 @@ const getOrderedRefs = useCallback((row) => {
           const jobId = await callVideosRegenerateAPI();
           
           if (jobId) {
-            console.log('✅ Video generation job queued successfully:', jobId);
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
@@ -3275,7 +4143,6 @@ const getOrderedRefs = useCallback((row) => {
             // Start video redirect flow with job ID
             startVideoRedirectFlow(jobId);
           } else {
-            console.warn('⚠️ No job ID returned from generate-videos-queue API');
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
@@ -3287,7 +4154,6 @@ const getOrderedRefs = useCallback((row) => {
           }
 
         } catch (apiError) {
-          console.error('❌ Error in save-all-frames or generate-videos-queue API:', apiError);
           setError('API upload failed: ' + apiError.message);
           setVideoGenProgress((prev) => ({
             ...prev,
@@ -3300,7 +4166,6 @@ const getOrderedRefs = useCallback((row) => {
         }
         
       } catch (e) {
-        console.error('❌ Error in handleGenerateVideosClick:', e);
         setError(e?.message || 'Failed to save images');
         setVideoGenProgress((prev) => ({
           ...prev,
@@ -3312,7 +4177,6 @@ const getOrderedRefs = useCallback((row) => {
         }));
         // No alert - just set error state
       } finally {
-        console.log('🏁 Process complete, re-enabling button');
         // Reset progress after a short delay
         setTimeout(() => {
           setVideoGenProgress({
@@ -3582,6 +4446,15 @@ const getOrderedRefs = useCallback((row) => {
                       onClick={(e) => {
                         e.stopPropagation();
                         const sceneNum = selected?.sceneNumber || selected?.scene_number || 1;
+                        // Get the model for this scene to set default frames
+                        const model = getSceneModel(sceneNum);
+                        const modelUpper = String(model || '').toUpperCase();
+                        if (isVEO3Model(model)) {
+                          setUploadFrames(['background']); // VEO3 default to background (no options shown)
+                        } else {
+                          // SORA, ANCHOR, PLOTLY, and others default to opening and closing
+                          setUploadFrames(['opening', 'closing']);
+                        }
                         setUploadingBackgroundSceneNumber(sceneNum);
                         setUploadedBackgroundFile(null);
                         setUploadedBackgroundPreview(null);
@@ -3594,6 +4467,27 @@ const getOrderedRefs = useCallback((row) => {
                       <Upload className="w-4 h-4" />
                       <span className="text-sm font-medium">Upload Background</span>
                     </button>
+                    
+                    {/* Avatar Management Button (VEO3 only) */}
+                    {isVEO3Model(selectedModel) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const sceneNum = selected?.sceneNumber || selected?.scene_number || 1;
+                          // Start with no avatar selected - user must select one
+                          setAvatarUrls(['', '']);
+                          setManagingAvatarSceneNumber(sceneNum);
+                          setError('');
+                          setShowAvatarManager(true);
+                        }}
+                        className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2"
+                        title="Manage Avatars"
+                      >
+                        <Pencil className="w-4 h-4" />
+                        <span className="text-sm font-medium">Manage Avatars</span>
+                      </button>
+                    )}
                   </>
               )}
             </div>
@@ -3632,14 +4526,140 @@ const getOrderedRefs = useCallback((row) => {
               // Get images from selected.images array, fallback to imageUrl, then to refs if available
               const getImg1 = () => {
                 const firstSelectedUrl = getSelectedImageUrl(selected.images, 0);
-                const currentRow = rows[selected.index];
+                const currentRow = rows.find(r => 
+                  (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
+                ) || rows[selected.index];
                 const isAvatarModel = selectedModel === 'VEO3';
 
                 if (selectedModel === 'ANCHOR') {
                   if (firstSelectedUrl && isValidImageUrl(firstSelectedUrl)) return firstSelectedUrl;
                 } else if (isAvatarModel) {
-                  if (currentRow && Array.isArray(currentRow.avatar_urls) && currentRow.avatar_urls.length > 0) {
-                    const avatarUrl = currentRow.avatar_urls[0];
+                  // For VEO3 Avatar tab, extract avatar URL from version object in session data images
+                  // EXACT same extraction as list area (lines 2101-2112):
+                  // it.images -> imagesContainer -> imagesContainer[current_version] -> verObj -> verObj.avatar_urls
+                  
+                  // Priority 1: Extract directly from version object avatar_urls (EXACT same as list area)
+                  // imageVersionData = it?.images || it (line 2340)
+                  let imagesContainer = null;
+                  
+                  if (selected?.imageVersionData && typeof selected.imageVersionData === 'object') {
+                    // Check if imageVersionData is it.images (images container) or it (scene object)
+                    if (selected.imageVersionData.images && typeof selected.imageVersionData.images === 'object' && !Array.isArray(selected.imageVersionData.images)) {
+                      // imageVersionData is it (scene object), extract it.images
+                      imagesContainer = selected.imageVersionData.images;
+                    } else if (selected.imageVersionData.current_version || selected.imageVersionData.v1 || selected.imageVersionData.v2) {
+                      // imageVersionData is already it.images (images container)
+                      imagesContainer = selected.imageVersionData;
+                    }
+                    
+                    if (imagesContainer) {
+                      // Get version key (same as list area line 2104)
+                      const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || selected?.current_version || 'v1';
+                      
+                      // Get version object (same as list area line 2105: imagesContainer[versionKey])
+                      const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                      
+                      // Extract avatar_urls from version object (EXACT same as list area line 2112: verObj?.avatar_urls)
+                      const versionAvatars = verObj?.avatar_urls;
+                      
+                      if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+                        // Map avatar URLs (EXACT same as list area lines 2123-2135)
+                        const avatarUrls = versionAvatars.map((av) => {
+                          if (typeof av === 'string') return av.trim();
+                          return (
+                            av?.imageurl ||
+                            av?.imageUrl ||
+                            av?.image_url ||
+                            av?.url ||
+                            av?.src ||
+                            av?.link ||
+                            av?.avatar_url ||
+                            ''
+                          );
+                        }).filter(url => url && typeof url === 'string' && url.trim());
+                        
+                        if (avatarUrls.length > 0) {
+                          const url = avatarUrls[0];
+                          if (url && isValidImageUrl(url)) {
+                            console.log('✅ Avatar tab: Using avatar URL from version object avatar_urls:', url);
+                            return url;
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Priority 2: Try to get from currentRow's imageVersionData (same structure as list area uses)
+                  // This is the EXACT same extraction: it.images[current_version].avatar_urls
+                  if (currentRow && currentRow.imageVersionData && typeof currentRow.imageVersionData === 'object') {
+                    console.log('🔍 Checking currentRow.imageVersionData:', currentRow.imageVersionData);
+                    
+                    let imagesContainer = currentRow.imageVersionData;
+                    
+                    // Check if imageVersionData has the images container structure (it.images)
+                    if (currentRow.imageVersionData.images && typeof currentRow.imageVersionData.images === 'object' && !Array.isArray(currentRow.imageVersionData.images)) {
+                      imagesContainer = currentRow.imageVersionData.images;
+                      console.log('🔍 Found images container in row imageVersionData.images');
+                    }
+                    
+                    // Get current version key (same as list area)
+                    const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || currentRow?.current_version || 'v1';
+                    console.log('🔍 Row versionKey:', versionKey);
+                    
+                    // Get version object (same as: imagesContainer[versionKey] in list area)
+                    const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                    console.log('🔍 Row version object:', verObj);
+                    console.log('🔍 Row version object keys:', Object.keys(verObj));
+                    
+                    // Extract avatar_urls from version object (EXACT same as list area line 2112)
+                    const versionAvatars = verObj?.avatar_urls;
+                    console.log('🔍 Row avatar_urls from version object:', versionAvatars);
+                    
+                    if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+                      // Map avatar URLs (EXACT same as list area lines 2123-2135)
+                      const avatarUrls = versionAvatars.map((av) => {
+                        if (typeof av === 'string') return av.trim();
+                        return (
+                          av?.imageurl ||
+                          av?.imageUrl ||
+                          av?.image_url ||
+                          av?.url ||
+                          av?.src ||
+                          av?.link ||
+                          av?.avatar_url ||
+                          ''
+                        );
+                      }).filter(url => url && typeof url === 'string' && url.trim());
+                      
+                      console.log('🔍 Row mapped avatar URLs:', avatarUrls);
+                      
+                      if (avatarUrls.length > 0) {
+                        const url = avatarUrls[0];
+                        if (url && isValidImageUrl(url)) {
+                          console.log('✅ Avatar tab: Using avatar URL from row version object avatar_urls:', url);
+                          return url;
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Priority 3: Use helper function as fallback
+                  const avatarUrlsFromSelected = getAvatarUrlsFromImageVersion(
+                    selected?.imageVersionData || null,
+                    selected?.current_version || 'v1',
+                    selectedModel
+                  );
+                  if (avatarUrlsFromSelected.length > 0) {
+                    const url = avatarUrlsFromSelected[0];
+                    if (url && isValidImageUrl(url)) {
+                      console.log('✅ Avatar tab: Using avatar URL from helper function:', url);
+                      return url;
+                    }
+                  }
+                  
+                  // Priority 4: Use selected.avatar_urls (should already be from current version)
+                  if (selected && Array.isArray(selected.avatar_urls) && selected.avatar_urls.length > 0) {
+                    const avatarUrl = selected.avatar_urls[0];
                     const url =
                       typeof avatarUrl === 'string'
                         ? avatarUrl.trim()
@@ -3652,8 +4672,15 @@ const getOrderedRefs = useCallback((row) => {
                             avatarUrl?.link ||
                             ''
                           ).trim();
-                    if (url && isValidImageUrl(url)) return url;
+                    if (url && isValidImageUrl(url)) {
+                      console.log('⚠️ Avatar tab: Using avatar URL from selected.avatar_urls (fallback):', url);
+                      return url;
+                    }
                   }
+                  
+                  // For VEO3 Avatar tab, don't fall through to other image sources - return empty if no avatar found
+                  console.log('❌ Avatar tab: No avatar URL found in session data images');
+                  return '';
                 }
 
                 // Priority 1: selected.images array
@@ -3724,21 +4751,6 @@ const getOrderedRefs = useCallback((row) => {
                 ? (primaryImg && primaryImg.trim() && secondaryImg && secondaryImg.trim())
                 : (secondaryImg && secondaryImg.trim());
               
-              // Debug log to see what images are being used
-              console.log('🖼️ Displaying Images:', {
-                sceneNumber: selected?.sceneNumber,
-                selectedIndex: selected.index,
-                primaryImg: primaryImg || '(empty)',
-                primaryValid: primaryImg ? isValidImageUrl(primaryImg) : false,
-                secondaryImg: secondaryImg || '(empty)',
-                secondaryValid: secondaryImg ? isValidImageUrl(secondaryImg) : false,
-                selectedImages: Array.isArray(selected.images) ? selected.images.map(getImageUrlFromEntry) : [],
-                selectedImageUrl: selected.imageUrl,
-                hasSecondImage,
-                currentRowRefs: rows[selected.index]?.refs || 'N/A',
-                allRowsCount: rows.length,
-                warning: !primaryImg ? '⚠️ No valid image URL found for primary image' : (primaryImg && !isValidImageUrl(primaryImg) ? '⚠️ Primary image URL format is invalid' : '✅ Primary image URL is valid')
-              });
               
               return (
                   <div className="mb-4">
@@ -3832,20 +4844,10 @@ const getOrderedRefs = useCallback((row) => {
                             crossOrigin={primaryImg.startsWith('http') && !primaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
                               handleNaturalSize(primaryImg, e.target);
-                              console.log('✅ Primary image loaded successfully:', primaryImg);
                             }}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
-                              console.error('❌ Primary image failed to load:', {
-                                attemptedUrl: failedUrl,
-                                originalUrl: primaryImg,
-                                errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
-                                naturalWidth: errorImg.naturalWidth,
-                                naturalHeight: errorImg.naturalHeight,
-                                complete: errorImg.complete,
-                                currentSrc: errorImg.currentSrc
-                              });
                               
                               // Try multiple fallback strategies
                               const currentRow = rows[selected.index];
@@ -3878,12 +4880,10 @@ const getOrderedRefs = useCallback((row) => {
                               // Try the first available fallback
                               if (fallbackUrls.length > 0) {
                                 const nextUrl = fallbackUrls[0];
-                                console.log('🔄 Trying fallback URL:', nextUrl);
                                 // Remove crossOrigin to avoid CORS issues on retry
                                 errorImg.crossOrigin = null;
                                 errorImg.src = nextUrl;
                               } else {
-                                console.error('❌ No fallback URLs available. All image sources exhausted.');
                                 // Show error state
                                 errorImg.style.display = 'none';
                               }
@@ -3965,105 +4965,159 @@ const getOrderedRefs = useCallback((row) => {
                                   </div>
                           );
                         })()}
-                        {Array.isArray(effectiveTextEls1) && effectiveTextEls1.length > 0 && (
-                          <div className="absolute inset-0 pointer-events-none">
-                            {effectiveTextEls1.map((el, idx) => {
-                              if (!el || typeof el !== 'object') return null;
-                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
-                                el.bounding_box || {},
-                                frameDims1 || selected?.imageDimensions || {}
-                              );
-                              const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
-                              const fontSize =
-                                fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
-                                  ? fontSizeBase * (Number((frameDims1 || selected?.imageDimensions)?.height) || 1)
-                                  : fontSizeBase;
-                              const color = el.fill || '#ffffff';
-                              const fontFamily = el.fontFamily || 'sans-serif';
-                              const fontWeight = el.fontWeight || 'normal';
-                              const lineHeight = el.lineHeight || 1.2;
-                              const shadow = el.effects?.textShadow;
-                              const textShadow =
-                                shadow && shadow.enabled
-                                        ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'
-                                    }`
-                                  : undefined;
-                              const anchor = el.layout?.anchor_point || 'top_left';
-                              const boxStyle = {
-                                position: 'absolute',
-                                left: `${leftPct}%`,
-                                top: `${topPct}%`,
-                                width: widthPct != null ? `${widthPct}%` : 'auto',
-                                height: heightPct != null ? `${heightPct}%` : 'auto',
-                                pointerEvents: 'none'
-                              };
-                              const textStyle = {
-                                color,
-                                fontFamily,
-                                fontWeight,
-                                fontSize,
-                                lineHeight,
-                                textShadow,
-                                whiteSpace: 'pre-wrap'
-                              };
-                              return (
-                                <div key={idx} style={boxStyle} className="pointer-events-none">
-                                  <div style={textStyle}>{el.text || ''}</div>
-                                </div>
-                              );
-                            })}
-                                </div>
-                        )}
-                        {Array.isArray(overlayEls1) && overlayEls1.length > 0 && (
-                          <div className="absolute inset-0 pointer-events-none">
-                            {overlayEls1.map((ov, idx) => {
-                              if (!ov || typeof ov !== 'object') return null;
-                              const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(ov.bounding_box || {}, frameDims1 || selected?.imageDimensions || {});
-                              let overlayUrl =
-                                ov?.overlay_image?.image_url ||
-                                ov?.overlay_image?.imageUrl ||
-                                ov?.image_url ||
-                                ov?.imageUrl ||
-                                ov?.url ||
-                                ov?.src ||
-                                ov?.link ||
-                                '';
-                              if (!overlayUrl) return null;
-                              
-                              const isChartOverlay = ov?.element_id === 'chart_overlay' || 
-                                                    ov?.label_name === 'Chart' ||
-                                                    overlayUrl.includes('chart') ||
-                                                    (selectedModel === 'PLOTLY' && overlayUrl);
-                              
-                              if (isChartOverlay) {
-                                const separator = overlayUrl.includes('?') ? '&' : '?';
-                                overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                        {/* Render all elements (text + overlays) in proper layer order */}
+                        {(() => {
+                          // Combine text and overlay elements with their layer information
+                          const allElements = [];
+                          
+                          // Add text elements with type and index for sorting
+                          if (Array.isArray(effectiveTextEls1) && effectiveTextEls1.length > 0) {
+                            effectiveTextEls1.forEach((el, idx) => {
+                              if (el && typeof el === 'object') {
+                                allElements.push({
+                                  type: 'text',
+                                  element: el,
+                                  index: idx,
+                                  zIndex: el.z_index || el.zIndex || (idx + 1) // Text elements start at z-index 1
+                                });
                               }
-
-                              const displayUrl = isAnchorModel
-                                ? getOverlayBackgroundRemovedUrl(overlayUrl)
-                                : overlayUrl;
-                              
-                              const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
-                              return (
-                                <img
-                                  key={`overlay-1-${idx}-${overlayUrl}`}
-                                  src={displayUrl}
-                                  alt="overlay"
-                                  className="absolute"
-                                  crossOrigin="anonymous"
-                                  style={{
+                            });
+                          }
+                          
+                          // Add overlay elements with type and index for sorting
+                          if (Array.isArray(overlayEls1) && overlayEls1.length > 0) {
+                            overlayEls1.forEach((ov, idx) => {
+                              if (ov && typeof ov === 'object') {
+                                allElements.push({
+                                  type: 'overlay',
+                                  element: ov,
+                                  index: idx,
+                                  zIndex: ov.z_index || ov.zIndex || (100 + idx + 1) // Overlays start at z-index 101
+                                });
+                              }
+                            });
+                          }
+                          
+                          // Sort by z-index to maintain proper layer order
+                          allElements.sort((a, b) => {
+                            // If both have explicit z-index, use that
+                            if (a.zIndex !== undefined && b.zIndex !== undefined) {
+                              return a.zIndex - b.zIndex;
+                            }
+                            // Otherwise, maintain original order: text first, then overlays
+                            if (a.type !== b.type) {
+                              return a.type === 'text' ? -1 : 1;
+                            }
+                            return a.index - b.index;
+                          });
+                          
+                          if (allElements.length === 0) return null;
+                          
+                          return (
+                            <div className="absolute inset-0 pointer-events-none">
+                              {allElements.map((item, globalIdx) => {
+                                if (item.type === 'text') {
+                                  const el = item.element;
+                                  const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
+                                    el.bounding_box || {},
+                                    frameDims1 || selected?.imageDimensions || {}
+                                  );
+                                  const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+                                  const fontSize =
+                                    fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
+                                      ? fontSizeBase * (Number((frameDims1 || selected?.imageDimensions)?.height) || 1)
+                                      : fontSizeBase;
+                                  const color = el.fill || '#ffffff';
+                                  const fontFamily = el.fontFamily || 'sans-serif';
+                                  const fontWeight = el.fontWeight || 'normal';
+                                  const lineHeight = el.lineHeight || 1.2;
+                                  const shadow = el.effects?.textShadow;
+                                  const textShadow =
+                                    shadow && shadow.enabled
+                                      ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
+                                      : undefined;
+                                  const anchor = el.layout?.anchor_point || 'top_left';
+                                  const boxStyle = {
+                                    position: 'absolute',
                                     left: `${leftPct}%`,
                                     top: `${topPct}%`,
                                     width: widthPct != null ? `${widthPct}%` : 'auto',
                                     height: heightPct != null ? `${heightPct}%` : 'auto',
-                                    opacity
-                                  }}
-                                />
-                              );
-                            })}
-                          </div>
-                        )}
+                                    pointerEvents: 'none',
+                                    zIndex: item.zIndex
+                                  };
+                                  const textStyle = {
+                                    color,
+                                    fontFamily,
+                                    fontWeight,
+                                    fontSize,
+                                    lineHeight,
+                                    textShadow,
+                                    whiteSpace: 'pre-wrap'
+                                  };
+                                  return (
+                                    <div key={`text-1-${item.index}`} style={boxStyle} className="pointer-events-none">
+                                      <div style={textStyle}>{el.text || ''}</div>
+                                    </div>
+                                  );
+                                } else if (item.type === 'overlay') {
+                                  const ov = item.element;
+                                  const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(
+                                    ov.bounding_box || {},
+                                    frameDims1 || selected?.imageDimensions || {}
+                                  );
+                                  // Check for file_url (for shapes) first, then overlay_image.image_url, then other fields
+                                  let overlayUrl =
+                                    ov?.file_url ||
+                                    ov?.fileUrl ||
+                                    ov?.overlay_image?.image_url ||
+                                    ov?.overlay_image?.imageUrl ||
+                                    ov?.image_url ||
+                                    ov?.imageUrl ||
+                                    ov?.url ||
+                                    ov?.src ||
+                                    ov?.link ||
+                                    '';
+                                  if (!overlayUrl) return null;
+                                  
+                                  const isChartOverlay = ov?.element_id === 'chart_overlay' || 
+                                                        ov?.label_name === 'Chart' ||
+                                                        overlayUrl.includes('chart') ||
+                                                        (selectedModel === 'PLOTLY' && overlayUrl);
+                                  
+                                  if (isChartOverlay) {
+                                    const separator = overlayUrl.includes('?') ? '&' : '?';
+                                    overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                                  }
+
+                                  const displayUrl = isAnchorModel
+                                    ? getOverlayBackgroundRemovedUrl(overlayUrl)
+                                    : overlayUrl;
+                                  
+                                  const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
+                                  return (
+                                    <img
+                                      key={`overlay-1-${item.index}-${overlayUrl}`}
+                                      src={displayUrl}
+                                      alt="overlay"
+                                      className="absolute"
+                                      crossOrigin="anonymous"
+                                      style={{
+                                        left: `${leftPct}%`,
+                                        top: `${topPct}%`,
+                                        width: widthPct != null ? `${widthPct}%` : 'auto',
+                                        height: heightPct != null ? `${heightPct}%` : 'auto',
+                                        opacity,
+                                        zIndex: item.zIndex
+                                      }}
+                                    />
+                                  );
+                                }
+                                return null;
+                              })}
+                            </div>
+                          );
+                        })()}
                       </>
                     );
                       })()}
@@ -4134,20 +5188,10 @@ const getOrderedRefs = useCallback((row) => {
                             crossOrigin={secondaryImg.startsWith('http') && !secondaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
                               handleNaturalSize(secondaryImg, e.target);
-                              console.log('✅ Secondary image loaded successfully:', secondaryImg);
                             }}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
-                              console.error('❌ Secondary image failed to load:', {
-                                attemptedUrl: failedUrl,
-                                originalUrl: secondaryImg,
-                                errorType: errorImg.naturalWidth === 0 ? 'Invalid/Empty Image' : 'Load Error',
-                                naturalWidth: errorImg.naturalWidth,
-                                naturalHeight: errorImg.naturalHeight,
-                                complete: errorImg.complete,
-                                currentSrc: errorImg.currentSrc
-                              });
                               
                               // Try multiple fallback strategies
                               const currentRow = rows[selected.index];
@@ -4175,12 +5219,10 @@ const getOrderedRefs = useCallback((row) => {
                               // Try the first available fallback
                               if (fallbackUrls.length > 0) {
                                 const nextUrl = fallbackUrls[0];
-                                console.log('🔄 Trying fallback URL for secondary image:', nextUrl);
                                 // Remove crossOrigin to avoid CORS issues on retry
                                 errorImg.crossOrigin = null;
                                 errorImg.src = nextUrl;
                               } else {
-                                console.error('❌ No fallback URLs available for Image 2. All image sources exhausted.');
                                 // Show error state
                                 errorImg.style.display = 'none';
                               }
@@ -4262,105 +5304,159 @@ const getOrderedRefs = useCallback((row) => {
                                   </div>
                           );
                         })()}
-                        {Array.isArray(effectiveTextEls2) && effectiveTextEls2.length > 0 && (
-                          <div className="absolute inset-0 pointer-events-none">
-                            {effectiveTextEls2.map((el, idx) => {
-                              if (!el || typeof el !== 'object') return null;
-                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
-                                el.bounding_box || {},
-                                frameDims2 || selected?.imageDimensions || {}
-                              );
-                              const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
-                              const fontSize =
-                                fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
-                                  ? fontSizeBase * (Number((frameDims2 || selected?.imageDimensions)?.height) || 1)
-                                  : fontSizeBase;
-                              const color = el.fill || '#ffffff';
-                              const fontFamily = el.fontFamily || 'sans-serif';
-                              const fontWeight = el.fontWeight || 'normal';
-                              const lineHeight = el.lineHeight || 1.2;
-                              const shadow = el.effects?.textShadow;
-                              const textShadow =
-                                shadow && shadow.enabled
-                                        ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'
-                                    }`
-                                  : undefined;
-                              const anchor = el.layout?.anchor_point || 'top_left';
-                              const boxStyle = {
-                                position: 'absolute',
-                                left: `${leftPct}%`,
-                                top: `${topPct}%`,
-                                width: widthPct != null ? `${widthPct}%` : 'auto',
-                                height: heightPct != null ? `${heightPct}%` : 'auto',
-                                pointerEvents: 'none'
-                              };
-                              const textStyle = {
-                                color,
-                                fontFamily,
-                                fontWeight,
-                                fontSize,
-                                lineHeight,
-                                textShadow,
-                                whiteSpace: 'pre-wrap'
-                              };
-                              return (
-                                <div key={idx} style={boxStyle} className="pointer-events-none">
-                                  <div style={textStyle}>{el.text || ''}</div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {Array.isArray(overlayEls2) && overlayEls2.length > 0 && (
-                          <div className="absolute inset-0 pointer-events-none">
-                            {overlayEls2.map((ov, idx) => {
-                              if (!ov || typeof ov !== 'object') return null;
-                              const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(ov.bounding_box || {}, frameDims2 || selected?.imageDimensions || {});
-                              let overlayUrl =
-                                ov?.overlay_image?.image_url ||
-                                ov?.overlay_image?.imageUrl ||
-                                ov?.image_url ||
-                                ov?.imageUrl ||
-                                ov?.url ||
-                                ov?.src ||
-                                ov?.link ||
-                                '';
-                              if (!overlayUrl) return null;
-                              
-                              const isChartOverlay = ov?.element_id === 'chart_overlay' || 
-                                                    ov?.label_name === 'Chart' ||
-                                                    overlayUrl.includes('chart') ||
-                                                    (selectedModel === 'PLOTLY' && overlayUrl);
-                              
-                              if (isChartOverlay) {
-                                const separator = overlayUrl.includes('?') ? '&' : '?';
-                                overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                        {/* Render all elements (text + overlays) in proper layer order */}
+                        {(() => {
+                          // Combine text and overlay elements with their layer information
+                          const allElements = [];
+                          
+                          // Add text elements with type and index for sorting
+                          if (Array.isArray(effectiveTextEls2) && effectiveTextEls2.length > 0) {
+                            effectiveTextEls2.forEach((el, idx) => {
+                              if (el && typeof el === 'object') {
+                                allElements.push({
+                                  type: 'text',
+                                  element: el,
+                                  index: idx,
+                                  zIndex: el.z_index || el.zIndex || (idx + 1) // Text elements start at z-index 1
+                                });
                               }
-
-                              const displayUrl = isAnchorModel
-                                ? getOverlayBackgroundRemovedUrl(overlayUrl)
-                                : overlayUrl;
-                              
-                              const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
-                              return (
-                                <img
-                                  key={`overlay-2-${idx}-${overlayUrl}`}
-                                  src={displayUrl}
-                                  alt="overlay"
-                                  className="absolute"
-                                  crossOrigin="anonymous"
-                                  style={{
+                            });
+                          }
+                          
+                          // Add overlay elements with type and index for sorting
+                          if (Array.isArray(overlayEls2) && overlayEls2.length > 0) {
+                            overlayEls2.forEach((ov, idx) => {
+                              if (ov && typeof ov === 'object') {
+                                allElements.push({
+                                  type: 'overlay',
+                                  element: ov,
+                                  index: idx,
+                                  zIndex: ov.z_index || ov.zIndex || (100 + idx + 1) // Overlays start at z-index 101
+                                });
+                              }
+                            });
+                          }
+                          
+                          // Sort by z-index to maintain proper layer order
+                          allElements.sort((a, b) => {
+                            // If both have explicit z-index, use that
+                            if (a.zIndex !== undefined && b.zIndex !== undefined) {
+                              return a.zIndex - b.zIndex;
+                            }
+                            // Otherwise, maintain original order: text first, then overlays
+                            if (a.type !== b.type) {
+                              return a.type === 'text' ? -1 : 1;
+                            }
+                            return a.index - b.index;
+                          });
+                          
+                          if (allElements.length === 0) return null;
+                          
+                          return (
+                            <div className="absolute inset-0 pointer-events-none">
+                              {allElements.map((item, globalIdx) => {
+                                if (item.type === 'text') {
+                                  const el = item.element;
+                                  const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
+                                    el.bounding_box || {},
+                                    frameDims2 || selected?.imageDimensions || {}
+                                  );
+                                  const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+                                  const fontSize =
+                                    fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
+                                      ? fontSizeBase * (Number((frameDims2 || selected?.imageDimensions)?.height) || 1)
+                                      : fontSizeBase;
+                                  const color = el.fill || '#ffffff';
+                                  const fontFamily = el.fontFamily || 'sans-serif';
+                                  const fontWeight = el.fontWeight || 'normal';
+                                  const lineHeight = el.lineHeight || 1.2;
+                                  const shadow = el.effects?.textShadow;
+                                  const textShadow =
+                                    shadow && shadow.enabled
+                                      ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
+                                      : undefined;
+                                  const anchor = el.layout?.anchor_point || 'top_left';
+                                  const boxStyle = {
+                                    position: 'absolute',
                                     left: `${leftPct}%`,
                                     top: `${topPct}%`,
                                     width: widthPct != null ? `${widthPct}%` : 'auto',
                                     height: heightPct != null ? `${heightPct}%` : 'auto',
-                                    opacity
-                                  }}
-                                />
-                              );
-                            })}
-                          </div>
-                        )}
+                                    pointerEvents: 'none',
+                                    zIndex: item.zIndex
+                                  };
+                                  const textStyle = {
+                                    color,
+                                    fontFamily,
+                                    fontWeight,
+                                    fontSize,
+                                    lineHeight,
+                                    textShadow,
+                                    whiteSpace: 'pre-wrap'
+                                  };
+                                  return (
+                                    <div key={`text-2-${item.index}`} style={boxStyle} className="pointer-events-none">
+                                      <div style={textStyle}>{el.text || ''}</div>
+                                    </div>
+                                  );
+                                } else if (item.type === 'overlay') {
+                                  const ov = item.element;
+                                  const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(
+                                    ov.bounding_box || {},
+                                    frameDims2 || selected?.imageDimensions || {}
+                                  );
+                                  // Check for file_url (for shapes) first, then overlay_image.image_url, then other fields
+                                  let overlayUrl =
+                                    ov?.file_url ||
+                                    ov?.fileUrl ||
+                                    ov?.overlay_image?.image_url ||
+                                    ov?.overlay_image?.imageUrl ||
+                                    ov?.image_url ||
+                                    ov?.imageUrl ||
+                                    ov?.url ||
+                                    ov?.src ||
+                                    ov?.link ||
+                                    '';
+                                  if (!overlayUrl) return null;
+                                  
+                                  const isChartOverlay = ov?.element_id === 'chart_overlay' || 
+                                                        ov?.label_name === 'Chart' ||
+                                                        overlayUrl.includes('chart') ||
+                                                        (selectedModel === 'PLOTLY' && overlayUrl);
+                                  
+                                  if (isChartOverlay) {
+                                    const separator = overlayUrl.includes('?') ? '&' : '?';
+                                    overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                                  }
+
+                                  const displayUrl = isAnchorModel
+                                    ? getOverlayBackgroundRemovedUrl(overlayUrl)
+                                    : overlayUrl;
+                                  
+                                  const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
+                                  return (
+                                    <img
+                                      key={`overlay-2-${item.index}-${overlayUrl}`}
+                                      src={displayUrl}
+                                      alt="overlay"
+                                      className="absolute"
+                                      crossOrigin="anonymous"
+                                      style={{
+                                        left: `${leftPct}%`,
+                                        top: `${topPct}%`,
+                                        width: widthPct != null ? `${widthPct}%` : 'auto',
+                                        height: heightPct != null ? `${heightPct}%` : 'auto',
+                                        opacity,
+                                        zIndex: item.zIndex
+                                      }}
+                                    />
+                                  );
+                                }
+                                return null;
+                              })}
+                            </div>
+                          );
+                        })()}
                       </>
                     );
                       })()}
@@ -4375,19 +5471,367 @@ const getOrderedRefs = useCallback((row) => {
             <div className="space-y-3">
               
               <div>
-                <label className="text-sm text-gray-600">Description</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm text-gray-600">Description</label>
+                  {(() => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    
+                    // For non-VEO3 models, show popup button; for VEO3, show inline edit
+                    if (!isVEO3) {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+                            setRegeneratingSceneNumber(sceneNumber);
+                            setRegenerateUserQuery('');
+                            setError('');
+                            setIsRegenerateForDescription(true); // Mark that this is for editing description
+                            
+                            // Get the model for this scene
+                            const model = getSceneModel(sceneNumber);
+                            
+                            // Set default frames based on model
+                            if (isVEO3Model(model) || isANCHORModel(model)) {
+                              setRegenerateFrames(['background']); // VEO3/ANCHOR always use background
+                            } else {
+                              // For all other models: default to both frames
+                              setRegenerateFrames(['opening', 'closing']);
+                            }
+                            
+                            setShowRegeneratePopup(true);
+                          }}
+                          className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                          </svg>
+                          Edit
+                        </button>
+                      );
+                    }
+                    
+                    // For VEO3, use inline edit
+                    return editingField !== 'description' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingField('description');
+                          setEditedDescription(selected?.description || '');
+                        }}
+                        className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                        Edit
+                      </button>
+                    ) : null;
+                  })()}
+                  {(() => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    // Only show inline edit controls for VEO3
+                    return isVEO3 && editingField === 'description' ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingField(null);
+                          setEditedDescription('');
+                        }}
+                        disabled={isSavingField}
+                        className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                        setIsSavingField(true);
+                        try {
+                          const user_id = localStorage.getItem('token');
+                          const session_id = localStorage.getItem('session_id');
+                          const scene_number = selected?.sceneNumber || selected?.scene_number || 1;
+                          
+                          if (!user_id || !session_id) {
+                            throw new Error('Missing user_id or session_id');
+                          }
+                          
+                          // Construct minimal user and session objects
+                          const user = {
+                            id: user_id,
+                            email: '',
+                            display_name: '',
+                            created_at: '',
+                            avatar_url: '',
+                            folder_url: '',
+                            brand_identity: {},
+                            tone_and_voice: {},
+                            look_and_feel: {},
+                            templates: [],
+                            voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+                          };
+                          
+                          const session = {
+                            session_id: session_id,
+                            user_id: user_id,
+                            title: '',
+                            video_duration: '60',
+                            created_at: '',
+                            updated_at: '',
+                            document_summary: [],
+                            messages: [],
+                            total_summary: [],
+                            scripts: [],
+                            videos: [],
+                            images: [],
+                            final_link: {},
+                            videoType: '',
+                            brand_style_interpretation: {},
+                            ...sessionAssets
+                          };
+                          
+                          const payload = {
+                            user,
+                            session,
+                            scene_number: Number(scene_number),
+                            field_name: 'desc',
+                            new_value: editedDescription.trim()
+                          };
+                          
+                          const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                          });
+                          
+                          const text = await response.text();
+                          let data;
+                          try {
+                            data = JSON.parse(text);
+                          } catch {
+                            data = text;
+                          }
+                          
+                          if (!response.ok) {
+                            throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
+                          }
+                          
+                          // Update local state
+                          setSelected(prev => ({ ...prev, description: editedDescription.trim() }));
+                          setRows(prevRows => prevRows.map(row => {
+                            const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                            if (String(rowSceneNumber) === String(scene_number)) {
+                              return { ...row, description: editedDescription.trim() };
+                            }
+                            return row;
+                          }));
+                          
+                          setEditingField(null);
+                          setError('');
+                        } catch (error) {
+                          setError('Failed to update description: ' + (error?.message || 'Unknown error'));
+                        } finally {
+                          setIsSavingField(false);
+                        }
+                      }}
+                      disabled={isSavingField}
+                      className="text-xs bg-[#13008B] text-white px-3 py-1 rounded hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      {isSavingField ? (
+                        <>
+                          <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                          Save
+                        </>
+                      )}
+                      </button>
+                    </div>
+                    ) : null;
+                  })()}
+                </div>
                 <textarea
-                  className="w-full h-32 border rounded-lg px-3 py-2 text-sm"
-                  readOnly
-                  value={selected?.description || ''}
+                  className={`w-full h-32 border rounded-lg px-3 py-2 text-sm ${(() => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    return isVEO3 && editingField === 'description' ? 'bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]' : 'bg-gray-50';
+                  })()}`}
+                  readOnly={(() => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    return !(isVEO3 && editingField === 'description');
+                  })()}
+                  value={(() => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    return isVEO3 && editingField === 'description' ? editedDescription : (selected?.description || '');
+                  })()}
+                  onChange={(e) => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    if (isVEO3 && editingField === 'description') {
+                      setEditedDescription(e.target.value);
+                    }
+                  }}
                 />
               </div>
               <div>
-                <label className="text-sm text-gray-600">Narration</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm text-gray-600">Narration</label>
+                  {editingField !== 'narration' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingField('narration');
+                        setEditedNarration(selected?.narration || '');
+                      }}
+                      className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      </svg>
+                      Edit
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingField(null);
+                          setEditedNarration('');
+                        }}
+                        disabled={isSavingField}
+                        className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                        setIsSavingField(true);
+                        try {
+                          const user_id = localStorage.getItem('token');
+                          const session_id = localStorage.getItem('session_id');
+                          const scene_number = selected?.sceneNumber || selected?.scene_number || 1;
+                          
+                          if (!user_id || !session_id) {
+                            throw new Error('Missing user_id or session_id');
+                          }
+                          
+                          // Construct minimal user and session objects
+                          const user = {
+                            id: user_id,
+                            email: '',
+                            display_name: '',
+                            created_at: '',
+                            avatar_url: '',
+                            folder_url: '',
+                            brand_identity: {},
+                            tone_and_voice: {},
+                            look_and_feel: {},
+                            templates: [],
+                            voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+                          };
+                          
+                          const session = {
+                            session_id: session_id,
+                            user_id: user_id,
+                            title: '',
+                            video_duration: '60',
+                            created_at: '',
+                            updated_at: '',
+                            document_summary: [],
+                            messages: [],
+                            total_summary: [],
+                            scripts: [],
+                            videos: [],
+                            images: [],
+                            final_link: {},
+                            videoType: '',
+                            brand_style_interpretation: {},
+                            ...sessionAssets
+                          };
+                          
+                          const payload = {
+                            user,
+                            session,
+                            scene_number: Number(scene_number),
+                            field_name: 'narration',
+                            new_value: editedNarration.trim()
+                          };
+                          
+                          const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                          });
+                          
+                          const text = await response.text();
+                          let data;
+                          try {
+                            data = JSON.parse(text);
+                          } catch {
+                            data = text;
+                          }
+                          
+                          if (!response.ok) {
+                            throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
+                          }
+                          
+                          // Update local state
+                          setSelected(prev => ({ ...prev, narration: editedNarration.trim() }));
+                          setRows(prevRows => prevRows.map(row => {
+                            const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                            if (String(rowSceneNumber) === String(scene_number)) {
+                              return { ...row, narration: editedNarration.trim() };
+                            }
+                            return row;
+                          }));
+                          
+                          setEditingField(null);
+                          setError('');
+                        } catch (error) {
+                          setError('Failed to update narration: ' + (error?.message || 'Unknown error'));
+                        } finally {
+                          setIsSavingField(false);
+                        }
+                      }}
+                      disabled={isSavingField}
+                      className="text-xs bg-[#13008B] text-white px-3 py-1 rounded hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                      {isSavingField ? (
+                        <>
+                          <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                          Save
+                        </>
+                      )}
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <textarea
-                  className="w-full h-32 border rounded-lg px-3 py-2 text-sm"
-                  readOnly
-                  value={selected?.narration || ''}
+                  className={`w-full h-32 border rounded-lg px-3 py-2 text-sm ${editingField === 'narration' ? 'bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]' : 'bg-gray-50'}`}
+                  readOnly={editingField !== 'narration'}
+                  value={editingField === 'narration' ? editedNarration : (selected?.narration || '')}
+                  onChange={(e) => editingField === 'narration' && setEditedNarration(e.target.value)}
                 />
               </div>
             </div>
@@ -4459,13 +5903,11 @@ const getOrderedRefs = useCallback((row) => {
               );
             })()} */}
             
-            {/* Advanced Options Accordion - Hide only for VEO3 */}
+            {/* Advanced Options Accordion - Show for all models (VEO3 only shows logo and voiceover) */}
             {(() => {
               const modelUpper = String(selected?.model || '').toUpperCase();
-              const isRelevantModel = modelUpper !== 'VEO3';
+              const isVEO3 = modelUpper === 'VEO3';
               const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
-              
-              if (!isRelevantModel) return null;
               
               const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
                 logoNeeded: false,
@@ -4578,8 +6020,13 @@ const getOrderedRefs = useCallback((row) => {
                                   </label>
                                 </div>
                                 {sceneOptions.logoNeeded && sessionAssets.logo_url && (
-                                  <div className="mt-2 text-xs text-gray-500">
-                                    Logo URL: {sessionAssets.logo_url}
+                                  <div className="mt-2">
+                                    <img 
+                                      src={sessionAssets.logo_url} 
+                                      alt="Logo preview" 
+                                      style={{ width: '200px', height: '100px', objectFit: 'contain' }}
+                                      className="border border-gray-300 rounded"
+                                    />
                                   </div>
                                 )}
                               </div>
@@ -4593,7 +6040,6 @@ const getOrderedRefs = useCallback((row) => {
                                     const brandVoiceovers = [];
                                     
                                     if (brandAssets && Array.isArray(brandAssets.voiceover)) {
-                                      console.log('🎤 Brand voiceovers available:', brandAssets.voiceover.length);
                                       brandVoiceovers.push(...brandAssets.voiceover);
                                     }
                                     
@@ -4610,25 +6056,14 @@ const getOrderedRefs = useCallback((row) => {
                                           matchingVoiceovers.push(vo);
                                         }
                                       });
-                                      console.log(`✅ Found ${matchingVoiceovers.length} voiceover(s) matching tone "${scriptTone}"`);
                                       if (matchingVoiceovers.length === 0) {
-                                        console.warn(`⚠️ No voiceovers match tone "${scriptTone}". Available types:`, 
-                                          brandVoiceovers.map(vo => vo.type).join(', '));
                                       }
                                     } else if (!scriptTone) {
-                                      console.warn('⚠️ No script tone available for voiceover filtering');
                                     }
                                     
                                     const hasSessionVoices = Object.keys(sessionAssets.voice_urls || {}).length > 0;
                                     const hasMatchingVoices = matchingVoiceovers.length > 0;
                                     const sessionVoicesCount = hasSessionVoices ? Object.keys(sessionAssets.voice_urls).length : 0;
-                                    
-                                    // Log summary
-                                    console.log('📊 Voiceover Summary:', {
-                                      brandVoiceovers: matchingVoiceovers.length,
-                                      sessionVoiceovers: sessionVoicesCount,
-                                      tone: scriptTone
-                                    });
                                     
                                     return (
                                       <>
@@ -4805,7 +6240,6 @@ const getOrderedRefs = useCallback((row) => {
                                       {transitionPresets.map((preset, idx) => {
                                         const presetName = preset?.name || '';
                                         if (!presetName) {
-                                          console.warn('⚠️ Preset missing name:', preset);
                                           return null;
                                         }
                                         const isSelected = sceneOptions.transitionPreset?.name === presetName;
@@ -5116,14 +6550,43 @@ const getOrderedRefs = useCallback((row) => {
                     const refsArray = r.refs || [];
                     const imgs = orderedSceneImages;
                     const imageEntries = buildImageEntries(imgs, r?.imageFrames);
-                    console.log('🎯 Scene Selected:', {
-                      sceneNumber: r.scene_number,
-                      refs: refsArray,
-                      first,
-                      second: orderedSceneImages[1],
-                      imgs, 
-                      model: modelUpper
-                    });
+                    
+                    // Get current version from images object
+                    const imageVersionData = r?.imageVersionData || null;
+                    const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || r?.current_version || 'v1';
+                    
+                    // Console log current version in images object and scripts array
+                    console.log('═══════════════════════════════════════════════════════════');
+                    console.log(`🎯 SCENE SELECTED: Scene ${r.scene_number || r.sceneNumber || i + 1}`);
+                    console.log('═══════════════════════════════════════════════════════════');
+                    console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
+                    console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
+                    if (imageVersionData && imagesCurrentVersion) {
+                      const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
+                      console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
+                    }
+                    console.log(`📜 Scripts Array:`, scriptsData);
+                    if (scriptsData && scriptsData.length > 0) {
+                      scriptsData.forEach((script, idx) => {
+                        const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
+                        console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
+                        if (scriptVersion && script[scriptVersion]) {
+                          console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
+                        }
+                      });
+                    }
+                    console.log('═══════════════════════════════════════════════════════════');
+                    
+                    // Get avatar URLs from current version of image object for VEO3 scenes
+                    const avatarUrlsFromVersion5 = getAvatarUrlsFromImageVersion(
+                      imageVersionData,
+                      r?.current_version || 'v1',
+                      modelUpper
+                    );
+                    const finalAvatarUrls5 = avatarUrlsFromVersion5.length > 0 
+                      ? avatarUrlsFromVersion5 
+                      : (Array.isArray(r?.avatar_urls) ? r.avatar_urls : []);
+                    
                     setSelected({
                       index: i,
                       imageUrl: first || '',
@@ -5137,8 +6600,11 @@ const getOrderedRefs = useCallback((row) => {
                       prompts: r?.prompts || { opening_frame: {}, closing_frame: {} },
                       imageDimensions: r?.imageDimensions || null,
                       textElements: Array.isArray(r?.textElements) ? r.textElements : [],
-                      imageVersionData: r?.imageVersionData || null,
+                      overlayElements: Array.isArray(r?.overlayElements) ? r.overlayElements : [],
+                      imageVersionData: imageVersionData,
                       imageFrames: Array.isArray(r?.imageFrames) ? r.imageFrames : [],
+                      avatar_urls: finalAvatarUrls5,
+                      current_version: r?.current_version || 'v1',
                       isEditable: !!r?.isEditable
                     });
                   }}
@@ -5226,7 +6692,7 @@ const getOrderedRefs = useCallback((row) => {
 
       {/* Regenerate Image Popup */}
       {showRegeneratePopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
           <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
             {/* Close Button - Circle at top right */}
             <button
@@ -5235,6 +6701,7 @@ const getOrderedRefs = useCallback((row) => {
                   setShowRegeneratePopup(false);
                   setRegenerateUserQuery('');
                   setRegeneratingSceneNumber(null);
+                  setIsRegenerateForDescription(false);
                 }
               }}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -5249,7 +6716,9 @@ const getOrderedRefs = useCallback((row) => {
 
             {/* Popup Content */}
             <div className="flex-1 p-6 overflow-y-auto relative">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Regenerate Image</h3>
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">
+                {isRegenerateForDescription ? 'Edit Description' : 'Regenerate Image'}
+              </h3>
               
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -5262,6 +6731,82 @@ const getOrderedRefs = useCallback((row) => {
                   className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
                   disabled={isRegenerating}
                 />
+              </div>
+
+              {/* Frame Selection - Show for all models except VEO3/ANCHOR */}
+              {regeneratingSceneNumber && (() => {
+                const model = getSceneModel(regeneratingSceneNumber);
+                const modelUpper = String(model || '').toUpperCase();
+                const isVEO3 = modelUpper === 'VEO3';
+                const isANCHOR = modelUpper === 'ANCHOR';
+                
+                // Show frame selection for all models except VEO3/ANCHOR (which use background)
+                if (!isVEO3 && !isANCHOR) {
+                  return (
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Frames to Regenerate
+                      </label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={regenerateFrames.includes('opening')}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setRegenerateFrames(prev => [...new Set([...prev, 'opening'])]);
+                              } else {
+                                setRegenerateFrames(prev => prev.filter(f => f !== 'opening'));
+                              }
+                            }}
+                            disabled={isRegenerating}
+                            className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                          />
+                          <span className="text-sm text-gray-700">Opening Frame</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={regenerateFrames.includes('closing')}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setRegenerateFrames(prev => [...new Set([...prev, 'closing'])]);
+                              } else {
+                                setRegenerateFrames(prev => prev.filter(f => f !== 'closing'));
+                              }
+                            }}
+                            disabled={isRegenerating}
+                            className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                          />
+                          <span className="text-sm text-gray-700">Closing Frame</span>
+                        </label>
+                      </div>
+                      {regenerateFrames.length === 0 && (
+                        <p className="text-xs text-red-600 mt-1">Please select at least one frame</p>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {/* Save as New Version */}
+              <div className="mb-6">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={regenerateSaveAsNewVersion}
+                    onChange={(e) => setRegenerateSaveAsNewVersion(e.target.checked)}
+                    disabled={isRegenerating}
+                    className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Save as new version</span>
+                </label>
+                <p className="text-xs text-gray-500 ml-6 mt-1">
+                  {regenerateSaveAsNewVersion 
+                    ? 'Will create a new version (e.g., v2, v3)' 
+                    : 'Will overwrite the current version'}
+                </p>
               </div>
 
               {/* Error Message */}
@@ -5316,7 +6861,18 @@ const getOrderedRefs = useCallback((row) => {
               <div className="flex justify-end">
                 <button
                   onClick={handleGenerateImage}
-                  disabled={isRegenerating || !regenerateUserQuery.trim()}
+                  disabled={(() => {
+                    if (isRegenerating || !regenerateUserQuery.trim()) return true;
+                    // For non-VEO3/ANCHOR models, require at least one frame selected
+                    if (regeneratingSceneNumber) {
+                      const model = getSceneModel(regeneratingSceneNumber);
+                      const modelUpper = String(model || '').toUpperCase();
+                      const isVEO3 = modelUpper === 'VEO3';
+                      const isANCHOR = modelUpper === 'ANCHOR';
+                      if (!isVEO3 && !isANCHOR && regenerateFrames.length === 0) return true;
+                    }
+                    return false;
+                  })()}
                   className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isRegenerating ? (
@@ -5337,9 +6893,170 @@ const getOrderedRefs = useCallback((row) => {
         </div>
       )}
 
+      {/* Avatar Manager Popup (VEO3 only) */}
+      {showAvatarManager && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => {
+                if (!isUpdatingAvatars) {
+                  setShowAvatarManager(false);
+                  setManagingAvatarSceneNumber(null);
+                  setAvatarUrls(['', '']);
+                  setError('');
+                }
+              }}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Close"
+              disabled={isUpdatingAvatars}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+
+            {/* Popup Content */}
+            <div className="flex-1 p-6 overflow-y-auto relative">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Manage VEO3 Avatars</h3>
+              <p className="text-sm text-gray-600 mb-6">
+                Select one avatar from the gallery below.
+              </p>
+              
+              {/* Avatar Selection Gallery */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Available Avatars
+                </label>
+                <div className="grid grid-cols-3 gap-4">
+                  {[
+                    { id: 'avatar_1', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png', name: 'Avatar 1' },
+                    { id: 'avatar_2', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png', name: 'Avatar 2' },
+                    { id: 'avatar_3', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png', name: 'Avatar 3' },
+                    { id: 'avatar_4', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png', name: 'Avatar 4' },
+                    { id: 'avatar_5', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png', name: 'Avatar 5' },
+                    { id: 'avatar_6', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png', name: 'Avatar 6' },
+                    { id: 'avatar_7', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png', name: 'Avatar 7' }
+                  ].map((avatar) => {
+                    // Normalize both URLs for exact matching
+                    const normalizedAvatarUrl = normalizeImageUrl(avatar.url);
+                    const isSelected = avatarUrls.some(url => normalizeImageUrl(url) === normalizedAvatarUrl);
+                    return (
+                      <div
+                        key={avatar.id}
+                        onClick={() => {
+                          if (isUpdatingAvatars) return;
+                          if (isSelected) {
+                            // Deselect
+                            setAvatarUrls([]);
+                          } else {
+                            // Select only one (replace previous selection)
+                            setAvatarUrls([avatar.url]);
+                          }
+                        }}
+                        className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 ${
+                          isSelected 
+                            ? 'border-[#13008B] shadow-lg' 
+                            : 'border-gray-200 hover:border-gray-400'
+                        } ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <div className="bg-white p-2">
+                          <img 
+                            src={avatar.url} 
+                            alt={avatar.name}
+                            className="w-full h-32 object-contain"
+                          />
+                        </div>
+                        <div className="bg-gray-50 px-2 py-1 text-center border-t border-gray-200">
+                          <p className="text-xs text-gray-600">{avatar.name}</p>
+                        </div>
+                        {isSelected && (
+                          <div className="absolute top-2 right-2 bg-[#13008B] text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-500 mt-3">
+                  {avatarUrls.length > 0 ? '1 avatar selected' : 'No avatar selected'}
+                </p>
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                  {error}
+                </div>
+              )}
+
+              {/* Loading Overlay */}
+              {isUpdatingAvatars && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                    <div className="relative w-16 h-16">
+                      <svg className="w-16 h-16" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="45" stroke="#E5E7EB" strokeWidth="8" fill="none" />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          stroke="#13008B"
+                          strokeWidth="8"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeDasharray="283"
+                          strokeDashoffset="70"
+                          className="animate-spin"
+                          style={{
+                            transformOrigin: '50% 50%',
+                            animation: 'spin 1.5s linear infinite'
+                          }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+                      </div>
+                    </div>
+                    <p className="text-lg font-semibold text-[#13008B]">Updating Avatars...</p>
+                    <p className="text-sm text-gray-600">Please wait while we update your avatars...</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Update Button */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleUpdateVEO3Avatars}
+                  disabled={isUpdatingAvatars || avatarUrls.filter(u => u.trim()).length === 0}
+                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isUpdatingAvatars ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Updating...
+                    </>
+                  ) : (
+                    'Update Avatars'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Upload Background Popup */}
       {showUploadBackgroundPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
           <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
             {/* Close Button - Circle at top right */}
             <button
@@ -5349,6 +7066,7 @@ const getOrderedRefs = useCallback((row) => {
                   setUploadedBackgroundFile(null);
                   setUploadedBackgroundPreview(null);
                   setUploadingBackgroundSceneNumber(null);
+                  setUploadFrames(['background']); // Reset to default
                 }
               }}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -5398,6 +7116,62 @@ const getOrderedRefs = useCallback((row) => {
                   </div>
                 )}
               </div>
+
+              {/* Frame Selection - Show for SORA, ANCHOR, PLOTLY scenes (not for VEO3) */}
+              {uploadingBackgroundSceneNumber && (() => {
+                const model = getSceneModel(uploadingBackgroundSceneNumber);
+                const modelUpper = String(model || '').toUpperCase();
+                const isVEO3 = isVEO3Model(model);
+                
+                // Only show frame selection for SORA, ANCHOR, PLOTLY (not VEO3)
+                if (!isVEO3) {
+                  return (
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Frames to Upload
+                      </label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={uploadFrames.includes('opening')}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setUploadFrames(prev => [...new Set([...prev, 'opening'])]);
+                              } else {
+                                setUploadFrames(prev => prev.filter(f => f !== 'opening'));
+                              }
+                            }}
+                            disabled={isUploadingBackground}
+                            className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                          />
+                          <span className="text-sm text-gray-700">Opening Frame</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={uploadFrames.includes('closing')}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setUploadFrames(prev => [...new Set([...prev, 'closing'])]);
+                              } else {
+                                setUploadFrames(prev => prev.filter(f => f !== 'closing'));
+                              }
+                            }}
+                            disabled={isUploadingBackground}
+                            className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                          />
+                          <span className="text-sm text-gray-700">Closing Frame</span>
+                        </label>
+                      </div>
+                      {uploadFrames.length === 0 && (
+                        <p className="text-xs text-red-600 mt-1">Please select at least one frame</p>
+                      )}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {/* Error Message */}
               {error && (
@@ -5451,7 +7225,7 @@ const getOrderedRefs = useCallback((row) => {
               <div className="flex justify-end">
                 <button
                   onClick={handleUploadBackground}
-                  disabled={isUploadingBackground || !uploadedBackgroundFile}
+                  disabled={isUploadingBackground || !uploadedBackgroundFile || uploadFrames.length === 0}
                   className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isUploadingBackground ? (
@@ -5471,6 +7245,7 @@ const getOrderedRefs = useCallback((row) => {
           </div>
         </div>
       )}
+
     </div>
   );
 };

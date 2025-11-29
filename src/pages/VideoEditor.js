@@ -379,24 +379,162 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     });
     
     const calculatedV1TotalDuration = accumulatedTime;
+    const activePrimaryClip = v1ClipInfo ? {
+      clip: v1ClipInfo.clip,
+      startTime: v1ClipInfo.startTimeInTimeline,
+      endTime: v1ClipInfo.startTimeInTimeline + ((v1ClipInfo.clip.trimEnd - v1ClipInfo.clip.trimStart) / (v1ClipInfo.clip.speed || 1.0)),
+      index: v1ClipInfo.index
+    } : null;
 
     // --- Overlay Layers (V2, V3, V4, etc.) Logic ---
     const activeOverlayClips = [];
+    
+    // Calculate primary clip positions for matching chart overlays
+    // Create maps for different matching strategies
+    let primaryClipAccumulatedTime = 0;
+    const primaryClipPositions = tracks[0].map((clip, clipIndex) => {
+      const trimmedDuration = clip.trimEnd - clip.trimStart;
+      const speed = clip.speed || 1.0;
+      const effectiveDuration = trimmedDuration / speed;
+      const startTime = primaryClipAccumulatedTime;
+      const endTime = startTime + effectiveDuration;
+      primaryClipAccumulatedTime += effectiveDuration;
+      return { clip, startTime, endTime, index: clipIndex };
+    });
+    
+    // Create maps for faster lookup: by sourceItemId (most direct), by clip ID, and by index
+    const primaryClipMapBySourceItemId = new Map();
+    const primaryClipMapById = new Map();
+    primaryClipPositions.forEach(pos => {
+      if (pos.clip.sourceItemId) {
+        primaryClipMapBySourceItemId.set(pos.clip.sourceItemId, pos);
+      }
+      primaryClipMapById.set(pos.clip.id, pos);
+    });
     
     for (let trackIndex = 1; trackIndex < tracks.length; trackIndex++) {
       const overlayClip = tracks[trackIndex][0]; // Overlay tracks hold one clip
       
       if (overlayClip) {
         const trimmedDuration = overlayClip.trimEnd - overlayClip.trimStart;
+        const speed = overlayClip.speed || 1.0;
+        const effectiveDuration = trimmedDuration / speed;
+        
+        // For chart overlays, DIRECTLY match to the primary clip that has the same source item
+        let overlayStartTime = overlayClip.timelineStartTime ?? 0;
+        let overlayEndTime = overlayStartTime + effectiveDuration;
+        let isPrimaryClipActive = true;
+        let primaryClipDuration = effectiveDuration;
+        let matchedPrimaryClip = null;
+
+        // Prefer matching using explicit index to avoid collisions when ids repeat
+        if (overlayClip.primaryClipIndex !== undefined && overlayClip.primaryClipIndex >= 0) {
+          matchedPrimaryClip = primaryClipPositions[overlayClip.primaryClipIndex] || null;
+          if (matchedPrimaryClip) {
+            console.log(`📊 Chart overlay ${overlayClip.id} matched by index ${overlayClip.primaryClipIndex} to primary clip ${matchedPrimaryClip.clip.id}`);
+          }
+        }
+
+        // Next, match against the currently active primary clip so overlay stays on the right video when scrubbed
+        if (!matchedPrimaryClip && activePrimaryClip) {
+          const matchesActiveClip =
+            (overlayClip.sourceItemId && overlayClip.sourceItemId === activePrimaryClip.clip.sourceItemId) ||
+            (overlayClip.primaryClipId && overlayClip.primaryClipId === activePrimaryClip.clip.id);
+          
+          if (matchesActiveClip) {
+            matchedPrimaryClip = activePrimaryClip;
+            console.log(`📊 Chart overlay ${overlayClip.id} matched active primary clip ${activePrimaryClip.clip.id}`);
+          }
+        }
+        
+        // Fallback 1: Match by sourceItemId
+        if (!matchedPrimaryClip && overlayClip.sourceItemId) {
+          matchedPrimaryClip = primaryClipMapBySourceItemId.get(overlayClip.sourceItemId);
+          if (matchedPrimaryClip) {
+            console.log(`✅ Chart overlay ${overlayClip.id} DIRECTLY matched by sourceItemId "${overlayClip.sourceItemId}" to primary clip ${matchedPrimaryClip.clip.id}`);
+          }
+        }
+        
+        // Fallback 2: Match by primary clip ID
+        if (!matchedPrimaryClip && overlayClip.primaryClipId) {
+          matchedPrimaryClip = primaryClipMapById.get(overlayClip.primaryClipId);
+          if (matchedPrimaryClip) {
+            console.log(`📊 Chart overlay ${overlayClip.id} matched by primaryClipId to primary clip ${overlayClip.primaryClipId}`);
+          }
+        }
+        
+        if (matchedPrimaryClip) {
+          // This is a chart overlay - DIRECTLY use the matched primary clip's exact timing
+          overlayStartTime = matchedPrimaryClip.startTime;
+          overlayEndTime = matchedPrimaryClip.endTime;
+          primaryClipDuration = matchedPrimaryClip.endTime - matchedPrimaryClip.startTime;
+          // Check if the primary clip is active at the current globalTime
+          isPrimaryClipActive = globalTime >= matchedPrimaryClip.startTime && globalTime < matchedPrimaryClip.endTime;
+          
+          console.log(`📊 Chart overlay ${overlayClip.id} timing:`, {
+            sourceItemId: overlayClip.sourceItemId,
+            primaryClipId: overlayClip.primaryClipId,
+            primaryClipIndex: overlayClip.primaryClipIndex,
+            matchedPrimaryClipId: matchedPrimaryClip.clip.id,
+            matchedPrimaryClipSourceItemId: matchedPrimaryClip.clip.sourceItemId,
+            primaryClipStartTime: matchedPrimaryClip.startTime,
+            primaryClipEndTime: matchedPrimaryClip.endTime,
+            primaryClipDuration,
+            overlayStartTime,
+            overlayEndTime,
+            globalTime,
+            isPrimaryClipActive
+          });
+        } else if (overlayClip.sourceItemId || overlayClip.primaryClipId || (overlayClip.primaryClipIndex !== undefined && overlayClip.primaryClipIndex >= 0)) {
+          // Chart overlay but primary clip not found - fall back to its own timelineStartTime if available
+          overlayStartTime = overlayClip.timelineStartTime ?? overlayStartTime;
+          overlayEndTime = overlayStartTime + effectiveDuration;
+          isPrimaryClipActive = true;
+        } else {
+          // Not a chart overlay - use overlay's own startTime or default to 0
+          overlayStartTime = overlayClip.startTime !== undefined ? overlayClip.startTime : overlayStartTime;
+          overlayEndTime = overlayStartTime + effectiveDuration;
+        }
         
         // Check if overlay is active at current time
-        if (globalTime >= 0 && globalTime < trimmedDuration) {
+        // For chart overlays, must match primary clip timing exactly
+        // For other overlays, check if globalTime is within the overlay's time range
+        const isActive = isPrimaryClipActive && 
+          globalTime >= overlayStartTime && 
+          globalTime < overlayEndTime;
+        
+        if (isActive) {
+          // Calculate local time for the overlay
+          const timeOffset = globalTime - overlayStartTime;
+          const localTime = overlayClip.trimStart + (timeOffset * speed);
+          
+          // For chart overlays, log matching details
+          if (overlayClip.primaryClipIndex !== undefined) {
+            console.log(`✅ Chart overlay ${overlayClip.id} is ACTIVE:`, {
+              globalTime,
+              overlayStartTime,
+              overlayEndTime,
+              timeOffset,
+              localTime,
+              primaryClipIndex: overlayClip.primaryClipIndex
+            });
+          }
+          
           activeOverlayClips.push({
             clip: overlayClip,
             trackIndex: trackIndex,
-                index: 0,
-            localTime: globalTime + overlayClip.trimStart,
-                startTimeInTimeline: 0
+            index: 0,
+            localTime: localTime,
+            startTimeInTimeline: overlayStartTime
+          });
+        } else if (overlayClip.primaryClipIndex !== undefined) {
+          // Log why chart overlay is not active
+          console.log(`❌ Chart overlay ${overlayClip.id} is NOT ACTIVE:`, {
+            globalTime,
+            overlayStartTime,
+            overlayEndTime,
+            isPrimaryClipActive,
+            primaryClipIndex: overlayClip.primaryClipIndex
           });
         }
       }
@@ -2302,10 +2440,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                   const transitionId = nextClip ? `${clip.id}-${nextClip.id}` : null;
                   const hasTransition = transitionId && transitions[transitionId];
                   
-                  // For primary track, flex-grow determines relative width. For V2, it uses a fixed relative size for visualization.
+                  // Calculate positioning for overlay tracks using explicit start times (keeps chart overlays aligned in the GUI)
+                  const clipStartTime = clip.startTime ?? clip.timelineStartTime ?? 0;
+                  const clipStartPercent = totalDuration > 0 ? (clipStartTime / totalDuration) * 100 : 0;
+                  const clipWidthPercent = totalDuration > 0 ? (effectiveDuration / totalDuration) * 100 : 0;
+                  // For primary track, flex-grow determines relative width. For overlays, position them on the timeline using left/width.
                   const clipWidthStyle = isPrimaryTrack 
                     ? { flexGrow: effectiveDuration, minWidth: '60px' }
-                    : { width: `${(effectiveDuration / totalDuration) * 100}%`, minWidth: '60px' }; 
+                    : { width: `${clipWidthPercent}%`, minWidth: '60px', left: `${clipStartPercent}%`, position: 'absolute' }; 
 
                   return (
                     <React.Fragment key={clip.id}>
@@ -2689,38 +2831,68 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   };
 
   // V2 Overlay Component
-  const OverlayElement = ({ clip }) => {
+  const OverlayElement = ({ clip, overlayInfo }) => {
     // Hooks must be called before any early returns
     const elementRef = useRef(null);
+    const lastVisibilityRef = useRef(false);
 
     // Sync V2 Video playback time
+    // Use overlayInfo if provided (for chart overlays), otherwise fall back to v2ClipInfo
+    const activeOverlayInfo = overlayInfo || v2ClipInfo;
+    const isActive = activeOverlayInfo && activeOverlayInfo.clip.id === clip.id;
+    
+    // Keep overlay video in sync every render of active info
     useEffect(() => {
-        if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
-        const videoElement = elementRef.current;
-        const localTime = v2ClipInfo?.localTime;
+      if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
+      const videoElement = elementRef.current;
+      const localTime = activeOverlayInfo?.localTime ?? clip.trimStart;
 
-        if (v2ClipInfo) {
-             // Set playback speed
-             const speed = clip.speed || 1.0;
-             if (Math.abs(videoElement.playbackRate - speed) > 0.01) {
-               videoElement.playbackRate = speed;
-             }
-             // Sync time
-            if (Math.abs(videoElement.currentTime - localTime) > 0.3) {
-                videoElement.currentTime = localTime;
-            }
-             // Play if playing
-            if (isPlaying && videoElement.paused) {
-                videoElement.play().catch(e => console.log("V2 Play interrupted"));
-            } else if (!isPlaying && !videoElement.paused) {
-                videoElement.pause();
-            }
-        } else {
-            // Not active (V2 clip is not active on timeline)
-            videoElement.pause();
-            videoElement.currentTime = clip.trimStart;
+      // Always keep overlay metadata ready
+      videoElement.muted = true;
+      videoElement.playsInline = true;
+      videoElement.preload = 'auto';
+      videoElement.disablePictureInPicture = true;
+
+      if (isActive) {
+        const speed = clip.speed || 1.0;
+        if (Math.abs(videoElement.playbackRate - speed) > 0.01) {
+          videoElement.playbackRate = speed;
         }
-    }, [v2ClipInfo, isPlaying, clip?.type, clip?.trimStart]);
+        // Force exact time for tight sync to base layer
+        if (!isNaN(localTime)) {
+          videoElement.currentTime = localTime;
+        }
+        if (isPlaying && videoElement.paused) {
+          videoElement.play().catch(() => {});
+        } else if (!isPlaying && !videoElement.paused) {
+          videoElement.pause();
+        }
+      } else {
+        if (!videoElement.paused) videoElement.pause();
+      }
+      lastVisibilityRef.current = isActive;
+    }, [activeOverlayInfo, isActive, isPlaying, clip?.type, clip?.trimStart, clip?.id]);
+
+    // On source/metadata ready, snap to current local time to avoid initial blank frame
+    useEffect(() => {
+      if (!clip || clip.type !== 'video' || !elementRef.current) return;
+      const videoElement = elementRef.current;
+      const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
+      const syncTime = () => {
+        if (!isNaN(localTime)) {
+          videoElement.currentTime = localTime;
+        }
+        if (isActive && isPlaying) {
+          videoElement.play().catch(() => {});
+        }
+      };
+      videoElement.addEventListener('loadedmetadata', syncTime);
+      videoElement.addEventListener('canplay', syncTime);
+      return () => {
+        videoElement.removeEventListener('loadedmetadata', syncTime);
+        videoElement.removeEventListener('canplay', syncTime);
+      };
+    }, [clip?.url, clip?.type, isActive, isPlaying, activeOverlayInfo]);
 
     // Early return after all hooks
     if (!clip || !clip.transform) return null;
@@ -2734,7 +2906,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     return (
         <div
             onClick={(e) => { e.stopPropagation(); setSelectedClipId(clip.id); }}
-            onMouseDown={isSelected ? (e) => handleOverlayDragStart(e, clip) : undefined} 
+            onMouseDown={(e) => { 
+              e.stopPropagation(); 
+              setSelectedClipId(clip.id); 
+              handleOverlayDragStart(e, clip); 
+            }} 
             className={`
                 absolute top-0 left-0 transform-gpu cursor-move transition-opacity 
                 ${isSelected ? 'z-50' : 'z-20'} 
@@ -2757,9 +2933,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                     ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/40' : 'border-transparent'}
                 `}
                 muted={clip.type === 'video' ? true : undefined}
+                playsInline
+                preload="auto"
                 autoPlay={false} 
                 loop={false} 
-                style={{ pointerEvents: isSelected ? 'auto' : 'none' }}
+                style={{ pointerEvents: 'auto', visibility: isActive ? 'visible' : 'hidden' }}
             />
 
             {/* Resize Handle (Bottom Right) */}
@@ -3271,7 +3449,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                     
                     {/* ALL OVERLAY LAYERS - RENDERED ON TOP */}
                     {activeOverlayClips.map((overlayInfo, index) => (
-                      <OverlayElement key={`overlay-${overlayInfo.trackIndex}-${index}`} clip={overlayInfo.clip} />
+                      <OverlayElement key={`overlay-${overlayInfo.trackIndex}-${index}`} clip={overlayInfo.clip} overlayInfo={overlayInfo} />
                     ))}
                     
                     {/* Audio playback (hidden audio elements for timing) */}

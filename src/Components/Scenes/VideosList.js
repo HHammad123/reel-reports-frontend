@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import VideoEditor from '../../pages/VideoEditor';
 import { Zap, ChevronRight, X } from 'lucide-react';
+import LogoImage from '../../asset/mainLogo.png';
 
 // FFmpeg xfade filter transition types
 // Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
@@ -68,21 +69,24 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     let timeoutId = null;
 
     // Get silent video URL (video without audio) for primary layer
-    const getSilentVideoUrlFromEntry = (entry = {}) =>
-      entry?.silent_video_url ||
-      entry?.video_only_url ||
-      entry?.video_without_audio_url ||
-      entry?.video?.silent_video_url ||
-      entry?.video?.video_only_url ||
-      entry?.video?.v1?.silent_video_url ||
-      entry?.video?.v1?.video_only_url ||
-      entry?.videos?.silent_video_url ||
-      entry?.videos?.video_only_url ||
-      entry?.videos?.v1?.silent_video_url ||
-      entry?.videos?.v1?.video_only_url ||
-      entry?.blobLink?.silent_video_link ||
-      entry?.blobLink?.video_only_link ||
-      null;
+    const getSilentVideoUrlFromEntry = (entry = {}) => {
+      // Check top-level first (most common structure)
+      if (entry?.silent_video_url) return entry.silent_video_url;
+      if (entry?.video_only_url) return entry.video_only_url;
+      if (entry?.video_without_audio_url) return entry.video_without_audio_url;
+      // Check nested structures
+      if (entry?.video?.silent_video_url) return entry.video.silent_video_url;
+      if (entry?.video?.video_only_url) return entry.video.video_only_url;
+      if (entry?.video?.v1?.silent_video_url) return entry.video.v1.silent_video_url;
+      if (entry?.video?.v1?.video_only_url) return entry.video.v1.video_only_url;
+      if (entry?.videos?.silent_video_url) return entry.videos.silent_video_url;
+      if (entry?.videos?.video_only_url) return entry.videos.video_only_url;
+      if (entry?.videos?.v1?.silent_video_url) return entry.videos.v1.silent_video_url;
+      if (entry?.videos?.v1?.video_only_url) return entry.videos.v1.video_only_url;
+      if (entry?.blobLink?.silent_video_link) return entry.blobLink.silent_video_link;
+      if (entry?.blobLink?.video_only_link) return entry.blobLink.video_only_link;
+      return null;
+    };
 
     // Get regular video URL (fallback if silent video not available)
     const getVideoUrlFromEntry = (entry = {}) =>
@@ -95,16 +99,19 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       entry?.url;
 
     // Get chart video URL (for PLOTLY model overlay)
-    const getChartVideoUrlFromEntry = (entry = {}) =>
-      entry?.chart_video_url ||
-      entry?.chartVideoUrl ||
-      entry?.chart_video?.url ||
-      entry?.chart?.video_url ||
-      entry?.videos?.v1?.chart_video_url ||
-      entry?.videos?.chart_video_url ||
-      entry?.video?.v1?.chart_video_url ||
-      entry?.video?.chart_video_url ||
-      null;
+    const getChartVideoUrlFromEntry = (entry = {}) => {
+      // Check top-level first (most common structure)
+      if (entry?.chart_video_url) return entry.chart_video_url;
+      if (entry?.chartVideoUrl) return entry.chartVideoUrl;
+      // Check nested structures
+      if (entry?.chart_video?.url) return entry.chart_video.url;
+      if (entry?.chart?.video_url) return entry.chart.video_url;
+      if (entry?.videos?.v1?.chart_video_url) return entry.videos.v1.chart_video_url;
+      if (entry?.videos?.chart_video_url) return entry.videos.chart_video_url;
+      if (entry?.video?.v1?.chart_video_url) return entry.video.v1.chart_video_url;
+      if (entry?.video?.chart_video_url) return entry.video.chart_video_url;
+      return null;
+    };
 
     // Get audio URL (prefer audio_only_url, especially from videos.v1 for SORA/PLOTLY)
     const getAudioUrlFromEntry = (entry = {}) => {
@@ -220,10 +227,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
 
           const audioUrl = getAudioUrlFromEntry(videoEntry);
           
-          // Extract chart_video_url for PLOTLY model
+          // Extract chart_video_url - check for all videos, not just PLOTLY
           const modelUpper = String(videoEntry?.model || videoEntry?.mode || '').toUpperCase();
           const isPlotly = modelUpper === 'PLOTLY';
-          const chartVideoUrl = isPlotly ? getChartVideoUrlFromEntry(videoEntry) : null;
+          // Extract chart_video_url if available (for PLOTLY and potentially other models)
+          const chartVideoUrl = getChartVideoUrlFromEntry(videoEntry);
+          
+          // Debug logging for video URLs
+          console.log(`📹 Video ${videoIndex + 1} URLs:`, {
+            model: modelUpper,
+            silent_video_url: silentVideoUrl,
+            primaryVideoUrl: primaryVideoUrl,
+            chart_video_url: chartVideoUrl,
+            hasSilentVideo: !!silentVideoUrl,
+            hasChartVideo: !!chartVideoUrl
+          });
           
           // Debug logging for audio URL extraction
           if (audioUrl) {
@@ -259,21 +277,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           }
 
           // Debug logging for chart_video_url
-          if (isPlotly && chartVideoUrl) {
-            console.log(`📊 Found chart_video_url for PLOTLY video ${videoIndex + 1}:`, chartVideoUrl);
+          if (chartVideoUrl) {
+            console.log(`📊 Found chart_video_url for video ${videoIndex + 1} (model: ${modelUpper}):`, chartVideoUrl);
           }
 
           return {
             id: videoEntry?.id || videoEntry?.video_id || `video-${videoIndex}`,
             title: videoEntry?.title || videoEntry?.name || `Video ${videoIndex + 1}`,
-            url: primaryVideoUrl || scenes[0]?.url || '',
+            url: primaryVideoUrl || scenes[0]?.url || '', // This will be silent_video_url if available
             description: videoEntry?.desc || videoEntry?.scene_description || '',
             narration: videoEntry?.narration || '',
             audioUrl: audioUrl,
             scenes,
             sceneNumber: videoEntry?.scene_number || videoEntry?.sceneNumber || videoEntry?.scene_no || null,
             model: modelUpper,
-            chartVideoUrl: chartVideoUrl, // Store chart_video_url for PLOTLY models
+            chartVideoUrl: chartVideoUrl, // Store chart_video_url for overlay layer
           };
         })
         .filter(Boolean)
@@ -311,17 +329,26 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         const parsedSessionVideos = parseVideosPayload(sdata);
         if (!cancelled && parsedSessionVideos.length > 0) {
           setItems(parsedSessionVideos);
-          setStatus('succeeded');
           setSelectedIndex(0);
         }
 
-        // If we have a jobId and no session videos yet, poll job API until succeeded
+        // If we have a jobId, always poll job API until status is "succeeded" or "failed"
         const id = jobId || localStorage.getItem('current_video_job_id');
-        const shouldPollJob = !!id && parsedSessionVideos.length === 0;
-        if (!shouldPollJob) { setIsLoading(false); setShowVideoLoader(false); return; }
+        const shouldPollJob = !!id;
+        if (!shouldPollJob) { 
+          setIsLoading(false); 
+          setShowVideoLoader(false); 
+          if (!cancelled && parsedSessionVideos.length > 0) {
+            setStatus('succeeded');
+          }
+          return; 
+        }
 
+        // Always show loader when we have a jobId to poll
+        setIsLoading(true);
         setShowVideoLoader(true);
         setJobProgress({ percent: 0, phase: 'queued' });
+        setStatus('queued');
 
         const poll = async () => {
           try {
@@ -334,17 +361,114 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             const progress = jdata?.progress || {};
             const percent = Number(progress?.percent) || 0;
             const phase = String(progress?.phase || progress?.stage || '').toLowerCase();
+            // Get status from response - check status field first, then phase
+            const responseStatus = String(jdata?.status || '').toLowerCase().trim();
+            const phaseStatus = String(phase || '').toLowerCase().trim();
+            // Also check if progress indicates completion
+            const isProgressComplete = percent >= 100 && (phase === 'done' || phase === 'completed' || phase === 'succeeded');
+            // Prioritize status field from API response
+            const finalStatus = responseStatus || phaseStatus || 'queued';
+            
+            console.log('📊 Video job status check:', {
+              responseStatus,
+              phaseStatus,
+              finalStatus,
+              isProgressComplete,
+              percent,
+              phase,
+              jdataStatus: jdata?.status,
+              fullResponse: jdata
+            });
+            
             if (!cancelled) {
               setJobProgress({ percent, phase });
-              setStatus(phase || String(jdata?.status || 'queued'));
+              setStatus(finalStatus);
+              // Keep loader visible while polling
+              setIsLoading(true);
+              setShowVideoLoader(true);
             }
 
-            if (!cancelled && !(phase === 'done' && percent >= 100)) {
+            // Check if status is "succeeded" or "failed" - only then stop polling
+            // Also check if progress is complete
+            const isCompleted = finalStatus === 'succeeded' || 
+                              finalStatus === 'failed' || 
+                              finalStatus === 'error' ||
+                              finalStatus === 'completed' ||
+                              isProgressComplete;
+            
+            if (!cancelled && !isCompleted) {
+              // Continue polling if not succeeded or failed - keep loader visible
+              console.log('⏳ Job still in progress, continuing to poll...', { finalStatus });
+              setIsLoading(true);
+              setShowVideoLoader(true);
               timeoutId = setTimeout(poll, 3000);
             } else {
+              // Job is complete (succeeded or failed) - reload session data to get the new videos
               if (!cancelled) {
-                setIsLoading(false);
-                setShowVideoLoader(false);
+                console.log('✅ Job completed with status:', finalStatus);
+                if (finalStatus === 'failed' || finalStatus === 'error') {
+                  // If failed, hide loader and show error
+                  console.error('❌ Video job failed');
+                  setIsLoading(false);
+                  setShowVideoLoader(false);
+                  setError('Video generation failed. Please try again.');
+                  return;
+                }
+                
+                console.log('✅ Video job succeeded, reloading session data...');
+                // Keep loader visible during refresh
+                setIsLoading(true);
+                setShowVideoLoader(true);
+                setJobProgress({ percent: 100, phase: 'loading' });
+                try {
+                  const session_id = localStorage.getItem('session_id');
+                  const user_id = localStorage.getItem('token');
+                  if (session_id && user_id) {
+                    const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ user_id, session_id })
+                    });
+                    const refreshText = await refreshResp.text();
+                    let refreshData;
+                    try {
+                      refreshData = JSON.parse(refreshText);
+                    } catch (_) {
+                      refreshData = refreshText;
+                    }
+                    if (refreshResp.ok && refreshData?.session_data) {
+                      const refreshedVideos = parseVideosPayload(refreshData.session_data);
+                      if (!cancelled && refreshedVideos.length > 0) {
+                        console.log(`✅ Loaded ${refreshedVideos.length} videos from session data`);
+                        setItems(refreshedVideos);
+                        setStatus('succeeded');
+                        setSelectedIndex(0);
+                        // Hide loader after successful load
+                        setIsLoading(false);
+                        setShowVideoLoader(false);
+                      } else if (!cancelled) {
+                        console.log('⚠️ No videos found in refreshed session data, will continue polling...');
+                        // If no videos yet, continue polling for a bit more
+                        timeoutId = setTimeout(poll, 3000);
+                        return;
+                      }
+                    } else {
+                      console.warn('⚠️ Failed to refresh session data:', refreshText);
+                      // Continue polling if refresh failed
+                      timeoutId = setTimeout(poll, 3000);
+                      return;
+                    }
+                  } else {
+                    // Missing session/user, hide loader
+                    setIsLoading(false);
+                    setShowVideoLoader(false);
+                  }
+                } catch (refreshError) {
+                  console.error('❌ Error refreshing session data:', refreshError);
+                  // Continue polling if refresh failed
+                  timeoutId = setTimeout(poll, 3000);
+                  return;
+                }
               }
             }
           } catch (e) {
@@ -471,7 +595,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         const overlayClips = []; // For chart_video_url overlays (PLOTLY)
         const audioClips = [];
         
-        let overlayAccumulatedTime = 0; // Track accumulated time for overlay positioning
+        let primaryClipAccumulatedTime = 0; // Track accumulated time for primary clips positioning
         
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
@@ -481,12 +605,22 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             try {
               const clip = await convertVideoUrlToClip(item);
               if (clip) {
+                // Store the source item ID in the primary clip for direct matching
+                clip.sourceItemId = item.id;
+                
+                // Calculate where this primary clip starts in the timeline (before adding it)
+                const primaryClipStartTime = primaryClipAccumulatedTime;
+                
+                // Store the current clip index before pushing (this is the index it will have)
+                const currentClipIndex = clips.length;
+                
                 clips.push(clip);
                 
-                // Convert chart_video_url to overlay clip for PLOTLY models
-                if (item.chartVideoUrl && item.model === 'PLOTLY') {
+                // Convert chart_video_url to overlay clip (for any video that has it)
+                // Only add chart overlay for PLOTLY clips so it stacks above the silent/base layer
+                if (item.model === 'PLOTLY' && item.chartVideoUrl) {
                   try {
-                    console.log(`📊 Converting chart_video_url to overlay for PLOTLY video ${item.id}:`, item.chartVideoUrl);
+                    console.log(`📊 Converting chart_video_url to overlay for video ${item.id} (model: ${item.model || 'unknown'}):`, item.chartVideoUrl);
                     const chartClip = await convertVideoUrlToClip({
                       id: `${item.id}-chart-overlay`,
                       url: item.chartVideoUrl,
@@ -495,25 +629,52 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                     });
                     
                     if (chartClip) {
-                      // Calculate the trimmed duration of the primary clip
-                      const primaryClipDuration = (clip.trimEnd - clip.trimStart) / (clip.speed || 1.0);
+                      // Calculate the trimmed duration of the primary clip (exact match)
+                      const primaryClipSpeed = clip.speed || 1.0;
+                      const primaryClipTrimmedDuration = clip.trimEnd - clip.trimStart;
+                      const primaryClipEffectiveDuration = primaryClipTrimmedDuration / primaryClipSpeed;
                       
-                      // Set overlay clip to match primary clip timing
+                      // Set overlay clip to match primary clip timing EXACTLY
                       chartClip.trimStart = 0;
-                      chartClip.trimEnd = Math.min(chartClip.duration, primaryClipDuration);
-                      chartClip.startTime = overlayAccumulatedTime; // Start at the same time as primary clip
+                      // Match the exact effective duration of the primary clip
+                      chartClip.trimEnd = Math.min(chartClip.duration, primaryClipEffectiveDuration);
+                      chartClip.speed = 1.0; // Ensure speed is 1.0 for proper sync
+                      // Start at the same time as the primary clip (where it actually is in the timeline)
+                      chartClip.startTime = primaryClipStartTime;
+                      // Persist the intended timeline start to survive matching fallbacks
+                      chartClip.timelineStartTime = primaryClipStartTime;
                       
-                      // Store reference to primary clip index for tracking
-                      chartClip.primaryClipIndex = clips.length - 1;
+                      // Add transform property to position overlay on top of video (centered, full width)
+                      // x: 50% (center), y: 50% (center), width: 100% (full width), opacity: 1.0
+                      chartClip.transform = {
+                        x: 50,  // Center horizontally
+                        y: 50,  // Center vertically
+                        width: 100,  // Full width of the video
+                        opacity: 1.0  // Fully visible
+                      };
+                      
+                      // Store DIRECT references to the primary clip for reliable matching
+                      chartClip.primaryClipId = clip.id; // Direct clip ID reference
+                      chartClip.primaryClipIndex = currentClipIndex; // Direct index reference (the index we just used)
+                      chartClip.sourceItemId = item.id; // Store source item ID for direct matching
                       
                       overlayClips.push(chartClip);
-                      console.log(`✅ Chart overlay clip created:`, {
-                        id: chartClip.id,
-                        url: chartClip.url,
-                        duration: chartClip.duration,
+                      console.log(`✅ Chart overlay clip created and DIRECTLY linked to primary clip:`, {
+                        itemId: item.id,
+                        itemModel: item.model,
+                        itemUrl: item.url, // This should be silent_video_url
+                        chartClipId: chartClip.id,
+                        chartClipUrl: chartClip.url,
+                        chartClipDuration: chartClip.duration,
+                        chartClipTrimEnd: chartClip.trimEnd,
                         startTime: chartClip.startTime,
-                        primaryClipIndex: chartClip.primaryClipIndex,
-                        primaryClipDuration: primaryClipDuration
+                        primaryClipId: clip.id,
+                        primaryClipIndex: currentClipIndex,
+                        sourceItemId: item.id,
+                        primaryClipStartTime: primaryClipStartTime,
+                        primaryClipEffectiveDuration: primaryClipEffectiveDuration,
+                        primaryClipSpeed: primaryClipSpeed,
+                        transform: chartClip.transform
                       });
                     }
                   } catch (error) {
@@ -521,9 +682,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                   }
                 }
                 
-                // Update accumulated time for next clip
+                // Update accumulated time for next clip (after adding current clip)
                 const trimmedDuration = (clip.trimEnd - clip.trimStart) / (clip.speed || 1.0);
-                overlayAccumulatedTime += trimmedDuration;
+                primaryClipAccumulatedTime += trimmedDuration;
               }
             } catch (error) {
               console.error(`Failed to convert video ${item.id}:`, error);
@@ -636,8 +797,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           }))
         });
         
-        // Set tracks: [0] = primary clips, [1] = overlay clips (chart_video_url for PLOTLY)
-        setEditorTracks([clips, overlayClips]);
+        // Set tracks: [0] = primary clips, [1+] = overlay clips (chart_video_url for PLOTLY)
+        // Each overlay clip needs its own track since VideoEditor expects tracks[trackIndex][0]
+        const overlayTracks = overlayClips.map(overlayClip => [overlayClip]);
+        setEditorTracks([clips, ...overlayTracks]);
         setEditorAudioTracks(audioClips);
         
         // Force a re-render by logging state update
@@ -799,15 +962,33 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100%] w-full">
-      {showVideoLoader && (
+      {(showVideoLoader || isLoading) && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
           <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3">
-            <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
-            <div className="text-lg font-semibold text-[#13008B]">Generating Videos</div>
-            {/* <div className="text-sm text-gray-600">
+            <div className="relative w-20 h-20 mx-auto">
+              <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+              <div className="absolute inset-2 rounded-full overflow-hidden">
+                <img 
+                  src={LogoImage} 
+                  alt="Logo" 
+                  className="w-full h-full object-contain animate-spin"
+                  style={{ animationDuration: '2s' }}
+                />
+              </div>
+            </div>
+            <div className="text-lg font-semibold text-[#13008B]">
+              {status === 'succeeded' || (jobProgress.phase === 'done' && jobProgress.percent >= 100) 
+                ? 'Loading Videos...' 
+                : 'Generating Videos'}
+            </div>
+            <div className="text-sm text-gray-600">
               {jobProgress.phase ? jobProgress.phase.toUpperCase() : 'PROCESSING'} • {Math.min(100, Math.max(0, Math.round(jobProgress.percent)))}%
-            </div> */}
-            <p className="text-xs text-gray-500">Please keep this tab open while we prepare your videos.</p>
+            </div>
+            <p className="text-xs text-gray-500">
+              {status === 'succeeded' || (jobProgress.phase === 'done' && jobProgress.percent >= 100)
+                ? 'Refreshing video list...'
+                : 'Please keep this tab open while we prepare your videos.'}
+            </p>
           </div>
         </div>
       )}
@@ -864,7 +1045,17 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         ) : isConvertingVideos ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto mb-4" />
+              <div className="relative w-20 h-20 mx-auto mb-4">
+                <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+                <div className="absolute inset-2 rounded-full overflow-hidden">
+                  <img 
+                    src={LogoImage} 
+                    alt="Logo" 
+                    className="w-full h-full object-contain animate-spin"
+                    style={{ animationDuration: '2s' }}
+                  />
+                </div>
+              </div>
               <div className="text-[#13008B] font-semibold">Loading video editor...</div>
             </div>
           </div>

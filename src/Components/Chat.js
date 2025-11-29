@@ -3,6 +3,7 @@ import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
 import ChartDataEditor from './ChartDataEditor';
+import LogoImage from '../asset/mainLogo.png';
 
 const GOOGLE_FONT_OPTIONS = [
   'Roboto',
@@ -2861,8 +2862,18 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             {/* Prominent loader while polling job status - shows until status is successful */}
             {isLoading && (
               <div className="flex flex-col items-center justify-center py-12 min-h-[400px]">
-                <div className="w-16 h-16 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin mb-4"></div>
-                <p className="text-lg font-semibold text-gray-900 mb-2">Generating Storyboard Images</p>
+                <div className="relative w-20 h-20 mb-4">
+                  <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+                  <div className="absolute inset-2 rounded-full overflow-hidden">
+                    <img 
+                      src={LogoImage} 
+                      alt="Logo" 
+                      className="w-full h-full object-contain animate-spin"
+                      style={{ animationDuration: '2s' }}
+                    />
+                  </div>
+                </div>
+                <p className="text-lg font-semibold text-gray-900 mb-2">Generating Images</p>
                 <p className="text-sm text-gray-600">
                   {jobStatus ? `Status: ${jobStatus.charAt(0).toUpperCase() + jobStatus.slice(1)}` : 'Processing...'}
                 </p>
@@ -3368,6 +3379,41 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       setSelectedAvatar(null);
     }
   }, [currentSceneIndex, scriptRows]); // Include scriptRows to update when scene data changes
+
+  // Auto-select first avatar if no avatar is selected for avatar-based scenes
+  useEffect(() => {
+    if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
+      const scene = scriptRows[currentSceneIndex];
+      const m = String(scene?.model || scene?.mode || '').toUpperCase();
+      const isAvatarish = (m === 'VEO3' || m === 'ANCHOR');
+      
+      // Only auto-select if:
+      // 1. Scene is avatar-based
+      // 2. No avatar is currently selected
+      // 3. Scene doesn't have an avatar saved
+      if (isAvatarish && !selectedAvatar) {
+        const hasSceneAvatar = (Array.isArray(scene?.avatar_urls) && scene.avatar_urls.length > 0) || 
+                              (typeof scene?.avatar === 'string' && scene.avatar.trim());
+        
+        if (!hasSceneAvatar) {
+          // Get the first available avatar from preset or brand assets
+          const firstPresetAvatar = Array.isArray(presetAvatars) && presetAvatars.length > 0 
+            ? String(presetAvatars[0]).trim() 
+            : null;
+          const firstBrandAvatar = Array.isArray(brandAssetsAvatars) && brandAssetsAvatars.length > 0 
+            ? String(brandAssetsAvatars[0]).trim() 
+            : null;
+          
+          // Prefer preset avatar, fallback to brand asset avatar
+          const firstAvailableAvatar = firstPresetAvatar || firstBrandAvatar;
+          
+          if (firstAvailableAvatar) {
+            setSelectedAvatar(firstAvailableAvatar);
+          }
+        }
+      }
+    }
+  }, [currentSceneIndex, scriptRows, selectedAvatar, presetAvatars, brandAssetsAvatars]);
 
   // Keep avatar selection scoped to the current scene - removed incorrect ref_image assignment
 
@@ -7216,15 +7262,27 @@ const saveAdvancedStyles = async () => {
 
 const beginSceneDataEdit = () => {
   const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
-  if (!scene || !scene?.veo3_prompt_template) return;
-  sceneDataBackupRef.current = JSON.parse(JSON.stringify(scene.veo3_prompt_template));
+  if (!scene) return;
+  // Backup both description and veo3_prompt_template
+  const backup = {
+    description: scene?.description || '',
+    veo3_prompt_template: scene?.veo3_prompt_template ? JSON.parse(JSON.stringify(scene.veo3_prompt_template)) : {}
+  };
+  sceneDataBackupRef.current = backup;
   setIsEditingSceneData(true);
 };
 
 const cancelSceneDataEdit = () => {
   const backup = sceneDataBackupRef.current;
   if (backup) {
-    handleSceneUpdate(currentSceneIndex, 'veo3_prompt_template', JSON.parse(JSON.stringify(backup)));
+    // Restore description
+    if (backup.description !== undefined) {
+      handleSceneUpdate(currentSceneIndex, 'description', backup.description);
+    }
+    // Restore veo3_prompt_template if it existed
+    if (backup.veo3_prompt_template && Object.keys(backup.veo3_prompt_template).length > 0) {
+      handleSceneUpdate(currentSceneIndex, 'veo3_prompt_template', JSON.parse(JSON.stringify(backup.veo3_prompt_template)));
+    }
   }
   sceneDataBackupRef.current = null;
   setIsEditingSceneData(false);
@@ -7759,8 +7817,18 @@ const saveAnchorPromptTemplate = async () => {
       {isSwitchingVideoType && loadingVideoType && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
           <div className="bg-white p-8 w-[300px] rounded-lg flex flex-col items-center justify-center shadow-xl">
-            {/* Circular loader spinner */}
-            <div className="w-16 h-16 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin mb-4"></div>
+            {/* Circular loader with logo */}
+            <div className="relative w-20 h-20 mb-4">
+              <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+              <div className="absolute inset-2 rounded-full overflow-hidden">
+                <img 
+                  src={LogoImage} 
+                  alt="Logo" 
+                  className="w-full h-full object-contain animate-spin"
+                  style={{ animationDuration: '2s' }}
+                />
+              </div>
+            </div>
             {/* Loading text with video type */}
             <p className="text-lg font-semibold text-gray-900">Loading {loadingVideoType}...</p>
           </div>
@@ -9360,7 +9428,17 @@ const saveAnchorPromptTemplate = async () => {
                                  {isSavingNarration && (
                                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                      <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                                       <div className="w-12 h-12 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
+                                       <div className="relative w-16 h-16 mx-auto">
+                                         <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+                                         <div className="absolute inset-2 rounded-full overflow-hidden">
+                                           <img 
+                                             src={LogoImage} 
+                                             alt="Logo" 
+                                             className="w-full h-full object-contain animate-spin"
+                                             style={{ animationDuration: '2s' }}
+                                           />
+                                         </div>
+                                       </div>
                                        <div className="text-sm font-semibold text-[#13008B]">Updating Narration</div>
                                        <p className="text-xs text-gray-500">Please wait...</p>
                              </div>
@@ -9773,7 +9851,17 @@ const saveAnchorPromptTemplate = async () => {
                               {isSavingDescription && (
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                                    <div className="w-12 h-12 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
+                                    <div className="relative w-16 h-16 mx-auto">
+                                      <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+                                      <div className="absolute inset-2 rounded-full overflow-hidden">
+                                        <img 
+                                          src={LogoImage} 
+                                          alt="Logo" 
+                                          className="w-full h-full object-contain animate-spin"
+                                          style={{ animationDuration: '2s' }}
+                                        />
+                                      </div>
+                                    </div>
                                     <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
                                     <p className="text-xs text-gray-500">Please wait...</p>
                                   </div>
@@ -9800,7 +9888,17 @@ const saveAnchorPromptTemplate = async () => {
                             {isSavingDescription && (
                               <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                 <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                                  <div className="w-12 h-12 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto" />
+                                  <div className="relative w-16 h-16 mx-auto">
+                                    <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+                                    <div className="absolute inset-2 rounded-full overflow-hidden">
+                                      <img 
+                                        src={LogoImage} 
+                                        alt="Logo" 
+                                        className="w-full h-full object-contain animate-spin"
+                                        style={{ animationDuration: '2s' }}
+                                      />
+                                    </div>
+                                  </div>
                                   <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
                                   <p className="text-xs text-gray-500">Please wait...</p>
                                 </div>
@@ -10521,71 +10619,6 @@ const saveAnchorPromptTemplate = async () => {
                               >
                                 <File className="w-4 h-4" /> Choose From Template
                               </button>
-                              <input ref={imageFileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e)=>{
-                                try {
-                                  const files = Array.from(e.target.files || []); if (!files.length) return;
-                                  await handleUploadBackgroundImages(files);
-                                } catch(err) { console.error('Background images upload failed:', err); alert('Failed to upload background images. Please try again.'); }
-                              }} />
-                              <input ref={pptxFileInputRef} type="file" accept=".pptx" className="hidden" onChange={async (e)=>{
-                                try {
-                                  const file = e.target.files?.[0];
-                                  if (!file) return;
-                                  await handleUploadBackgroundPptx(file);
-                                } catch(err) { console.error('Background PPTX upload failed:', err); alert('Failed to upload PPTX. Please try again.'); }
-                              }} />
-                              <div className="relative upload-dropdown-container">
-                                <button 
-                                  onClick={() => setShowUploadDropdown(!showUploadDropdown)} 
-                                  disabled={isUploadingBackground} 
-                                  className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${isUploadingBackground ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-white border border-gray-200 hover:bg-gray-50 text-gray-900'}`}
-                                >
-                                  {isUploadingBackground ? (
-                                    <span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-                                  ) : (
-                                    <>
-                                      <Upload className="w-4 h-4" />
-                                      <span>Upload</span>
-                                      <ChevronDown className="w-4 h-4" />
-                                    </>
-                                  )}
-                              </button>
-                                {showUploadDropdown && !isUploadingBackground && (
-                                  <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                                    <button
-                                      onClick={() => {
-                                        if (imageFileInputRef.current) imageFileInputRef.current.click();
-                                        setShowUploadDropdown(false);
-                                      }}
-                                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
-                                    >
-                                      <Upload className="w-4 h-4" />
-                                      Upload Image
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        if (pptxFileInputRef.current) pptxFileInputRef.current.click();
-                                        setShowUploadDropdown(false);
-                                      }}
-                                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 border-t border-gray-200"
-                                    >
-                                      <File className="w-4 h-4" />
-                                      Upload PPTX
-                                    </button>
-                                    <div className="px-4 py-2 border-t border-gray-200">
-                                      <label className="flex items-center gap-2 text-sm cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={convertColors}
-                                          onChange={(e) => setConvertColors(e.target.checked)}
-                                          className="rounded"
-                                        />
-                                        <span>Convert Colors</span>
-                                      </label>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
                             </div>
                           </div>
                         );
@@ -11194,10 +11227,10 @@ const saveAnchorPromptTemplate = async () => {
                                       </div>
                                   </div>
                                 )}
-                                {isVeo && scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object' && Object.keys(scene.veo3_prompt_template).length > 0 && (
+                                {isVeo && (
                                   <div className="rounded-lg border border-gray-200 bg-white p-4">
                                     <div className="mb-3 flex items-center justify-between">
-                                      <h5 className="text-sm font-semibold text-gray-800">Scene Data</h5>
+                                      <h5 className="text-sm font-semibold text-gray-800">VEO3 Prompt Template</h5>
                                       <div className="flex items-center gap-2">
                                         {isEditingSceneData ? (
                                           <>
@@ -11233,7 +11266,51 @@ const saveAnchorPromptTemplate = async () => {
                                       </div>
                                     </div>
                                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                      {/* Always show description */}
+                                      {(() => {
+                                        const descriptionValue = scene?.description || '';
+                                        const displayValue = typeof descriptionValue === 'string' ? descriptionValue : JSON.stringify(descriptionValue ?? '', null, 2);
+                                        if (isEditingSceneData) {
+                                          const onChange = (val) => {
+                                            handleSceneUpdate(currentSceneIndex, 'description', val);
+                                          };
+                                          return (
+                                            <div
+                                              key="description"
+                                              className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
+                                            >
+                                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                                Description
+                                              </p>
+                                              <textarea
+                                                value={displayValue}
+                                                onChange={(e) => onChange(e.target.value)}
+                                                rows={3}
+                                                className="mt-1 w-full resize-y rounded-md border border-blue-200 px-3 py-2 text-sm text-gray-800 focus:border-transparent focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                          );
+                                        }
+                                        return (
+                                          <div
+                                            key="description"
+                                            className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
+                                          >
+                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                              Description
+                                            </p>
+                                            <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
+                                              {displayValue || 'No description provided'}
+                                            </p>
+                                          </div>
+                                        );
+                                      })()}
+                                      {/* Show other veo3_prompt_template fields if they exist */}
+                                      {scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object' && Object.keys(scene.veo3_prompt_template).length > 0 && (
+                                        <>
                                       {Object.entries(scene.veo3_prompt_template).map(([key, value]) => {
+                                            // Skip description if it's already shown above
+                                            if (key === 'description') return null;
                                         const displayValue =
                                           typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
                                         if (isEditingSceneData) {
@@ -11279,6 +11356,8 @@ const saveAnchorPromptTemplate = async () => {
                                           </div>
                                         );
                                       })}
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 )}
@@ -12825,7 +12904,17 @@ const saveAnchorPromptTemplate = async () => {
       {isGeneratingVideo && (
         <div className="fixed  inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-gray-100 w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <div className="relative w-20 h-20 mx-auto mb-4">
+              <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+              <div className="absolute inset-2 rounded-full overflow-hidden">
+                <img 
+                  src={LogoImage} 
+                  alt="Logo" 
+                  className="w-full h-full object-contain animate-spin"
+                  style={{ animationDuration: '2s' }}
+                />
+              </div>
+            </div>
             <h4 className="text-lg font-semibold text-[#13008B]">Generating Video...</h4>
             <p className="mt-1 text-sm text-gray-600">This may take up to 5 minutes.</p>
             <p className="mt-2 text-sm font-medium text-gray-800">Time remaining: {formatSeconds(videoCountdown)}</p>

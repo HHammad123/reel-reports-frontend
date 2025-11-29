@@ -480,6 +480,10 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [isDraggingShape, setIsDraggingShape] = useState(false)
   const [isResizingShape, setIsResizingShape] = useState(false)
   const [defaultShapeColor, setDefaultShapeColor] = useState('#7c3aed')
+  
+  // Multiple overlay layers support (for anchor and other models)
+  const [overlayLayers, setOverlayLayers] = useState([])
+  const [selectedOverlayLayer, setSelectedOverlayLayer] = useState(null)
   const [isToolbarOpen, setIsToolbarOpen] = useState(true)
   const [hoveredTextLayerId, setHoveredTextLayerId] = useState(null)
   const [hoverToolbarPosition, setHoverToolbarPosition] = useState({ x: 0, y: 0 })
@@ -516,11 +520,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     
     // For other aspect ratios, use the original sizing
     return {
-      aspectRatio: normalizedAspectRatio,
-      width: 'min(100%, 860px)',
-      maxWidth: '860px',
-      maxHeight: '72vh',
-      minHeight: '200px'
+    aspectRatio: normalizedAspectRatio,
+    width: 'min(100%, 860px)',
+    maxWidth: '860px',
+    maxHeight: '72vh',
+    minHeight: '200px'
     };
   }, [normalizedAspectRatio])
 
@@ -1823,8 +1827,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     // Toggle selection: if clicking on already selected layer, keep it selected
     // If clicking on new layer, select it
     if (selectedLayer?.id !== layer.id) {
-      setSelectedLayer(layer)
-      setSelectedShape(null)
+    setSelectedLayer(layer)
+    setSelectedShape(null)
     }
     // Don't auto-open text panel on click - user can manually open it from toolbar
   }
@@ -1875,84 +1879,148 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
 
   const saveButtonLabel = isCropping ? 'Save Cropped Image' : 'Save Changes'
 
-  const renderOverlayImage = () => {
-    if (!overlayVisible || !overlayImage) return null
+  // Render all overlay layers
+  const renderAllOverlayLayers = () => {
     const { scaleX, scaleY } = getImageScale()
-    // Calculate size from scale if overlaySize not set yet (backward compatibility)
-    const overlayWidth = overlaySize?.width || (overlayImage.width * overlayScale)
-    const overlayHeight = overlaySize?.height || (overlayImage.height * overlayScale)
-    const widthPx = Math.max(overlayWidth * scaleX, 1)
-    const heightPx = Math.max(overlayHeight * scaleY, 1)
+    const overlays = []
     
-    return (
-      <div
-        className="absolute z-5 cursor-move"
-        style={{
-          position: 'absolute',
-          left: overlayPosition.x * scaleX,
-          top: overlayPosition.y * scaleY,
-          width: widthPx,
-          height: heightPx,
-          transformOrigin: 'top left'
-        }}
-        onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
-        onMouseEnter={() => {
-          if (overlayHoverTimeoutRef.current) {
-            clearTimeout(overlayHoverTimeoutRef.current)
-          }
-          setHoveredOverlay(true)
-        }}
-        onMouseLeave={() => {
-          overlayHoverTimeoutRef.current = setTimeout(() => {
-            setHoveredOverlay(false)
-            overlayHoverTimeoutRef.current = null
-          }, 200)
-        }}
-      >
-        <img
-          src={overlayImageUrl}
-          alt="Overlay"
-          draggable="false"
+    // Render all overlays from overlayLayers array
+    overlayLayers.forEach((overlayLayer) => {
+      if (!overlayLayer.image && !overlayLayer.imageUrl) return
+      
+      const widthPx = Math.max(overlayLayer.width * scaleX, 1)
+      const heightPx = Math.max(overlayLayer.height * scaleY, 1)
+      const isSelected = selectedOverlayLayer?.id === overlayLayer.id
+      
+      overlays.push(
+        <div
+          key={`overlay-layer-${overlayLayer.id}`}
+          className={`absolute z-5 cursor-move ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
           style={{
-            width: '100%',
-            height: '100%',
-            display: 'block'
+            position: 'absolute',
+            left: overlayLayer.x * scaleX,
+            top: overlayLayer.y * scaleY,
+            width: widthPx,
+            height: heightPx,
+            transformOrigin: 'top left'
           }}
-        />
-        {(isOverlayUploading || isRemovingBackground) && (
-          <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-20 pointer-events-none">
-            <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        )}
-        {hoveredOverlay && (
-          <div className="absolute -top-2 right-2 z-10 flex gap-2">
-            {!isCropping && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  startCropping('overlay')
-                  setHoveredOverlay(false)
-                }}
-                className="w-7 h-7 bg-white/90 border border-purple-500 text-purple-600 rounded-full flex items-center justify-center shadow-md hover:bg-purple-50 transition"
-                title="Crop Overlay"
-                onMouseEnter={() => {
-                  if (overlayHoverTimeoutRef.current) {
-                    clearTimeout(overlayHoverTimeoutRef.current)
-                    overlayHoverTimeoutRef.current = null
-                  }
-                }}
-              >
-                <Icon name="crop" size={12} />
-              </button>
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            setSelectedOverlayLayer(overlayLayer)
+            handleOverlayMouseDown(e, 'drag')
+          }}
+          onMouseEnter={() => {
+            if (overlayHoverTimeoutRef.current) {
+              clearTimeout(overlayHoverTimeoutRef.current)
+            }
+            setHoveredOverlay(true)
+          }}
+          onMouseLeave={() => {
+            overlayHoverTimeoutRef.current = setTimeout(() => {
+              setHoveredOverlay(false)
+              overlayHoverTimeoutRef.current = null
+            }, 200)
+          }}
+        >
+          <img
+            src={overlayLayer.imageUrl || overlayLayer.fileUrl}
+            alt={`Overlay ${overlayLayer.id}`}
+            draggable="false"
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'block',
+              objectFit: 'contain'
+            }}
+          />
+          {isSelected && (
+            <div className="absolute -top-2 -right-2 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs z-20">
+              ✓
+            </div>
+          )}
+        </div>
+      )
+    })
+    
+    // Also render the main overlay image if it exists and is not already in overlayLayers
+    if (overlayVisible && overlayImage) {
+      const isInLayers = overlayLayers.some(ol => ol.imageUrl === overlayImageUrl)
+      if (!isInLayers) {
+        const overlayWidth = overlaySize?.width || (overlayImage.width * overlayScale)
+        const overlayHeight = overlaySize?.height || (overlayImage.height * overlayScale)
+        const widthPx = Math.max(overlayWidth * scaleX, 1)
+        const heightPx = Math.max(overlayHeight * scaleY, 1)
+        
+        overlays.push(
+          <div
+            key="main-overlay"
+            className="absolute z-5 cursor-move"
+            style={{
+              position: 'absolute',
+              left: overlayPosition.x * scaleX,
+              top: overlayPosition.y * scaleY,
+              width: widthPx,
+              height: heightPx,
+              transformOrigin: 'top left'
+            }}
+            onMouseDown={(e) => handleOverlayMouseDown(e, 'drag')}
+            onMouseEnter={() => {
+              if (overlayHoverTimeoutRef.current) {
+                clearTimeout(overlayHoverTimeoutRef.current)
+              }
+              setHoveredOverlay(true)
+            }}
+            onMouseLeave={() => {
+              overlayHoverTimeoutRef.current = setTimeout(() => {
+                setHoveredOverlay(false)
+                overlayHoverTimeoutRef.current = null
+              }, 200)
+            }}
+          >
+            <img
+              src={overlayImageUrl}
+              alt="Overlay"
+              draggable="false"
+              style={{
+                width: '100%',
+                height: '100%',
+                display: 'block'
+              }}
+            />
+            {(isOverlayUploading || isRemovingBackground) && (
+              <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-20 pointer-events-none">
+                <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
+              </div>
             )}
-            {isCropping && croppingTarget === 'overlay' && (
-              <>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    cancelCrop()
-                    setHoveredOverlay(false)
+            {hoveredOverlay && (
+              <div className="absolute -top-2 right-2 z-10 flex gap-2">
+                {!isCropping && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      startCropping('overlay')
+                      setHoveredOverlay(false)
+                    }}
+                    className="w-7 h-7 bg-white/90 border border-purple-500 text-purple-600 rounded-full flex items-center justify-center shadow-md hover:bg-purple-50 transition"
+                    title="Crop Overlay"
+                    onMouseEnter={() => {
+                      if (overlayHoverTimeoutRef.current) {
+                        clearTimeout(overlayHoverTimeoutRef.current)
+                        overlayHoverTimeoutRef.current = null
+                      }
+                    }}
+                  >
+                    <Icon name="crop" size={12} />
+                  </button>
+                )}
+                {isCropping && croppingTarget === 'overlay' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        cancelCrop()
+                        setHoveredOverlay(false)
                   }}
                   className="w-7 h-7 bg-gray-100 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition"
                   title="Cancel Overlay Crop"
@@ -2232,11 +2300,184 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             </>
           )
         })()}
-      </div>
-    )
+          </div>
+        )
+      }
+    }
+    
+    return <>{overlays}</>
   }
 
-  const handleAddShape = (type) => {
+  // Convert shape to PNG
+  const convertShapeToPNG = async (shape) => {
+    try {
+      // Create a canvas for the shape
+      const padding = Math.max(shape.borderWidth || 0, 10) // Add padding for borders
+      const canvas = document.createElement('canvas')
+      canvas.width = shape.width + (padding * 2)
+      canvas.height = shape.height + (padding * 2)
+      const ctx = canvas.getContext('2d')
+
+      // Enable high DPI rendering
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = (shape.width + (padding * 2)) * dpr
+      canvas.height = (shape.height + (padding * 2)) * dpr
+      ctx.scale(dpr, dpr)
+
+      // Translate to center (accounting for padding)
+      ctx.translate(padding, padding)
+
+      // Apply rotation if needed
+      if (shape.rotation) {
+        ctx.translate(shape.width / 2, shape.height / 2)
+        ctx.rotate((shape.rotation * Math.PI) / 180)
+        ctx.translate(-shape.width / 2, -shape.height / 2)
+      }
+
+      // Set opacity
+      ctx.globalAlpha = shape.opacity ?? 1
+
+      const fillColor = shape.fill || 'transparent'
+      const strokeColor = shape.borderColor || '#000000'
+      const strokeWidth = shape.borderWidth || 0
+
+      // Draw shape based on type
+      if (shape.type === 'rectangle' || shape.type === 'square') {
+        const borderRadius = shape.borderRadius || 0
+        if (borderRadius > 0) {
+          const r = Math.min(borderRadius, shape.width / 2, shape.height / 2)
+          ctx.beginPath()
+          ctx.moveTo(r, 0)
+          ctx.lineTo(shape.width - r, 0)
+          ctx.quadraticCurveTo(shape.width, 0, shape.width, r)
+          ctx.lineTo(shape.width, shape.height - r)
+          ctx.quadraticCurveTo(shape.width, shape.height, shape.width - r, shape.height)
+          ctx.lineTo(r, shape.height)
+          ctx.quadraticCurveTo(0, shape.height, 0, shape.height - r)
+          ctx.lineTo(0, r)
+          ctx.quadraticCurveTo(0, 0, r, 0)
+          ctx.closePath()
+        } else {
+          ctx.rect(0, 0, shape.width, shape.height)
+        }
+
+        if (fillColor !== 'transparent') {
+          ctx.fillStyle = fillColor
+          ctx.fill()
+        }
+
+        if (strokeWidth > 0) {
+          ctx.strokeStyle = strokeColor
+          ctx.lineWidth = strokeWidth
+          ctx.stroke()
+        }
+      } else if (shape.type === 'circle') {
+        const radius = Math.min(shape.width, shape.height) / 2
+        ctx.beginPath()
+        ctx.arc(shape.width / 2, shape.height / 2, radius, 0, Math.PI * 2)
+        ctx.closePath()
+
+        if (fillColor !== 'transparent') {
+          ctx.fillStyle = fillColor
+          ctx.fill()
+        }
+
+        if (strokeWidth > 0) {
+          ctx.strokeStyle = strokeColor
+          ctx.lineWidth = strokeWidth
+          ctx.stroke()
+        }
+      } else if (shape.type === 'triangle') {
+        ctx.beginPath()
+        ctx.moveTo(shape.width / 2, 0)
+        ctx.lineTo(0, shape.height)
+        ctx.lineTo(shape.width, shape.height)
+        ctx.closePath()
+
+        if (fillColor !== 'transparent') {
+          ctx.fillStyle = fillColor
+          ctx.fill()
+        }
+
+        if (strokeWidth > 0) {
+          ctx.strokeStyle = strokeColor
+          ctx.lineWidth = strokeWidth
+          ctx.stroke()
+        }
+      } else if (shape.type === 'line') {
+        ctx.beginPath()
+        ctx.moveTo(0, shape.height / 2)
+        ctx.lineTo(shape.width, shape.height / 2)
+        ctx.strokeStyle = strokeColor
+        ctx.lineWidth = strokeWidth || 2
+        ctx.stroke()
+      }
+
+      // Convert canvas to blob
+      return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob)
+          } else {
+            reject(new Error('Failed to convert shape to blob'))
+          }
+        }, 'image/png')
+      })
+    } catch (error) {
+      console.error('Error converting shape to PNG:', error)
+      throw error
+    }
+  }
+
+  // Upload shape PNG to server
+  const uploadShapePNG = async (blob, shapeId) => {
+    try {
+      const sessionId = localStorage.getItem('session_id')
+      if (!sessionId) {
+        throw new Error('Missing session ID')
+      }
+
+      const formData = new FormData()
+      formData.append('session_id', sessionId)
+      formData.append('file', blob, `shape-${shapeId}.png`)
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
+        method: 'POST',
+        body: formData
+      })
+
+      const responseText = await response.text()
+      let responseData
+      try {
+        responseData = JSON.parse(responseText)
+      } catch (_) {
+        responseData = responseText
+      }
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status} ${responseText}`)
+      }
+
+      // Extract file_url from response
+      const fileUrl = responseData?.file_url || 
+                     responseData?.url || 
+                     responseData?.image_url ||
+                     responseData?.data?.file_url ||
+                     responseData?.data?.url ||
+                     responseData?.data?.image_url
+
+      if (!fileUrl) {
+        throw new Error('Upload API did not return file_url')
+      }
+
+      return fileUrl
+    } catch (error) {
+      console.error('Error uploading shape PNG:', error)
+      throw error
+    }
+  }
+
+  const handleAddShape = async (type) => {
     // Center new shape in the image area if possible
     let centerX = 120
     let centerY = 120
@@ -2262,7 +2503,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       borderStyle: 'solid',
       borderRadius: 12,
       rotation: 0,
-      opacity: 1
+      opacity: 1,
+      fileUrl: null, // Will be set after upload
+      isUploading: true // Track upload state
     }
 
     switch (type) {
@@ -2311,6 +2554,27 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setShapeLayers(newLayers)
     setSelectedShape(baseShape)
     setSelectedLayer(null)
+
+    // Convert shape to PNG and upload
+    try {
+      const blob = await convertShapeToPNG(baseShape)
+      const fileUrl = await uploadShapePNG(blob, baseShape.id)
+      
+      // Update shape with file URL
+      const updatedShape = { ...baseShape, fileUrl, isUploading: false }
+      const updatedLayers = newLayers.map(s => s.id === baseShape.id ? updatedShape : s)
+      setShapeLayers(updatedLayers)
+      setSelectedShape(updatedShape)
+      
+      console.log('✅ Shape uploaded successfully:', fileUrl)
+    } catch (error) {
+      console.error('❌ Failed to upload shape:', error)
+      // Remove isUploading flag even on error
+      const updatedShape = { ...baseShape, isUploading: false }
+      const updatedLayers = newLayers.map(s => s.id === baseShape.id ? updatedShape : s)
+      setShapeLayers(updatedLayers)
+      alert('Failed to upload shape. Please try again.')
+    }
 
     saveToHistory('shape_add', {
       previousLayers,
@@ -2489,7 +2753,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           groupedLayers: groupedLayers.map(l => ({ id: l.id, x: l.x, y: l.y }))
         })
       } else {
-        setLayerStart({ x: layer.x, y: layer.y })
+      setLayerStart({ x: layer.x, y: layer.y })
       }
     } else if (action === 'resize') {
       setIsResizing(true)
@@ -2547,8 +2811,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       } else {
         // Single layer movement (no group)
         updatedLayers = textLayers.map(layer =>
-          layer.id === selectedLayer.id ? { ...layer, x: newX, y: newY } : layer
-        )
+        layer.id === selectedLayer.id ? { ...layer, x: newX, y: newY } : layer
+      )
       }
       
       setTextLayers(updatedLayers)
@@ -2830,44 +3094,67 @@ const handleTemplateJsonLoad = () => {
       setShapeLayers(data.shape_layers)
     }
     
-    // Handle overlay_elements
+    // Handle overlay_elements - load ALL overlays, not just the first one
     if (data.overlay_elements && Array.isArray(data.overlay_elements) && data.overlay_elements.length > 0) {
-      const ov = data.overlay_elements[0]
-      const bbPercent = convertBoundingBoxToPercent(ov?.bounding_box || {}, {
-        width: originalWidth,
-        height: originalHeight
-      })
-      const posXNat = (bbPercent.x / 100) * originalWidth
-      const posYNat = (bbPercent.y / 100) * originalHeight
-      const targetWNat = (bbPercent.width / 100) * originalWidth
-      const targetHNat = (bbPercent.height / 100) * originalHeight
+      const loadedOverlays = []
       
-      const ovUrl = ov?.overlay_image?.image_url
-      if (ovUrl) {
-        const oImg = new Image()
-        oImg.onload = () => {
-          setOverlayImage(oImg)
-          setOverlayImageUrl(ovUrl)
-          setOverlayVisible(true)
+      // Load all overlay_elements
+      data.overlay_elements.forEach((ov, index) => {
+        const bbPercent = convertBoundingBoxToPercent(ov?.bounding_box || {}, {
+          width: originalWidth,
+          height: originalHeight
+        })
+        const posXNat = (bbPercent.x / 100) * originalWidth
+        const posYNat = (bbPercent.y / 100) * originalHeight
+        const targetWNat = (bbPercent.width / 100) * originalWidth
+        const targetHNat = (bbPercent.height / 100) * originalHeight
+        
+        const ovUrl = ov?.overlay_image?.image_url
+        if (ovUrl) {
+          const overlayLayer = {
+            id: Date.now() + index,
+            imageUrl: ovUrl,
+            x: posXNat,
+            y: posYNat,
+            width: targetWNat,
+            height: targetHNat,
+            image: null, // Will be loaded asynchronously
+            fileUrl: ovUrl // Store the file URL
+          }
+          loadedOverlays.push(overlayLayer)
           
-          // Store in natural pixel coordinates (like shapes)
-          setOverlayPosition({ x: posXNat, y: posYNat })
-          
-          // Store size in natural pixel coordinates
-          setOverlaySize({ width: targetWNat, height: targetHNat })
-          
-          // Calculate scale for backward compatibility
-          const scaleX = oImg.width > 0 ? (targetWNat / oImg.width) : 1
-          const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1
-          const fitScale = Math.min(scaleX, scaleY)
-          setOverlayScale(fitScale || 1)
-          resetOverlayBackgroundState()
+          // Load image asynchronously
+          const oImg = new Image()
+          oImg.onload = () => {
+            overlayLayer.image = oImg
+            setOverlayLayers(prev => {
+              const updated = [...prev]
+              const existingIndex = updated.findIndex(ol => ol.id === overlayLayer.id)
+              if (existingIndex >= 0) {
+                updated[existingIndex] = { ...overlayLayer, image: oImg }
+              } else {
+                updated.push({ ...overlayLayer, image: oImg })
+              }
+              return updated
+            })
+          }
+          oImg.onerror = () => {
+            console.error(`Failed to load overlay image ${index} from template`)
+          }
+          oImg.src = ovUrl
         }
-        oImg.onerror = () => {
-          console.error('Failed to load overlay image from template')
-        }
-        oImg.src = ovUrl
-      }
+      })
+      
+      setOverlayLayers(loadedOverlays)
+      
+      // Clear main overlayImage when loading overlay_elements to prevent duplication
+      setOverlayImage(null)
+      setOverlayImageUrl('')
+      setOverlayVisible(false)
+      
+      // Don't set main overlayImage when loading overlay_elements - use overlayLayers only
+      // This prevents duplication. Only set overlayImage for true backward compatibility
+      // (when there's a single overlay_image field but no overlay_elements array)
     }
     
     alert(`Template loaded! ${convertedLayers.length} text layers added.`)
@@ -3329,41 +3616,65 @@ const handleTemplateJsonLoad = () => {
                 setTextLayers(convertedLayers);
               }
               
-              // Handle overlay_elements
+              // Handle overlay_elements - load ALL overlays, not just the first one
               if (data.overlay_elements && Array.isArray(data.overlay_elements) && data.overlay_elements.length > 0) {
-                const ov = data.overlay_elements[0];
-                const bbPercent = convertBoundingBoxToPercent(ov?.bounding_box || {}, naturalDims);
-                const posXNat = (bbPercent.x / 100) * originalWidth;
-                const posYNat = (bbPercent.y / 100) * originalHeight;
-                const targetWNat = (bbPercent.width / 100) * originalWidth;
-                const targetHNat = (bbPercent.height / 100) * originalHeight;
+                const loadedOverlays = []
                 
-                const ovUrl = ov?.overlay_image?.image_url;
-                if (ovUrl) {
-                  const loadOverlay = async () => {
+                // Load all overlay_elements
+                data.overlay_elements.forEach((ov, index) => {
+                  const bbPercent = convertBoundingBoxToPercent(ov?.bounding_box || {}, naturalDims);
+                  const posXNat = (bbPercent.x / 100) * originalWidth;
+                  const posYNat = (bbPercent.y / 100) * originalHeight;
+                  const targetWNat = (bbPercent.width / 100) * originalWidth;
+                  const targetHNat = (bbPercent.height / 100) * originalHeight;
+                  
+                  const ovUrl = ov?.overlay_image?.image_url;
+                  if (ovUrl) {
+                    const overlayLayer = {
+                      id: Date.now() + index,
+                      imageUrl: ovUrl,
+                      x: posXNat,
+                      y: posYNat,
+                      width: targetWNat,
+                      height: targetHNat,
+                      image: null, // Will be loaded asynchronously
+                      fileUrl: ovUrl // Store the file URL
+                    }
+                    loadedOverlays.push(overlayLayer)
+                    
+                    // Load image asynchronously
                     const oImg = new Image();
                     oImg.crossOrigin = 'anonymous';
                     oImg.onload = () => {
-                      setOverlayImage(oImg);
-                      setOverlayImageUrl(ovUrl);
-                      setOverlayVisible(true);
-                      
-                      setOverlayPosition({ x: posXNat, y: posYNat });
-                      setOverlaySize({ width: targetWNat, height: targetHNat });
-                      
-                      const scaleX = oImg.width > 0 ? (targetWNat / oImg.width) : 1;
-                      const scaleY = oImg.height > 0 ? (targetHNat / oImg.height) : 1;
-                      const fitScale = Math.min(scaleX, scaleY);
-                      setOverlayScale(fitScale || 1);
-                      resetOverlayBackgroundState();
+                      overlayLayer.image = oImg
+                      setOverlayLayers(prev => {
+                        const updated = [...prev]
+                        const existingIndex = updated.findIndex(ol => ol.id === overlayLayer.id)
+                        if (existingIndex >= 0) {
+                          updated[existingIndex] = { ...overlayLayer, image: oImg }
+                        } else {
+                          updated.push({ ...overlayLayer, image: oImg })
+                        }
+                        return updated
+                      })
                     };
                     oImg.onerror = () => {
-                      console.error('Failed to load overlay image');
+                      console.error(`Failed to load overlay image ${index}`);
                     };
                     oImg.src = ovUrl;
-                  };
-                  loadOverlay();
-                }
+                  }
+                });
+                
+                setOverlayLayers(loadedOverlays)
+                
+                // Clear main overlayImage when loading overlay_elements to prevent duplication
+                setOverlayImage(null)
+                setOverlayImageUrl('')
+                setOverlayVisible(false)
+                
+                // Don't set main overlayImage when loading overlay_elements - use overlayLayers only
+                // This prevents duplication. Only set overlayImage for true backward compatibility
+                // (when there's a single overlay_image field but no overlay_elements array)
               }
             };
             requestAnimationFrame(waitForRender);
@@ -3470,6 +3781,26 @@ const handleTemplateJsonLoad = () => {
     });
   };
 
+  // Helper function to convert image URL to blob
+  const imageUrlToBlob = async (url) => {
+    try {
+      // If it's a data URL (base64), convert directly
+      if (url.startsWith('data:')) {
+        const response = await fetch(url);
+        return await response.blob();
+      }
+      // If it's a regular URL, fetch it
+      const response = await fetch(url, { mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status}`);
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error('Error converting image to blob:', error);
+      throw error;
+    }
+  };
+
   // Handle save changes
   const handleSaveChanges = async () => {
     try {
@@ -3495,19 +3826,104 @@ const handleTemplateJsonLoad = () => {
       
       // Convert overlay to overlay_elements format (if present)
       let overlayElements = [];
-      if (overlayVisible && overlayImage && imageRef.current) {
+      let finalOverlayUrl = overlayImageUrl;
+      
         const imgEl = imageRef.current;
-        const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl.naturalWidth;
-        const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl.naturalHeight;
+      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1;
+      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1;
+      
+      // Add ALL overlay layers to overlay_elements (from overlayLayers array)
+      for (const overlayLayer of overlayLayers) {
+        if (!overlayLayer.fileUrl) {
+          console.warn(`Skipping overlay layer ${overlayLayer.id} - no file URL available`);
+          continue;
+        }
         
-        // Overlay position and size are already in natural pixel coordinates (like shapes)
-        const naturalX = overlayPosition.x;
-        const naturalY = overlayPosition.y;
-        const naturalWidth = overlaySize?.width || (overlayImage.width * overlayScale);
-        const naturalHeight = overlaySize?.height || (overlayImage.height * overlayScale);
+        // Overlay position and size are in natural pixel coordinates
+        const naturalX = overlayLayer.x;
+        const naturalY = overlayLayer.y;
+        const naturalWidth = overlayLayer.width;
+        const naturalHeight = overlayLayer.height;
+        const imageWidth = overlayLayer.image?.width || naturalWidth;
+        const imageHeight = overlayLayer.image?.height || naturalHeight;
         
-        overlayElements = [
-          {
+        overlayElements.push({
+          bounding_box: {
+            x: originalWidth > 0 ? naturalX / originalWidth : 0,
+            y: originalHeight > 0 ? naturalY / originalHeight : 0,
+            width: originalWidth > 0 ? naturalWidth / originalWidth : 0,
+            height: originalHeight > 0 ? naturalHeight / originalHeight : 0
+          },
+          overlay_image: {
+            image_url: overlayLayer.fileUrl, // Use the stored file URL
+            image_dimensions: {
+              width: imageWidth,
+              height: imageHeight
+            }
+          }
+        });
+      }
+      
+      // Also add the main overlay image if it exists and is not already in overlayLayers
+      // (for backward compatibility with the single overlay system)
+      if (overlayVisible && overlayImage && imageRef.current) {
+        // Check if this overlay is already in overlayLayers
+        const isAlreadyInLayers = overlayLayers.some(ol => ol.imageUrl === overlayImageUrl);
+        
+        if (!isAlreadyInLayers) {
+          // Upload overlay image first if available
+          try {
+            // Convert overlay image to blob
+            const overlayBlob = await imageUrlToBlob(overlayImageUrl);
+            
+            // Create FormData for upload
+            const formData = new FormData();
+            formData.append('session_id', sessionId);
+            formData.append('file', overlayBlob, 'overlay-image.png'); // Use appropriate filename
+            
+            // Upload overlay image
+            const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
+              method: 'POST',
+              body: formData
+            });
+            
+            const uploadResponseText = await uploadResponse.text();
+            let uploadResponseData;
+            try {
+              uploadResponseData = JSON.parse(uploadResponseText);
+            } catch (_) {
+              uploadResponseData = uploadResponseText;
+            }
+            
+            if (!uploadResponse.ok) {
+              throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
+            }
+            
+            // Extract URL from response
+            finalOverlayUrl = uploadResponseData?.url || 
+                             uploadResponseData?.image_url || 
+                             uploadResponseData?.file_url ||
+                             uploadResponseData?.data?.url ||
+                             uploadResponseData?.data?.image_url ||
+                             uploadResponseData?.data?.file_url ||
+                             overlayImageUrl; // Fallback to original URL
+            
+            if (!finalOverlayUrl || finalOverlayUrl === overlayImageUrl) {
+              console.warn('Upload API did not return a new URL, using original URL');
+            }
+          } catch (uploadError) {
+            console.error('Failed to upload overlay image:', uploadError);
+            // Continue with original URL if upload fails
+            alert('Warning: Failed to upload overlay image. Using original URL.');
+          }
+          
+          // Overlay position and size are already in natural pixel coordinates (like shapes)
+          const naturalX = overlayPosition.x;
+          const naturalY = overlayPosition.y;
+          const naturalWidth = overlaySize?.width || (overlayImage.width * overlayScale);
+          const naturalHeight = overlaySize?.height || (overlayImage.height * overlayScale);
+          
+          overlayElements.push({
             bounding_box: {
               x: originalWidth > 0 ? naturalX / originalWidth : 0,
               y: originalHeight > 0 ? naturalY / originalHeight : 0,
@@ -3515,15 +3931,48 @@ const handleTemplateJsonLoad = () => {
               height: originalHeight > 0 ? naturalHeight / originalHeight : 0
             },
             overlay_image: {
-              image_url: overlayImageUrl,
+              image_url: finalOverlayUrl, // Use the uploaded URL
               image_dimensions: {
                 width: overlayImage.width,
                 height: overlayImage.height
               }
             }
-          }
-        ];
+          });
+        }
       }
+      
+      // Add all shapes to overlay_elements
+      for (const shape of shapeLayers) {
+        // Skip shapes that don't have a file URL (upload failed or still uploading)
+        if (!shape.fileUrl) {
+          console.warn(`Skipping shape ${shape.id} - no file URL available`);
+          continue;
+        }
+        
+        // Shape position and size are in natural pixel coordinates
+        const naturalX = shape.x;
+        const naturalY = shape.y;
+        const naturalWidth = shape.width;
+        const naturalHeight = shape.type === 'line' ? Math.max(shape.borderWidth || 1, shape.height || 1) : shape.height;
+        
+        overlayElements.push({
+          bounding_box: {
+            x: originalWidth > 0 ? naturalX / originalWidth : 0,
+            y: originalHeight > 0 ? naturalY / originalHeight : 0,
+            width: originalWidth > 0 ? naturalWidth / originalWidth : 0,
+            height: originalHeight > 0 ? naturalHeight / originalHeight : 0
+          },
+          overlay_image: {
+            image_url: shape.fileUrl, // Use the uploaded file URL
+            image_dimensions: {
+              width: naturalWidth,
+              height: naturalHeight
+            }
+          }
+        });
+      }
+      
+      console.log(`📊 Total overlay_elements to save: ${overlayElements.length}`, overlayElements);
       
       // Build request body
       const requestBody = {
@@ -4510,7 +4959,7 @@ const handleTemplateJsonLoad = () => {
                   </div>
                   
                   {/* Overlay Image */}
-                  {renderOverlayImage()}
+                  {renderAllOverlayLayers()}
                 </div>
               ) : (
                 <div className="text-center py-10 text-gray-500">
@@ -5525,11 +5974,11 @@ const handleTemplateJsonLoad = () => {
                           </div>
                           
                           {/* Hidden File Input */}
-                          <input
+                      <input
                             id="overlay-file-input"
-                            type="file"
-                            accept="image/*"
-                            onChange={handleOverlayImageUpload}
+                        type="file"
+                        accept="image/*"
+                        onChange={handleOverlayImageUpload}
                             style={{ display: 'none' }}
                           />
                         </div>

@@ -514,16 +514,30 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                       </button>
                     )}
                   </td>
-                  {data.map((series, colIdx) => (
-                    <td key={colIdx} style={cellStyle}>
-                      <input
-                        type="number"
-                        value={series.y[rowIdx]}
-                        onChange={(e) => updateCell(['series', 'data', colIdx, 'y', rowIdx], e.target.value)}
-                        style={inputStyle}
-                      />
-                    </td>
-                  ))}
+                  {data.map((series, colIdx) => {
+                    // Safely access series.y with fallback
+                    const seriesY = Array.isArray(series.y) ? series.y : [];
+                    const yValue = seriesY[rowIdx] ?? '';
+                    
+                    return (
+                      <td key={colIdx} style={cellStyle}>
+                        <input
+                          type="number"
+                          value={yValue}
+                          onChange={(e) => {
+                            // Ensure the array exists and is long enough
+                            const newY = [...seriesY];
+                            while (newY.length <= rowIdx) {
+                              newY.push('');
+                            }
+                            newY[rowIdx] = e.target.value;
+                            updateCell(['series', 'data', colIdx, 'y'], newY);
+                          }}
+                          style={inputStyle}
+                        />
+                      </td>
+                    );
+                  })}
                   <td style={cellStyle}></td>
                 </tr>
                 {hoveredRow === rowIdx && (
@@ -570,10 +584,27 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
   // Pie/Donut table
   const renderPieTable = () => {
     // Safely extract labels and data with fallbacks
-    const series = localChartData?.series || {};
+    if (!localChartData || !localChartData.series) {
+      return (
+        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+          <div>Loading chart data...</div>
+        </div>
+      );
+    }
+
+    const series = localChartData.series || {};
     const labels = Array.isArray(series.labels) ? series.labels : [];
     const data = Array.isArray(series.data) ? series.data : [];
     const values = Array.isArray(data[0]?.values) ? data[0].values : [];
+
+    // Validate data structure
+    if (labels.length === 0 || values.length === 0) {
+      return (
+        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+          <div>No chart data available. Please add data to display the chart.</div>
+        </div>
+      );
+    }
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -670,12 +701,29 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
   // Waterfall table
   const renderWaterfallTable = () => {
     // Safely extract x and data with fallbacks
-    const seriesObj = localChartData?.series || {};
+    if (!localChartData || !localChartData.series) {
+      return (
+        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+          <div>Loading chart data...</div>
+        </div>
+      );
+    }
+
+    const seriesObj = localChartData.series || {};
     const x = Array.isArray(seriesObj.x) ? seriesObj.x : [];
     const data = Array.isArray(seriesObj.data) ? seriesObj.data : [];
     const seriesData = data[0] || {};
     const y = Array.isArray(seriesData.y) ? seriesData.y : [];
     const measure = Array.isArray(seriesData.measure) ? seriesData.measure : [];
+
+    // Validate data structure
+    if (x.length === 0) {
+      return (
+        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+          <div>No chart data available. Please add data to display the chart.</div>
+        </div>
+      );
+    }
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -784,7 +832,27 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Waterfall Stacked table
   const renderWaterfallStackedTable = () => {
-    const { x, data } = localChartData.series;
+    // Safely extract x and data with fallbacks
+    if (!localChartData || !localChartData.series) {
+      return (
+        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+          <div>Loading chart data...</div>
+        </div>
+      );
+    }
+
+    const series = localChartData.series || {};
+    const x = Array.isArray(series.x) ? series.x : [];
+    const data = Array.isArray(series.data) ? series.data : [];
+
+    // Validate data structure
+    if (data.length === 0 || x.length === 0) {
+      return (
+        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+          <div>No chart data available. Please add data to display the chart.</div>
+        </div>
+      );
+    }
 
     return (
       <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
@@ -890,29 +958,55 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                       </button>
                     )}
                   </td>
-                  {data.map((series, colIdx) => (
-                    <React.Fragment key={colIdx}>
-                      <td style={cellStyle}>
-                        <input
-                          type="number"
-                          value={series.y[rowIdx]}
-                          onChange={(e) => updateCell(['series', 'data', colIdx, 'y', rowIdx], e.target.value)}
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td style={cellStyle}>
-                        <select
-                          value={series.measure[rowIdx]}
-                          onChange={(e) => updateCell(['series', 'data', colIdx, 'measure', rowIdx], e.target.value)}
-                          style={selectStyle}
-                        >
-                          <option value="absolute">absolute</option>
-                          <option value="relative">relative</option>
-                          <option value="total">total</option>
-                        </select>
-                      </td>
-                    </React.Fragment>
-                  ))}
+                  {data.map((series, colIdx) => {
+                    // Safely access series properties with fallbacks
+                    const seriesY = Array.isArray(series.y) ? series.y : [];
+                    const seriesMeasure = Array.isArray(series.measure) ? series.measure : [];
+                    
+                    // Ensure arrays are long enough for the current row index
+                    const yValue = seriesY[rowIdx] ?? '';
+                    const measureValue = seriesMeasure[rowIdx] ?? 'absolute';
+                    
+                    return (
+                      <React.Fragment key={colIdx}>
+                        <td style={cellStyle}>
+                          <input
+                            type="number"
+                            value={yValue}
+                            onChange={(e) => {
+                              // Ensure the array exists and is long enough
+                              const newY = [...seriesY];
+                              while (newY.length <= rowIdx) {
+                                newY.push('');
+                              }
+                              newY[rowIdx] = e.target.value;
+                              updateCell(['series', 'data', colIdx, 'y'], newY);
+                            }}
+                            style={inputStyle}
+                          />
+                        </td>
+                        <td style={cellStyle}>
+                          <select
+                            value={measureValue}
+                            onChange={(e) => {
+                              // Ensure the array exists and is long enough
+                              const newMeasure = [...seriesMeasure];
+                              while (newMeasure.length <= rowIdx) {
+                                newMeasure.push('absolute');
+                              }
+                              newMeasure[rowIdx] = e.target.value;
+                              updateCell(['series', 'data', colIdx, 'measure'], newMeasure);
+                            }}
+                            style={selectStyle}
+                          >
+                            <option value="absolute">absolute</option>
+                            <option value="relative">relative</option>
+                            <option value="total">total</option>
+                          </select>
+                        </td>
+                      </React.Fragment>
+                    );
+                  })}
                 </tr>
                 {hoveredRow === rowIdx && (
                   <tr style={{height: '2px', position: 'relative'}}>
