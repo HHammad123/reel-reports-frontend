@@ -8,6 +8,41 @@ import { Provider } from 'react-redux';
 import { PersistGate } from 'redux-persist/integration/react';
 import store, { persistor } from './redux/store';
 
+// Suppress Chrome extension message passing errors (harmless, caused by browser extensions)
+const suppressExtensionErrors = () => {
+  // Suppress unhandled promise rejections from extensions
+  window.addEventListener('unhandledrejection', (event) => {
+    const errorMessage = event.reason?.message || String(event.reason || '');
+    if (
+      errorMessage.includes('message channel closed') ||
+      errorMessage.includes('listener indicated an asynchronous response') ||
+      errorMessage.includes('runtime.lastError')
+    ) {
+      event.preventDefault(); // Suppress the error
+      return;
+    }
+  });
+
+  // Suppress console errors from extensions (optional - only in production)
+  if (process.env.NODE_ENV === 'production') {
+    const originalError = console.error;
+    console.error = (...args) => {
+      const errorStr = args.join(' ');
+      if (
+        errorStr.includes('message channel closed') ||
+        errorStr.includes('listener indicated an asynchronous response') ||
+        errorStr.includes('runtime.lastError')
+      ) {
+        return; // Suppress extension errors in production
+      }
+      originalError.apply(console, args);
+    };
+  }
+};
+
+// Initialize error suppression
+suppressExtensionErrors();
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 // Compute a robust basename for BrowserRouter (root deployment)
 const computeBaseName = () => {

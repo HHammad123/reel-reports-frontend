@@ -1627,6 +1627,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           option: savedLabel,
           preset_id: pendingPresenterPresetId
         };
+        // For VEO3 models, also save preset_id to the preset field for proper matching
+        if (modelUpper === 'VEO3') {
+          presenterOpts.preset = String(pendingPresenterPresetId);
+        }
         // For ANCHOR models, include anchor_id from the preset
         if (modelUpper === 'ANCHOR' && savedPreset?.anchor_id) {
           presenterOpts.anchor_id = String(savedPreset.anchor_id);
@@ -3883,8 +3887,19 @@ const [textEditorFormat, setTextEditorFormat] = useState({
                 is_custom: false
               };
             }
+          } else if (modelUpper === 'VEO3') {
+            // For VEO3, set both preset_id and preset fields
+          const presenterPayload = {
+            preset_id: String(selectedPreset.preset_id),
+            preset: String(selectedPreset.preset_id), // Also set preset field for proper matching
+            option: selectedPreset.option || regenPresenterPresetLabel || ''
+          };
+          if (selectedPreset.sample_video) {
+            presenterPayload.sample_video = selectedPreset.sample_video;
+          }
+          body.presenter_options = presenterPayload;
           } else {
-            // For VEO3, use the existing format
+            // For other models, use the existing format
           const presenterPayload = {
             preset_id: String(selectedPreset.preset_id),
             option: selectedPreset.option || regenPresenterPresetLabel || ''
@@ -4401,6 +4416,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         if (newScenePresenterPresetId && selectedPreset) {
           const presenterPayload = {
             preset_id: String(selectedPreset.preset_id),
+            preset: String(selectedPreset.preset_id), // For VEO3, also set preset field
             option: selectedPreset.option || newScenePresenterPresetLabel || ''
           };
           if (selectedPreset.sample_video) {
@@ -4410,6 +4426,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         } else if (newScenePresenterPresetLabel || newScenePresenterPresetId) {
           body.presenter_options = {
             preset_id: String(newScenePresenterPresetId || ''),
+            preset: String(newScenePresenterPresetId || ''), // For VEO3, also set preset field
             option: newScenePresenterPresetLabel || ''
           };
         } else {
@@ -5812,6 +5829,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
               preset_id: switchPresenterPresetId,
               option: switchPresenterPresetLabel || selectedPreset.option || ''
             };
+            // For VEO3 models, also set preset field to preset_id for proper matching
+            if (desiredModel === 'VEO3') {
+              requestBody.presenter_options.preset = String(switchPresenterPresetId);
+            }
             // For ANCHOR models, include anchor_id from the preset
             if (desiredModel === 'ANCHOR' && selectedPreset?.anchor_id) {
               requestBody.presenter_options.anchor_id = String(selectedPreset.anchor_id);
@@ -5821,6 +5842,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
               preset_id: switchPresenterPresetId,
               option: switchPresenterPresetLabel || ''
             };
+            // For VEO3 models, also set preset field to preset_id for proper matching
+            if (desiredModel === 'VEO3') {
+              requestBody.presenter_options.preset = String(switchPresenterPresetId);
+            }
           }
         } else {
           requestBody.presenter_options = {};
@@ -6326,8 +6351,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         if (Array.isArray(targetRow?.text_to_be_included)) {
           applyField(clone, ['text_to_be_included'], targetRow.text_to_be_included);
         }
-        // Always set ref_image to empty array
-        clone.ref_image = [];
+        // Set ref_image from refImages (which includes refImagesOverride if provided)
+        clone.ref_image = Array.isArray(refImages) && refImages.length > 0 ? refImages : [];
         // Remove avatar field - we'll use avatar_urls instead
         if ('avatar' in clone) {
           delete clone.avatar;
@@ -6454,7 +6479,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           text_to_be_included: Array.isArray(fallbackRow?.text_to_be_included)
             ? fallbackRow.text_to_be_included
             : (typeof fallbackRow?.text_to_include === 'string' && fallbackRow.text_to_include.trim() ? [fallbackRow.text_to_include.trim()] : []),
-          ref_image: [],
+          ref_image: Array.isArray(refImages) && refImages.length > 0 ? refImages : [],
           // Don't include avatar field - use avatar_urls instead
           // Don't include background field - use background_image array only
           background_image: (() => {
@@ -9524,6 +9549,134 @@ const saveAnchorPromptTemplate = async () => {
                              );
                            })()}
                          </div>
+                         {/* Description section for PLOTLY - appears below narration and above charts */}
+                         {(() => {
+                           const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                           const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                           const isPlotly = sceneModelUpper === 'PLOTLY';
+                           if (!isPlotly) return null;
+                           
+                           const sceneDescription =
+                             Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+                               ? scriptRows[currentSceneIndex].description || ''
+                               : '';
+                           const isInlineEditing =
+                             !isEditingScene &&
+                             isDescriptionEditing &&
+                             descriptionSceneIndex === currentSceneIndex;
+                           const startInlineEditing = () => {
+                             setPendingDescription(sceneDescription);
+                             setDescriptionSceneIndex(currentSceneIndex);
+                             setIsDescriptionEditing(true);
+                           };
+                           const cancelInlineEditing = () => {
+                             setPendingDescription(sceneDescription);
+                             setIsDescriptionEditing(false);
+                             setDescriptionSceneIndex(null);
+                           };
+                           const saveInlineDescription = async () => {
+                             try {
+                               setIsSavingDescription(true);
+                               const scene =
+                                 Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+                                   ? scriptRows[currentSceneIndex]
+                                   : null;
+                               const sceneNumber = (scene?.scene_number ?? (currentSceneIndex + 1)) || 0;
+                               const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                               const nextDescription = pendingDescription || '';
+                               const narrationText = scene?.narration || '';
+                               const computedWordCount = computeWordCount(narrationText || nextDescription);
+                               handleSceneUpdate(currentSceneIndex, 'description', nextDescription);
+                               handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
+
+                               // Use update-text API for PLOTLY
+                               try {
+                                 await updateSceneGenImageFlag(currentSceneIndex, {
+                                   descriptionOverride: nextDescription
+                                 });
+                               } catch (err) {
+                                 console.warn('update-text description failed:', err);
+                                 alert('Failed to save description. Please try again.');
+                               }
+                               setIsDescriptionEditing(false);
+                               setDescriptionSceneIndex(null);
+                             } catch (err) {
+                               console.error('Error saving description:', err);
+                               alert('Failed to save description. Please try again.');
+                             } finally {
+                               setIsSavingDescription(false);
+                             }
+                           };
+                           
+                           return (
+                             <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative mt-4 w-full">
+                               {/* Loading Overlay */}
+                               {isSavingDescription && (
+                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                                     <div className="w-16 h-16 mx-auto">
+                                       <video
+                                         src={LoadingAnimationVideo}
+                                         autoPlay
+                                         loop
+                                         muted
+                                         playsInline
+                                         className="w-full h-full object-contain"
+                                       />
+                                     </div>
+                                     <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
+                                     <p className="text-xs text-gray-500">Please wait...</p>
+                                   </div>
+                                 </div>
+                               )}
+                               <div className="flex items-center justify-between mb-3">
+                                 <h4 className="text-lg font-semibold text-gray-800">Description</h4>
+                                 {isInlineEditing ? (
+                                   <div className="flex items-center gap-2">
+                                     <button
+                                       type="button"
+                                       className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                       onClick={cancelInlineEditing}
+                                       disabled={isSavingDescription}
+                                     >
+                                       Cancel
+                                     </button>
+                                     <button
+                                       type="button"
+                                       onClick={saveInlineDescription}
+                                       disabled={isSavingDescription}
+                                       className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                     >
+                                       {isSavingDescription ? (
+                                         <>
+                                           <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                           <span>Saving...</span>
+                                         </>
+                                       ) : (
+                                         'Save'
+                                       )}
+                                     </button>
+                                   </div>
+                                 ) : (
+                                   <p className="text-xs text-gray-500">Double-click the description to edit.</p>
+                                 )}
+                               </div>
+                               <textarea
+                                 value={isInlineEditing ? pendingDescription : sceneDescription}
+                                 onChange={(e) => setPendingDescription(e.target.value)}
+                                 onDoubleClick={startInlineEditing}
+                                 readOnly={!isInlineEditing || isSavingDescription}
+                                 className={`w-full px-3 py-2 rounded-lg border ${
+                                   isInlineEditing
+                                     ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
+                                     : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
+                                 } ${isSavingDescription ? 'opacity-60' : ''}`}
+                                 rows={4}
+                                 placeholder="Double-click to edit description"
+                               />
+                             </div>
+                           );
+                         })()}
                        </div>
                      </div>
 
@@ -9579,7 +9732,68 @@ const saveAnchorPromptTemplate = async () => {
                             }
                           };
                           
+                          // Get description for PLOTLY
+                          const sceneDescription =
+                            Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+                              ? scriptRows[currentSceneIndex].description || ''
+                              : '';
+                          const isInlineEditing =
+                            !isEditingScene &&
+                            isDescriptionEditing &&
+                            descriptionSceneIndex === currentSceneIndex;
+                          const startInlineEditing = () => {
+                            setPendingDescription(sceneDescription);
+                            setDescriptionSceneIndex(currentSceneIndex);
+                            setIsDescriptionEditing(true);
+                          };
+                          const cancelInlineEditing = () => {
+                            setPendingDescription(sceneDescription);
+                            setIsDescriptionEditing(false);
+                            setDescriptionSceneIndex(null);
+                          };
+                          const saveInlineDescription = async () => {
+                            try {
+                              const scene =
+                                Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
+                                  ? scriptRows[currentSceneIndex]
+                                  : null;
+                              const sceneNumber = (scene?.scene_number ?? (currentSceneIndex + 1)) || 0;
+                              const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                              const nextDescription = pendingDescription || '';
+                              const narrationText = scene?.narration || '';
+                              const computedWordCount = computeWordCount(narrationText || nextDescription);
+                              handleSceneUpdate(currentSceneIndex, 'description', nextDescription);
+                              handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
+
+                              if (modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
+                                try {
+                                  await updateSceneGenImageFlag(currentSceneIndex, {
+                                    descriptionOverride: nextDescription
+                                  });
+                                } catch (err) {
+                                  console.warn('update-text description failed:', err);
+                                }
+                                setIsDescriptionEditing(false);
+                                setDescriptionSceneIndex(null);
+                              } else {
+                                // Default to update-text flow for any other models
+                                try {
+                                  await updateSceneGenImageFlag(currentSceneIndex, {
+                                    descriptionOverride: nextDescription
+                                  });
+                                } catch (err) {
+                                  console.warn('description update failed:', err);
+                                }
+                                setIsDescriptionEditing(false);
+                                setDescriptionSceneIndex(null);
+                              }
+                            } catch (_) {
+                              /* noop */
+                            }
+                          };
+                          
                           return (
+                            <>
                             <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                               <h4 className="text-lg font-semibold text-gray-800 mb-4">Chart</h4>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -9671,12 +9885,15 @@ const saveAnchorPromptTemplate = async () => {
                                 </div>
                               </div>
                             </div>
+                            </>
                           );
                         }
+                        // For PLOTLY, also show description section after chart editor
                         // Check if VEO3 model - show veo3_prompt_template instead of description
                         // Note: scene is already declared above at line 9523
                         const modelUpper = scene ? String(scene?.model || scene?.mode || '').toUpperCase() : '';
                         const isVEO3 = modelUpper === 'VEO3';
+                        const isPlotlyForDescription = modelUpper === 'PLOTLY';
                         
                         // For VEO3: Show veo3_prompt_template fields (excluding description)
                         if (isVEO3) {
@@ -9881,7 +10098,15 @@ const saveAnchorPromptTemplate = async () => {
                           );
                         }
                         
-                        // Default: Description for non-VEO3 scenes
+                        // Default: Description for non-VEO3 and non-PLOTLY scenes (PLOTLY has its own description section above charts)
+                        const defaultScene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                        const modelUpperForDefault = defaultScene ? String(defaultScene?.model || defaultScene?.mode || '').toUpperCase() : '';
+                        const isPlotlyForDefault = modelUpperForDefault === 'PLOTLY';
+                        // Skip default description for PLOTLY since it has its own section above charts
+                        if (isPlotlyForDefault) {
+                          return null;
+                        }
+                        
                         const sceneDescription =
                           Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
                             ? scriptRows[currentSceneIndex].description || ''
@@ -9902,19 +10127,19 @@ const saveAnchorPromptTemplate = async () => {
                         };
                         const saveInlineDescription = async () => {
                           try {
-                            const scene =
+                            const saveScene =
                               Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
                                 ? scriptRows[currentSceneIndex]
                                 : null;
-                            const sceneNumber = (scene?.scene_number ?? (currentSceneIndex + 1)) || 0;
-                            const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                            const sceneNumber = (saveScene?.scene_number ?? (currentSceneIndex + 1)) || 0;
+                            const modelUpper = String(saveScene?.model || saveScene?.mode || '').toUpperCase();
                             const nextDescription = pendingDescription || '';
-                            const narrationText = scene?.narration || '';
+                            const narrationText = saveScene?.narration || '';
                             const computedWordCount = computeWordCount(narrationText || nextDescription);
                             handleSceneUpdate(currentSceneIndex, 'description', nextDescription);
                             handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
 
-                            if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+                            if (modelUpper === 'VEO3') {
                               setIsSavingDescription(true);
                               try {
                                 const { session, user } = await buildSessionAndUserForScene();
@@ -10030,11 +10255,12 @@ const saveAnchorPromptTemplate = async () => {
                                 alert(err?.message || 'Failed to save description. Please try again.');
                               } finally {
                                 setIsSavingDescription(false);
-                                // Close editing state after loading completes for VEO3/ANCHOR
+                                // Close editing state after loading completes for VEO3
                                 setIsDescriptionEditing(false);
                                 setDescriptionSceneIndex(null);
                               }
-                            } else if (modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
+                            } else if (modelUpper === 'ANCHOR' || modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
+                              // Use update-text API for ANCHOR, SORA, and PLOTLY
                               try {
                                 await updateSceneGenImageFlag(currentSceneIndex, {
                                   descriptionOverride: nextDescription
@@ -11448,7 +11674,7 @@ const saveAnchorPromptTemplate = async () => {
                                   Object.keys(scene.anchor_prompt_template).length > 0 && (
                                     <div className="rounded-lg border border-gray-200 bg-white p-4">
                                       <div className="mb-3 flex items-center justify-between">
-                                        <h5 className="text-sm font-semibold text-gray-800">Anchor Prompt Template</h5>
+                                        <h5 className="text-sm font-semibold text-gray-800">Scene Data</h5>
                                         <div className="flex items-center gap-2">
                                           {isEditingAnchorPrompt ? (
                                             <>
@@ -11485,7 +11711,7 @@ const saveAnchorPromptTemplate = async () => {
                                       </div>
                                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                         {Object.entries(scene.anchor_prompt_template)
-                                          .filter(([key]) => key !== 'anchor_positions')
+                                          .filter(([key]) => key !== 'anchor_positions' && key !== 'desc_template')
                                           .map(([key, value]) => {
                                             const isEditableField = true;
                                             const displayKey = key.replace(/_/g, ' ');
@@ -12158,11 +12384,7 @@ const saveAnchorPromptTemplate = async () => {
                               if (isSummarySceneActive) {
                                 return [imageUrl];
                               }
-                              // For VEO3/ANCHOR, only allow one template - replace previous selection
-                              if (isVEO3) {
-                                return [imageUrl];
-                              }
-                              // For all other cases, allow up to 2 selections (for Generate button)
+                              // For all models, allow up to 2 selections
                               const next = [...prev, imageUrl];
                               if (next.length > 2) {
                                 next.shift();
@@ -12217,14 +12439,17 @@ const saveAnchorPromptTemplate = async () => {
                       const isAnchor = modelUpper === 'ANCHOR';
                       const isPlotly = modelUpper === 'PLOTLY';
                       
-                      // For Keep Default, use only the first selected image (single selection)
-                      const imagesToUse = selectedTemplateUrls.length > 0 ? [selectedTemplateUrls[0]] : [];
+                      // For Keep Default, use up to 2 selected images
+                      const imagesToUse = selectedTemplateUrls.length > 0 ? selectedTemplateUrls.slice(0, 2) : [];
                       if (imagesToUse.length === 0) return;
                       
-                      // Update scene with selected image
-                        if (isAnchor || isPlotly) {
+                      // Update scene with selected images
+                        if (isAnchor || isPlotly || isVEO3) {
+                        // For models that use background, use first image as background
                         scene.background = imagesToUse[0]; 
                         scene.background_image = imagesToUse[0];
+                        // Also store all images in ref_image for API calls
+                        scene.ref_image = imagesToUse;
                       } else {
                         scene.ref_image = imagesToUse;
                         }
@@ -12236,15 +12461,13 @@ const saveAnchorPromptTemplate = async () => {
                       // Call update-text API for Keep Default
                       try {
                         setIsApplyingKeepDefault(true);
-                          const refImagesToUse = isAnchor || isPlotly 
-                            ? [scene.background || scene.background_image || ''] 
-                            : (scene.ref_image || []);
+                          // Use all selected images (up to 2) for all models
+                          const refImagesToUse = scene.ref_image || [];
                           
-                        // Build background_image array only for generated_images tab
-                        // For all other tabs, don't send background_image (remove it)
+                        // Build background_image array for image-related tabs
+                        // Format: [{template_id: "", image_url: "<url>"}]
                         let backgroundImageArray = undefined;
-                        if (assetsTab === 'generated_images') {
-                          // For generated images, format as [{template_id: "", image_url: "<url>"}]
+                        if (['generated_images', 'uploaded_images', 'uploaded_templates', 'documents_images'].includes(assetsTab)) {
                           backgroundImageArray = refImagesToUse.filter(Boolean).map((url) => {
                             const trimmedUrl = typeof url === 'string' ? url.trim() : '';
                             if (!trimmedUrl) return null;
@@ -12254,8 +12477,7 @@ const saveAnchorPromptTemplate = async () => {
                             };
                           }).filter(item => item !== null);
                         }
-                        // For all other tabs (preset_templates, uploaded_templates, uploaded_images, documents_images), 
-                        // don't send backgroundImageArray (keep it as undefined to remove background_image from API call)
+                        // For preset_templates tab, don't send backgroundImageArray (keep it as undefined)
 
                           // Get avatar_url from selected avatar or scene
                           const currentAvatarUrl = scene?.avatar || selectedAvatar || '';
@@ -12305,16 +12527,12 @@ const saveAnchorPromptTemplate = async () => {
                       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
                       const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
                       
-                      if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY') {
-                        // Background accepts a single image; use the first
-                        const first = multi[0];
-                        scene.background = first; scene.background_image = first;
-                      } else if (isVEO3) {
-                        // For VEO3, only use the first template (single selection enforced)
-                        scene.ref_image = [multi[0]];
-                      } else {
-                        // For SORA/infographics, allow multiple templates as ref images
-                        scene.ref_image = multi;
+                      // For all models, use up to 2 images
+                      scene.ref_image = multi;
+                      // For models that use background field, also set it
+                      if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY' || isVEO3) {
+                        scene.background = multi[0]; 
+                        scene.background_image = multi[0];
                       }
                       // For Generate button, set gen_image to true (we're generating new images with templates)
                       // Only Keep Default sets gen_image to false
@@ -12323,22 +12541,43 @@ const saveAnchorPromptTemplate = async () => {
                       }
                       rows[currentSceneIndex] = scene;
                       setScriptRows(rows);
-                      // For VEO3, only use the first template in selectedRefImages
-                      const refImagesToSet = isVEO3 && multi.length > 0 ? [multi[0]] : multi;
-                      setSelectedRefImages(refImagesToSet);
+                      // Use all selected images (up to 2) for all models
+                      setSelectedRefImages(multi);
                       if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
                       
                       // For Generate button, call update-scene-visual API for all tabs
                         try {
                           setIsEnhancing(true);
-                          // For VEO3, only send the first template (single selection enforced)
-                          const templatesToSend = isVEO3 && multi.length > 0 ? [multi[0]] : multi;
-                          await sendUpdateSceneVisualWithTemplates(
-                            scene?.scene_number ?? (currentSceneIndex + 1),
-                            templatesToSend
-                          );
+                          // Send all selected templates (up to 2) for all models
+                          const templatesToSend = multi;
+                          
+                          // Send all selected images (up to 2) to update-scene-visual API for all tabs
+                          if (templatesToSend.length > 0) {
+                            await sendUpdateSceneVisualWithTemplates(
+                              scene?.scene_number ?? (currentSceneIndex + 1),
+                              templatesToSend
+                            );
+                          }
+                          
+                          // Build background_image array for image tabs to also send via updateSceneGenImageFlag
+                          let backgroundImageArray = undefined;
+                          if (['generated_images', 'uploaded_images', 'documents_images'].includes(assetsTab)) {
+                            backgroundImageArray = templatesToSend.filter(Boolean).map((url) => {
+                              const trimmedUrl = typeof url === 'string' ? url.trim() : '';
+                              if (!trimmedUrl) return null;
+                              return {
+                                template_id: '',
+                                image_url: trimmedUrl
+                              };
+                            }).filter(item => item !== null);
+                          }
+                          
                           // For Generate button, set gen_image to true (we're generating new images with templates)
-                          await updateSceneGenImageFlag(currentSceneIndex, { genImage: true });
+                          await updateSceneGenImageFlag(currentSceneIndex, { 
+                            genImage: true,
+                            refImagesOverride: multi.filter(Boolean),
+                            backgroundImageArrayOverride: backgroundImageArray && backgroundImageArray.length > 0 ? backgroundImageArray : undefined
+                          });
                           // Refresh scriptRows to get updated data from server
                           const sessionId = localStorage.getItem('session_id');
                           const token = localStorage.getItem('token');

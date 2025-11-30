@@ -352,9 +352,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   const overlayElementCacheRef = useRef(new Map()); // Cache for overlay elements
 
   // --- Derived State: The Active Clips for all layers ---
-  const { v1ClipInfo, activeOverlayClips, v1TotalDuration } = useMemo(() => {
+    const { v1ClipInfo, activeOverlayClips, v1TotalDuration } = useMemo(() => {
     let accumulatedTime = 0;
     let v1ClipInfo = null;
+    const EPSILON = 0.05; // small tolerance to avoid flicker from float rounding
 
     // --- V1 (Primary) Track Logic ---
     tracks[0].forEach((clip, i) => {
@@ -469,7 +470,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           overlayEndTime = matchedPrimaryClip.endTime;
           primaryClipDuration = matchedPrimaryClip.endTime - matchedPrimaryClip.startTime;
           // Check if the primary clip is active at the current globalTime
-          isPrimaryClipActive = globalTime >= matchedPrimaryClip.startTime && globalTime < matchedPrimaryClip.endTime;
+          isPrimaryClipActive = (globalTime + EPSILON) >= matchedPrimaryClip.startTime && (globalTime - EPSILON) < matchedPrimaryClip.endTime;
           
           console.log(`📊 Chart overlay ${overlayClip.id} timing:`, {
             sourceItemId: overlayClip.sourceItemId,
@@ -500,13 +501,21 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         // For chart overlays, must match primary clip timing exactly
         // For other overlays, check if globalTime is within the overlay's time range
         const isActive = isPrimaryClipActive && 
-          globalTime >= overlayStartTime && 
-          globalTime < overlayEndTime;
+          (globalTime + EPSILON) >= overlayStartTime && 
+          (globalTime - EPSILON) < overlayEndTime;
         
         if (isActive) {
-          // Calculate local time for the overlay
+          // Calculate local time for the overlay with looping support when primary is longer
           const timeOffset = globalTime - overlayStartTime;
-          const localTime = overlayClip.trimStart + (timeOffset * speed);
+          const overlayTimelineDuration = Math.max(0.001, effectiveDuration);
+          const loopedOffset = matchedPrimaryClip
+            ? (timeOffset % overlayTimelineDuration + overlayTimelineDuration) % overlayTimelineDuration
+            : timeOffset;
+          const localTime = overlayClip.trimStart + (loopedOffset * speed);
+          const clampedLocalTime = Math.min(
+            overlayClip.trimEnd,
+            Math.max(overlayClip.trimStart, localTime)
+          );
           
           // For chart overlays, log matching details
           if (overlayClip.primaryClipIndex !== undefined) {
@@ -515,7 +524,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               overlayStartTime,
               overlayEndTime,
               timeOffset,
-              localTime,
+              localTime: clampedLocalTime,
               primaryClipIndex: overlayClip.primaryClipIndex
             });
           }
@@ -524,7 +533,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             clip: overlayClip,
             trackIndex: trackIndex,
             index: 0,
-            localTime: localTime,
+            localTime: clampedLocalTime,
             startTimeInTimeline: overlayStartTime
           });
         } else if (overlayClip.primaryClipIndex !== undefined) {
@@ -545,6 +554,19 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
 
   // Backward compatibility: v2ClipInfo for existing code
   const v2ClipInfo = activeOverlayClips[0] || null;
+  // Separate overlay tracks into chart vs other for clearer layering
+  const overlayTracksInfo = useMemo(
+    () => tracks.slice(1).map((track, idx) => ({ track, trackIndex: idx + 1 })),
+    [tracks]
+  );
+  const chartTracksInfo = useMemo(
+    () => overlayTracksInfo.filter(({ track }) => track?.[0]?.isChartOverlay),
+    [overlayTracksInfo]
+  );
+  const otherOverlayTracksInfo = useMemo(
+    () => overlayTracksInfo.filter(({ track }) => !track?.[0]?.isChartOverlay),
+    [overlayTracksInfo]
+  );
 
   // Compute selectedClip from selectedClipId
   const selectedClip = useMemo(() => {
@@ -1515,16 +1537,96 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         if (Date.now() - lastCaptureTime >= captureInterval) {
           // Get current active overlay clips info
           const currentOverlayClips = [];
+          
+          // Build primary clip lookup to keep overlay alignment identical to preview
+          let primaryAccumulatedTime = 0;
+          const primaryClipPositions = tracks[0].map((clip, clipIndex) => {
+            const trimmedDuration = clip.trimEnd - clip.trimStart;
+            const speed = clip.speed || 1.0;
+            const effectiveDuration = trimmedDuration / speed;
+            const startTime = primaryAccumulatedTime;
+            const endTime = startTime + effectiveDuration;
+            primaryAccumulatedTime += effectiveDuration;
+            return { clip, startTime, endTime, index: clipIndex };
+          });
+
+          const activePrimaryClip = primaryClipPositions.find(
+            (pos) => currentTime >= pos.startTime && currentTime < pos.endTime
+          );
+
+          const primaryClipMapBySourceItemId = new Map();
+          const primaryClipMapById = new Map();
+          primaryClipPositions.forEach((pos) => {
+            if (pos.clip.sourceItemId) {
+              primaryClipMapBySourceItemId.set(pos.clip.sourceItemId, pos);
+            }
+            primaryClipMapById.set(pos.clip.id, pos);
+          });
+
           for (let trackIndex = 1; trackIndex < tracks.length; trackIndex++) {
             const track = tracks[trackIndex];
             if (track && track.length > 0) {
               const overlayClip = track[0];
               const trimmedDuration = overlayClip.trimEnd - overlayClip.trimStart;
-              if (currentTime >= 0 && currentTime < trimmedDuration) {
+              const speed = overlayClip.speed || 1.0;
+              const effectiveDuration = trimmedDuration / speed;
+
+              // Default to timelineStart/startTime; override when matched to primary clip
+              let overlayStartTime = overlayClip.timelineStartTime ?? overlayClip.startTime ?? 0;
+              let overlayDuration = effectiveDuration;
+              let matchedPrimaryClip = null;
+
+              if (overlayClip.primaryClipIndex !== undefined && overlayClip.primaryClipIndex >= 0) {
+                matchedPrimaryClip = primaryClipPositions[overlayClip.primaryClipIndex] || null;
+              }
+
+              if (!matchedPrimaryClip && activePrimaryClip) {
+                const matchesActiveClip =
+                  (overlayClip.sourceItemId && overlayClip.sourceItemId === activePrimaryClip.clip.sourceItemId) ||
+                  (overlayClip.primaryClipId && overlayClip.primaryClipId === activePrimaryClip.clip.id);
+                if (matchesActiveClip) matchedPrimaryClip = activePrimaryClip;
+              }
+
+              if (!matchedPrimaryClip && overlayClip.sourceItemId) {
+                matchedPrimaryClip = primaryClipMapBySourceItemId.get(overlayClip.sourceItemId) || null;
+              }
+
+              if (!matchedPrimaryClip && overlayClip.primaryClipId) {
+                matchedPrimaryClip = primaryClipMapById.get(overlayClip.primaryClipId) || null;
+              }
+
+              if (matchedPrimaryClip) {
+                overlayStartTime = matchedPrimaryClip.startTime;
+                // Use primary duration for active window, but keep overlay looping within its own duration
+                const primaryDuration = matchedPrimaryClip.endTime - matchedPrimaryClip.startTime;
+                overlayDuration = primaryDuration;
+              }
+
+              const overlayEndTime = overlayStartTime + overlayDuration;
+              const isPrimaryActive = matchedPrimaryClip
+                ? currentTime >= matchedPrimaryClip.startTime && currentTime < matchedPrimaryClip.endTime
+                : true;
+              const isActive =
+                isPrimaryActive && currentTime >= overlayStartTime && currentTime < overlayEndTime;
+
+              if (isActive) {
+                const timeOffset = currentTime - overlayStartTime;
+                // Loop overlay within its own trimmed duration when primary runs longer
+                const overlayTimelineDuration = Math.max(0.001, effectiveDuration);
+                const loopedOffset = matchedPrimaryClip
+                  ? (timeOffset % overlayTimelineDuration + overlayTimelineDuration) % overlayTimelineDuration
+                  : timeOffset;
+                const localTime = overlayClip.trimStart + loopedOffset * speed;
+                const clampedLocalTime = Math.min(
+                  overlayClip.trimEnd,
+                  Math.max(overlayClip.trimStart, localTime)
+                );
+
                 currentOverlayClips.push({
                   clip: overlayClip,
-                  trackIndex: trackIndex,
-                  localTime: currentTime + overlayClip.trimStart,
+                  trackIndex,
+                  localTime: clampedLocalTime,
+                  startTimeInTimeline: overlayStartTime,
                 });
               }
             }
@@ -1679,6 +1781,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               tempVideo.src = overlayClip.url;
               tempVideo.muted = true;
               tempVideo.preload = 'auto';
+              tempVideo.playsInline = true;
+              // Preload video to reduce flickering
+              tempVideo.load();
               overlayElementCacheRef.current.set(cacheKey, tempVideo);
               overlayElementToDraw = tempVideo;
             } else if (overlayClip.type === 'image') {
@@ -1695,21 +1800,57 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         
         if (overlayElementToDraw) {
           // Update video time for overlay videos
+          let shouldDraw = true;
           if (overlayElementToDraw.tagName === 'VIDEO') {
-            // Set playback speed
-            const speed = overlayClip.speed || 1.0;
-            if (Math.abs(overlayElementToDraw.playbackRate - speed) > 0.01) {
-              overlayElementToDraw.playbackRate = speed;
-            }
-            // Find matching overlay info for timing
-            const overlayInfo = overlayClipsInfo.find(o => o.clip.id === overlayClip.id);
-            if (overlayInfo?.localTime !== undefined) {
-              try {
-                overlayElementToDraw.currentTime = overlayInfo.localTime;
-              } catch (e) {
-                // Ignore seek errors
+            // Ensure video is loaded before seeking to prevent flickering
+            if (overlayElementToDraw.readyState < 2) {
+              // Video not ready yet, skip drawing this frame
+              shouldDraw = false;
+            } else {
+              // Set playback speed
+              const speed = overlayClip.speed || 1.0;
+              if (Math.abs(overlayElementToDraw.playbackRate - speed) > 0.01) {
+                overlayElementToDraw.playbackRate = speed;
+              }
+              
+              // Find matching overlay info for timing
+              const overlayInfo =
+                (overlayClipsInfo.length ? overlayClipsInfo : activeOverlayClips).find(
+                  (o) => o.clip.id === overlayClip.id
+                );
+              if (overlayInfo?.localTime !== undefined) {
+                try {
+                  const start = overlayClip.trimStart || 0;
+                  const end = overlayClip.trimEnd ?? overlayClip.duration ?? overlayInfo.localTime;
+                  const targetTime = Math.min(end, Math.max(start, overlayInfo.localTime));
+                  
+                  // Use a cache to track last seek time to avoid excessive seeking
+                  const cacheKey = `seek-${overlayClip.id}`;
+                  const lastSeekTime = overlayElementCacheRef.current.get(cacheKey) || -1;
+                  const currentTime = overlayElementToDraw.currentTime;
+                  const timeDiff = Math.abs(currentTime - targetTime);
+                  
+                  // Only seek if:
+                  // 1. Video is ready (readyState >= 3 for HAVE_FUTURE_DATA is better, but 2 is minimum)
+                  // 2. Time difference is significant (increased threshold to reduce flickering)
+                  // 3. Target time has changed significantly from last seek
+                  const seekThreshold = 0.2; // Increased from 0.05/0.1 to reduce flickering
+                  const timeChanged = Math.abs(lastSeekTime - targetTime) > 0.1;
+                  
+                  if (overlayElementToDraw.readyState >= 3 && (timeDiff > seekThreshold || isNaN(currentTime)) && timeChanged) {
+                    overlayElementToDraw.currentTime = targetTime;
+                    overlayElementCacheRef.current.set(cacheKey, targetTime);
+                  }
+                } catch (e) {
+                  // Ignore seek errors
+                }
               }
             }
+          }
+          
+          // Only proceed with drawing if video is ready (or if it's an image)
+          if (!shouldDraw) {
+            continue;
           }
           try {
             // Calculate overlay position and size from transform values
@@ -1727,7 +1868,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               // It's a video
               const overlayAspect = overlayElementToDraw.videoWidth / overlayElementToDraw.videoHeight;
               overlayHeight = overlayWidth / overlayAspect;
-              isReady = overlayElementToDraw.readyState >= 2;
+              // Use HAVE_FUTURE_DATA (readyState >= 3) for smoother video rendering
+              // This ensures enough data is buffered to prevent flickering
+              isReady = overlayElementToDraw.readyState >= 3;
             } else if (overlayElementToDraw.naturalWidth && overlayElementToDraw.naturalWidth > 0) {
               // It's an image
               const overlayAspect = overlayElementToDraw.naturalWidth / overlayElementToDraw.naturalHeight;
@@ -1987,15 +2130,180 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     }
   };
 
+  // Helper function to recalculate audio clip positions based on video clip timeline positions
+  const recalculateAudioPositions = (videoTracks, audioTracks) => {
+    const primaryTrack = videoTracks[0] || [];
+    const updatedAudioTracks = audioTracks.map(ac => ({ ...ac }));
+    
+    // Calculate timeline position for each video clip (accumulated duration)
+    let accumulatedTime = 0;
+    const videoClipPositions = new Map();
+    
+    primaryTrack.forEach((videoClip) => {
+      const trimmedDuration = videoClip.trimEnd - videoClip.trimStart;
+      const speed = videoClip.speed || 1.0;
+      const effectiveDuration = trimmedDuration / speed;
+      
+      // Store the start time for this video clip
+      videoClipPositions.set(videoClip.id, accumulatedTime);
+      accumulatedTime += effectiveDuration;
+    });
+    
+    // Update audio clip startTimes to match their linked video clip positions
+    updatedAudioTracks.forEach((audioClip, index) => {
+      if (audioClip.linkedVideoClipId) {
+        const videoPosition = videoClipPositions.get(audioClip.linkedVideoClipId);
+        if (videoPosition !== undefined) {
+          updatedAudioTracks[index].startTime = videoPosition;
+        }
+      }
+    });
+    
+    return updatedAudioTracks;
+  };
+
   const moveClipByOne = (trackIndex, fromIndex, direction) => {
+    console.log(`📹 moveClipByOne called: trackIndex=${trackIndex}, fromIndex=${fromIndex}, direction=${direction}`);
+    const targetIndex = direction === 'left' ? fromIndex - 1 : fromIndex + 1;
+    
+    // For overlay tracks, just do simple swap
+    if (trackIndex !== 0) {
+      setTracks(prev => {
+        const newTracks = prev.map(t => [...t]);
+        const track = newTracks[trackIndex];
+        if (!track) {
+          console.log('❌ No track found');
+          return prev;
+        }
+        if (targetIndex < 0 || targetIndex >= track.length) {
+          console.log(`❌ Invalid targetIndex: ${targetIndex} (track length: ${track.length})`);
+          return prev;
+        }
+        
+        // Create new array with swapped elements
+        const newTrack = [...track];
+        [newTrack[fromIndex], newTrack[targetIndex]] = [newTrack[targetIndex], newTrack[fromIndex]];
+        newTracks[trackIndex] = newTrack;
+        
+        console.log('✅ Swapped overlay clips');
+        return newTracks;
+      });
+      return;
+    }
+
+    // Handle primary track (trackIndex 0) for video-audio linking
     setTracks(prev => {
       const newTracks = prev.map(t => [...t]);
       const track = newTracks[trackIndex];
       if (!track) return prev;
-      const targetIndex = direction === 'left' ? fromIndex - 1 : fromIndex + 1;
       if (targetIndex < 0 || targetIndex >= track.length) return prev;
-      [track[fromIndex], track[targetIndex]] = [track[targetIndex], track[fromIndex]];
+      
+      // Create new track array with swapped clips
+      const newTrack = [...track];
+      [newTrack[fromIndex], newTrack[targetIndex]] = [newTrack[targetIndex], newTrack[fromIndex]];
+      newTracks[trackIndex] = newTrack;
+      
+      // Recalculate all audio clip positions based on new video clip timeline positions
+      setAudioTracks(prevAudio => {
+        const updatedAudio = recalculateAudioPositions(newTracks, prevAudio);
+        console.log(`🔗 Recalculated audio clip positions after video clip swap`);
+        return updatedAudio;
+      });
+      
       return newTracks;
+    });
+  };
+
+  const moveAudioByOne = (fromIndex, direction) => {
+    console.log(`🎵 moveAudioByOne called: fromIndex=${fromIndex}, direction=${direction}`);
+    
+    // Sort audio tracks by startTime to find correct adjacent clips
+    setAudioTracks(prev => {
+      if (!prev || prev.length === 0) {
+        console.log('❌ No audio tracks');
+        return prev;
+      }
+      
+      const sortedTracks = [...prev].sort((a, b) => a.startTime - b.startTime);
+      const movingAudioClip = prev[fromIndex];
+      
+      if (!movingAudioClip) {
+        console.log(`❌ No audio clip at index ${fromIndex}`);
+        return prev;
+      }
+      
+      // Find the position in sorted array
+      const sortedIndex = sortedTracks.findIndex(ac => ac.id === movingAudioClip.id);
+      if (sortedIndex < 0) {
+        console.log('❌ Could not find clip in sorted array');
+        return prev;
+      }
+      
+      const targetSortedIndex = direction === 'left' ? sortedIndex - 1 : sortedIndex + 1;
+      if (targetSortedIndex < 0 || targetSortedIndex >= sortedTracks.length) {
+        console.log(`❌ Invalid targetSortedIndex: ${targetSortedIndex}`);
+        return prev;
+      }
+      
+      const targetAudioClip = sortedTracks[targetSortedIndex];
+      
+      // If both audio clips have linked video clips, swap the video clips and recalculate
+      if (movingAudioClip?.linkedVideoClipId && targetAudioClip?.linkedVideoClipId) {
+        setTracks(prevTracks => {
+          const newTracks = prevTracks.map(t => [...t]);
+          const primaryTrack = newTracks[0] || [];
+          
+          // Find video clips by their IDs
+          const movingVideoIndex = primaryTrack.findIndex(vc => vc.id === movingAudioClip.linkedVideoClipId);
+          const targetVideoIndex = primaryTrack.findIndex(vc => vc.id === targetAudioClip.linkedVideoClipId);
+          
+          if (movingVideoIndex >= 0 && targetVideoIndex >= 0) {
+            // Create new track array with swapped clips
+            const newPrimaryTrack = [...primaryTrack];
+            [newPrimaryTrack[movingVideoIndex], newPrimaryTrack[targetVideoIndex]] = 
+              [newPrimaryTrack[targetVideoIndex], newPrimaryTrack[movingVideoIndex]];
+            newTracks[0] = newPrimaryTrack;
+            
+            console.log(`🔗 Swapped video clips linked to audio clips`);
+            
+            // Recalculate all audio positions based on new video order
+            setAudioTracks(prevAudio => {
+              const updatedAudio = recalculateAudioPositions(newTracks, prevAudio);
+              console.log(`🔗 Recalculated audio clip positions after video clip swap from audio move`);
+              return updatedAudio;
+            });
+          }
+          
+          return newTracks;
+        });
+        
+        // Return unchanged for now, will be updated by recalculateAudioPositions
+        return prev;
+      }
+      
+      // If no linked video clips, just swap audio clips and their start times
+      const newAudioTracks = [...prev];
+      const targetIndex = prev.findIndex(ac => ac.id === targetAudioClip.id);
+      
+      if (targetIndex >= 0) {
+        // Swap the audio tracks in the array
+        const tempAudio = newAudioTracks[fromIndex];
+        newAudioTracks[fromIndex] = { ...newAudioTracks[targetIndex] };
+        newAudioTracks[targetIndex] = { ...tempAudio };
+        
+        // Also swap their start times
+        const tempStartTime = newAudioTracks[fromIndex].startTime;
+        newAudioTracks[fromIndex] = { 
+          ...newAudioTracks[fromIndex], 
+          startTime: newAudioTracks[targetIndex].startTime 
+        };
+        newAudioTracks[targetIndex] = { 
+          ...newAudioTracks[targetIndex], 
+          startTime: tempStartTime 
+        };
+      }
+      
+      return newAudioTracks;
     });
   };
 
@@ -2526,7 +2834,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                              </button>
                              <button
                                onMouseDown={(e) => e.stopPropagation()}
-                               onClicl={(e) => {
+                               onClick={(e) => {
                                  e.stopPropagation();
                                  moveClipByOne(trackIndex, index, 'right');
                                }}
@@ -2714,7 +3022,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           />
           
           {/* Audio Clips */}
-          {audioTracks.map((audioClip) => {
+          {audioTracks.map((audioClip, index) => {
             const isSelected = selectedClipId === audioClip.id;
             const trimmedDuration = audioClip.trimEnd - audioClip.trimStart;
             const speed = audioClip.speed || 1.0;
@@ -2760,6 +3068,36 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                   >
                     <X size={12} strokeWidth={3} />
                   </button>
+                )}
+
+                {/* Move Buttons (Left/Right) */}
+                {isSelected && (
+                  <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto">
+                    <button
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveAudioByOne(index, 'left');
+                      }}
+                      disabled={index === 0}
+                      className={`w-6 h-6 rounded-full border flex items-center justify-center text-gray-700 bg-white shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100`}
+                      title="Move audio left"
+                    >
+                      <ArrowLeft size={12} />
+                    </button>
+                    <button
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveAudioByOne(index, 'right');
+                      }}
+                      disabled={index === audioTracks.length - 1}
+                      className={`w-6 h-6 rounded-full border flex items-center justify-center text-gray-700 bg-white shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-100`}
+                      title="Move audio right"
+                    >
+                      <ArrowRight size={12} />
+                    </button>
+                  </div>
                 )}
 
                 {/* Drag Handle to Reposition */}
@@ -2830,69 +3168,142 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     );
   };
 
-  // V2 Overlay Component
-  const OverlayElement = ({ clip, overlayInfo }) => {
+  // V2 Overlay Component - Optimized to prevent flickering
+  const OverlayElement = React.memo(({ clip, overlayInfo }) => {
     // Hooks must be called before any early returns
     const elementRef = useRef(null);
-    const lastVisibilityRef = useRef(false);
+    const lastTimeRef = useRef(null);
+    const syncIntervalRef = useRef(null);
+    const isInitializedRef = useRef(false);
+    const wasActiveRef = useRef(false);
 
     // Sync V2 Video playback time
     // Use overlayInfo if provided (for chart overlays), otherwise fall back to v2ClipInfo
     const activeOverlayInfo = overlayInfo || v2ClipInfo;
     const isActive = activeOverlayInfo && activeOverlayInfo.clip.id === clip.id;
     
-    // Keep overlay video in sync every render of active info
+    // Initialize video element once and keep it stable
+    useEffect(() => {
+      if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
+      const videoElement = elementRef.current;
+      
+      // Initialize video properties only once
+      if (!isInitializedRef.current) {
+        videoElement.muted = true;
+        videoElement.playsInline = true;
+        videoElement.preload = 'auto';
+        videoElement.disablePictureInPicture = true;
+        videoElement.loop = !clip.isChartOverlay;
+        videoElement.crossOrigin = 'anonymous';
+        isInitializedRef.current = true;
+      }
+    }, [clip?.url, clip?.type, clip?.isChartOverlay]);
+
+    // Stable sync mechanism using interval instead of constant re-renders
     useEffect(() => {
       if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
       const videoElement = elementRef.current;
       const localTime = activeOverlayInfo?.localTime ?? clip.trimStart;
+      const isChartOverlay = clip.isChartOverlay;
 
-      // Always keep overlay metadata ready
-      videoElement.muted = true;
-      videoElement.playsInline = true;
-      videoElement.preload = 'auto';
-      videoElement.disablePictureInPicture = true;
+      // Clear any existing interval
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
 
-      if (isActive) {
+      if (isActive && videoElement.readyState >= 2) {
+        // Set playback speed
         const speed = clip.speed || 1.0;
         if (Math.abs(videoElement.playbackRate - speed) > 0.01) {
           videoElement.playbackRate = speed;
         }
-        // Force exact time for tight sync to base layer
-        if (!isNaN(localTime)) {
-          videoElement.currentTime = localTime;
-        }
+
+        // Use interval-based sync instead of constant re-renders
+        // Sync every 100ms for smooth playback without flickering
+        syncIntervalRef.current = setInterval(() => {
+          if (!videoElement || videoElement.readyState < 2) return;
+          
+          const currentLocalTime = activeOverlayInfo?.localTime ?? clip.trimStart;
+          if (isNaN(currentLocalTime)) return;
+
+          const start = clip.trimStart || 0;
+          const end = clip.trimEnd ?? clip.duration ?? currentLocalTime;
+          const targetTime = Math.min(end, Math.max(start, currentLocalTime));
+          const currentTime = videoElement.currentTime;
+          const timeDiff = Math.abs(currentTime - targetTime);
+          
+          // Only seek if significantly off (0.3s threshold to prevent flickering)
+          const seekThreshold = 0.3;
+          const lastSeekTime = lastTimeRef.current;
+          const timeChanged = lastSeekTime === null || Math.abs(lastSeekTime - targetTime) > 0.2;
+          
+          if (timeDiff > seekThreshold && timeChanged && videoElement.readyState >= 3) {
+            try {
+              videoElement.currentTime = targetTime;
+              lastTimeRef.current = targetTime;
+            } catch (e) {
+              // Ignore seek errors
+            }
+          }
+        }, 100); // Check every 100ms
+
+        // Play/pause control
         if (isPlaying && videoElement.paused) {
           videoElement.play().catch(() => {});
         } else if (!isPlaying && !videoElement.paused) {
           videoElement.pause();
         }
       } else {
-        if (!videoElement.paused) videoElement.pause();
+        // Inactive - pause video
+        if (videoElement && !videoElement.paused) {
+          videoElement.pause();
+        }
+        lastTimeRef.current = null;
       }
-      lastVisibilityRef.current = isActive;
-    }, [activeOverlayInfo, isActive, isPlaying, clip?.type, clip?.trimStart, clip?.id]);
+      
+      wasActiveRef.current = isActive;
+      
+      return () => {
+        if (syncIntervalRef.current) {
+          clearInterval(syncIntervalRef.current);
+          syncIntervalRef.current = null;
+        }
+      };
+    }, [isActive, isPlaying, clip?.id, clip?.trimStart, clip?.trimEnd, clip?.duration, clip?.speed, clip?.isChartOverlay, activeOverlayInfo?.localTime]);
 
     // On source/metadata ready, snap to current local time to avoid initial blank frame
     useEffect(() => {
       if (!clip || clip.type !== 'video' || !elementRef.current) return;
       const videoElement = elementRef.current;
       const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
+      
       const syncTime = () => {
-        if (!isNaN(localTime)) {
-          videoElement.currentTime = localTime;
+        if (videoElement && !isNaN(localTime) && videoElement.readyState >= 2) {
+          try {
+            videoElement.currentTime = localTime;
+            lastTimeRef.current = localTime;
+          } catch (e) {
+            // Ignore seek errors
+          }
         }
-        if (isActive && isPlaying) {
+        if (isActive && isPlaying && videoElement) {
           videoElement.play().catch(() => {});
         }
       };
-      videoElement.addEventListener('loadedmetadata', syncTime);
-      videoElement.addEventListener('canplay', syncTime);
+      
+      if (videoElement.readyState >= 2) {
+        syncTime();
+      } else {
+        videoElement.addEventListener('loadedmetadata', syncTime, { once: true });
+        videoElement.addEventListener('canplay', syncTime, { once: true });
+      }
+      
       return () => {
         videoElement.removeEventListener('loadedmetadata', syncTime);
         videoElement.removeEventListener('canplay', syncTime);
       };
-    }, [clip?.url, clip?.type, isActive, isPlaying, activeOverlayInfo]);
+    }, [clip?.url, clip?.type, isActive, isPlaying, activeOverlayInfo?.localTime]);
 
     // Early return after all hooks
     if (!clip || !clip.transform) return null;
@@ -2912,7 +3323,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               handleOverlayDragStart(e, clip); 
             }} 
             className={`
-                absolute top-0 left-0 transform-gpu cursor-move transition-opacity 
+                absolute top-0 left-0 transform-gpu cursor-move
                 ${isSelected ? 'z-50' : 'z-20'} 
                 ${isInteracting ? 'cursor-grabbing' : 'hover:ring-2 hover:ring-blue-500/50'}
             `}
@@ -2921,23 +3332,84 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 top: `${y}%`,
                 width: `${width}%`,
                 opacity: opacity,
-                transform: `translate(-50%, -50%)`, 
+                transform: `translate(-50%, -50%)`,
+                // For chart overlays, ensure container matches player container dimensions exactly
+                ...(clip.isChartOverlay ? {
+                  // Match the player container's aspect ratio (16:9)
+                  // Container should fill the player area
+                  height: '100%',
+                  aspectRatio: '16/9',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  // Position to cover full player area
+                  top: '50%',
+                  left: '50%'
+                } : {})
             }}
         >
             <Component
+                key={clip.id || clip.url}
                 ref={elementRef}
                 src={clip.url}
                 crossOrigin="anonymous"
                 className={`
-                    w-full h-auto object-contain rounded-lg shadow-xl shadow-black/50 border-4 transition-all
+                    ${clip.isChartOverlay ? 'w-full h-full' : 'w-full h-auto'} 
+                    object-contain rounded-lg shadow-xl shadow-black/50 border-4
                     ${isSelected ? 'border-blue-500 ring-4 ring-blue-500/40' : 'border-transparent'}
                 `}
                 muted={clip.type === 'video' ? true : undefined}
                 playsInline
                 preload="auto"
                 autoPlay={false} 
-                loop={false} 
-                style={{ pointerEvents: 'auto', visibility: isActive ? 'visible' : 'hidden' }}
+                loop={clip.isChartOverlay ? false : undefined}
+                onLoadedData={() => {
+                  // Ensure video is ready before showing to prevent flicker
+                  if (elementRef.current && isActive) {
+                    const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
+                    if (!isNaN(localTime)) {
+                      elementRef.current.currentTime = localTime;
+                    }
+                  }
+                }}
+                onLoadedMetadata={() => {
+                  // Pre-sync video time when metadata loads to prevent blank frames
+                  if (elementRef.current) {
+                    const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
+                    // Wait for HAVE_FUTURE_DATA (readyState >= 3) for smoother playback
+                    if (!isNaN(localTime)) {
+                      const checkReady = () => {
+                        if (elementRef.current && elementRef.current.readyState >= 3) {
+                          elementRef.current.currentTime = localTime;
+                        } else if (elementRef.current) {
+                          // Retry when more data is loaded
+                          elementRef.current.addEventListener('canplay', checkReady, { once: true });
+                        }
+                      };
+                      checkReady();
+                    }
+                  }
+                }}
+                style={{ 
+                  pointerEvents: isActive ? 'auto' : 'none', 
+                  // Always keep element in DOM to prevent re-creation flicker
+                  // Use opacity and pointer-events instead of visibility/display
+                  opacity: isActive ? 1 : 0,
+                  willChange: 'opacity', // Optimize for animations
+                  transition: 'opacity 0.2s ease-in-out', // Smooth fade to prevent flicker
+                  objectFit: 'contain', // Preserve aspect ratio without distortion
+                  width: '100%',
+                  height: '100%',
+                  display: 'block', // Prevent inline spacing issues
+                  // For chart overlays, ensure video fills container properly
+                  ...(clip.isChartOverlay ? {
+                    minWidth: 0,
+                    minHeight: 0,
+                    maxWidth: '100%',
+                    maxHeight: '100%'
+                  } : {})
+                }}
             />
 
             {/* Resize Handle (Bottom Right) */}
@@ -2950,7 +3422,19 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             )}
         </div>
     );
-  };
+  }, (prevProps, nextProps) => {
+    // Custom comparison to prevent unnecessary re-renders
+    // Only re-render if clip URL, transform, or active state changes
+    return (
+      prevProps.clip?.url === nextProps.clip?.url &&
+      prevProps.clip?.transform?.x === nextProps.clip?.transform?.x &&
+      prevProps.clip?.transform?.y === nextProps.clip?.transform?.y &&
+      prevProps.clip?.transform?.width === nextProps.clip?.transform?.width &&
+      prevProps.clip?.transform?.opacity === nextProps.clip?.transform?.opacity &&
+      (prevProps.overlayInfo?.clip?.id === nextProps.overlayInfo?.clip?.id) &&
+      (Math.abs((prevProps.overlayInfo?.localTime || 0) - (nextProps.overlayInfo?.localTime || 0)) < 0.1)
+    );
+  });
 
   // Handle regenerate video
   const handleRegenerateVideo = useCallback(async () => {
@@ -3449,7 +3933,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                     
                     {/* ALL OVERLAY LAYERS - RENDERED ON TOP */}
                     {activeOverlayClips.map((overlayInfo, index) => (
-                      <OverlayElement key={`overlay-${overlayInfo.trackIndex}-${index}`} clip={overlayInfo.clip} overlayInfo={overlayInfo} />
+                      <OverlayElement 
+                        key={`overlay-${overlayInfo.clip?.id || overlayInfo.trackIndex}-${index}`} 
+                        clip={overlayInfo.clip} 
+                        overlayInfo={overlayInfo} 
+                      />
                     ))}
                     
                     {/* Audio playback (hidden audio elements for timing) */}
@@ -3544,27 +4032,48 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 </button>
               </div>
               
-              {/* Render all overlay layers (V2, V3, V4, etc.) */}
-              {tracks.slice(1).map((track, index) => {
-                const trackIndex = index + 1;
-                return (
-                  <div key={trackIndex} className="relative mb-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-gray-600 w-20">V{trackIndex + 1}</span>
-                      {trackIndex > 1 && (
-                        <button
-                          onClick={() => removeLayer(trackIndex)}
-                          className="text-xs text-red-600 hover:text-red-700"
-                          title="Remove Layer"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
+              {/* Chart Layers (dedicated) */}
+              {chartTracksInfo.length > 0 && (
+                <div className="mb-2">
+                  <div className="text-[11px] font-semibold text-gray-700 uppercase mb-1">Charts</div>
+                  {chartTracksInfo.map(({ track, trackIndex }, idx) => (
+                    <div key={`chart-${trackIndex}`} className="relative mb-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs text-gray-600 w-20">Chart {idx + 1}</span>
+                        {trackIndex > 1 && (
+                          <button
+                            onClick={() => removeLayer(trackIndex)}
+                            className="text-xs text-red-600 hover:text-red-700"
+                            title="Remove Layer"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                      {renderTimelineTrack(track, trackIndex, `Chart ${idx + 1}`)}
                     </div>
-                    {renderTimelineTrack(track, trackIndex, `V${trackIndex + 1} (Overlay)`)}
+                  ))}
+                </div>
+              )}
+
+              {/* Other overlay layers (V2, V3, etc.) */}
+              {otherOverlayTracksInfo.map(({ track, trackIndex }) => (
+                <div key={trackIndex} className="relative mb-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-gray-600 w-20">V{trackIndex + 1}</span>
+                    {trackIndex > 1 && (
+                      <button
+                        onClick={() => removeLayer(trackIndex)}
+                        className="text-xs text-red-600 hover:text-red-700"
+                        title="Remove Layer"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
                   </div>
-                );
-              })}
+                  {renderTimelineTrack(track, trackIndex, `V${trackIndex + 1} (Overlay)`)}
+                </div>
+              ))}
               
               {/* Primary Track (V1) */}
               {renderTimelineTrack(tracks[0], 0, "V1 (Primary)")}

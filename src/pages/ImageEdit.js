@@ -4677,6 +4677,11 @@ const handleTemplateJsonLoad = () => {
   const convertTextLayersToElements = () => {
     if (!imageRef.current || textLayers.length === 0) return [];
     
+    // Get original image dimensions for proper coordinate conversion
+    const imgEl = imageRef.current;
+    const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1;
+    const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1;
+    
     // Sort text layers by their position in layerOrder to preserve z-order
     const sortedTextLayers = [...textLayers].sort((a, b) => {
       const indexA = layerOrder.findIndex(l => l.type === 'text' && l.id === a.id);
@@ -4688,11 +4693,16 @@ const handleTemplateJsonLoad = () => {
     });
     
     return sortedTextLayers.map((layer) => {
-      const toNormalized = (value) => Math.max(0, Math.min(1, ensureNumber(value) / 100))
-      const x = toNormalized(layer.x)
-      const y = toNormalized(layer.y)
-      const width = toNormalized(layer.width)
-      const height = toNormalized(layer.height)
+      // Convert percentages (0-100) to normalized coordinates (0-1)
+      // This ensures consistency regardless of display size
+      const toNormalized = (value) => {
+        const percent = ensureNumber(value);
+        return Math.max(0, Math.min(1, percent / 100));
+      };
+      const x = toNormalized(layer.x);
+      const y = toNormalized(layer.y);
+      const width = toNormalized(layer.width);
+      const height = toNormalized(layer.height);
       
       // Get z-index from absolute position in layerOrder (unified for all layer types)
       const layerOrderIndex = layerOrder.findIndex(l => l.type === 'text' && l.id === layer.id);

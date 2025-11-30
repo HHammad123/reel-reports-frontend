@@ -1,11 +1,121 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ChevronDown, Pencil, RefreshCw, Upload } from 'lucide-react';
+import { ChevronDown, Pencil, RefreshCw, Upload, File as FileIcon } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
 import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
 import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
+
+// Helper functions for asset modal (from Chat.js)
+const resolveTemplateAssetUrl = (entry) => {  
+  if (!entry) return '';
+  if (typeof entry === 'string') return entry.trim();
+  if (typeof entry !== 'object') return '';
+  const baseImage = entry.base_image || entry.baseImage;
+  if (baseImage) {
+    if (typeof baseImage === 'string') return baseImage.trim();
+    if (typeof baseImage === 'object') {
+      const baseUrl = baseImage.image_url || baseImage.imageUrl || baseImage.url || baseImage.src || baseImage.href;
+      if (baseUrl) return baseUrl.trim();
+    }
+  }
+  const direct =
+    entry.image_url ||
+    entry.imageUrl ||
+    entry.url ||
+    entry.src ||
+    entry.href ||
+    entry.link ||
+    (entry.asset && (entry.asset.image_url || entry.asset.url)) ||
+    (entry.media && (entry.media.image_url || entry.media.url));
+  return typeof direct === 'string' ? direct.trim() : '';
+};
+
+const normalizeTemplateAspectLabel = (aspect) => {
+  if (!aspect || typeof aspect !== 'string') return 'Unspecified';
+  const trimmed = aspect.trim();
+  if (!trimmed) return 'Unspecified';
+  const normalized = trimmed.replace(/[xX_]/g, ':').replace(/\s+/g, '');
+  if (/^\d+:\d+$/.test(normalized)) return normalized;
+  const lower = normalized.toLowerCase();
+  if (lower.includes('portrait')) return '9:16';
+  if (lower.includes('landscape')) return '16:9';
+  return trimmed;
+};
+
+const normalizeBrandAssetsResponse = (data = {}) => {
+  if (!data || typeof data !== 'object') {
+    return {
+      logos: [],
+      icons: [],
+      uploaded_images: [],
+      templates: [],
+      documents_images: []
+    };
+  }
+  
+  const logos = Array.isArray(data.logos) ? data.logos : [];
+  const icons = Array.isArray(data.icons) ? data.icons : [];
+  const uploaded_images = Array.isArray(data.uploaded_images) ? data.uploaded_images : [];
+  const documents_images = Array.isArray(data.documents_images) ? data.documents_images : [];
+  
+  let templates = data.templates ?? [];
+  
+  const aspectRatioKeys = Object.keys(data).filter(key => 
+    /^(\d+):(\d+)$/.test(key) && typeof data[key] === 'object' && data[key] !== null
+  );
+  
+  if (aspectRatioKeys.length > 0 && (!Array.isArray(templates) || templates.length === 0)) {
+    const templatesObj = {};
+    aspectRatioKeys.forEach(key => {
+      templatesObj[key] = data[key];
+    });
+    templates = templatesObj;
+  }
+  
+  return {
+    logos,
+    icons,
+    uploaded_images,
+    templates,
+    documents_images
+  };
+};
+
+const extractAssetsByType = (templatesInput = {}, assetType = 'preset_templates') => {
+  const normalized = [];
+  
+  if (!templatesInput || typeof templatesInput !== 'object') return normalized;
+  if (Array.isArray(templatesInput)) return normalized;
+  
+  Object.keys(templatesInput).forEach(aspectKey => {
+    const aspectGroup = templatesInput[aspectKey];
+    if (!aspectGroup || typeof aspectGroup !== 'object') return;
+    
+    const assets = Array.isArray(aspectGroup[assetType]) ? aspectGroup[assetType] : [];
+    
+    assets.forEach((entry, idx) => {
+      if (!entry) return;
+      const imageUrl = resolveTemplateAssetUrl(entry);
+      if (!imageUrl) return;
+      
+      const aspectLabel = normalizeTemplateAspectLabel(aspectKey);
+      const templateId = entry?.template_id || entry?.templateId || entry?.id || `${assetType}-${aspectKey}-${idx}`;
+      
+      normalized.push({
+        id: String(templateId),
+        imageUrl,
+        aspect: aspectLabel,
+        label: `${assetType.replace('_', ' ')} ${idx + 1}`,
+        raw: entry,
+        assetType: assetType
+      });
+    });
+  });
+  
+  return normalized;
+};
 
 const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
   if (!ratio || typeof ratio !== 'string') return fallback;
@@ -79,6 +189,22 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [isUploadingBackground, setIsUploadingBackground] = useState(false);
   const [uploadingBackgroundSceneNumber, setUploadingBackgroundSceneNumber] = useState(null);
   const [uploadFrames, setUploadFrames] = useState(['background']); // For upload: ['opening'], ['closing'], ['background'], or combinations
+  
+  // Asset modal state (for background selection)
+  const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+  const [assetsTab, setAssetsTab] = useState('preset_templates');
+  const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  const [selectedAssetUrl, setSelectedAssetUrl] = useState('');
+  const [selectedTemplateUrls, setSelectedTemplateUrls] = useState([]);
+  const [showUploadPopup, setShowUploadPopup] = useState(false);
+  const [uploadPopupTab, setUploadPopupTab] = useState('image');
+  const assetsUploadInputRef = useRef(null);
+  const assetImageUploadRef = useRef(null);
+  const assetPptxUploadRef = useRef(null);
+  const [pendingUploadType, setPendingUploadType] = useState('uploaded_image');
+  const [convertColors, setConvertColors] = useState(true);
+  const [generatedImagesData, setGeneratedImagesData] = useState({ generated_images: {} });
+  const [isLoadingGeneratedImages, setIsLoadingGeneratedImages] = useState(false);
   const [imageNaturalDims, setImageNaturalDims] = useState({});
   const [isSceneUpdating, setIsSceneUpdating] = useState(false);
   // Edit description/narration state
@@ -567,19 +693,19 @@ const getOrderedRefs = useCallback((row) => {
       
       // Normalize and deduplicate all avatar URLs
       const normalizedUrls = avatarUrls
-        .map((entry) => {
+          .map((entry) => {
           if (typeof entry === 'string') return normalizeSimpleUrl(entry);
-          return normalizeSimpleUrl(
-            entry?.imageurl ||
-              entry?.imageUrl ||
-              entry?.image_url ||
-              entry?.url ||
-              entry?.src ||
-              entry?.link ||
-              entry?.avatar_url ||
-              ''
+            return normalizeSimpleUrl(
+              entry?.imageurl ||
+                entry?.imageUrl ||
+                entry?.image_url ||
+                entry?.url ||
+                entry?.src ||
+                entry?.link ||
+                entry?.avatar_url ||
+                ''
           );
-        })
+          })
         .filter(Boolean);
       
       return new Set(normalizedUrls);
@@ -609,6 +735,36 @@ const getOrderedRefs = useCallback((row) => {
       return []
     },
     [getOrderedRefs, getAvatarUrlSet, normalizeSimpleUrl]
+  )
+
+  const getAnchorAvatarImages = useCallback(
+    (row) => {
+      // Get avatar URLs from row's imageVersionData
+      const currentVersion = row?.current_version || 'v1';
+      const avatarUrls = getAvatarUrlsFromImageVersion(row?.imageVersionData, currentVersion, 'ANCHOR');
+      
+      // Also check row.avatar_urls as fallback
+      if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(row?.avatar_urls)) {
+        return row.avatar_urls
+          .map((av) => {
+            if (typeof av === 'string') return av.trim();
+            return (
+              av?.imageurl ||
+              av?.imageUrl ||
+              av?.image_url ||
+              av?.url ||
+              av?.src ||
+              av?.link ||
+              av?.avatar_url ||
+              ''
+            );
+          })
+          .filter(url => url && typeof url === 'string' && url.trim());
+      }
+      
+      return avatarUrls || [];
+    },
+    [getAvatarUrlsFromImageVersion]
   )
 
   const getPrimaryImage = useCallback((row) => {
@@ -849,6 +1005,68 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, [sessionAssets, brandAssets, rows, videosData]);
 
+  // Load assets when upload background popup opens
+  useEffect(() => {
+    if (!showUploadBackgroundPopup) return;
+    let cancelled = false;
+    setIsAssetsLoading(true);
+    (async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          if (!cancelled) setIsAssetsLoading(false);
+          return;
+        }
+        const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+        const resp = await fetch(url);
+        const text = await resp.text();
+        let data; try { data = JSON.parse(text); } catch(_) { data = {}; }
+        if (cancelled) return;
+        const normalized = normalizeBrandAssetsResponse(data);
+        if (!cancelled) setAssetsData(normalized);
+      } catch (err) {
+        console.error('Failed to load assets:', err);
+      } finally {
+        if (!cancelled) setIsAssetsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showUploadBackgroundPopup]);
+
+  // Load generated images when generated_images tab is selected
+  useEffect(() => {
+    if (!showUploadBackgroundPopup || assetsTab !== 'generated_images') {
+      setIsLoadingGeneratedImages(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingGeneratedImages(true);
+    (async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          if (!cancelled) setIsLoadingGeneratedImages(false);
+          return;
+        }
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(token)}/generated-media`);
+        const text = await resp.text();
+        let data; try { data = JSON.parse(text); } catch(_) { data = null; }
+        if (cancelled) return;
+        if (!cancelled && data && typeof data === 'object') {
+          setGeneratedImagesData({
+            generated_images: data.generated_images || {},
+            generated_videos: data.generated_videos || {}
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load generated images:', err);
+      } finally {
+        if (!cancelled) setIsLoadingGeneratedImages(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showUploadBackgroundPopup, assetsTab]);
+
   useEffect(() => {
     let cancelled = false;
     let timeoutId = null;
@@ -995,6 +1213,20 @@ const getOrderedRefs = useCallback((row) => {
                   path: `${scriptBasePathRoot2}.narration`
                 }
               ]);
+              
+              // Extract veo3_prompt_template from script scene data
+              const modelUpperRoot = String(imagesRoot?.model || imagesRoot?.mode || '').toUpperCase();
+              const isVEO3Root = modelUpperRoot === 'VEO3' || modelUpperRoot === 'ANCHOR';
+              const veo3PromptTemplateRoot = scriptSceneForRoot?.veo3_prompt_template || 
+                                            scriptSceneForRoot?.veo3PromptTemplate || 
+                                            scriptSceneForRoot?.veo3_prompt || 
+                                            scriptSceneForRoot?.veo3Prompt ||
+                                            imagesRoot?.veo3_prompt_template ||
+                                            imagesRoot?.veo3PromptTemplate ||
+                                            imagesRoot?.veo3_prompt ||
+                                            imagesRoot?.veo3Prompt ||
+                                            null;
+              
 	            pushRow(1, imagesRoot?.scene_title || 'Images', refs, {
 	              description: descriptionForRoot,
 	              narration: narrationForRoot,
@@ -1004,6 +1236,8 @@ const getOrderedRefs = useCallback((row) => {
               imageVersionData: imagesRoot,
               imageFrames: arr,
               isEditable: true,
+              // Store veo3_prompt_template for VEO3 models
+              ...(isVEO3Root && veo3PromptTemplateRoot ? { veo3_prompt_template: veo3PromptTemplateRoot } : {}),
 	              prompts: {
 	                opening_frame: normalizePromptFields(vObj?.opening_frame || vObj?.prompts?.opening_frame || imagesRoot?.opening_frame || imagesRoot?.prompts?.opening_frame || {}),
 	                closing_frame: normalizePromptFields(vObj?.closing_frame || vObj?.prompts?.closing_frame || imagesRoot?.closing_frame || imagesRoot?.prompts?.closing_frame || {})
@@ -1154,6 +1388,17 @@ const getOrderedRefs = useCallback((row) => {
                   }
                 ]);
                 
+                // Extract veo3_prompt_template from script scene data
+                const veo3PromptTemplate = scriptSceneForIt?.veo3_prompt_template || 
+                                          scriptSceneForIt?.veo3PromptTemplate || 
+                                          scriptSceneForIt?.veo3_prompt || 
+                                          scriptSceneForIt?.veo3Prompt ||
+                                          it?.veo3_prompt_template ||
+                                          it?.veo3PromptTemplate ||
+                                          it?.veo3_prompt ||
+                                          it?.veo3Prompt ||
+                                          null;
+                
                 const meta = {
                   description: descriptionForIt,
                   narration: narrationForIt,
@@ -1166,6 +1411,8 @@ const getOrderedRefs = useCallback((row) => {
                   isEditable: true,
                   // Store avatar_urls in metadata for VEO3 only
                   ...(isVEO3 && avatarUrlsForMeta.length > 0 ? { avatar_urls: avatarUrlsForMeta } : {}),
+                  // Store veo3_prompt_template for VEO3 models
+                  ...(isVEO3 && veo3PromptTemplate ? { veo3_prompt_template: veo3PromptTemplate } : {}),
                   prompts: {
                     opening_frame: normalizePromptFields(
                       verObj?.opening_frame ||
@@ -1229,11 +1476,27 @@ const getOrderedRefs = useCallback((row) => {
                     path: `${scriptBasePathForSc}.narration`
                   }
                 ]);
+                
+                // Extract veo3_prompt_template from script scene data
+                const modelUpperSc = String(sc?.model || sc?.mode || '').toUpperCase();
+                const isVEO3Sc = modelUpperSc === 'VEO3' || modelUpperSc === 'ANCHOR';
+                const veo3PromptTemplateSc = scriptSceneForSc?.veo3_prompt_template || 
+                                             scriptSceneForSc?.veo3PromptTemplate || 
+                                             scriptSceneForSc?.veo3_prompt || 
+                                             scriptSceneForSc?.veo3Prompt ||
+                                             sc?.veo3_prompt_template ||
+                                             sc?.veo3PromptTemplate ||
+                                             sc?.veo3_prompt ||
+                                             sc?.veo3Prompt ||
+                                             null;
+                
                 const meta = {
                   description: descriptionForSc,
                   narration: narrationForSc,
                   textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || '',
-                  model: sc?.model || sc?.mode || '',
+                  model: modelUpperSc,
+                  // Store veo3_prompt_template for VEO3 models
+                  ...(isVEO3Sc && veo3PromptTemplateSc ? { veo3_prompt_template: veo3PromptTemplateSc } : {}),
                   prompts: {
                     opening_frame: normalizePromptFields(sc?.v1?.opening_frame || sc?.v1?.prompts?.opening_frame || sc?.opening_frame || sc?.prompts?.opening_frame || {}),
                     closing_frame: normalizePromptFields(sc?.v1?.closing_frame || sc?.v1?.prompts?.closing_frame || sc?.closing_frame || sc?.prompts?.closing_frame || {})
@@ -1296,11 +1559,26 @@ const getOrderedRefs = useCallback((row) => {
                 }
               ]);
               
+              // Extract veo3_prompt_template from script scene data
+              const modelUpperIt2 = String(it?.model || it?.mode || '').toUpperCase();
+              const isVEO3It2 = modelUpperIt2 === 'VEO3' || modelUpperIt2 === 'ANCHOR';
+              const veo3PromptTemplateIt2 = scriptSceneForIt2?.veo3_prompt_template || 
+                                            scriptSceneForIt2?.veo3PromptTemplate || 
+                                            scriptSceneForIt2?.veo3_prompt || 
+                                            scriptSceneForIt2?.veo3Prompt ||
+                                            it?.veo3_prompt_template ||
+                                            it?.veo3PromptTemplate ||
+                                            it?.veo3_prompt ||
+                                            it?.veo3Prompt ||
+                                            null;
+              
               const meta = {
                 description: descriptionForIt2,
                 narration: narrationForIt2,
                 textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
-                model: it?.model || it?.mode || '',
+                model: modelUpperIt2,
+                // Store veo3_prompt_template for VEO3 models
+                ...(isVEO3It2 && veo3PromptTemplateIt2 ? { veo3_prompt_template: veo3PromptTemplateIt2 } : {}),
                 prompts: {
                   opening_frame: normalizePromptFields(it?.v1?.opening_frame || it?.v1?.prompts?.opening_frame || it?.opening_frame || it?.prompts?.opening_frame || {}),
                   closing_frame: normalizePromptFields(it?.v1?.closing_frame || it?.v1?.prompts?.closing_frame || it?.closing_frame || it?.prompts?.closing_frame || {})
@@ -1351,11 +1629,27 @@ const getOrderedRefs = useCallback((row) => {
               path: `${scriptBasePathForSc2}.narration`
             }
           ]);
+          
+          // Extract veo3_prompt_template from script scene data
+          const modelUpperSc2 = String(sc?.model || sc?.mode || '').toUpperCase();
+          const isVEO3Sc2 = modelUpperSc2 === 'VEO3' || modelUpperSc2 === 'ANCHOR';
+          const veo3PromptTemplateSc2 = scriptSceneForSc2?.veo3_prompt_template || 
+                                        scriptSceneForSc2?.veo3PromptTemplate || 
+                                        scriptSceneForSc2?.veo3_prompt || 
+                                        scriptSceneForSc2?.veo3Prompt ||
+                                        sc?.veo3_prompt_template ||
+                                        sc?.veo3PromptTemplate ||
+                                        sc?.veo3_prompt ||
+                                        sc?.veo3Prompt ||
+                                        null;
+          
           const meta = {
             description: descriptionForSc2,
             narration: narrationForSc2,
             textToBeIncluded: sc?.text_to_be_included || sc?.textToBeIncluded || sc?.include_text || '',
-            model: sc?.model || sc?.mode || '',
+            model: modelUpperSc2,
+            // Store veo3_prompt_template for VEO3 models
+            ...(isVEO3Sc2 && veo3PromptTemplateSc2 ? { veo3_prompt_template: veo3PromptTemplateSc2 } : {}),
             prompts: {
               opening_frame: normalizePromptFields(sc?.v1?.opening_frame || sc?.v1?.prompts?.opening_frame || sc?.opening_frame || sc?.prompts?.opening_frame || {}),
               closing_frame: normalizePromptFields(sc?.v1?.closing_frame || sc?.v1?.prompts?.closing_frame || sc?.closing_frame || sc?.prompts?.closing_frame || {})
@@ -1418,6 +1712,13 @@ const getOrderedRefs = useCallback((row) => {
           const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
           const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
           const refs = [...new Set([...collectedUrls, ...avatarUrls])].filter(Boolean);
+          // Extract veo3_prompt_template from scene data
+          const veo3PromptTemplate = scene?.veo3_prompt_template || 
+                                    scene?.veo3PromptTemplate || 
+                                    scene?.veo3_prompt || 
+                                    scene?.veo3Prompt ||
+                                    null;
+          
           const meta = {
             description: scene?.desc || scene?.description || scene?.scene_description || '',
             narration: scene?.narration || scene?.voiceover || '',
@@ -1425,6 +1726,8 @@ const getOrderedRefs = useCallback((row) => {
             model: modelUpper,
             // Store avatar_urls in metadata for VEO3 only
             ...(isVEO3 && avatarUrls.length > 0 ? { avatar_urls: avatarUrls } : {}),
+            // Store veo3_prompt_template for VEO3 models
+            ...(isVEO3 && veo3PromptTemplate ? { veo3_prompt_template: veo3PromptTemplate } : {}),
             prompts: {
               opening_frame: normalizePromptFields(
                 scene?.v1?.opening_frame ||
@@ -1584,7 +1887,12 @@ const getOrderedRefs = useCallback((row) => {
             imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
             avatar_urls: finalAvatarUrls,
             current_version: firstScene?.current_version || 'v1',
-            isEditable: !!firstScene?.isEditable
+            isEditable: !!firstScene?.isEditable,
+            veo3_prompt_template: firstScene?.veo3_prompt_template || 
+                                  firstScene?.veo3PromptTemplate || 
+                                  firstScene?.veo3_prompt || 
+                                  firstScene?.veo3Prompt || 
+                                  ''
           });
           
           // Call APIs for VEO3/SORA/ANCHOR models if images exist
@@ -1818,7 +2126,12 @@ const getOrderedRefs = useCallback((row) => {
                           imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
                           avatar_urls: finalAvatarUrls2,
                           current_version: firstScene?.current_version || 'v1',
-                          isEditable: !!firstScene?.isEditable
+                          isEditable: !!firstScene?.isEditable,
+                          veo3_prompt_template: firstScene?.veo3_prompt_template || 
+                                                firstScene?.veo3PromptTemplate || 
+                                                firstScene?.veo3_prompt || 
+                                                firstScene?.veo3Prompt || 
+                                                ''
                         });
                   }
                 }
@@ -2715,7 +3028,12 @@ const getOrderedRefs = useCallback((row) => {
           imageFrames: Array.isArray(sceneToSelect?.imageFrames) ? sceneToSelect.imageFrames : [],
           avatar_urls: finalAvatarUrls3,
           current_version: sceneToSelect?.current_version || 'v1',
-          isEditable: !!sceneToSelect?.isEditable
+          isEditable: !!sceneToSelect?.isEditable,
+          veo3_prompt_template: sceneToSelect?.veo3_prompt_template || 
+                                 sceneToSelect?.veo3PromptTemplate || 
+                                 sceneToSelect?.veo3_prompt || 
+                                 sceneToSelect?.veo3Prompt || 
+                                 ''
         });
       }
       setIsLoading(false);
@@ -3216,6 +3534,93 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, [uploadedBackgroundFile, uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad]);
 
+  // Handle background selection from assets (when user selects an image from asset modal)
+  const handleSaveBackgroundFromAsset = React.useCallback(async (imageUrl) => {
+    if (!imageUrl || !uploadingBackgroundSceneNumber) return;
+    
+    try {
+      setIsUploadingBackground(true);
+      setError('');
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      
+      if (!session_id || !user_id) {
+        setError('Missing session or user');
+        setIsUploadingBackground(false);
+        return;
+      }
+
+      const model = getSceneModel(uploadingBackgroundSceneNumber);
+      if (!model) {
+        setError('Unable to determine scene model');
+        setIsUploadingBackground(false);
+        return;
+      }
+
+      const aspectRatio = await getAspectRatio();
+      const isVEO3 = isVEO3Model(model);
+
+      // Determine frames to upload - use selected frames, or default based on model
+      let framesToUpload = [];
+      if (isVEO3) {
+        // For VEO3, always use background
+        framesToUpload = ['background'];
+      } else {
+        // For other models, use selected frames (opening, closing, or both)
+        framesToUpload = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
+      }
+
+      // Call regenerate API with selected image URL
+      const payload = {
+        user_id: user_id,
+        session_id: session_id,
+        scene_number: uploadingBackgroundSceneNumber,
+        model: model,
+        action: 'upload',
+        upload_image_url: imageUrl,
+        frames_to_regenerate: framesToUpload,
+        save_as_new_version: false,
+        aspect_ratio: aspectRatio
+      };
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Upload background failed: ${response.status} ${text}`);
+      }
+
+      // Handle successful upload
+      const sceneNumberToRefresh = uploadingBackgroundSceneNumber;
+      
+      // Close popup immediately
+      setShowUploadBackgroundPopup(false);
+      setSelectedAssetUrl('');
+      setSelectedTemplateUrls([]);
+      setUploadingBackgroundSceneNumber(null);
+      setUploadFrames(['background']);
+      
+      // Refresh images
+      await refreshLoad(sceneNumberToRefresh);
+    } catch (e) {
+      setError(e?.message || 'Failed to upload background');
+    } finally {
+      setIsUploadingBackground(false);
+      setIsLoading(false);
+    }
+  }, [uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad]);
+
   // Reset active image tab when scene changes
   useEffect(() => {
     setActiveImageTab(0);
@@ -3568,20 +3973,44 @@ const getOrderedRefs = useCallback((row) => {
   // given scene/image index using consistent html2canvas settings.
   async function captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex) {
     const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
+    console.log(`🔍 Looking for DOM element with selector: ${selector}`);
     const node = document.querySelector(selector);
+    if (!node) {
+      console.warn(`⚠️ DOM element not found for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
+      // Try alternative selector patterns
+      const altSelectors = [
+        `[data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`,
+        `[data-scene="${sceneNumber}"][data-image="${imageIndex}"]`,
+      ];
+      for (const altSelector of altSelectors) {
+        const altNode = document.querySelector(altSelector);
+        if (altNode) {
+          console.log(`✅ Found element with alternative selector: ${altSelector}`);
+          node = altNode;
+          break;
+        }
+      }
     if (!node) {
       return null;
     }
+    }
+    
     try {
+      console.log(`📸 Starting html2canvas capture for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
       const canvas = await html2canvas(node, {
         useCORS: true,
         logging: false,
         backgroundColor: null,
         // Use device pixel ratio or 1 to keep file size under API limits.
-        scale: window.devicePixelRatio || 1
+        scale: window.devicePixelRatio || 1,
+        allowTaint: false,
+        removeContainer: false
       });
-      return canvas.toDataURL('image/png');
+      const dataUrl = canvas.toDataURL('image/png');
+      console.log(`✅ html2canvas capture complete for Scene ${sceneNumber}, Image ${imageIndex + 1}, data URL length: ${dataUrl.length}`);
+      return dataUrl;
     } catch (err) {
+      console.error(`❌ html2canvas error for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, err);
       return null;
     }
   }
@@ -3600,9 +4029,25 @@ const getOrderedRefs = useCallback((row) => {
     let saved = 0;
 
     try {
+      console.log('🎬 Starting image save process for ALL scenes...');
+      
+      // CRITICAL: Verify storage ref is valid at the START of the function
+      if (!imageStorageRef.current) {
+        console.warn('⚠️ Storage ref is null at start, initializing...');
+        imageStorageRef.current = new Map();
+      }
+      if (!(imageStorageRef.current instanceof Map)) {
+        console.warn('⚠️ Storage ref is not a Map at start, re-initializing...');
+        imageStorageRef.current = new Map();
+      }
+      console.log(`📦 Storage initialized with ${imageStorageRef.current.size} existing image(s)`);
+      
       if (rows.length === 0) {
+        console.warn('⚠️ No scenes found');
         return failed;
       }
+
+      console.log(`📊 Total scenes: ${rows.length}`);
 
       // Iterate through ALL rows (scenes)
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
@@ -3610,12 +4055,16 @@ const getOrderedRefs = useCallback((row) => {
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
         const modelUpper = String(row?.model || '').toUpperCase();
         const isVeo3 = modelUpper === 'VEO3';
+        const isAnchor = modelUpper === 'ANCHOR';
         const isPlotly = modelUpper === 'PLOTLY';
-        const sceneImages = isVeo3 ? getVeo3ImageTabImages(row) : getSceneImages(row);
+        const sceneImages = isVeo3 ? getVeo3ImageTabImages(row) : (isAnchor ? getAnchorAvatarImages(row) : getSceneImages(row));
         const images = sceneImages || [];
         const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : [];
         const fallbackDims = row?.imageDimensions || row?.image_dimensions || null;
 
+        console.log(`\n🎬 Processing Scene ${sceneNumber}...`);
+        console.log(`   Model: ${modelUpper}`);
+        console.log(`   Images: ${images.length}`);
 
         // Process each image in this scene
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
@@ -3637,7 +4086,10 @@ const getOrderedRefs = useCallback((row) => {
               if (String(currentSceneNumber) !== String(sceneNumber)) {
                 const targetRow = rows.find((r, idx) => (r?.scene_number || idx + 1) === sceneNumber);
                 if (targetRow) {
-                  const imgs = isVeo3 ? getVeo3ImageTabImages(targetRow) : getSceneImages(targetRow);
+                  const targetModelUpper = String(targetRow?.model || '').toUpperCase();
+                  const targetIsVeo3 = targetModelUpper === 'VEO3';
+                  const targetIsAnchor = targetModelUpper === 'ANCHOR';
+                  const imgs = targetIsVeo3 ? getVeo3ImageTabImages(targetRow) : (targetIsAnchor ? getAnchorAvatarImages(targetRow) : getSceneImages(targetRow));
                   const imageEntries = buildImageEntries(imgs, targetRow?.imageFrames);
                   const firstImg = imgs[0] || '';
                   // Get avatar URLs from current version of image object for VEO3 scenes
@@ -3683,14 +4135,23 @@ const getOrderedRefs = useCallback((row) => {
               }
 
               // 3) Now capture the DOM with html2canvas (same as Export)
+              console.log(`📸 Attempting html2canvas capture for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
+              try {
               dataUrl = await captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex);
               if (dataUrl) {
+                  console.log(`✅ html2canvas capture successful for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
               } else {
+                  console.warn(`⚠️ html2canvas returned null for Scene ${sceneNumber}, Image ${imageIndex + 1}, will try fallback`);
+                }
+              } catch (html2canvasError) {
+                console.error(`❌ html2canvas error for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, html2canvasError);
+                dataUrl = null; // Will use fallback
               }
             }
 
             // 2) If DOM snapshot was not used or failed, fall back to frame-based rendering.
             if (!dataUrl) {
+              console.log(`🔄 Using fallback rendering for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
             // Find the corresponding frame for this image (if any)
             let frame = null;
             if (frames.length > 0) {
@@ -3702,14 +4163,25 @@ const getOrderedRefs = useCallback((row) => {
               }
 
             if (frame) {
+                console.log(`📐 Using frame-based rendering with overlays for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
               // Use frame data + base image dimensions to build the canvas at the correct size.
               // For PLOTLY, do NOT bake overlay images into the saved frame; overlays stay visual-only.
+                try {
               dataUrl = await mergeFrameToDataUrl(frame, fallbackDims, {
                   includeOverlays: !isPlotly
               });
+                  if (dataUrl) {
+                    console.log(`✅ Frame-based rendering successful for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
+                  }
+                } catch (frameError) {
+                  console.error(`❌ Frame-based rendering failed for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, frameError);
+                  dataUrl = null; // Will try raw image fallback
+                }
             } else {
-                // Fallback: load the raw image and render it to a canvas sized
+                // Final fallback: load the raw image and render it to a canvas sized
                 // according to image_dimensions when available.
+                console.log(`🖼️ Using raw image fallback for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
+                try {
               const imgEl = await loadImageElement(imageUrl);
                 const baseDims = fallbackDims || {};
                 const width =
@@ -3728,6 +4200,11 @@ const getOrderedRefs = useCallback((row) => {
               ctx.drawImage(imgEl, 0, 0, width, height);
 
               dataUrl = canvas.toDataURL('image/png');
+                  console.log(`✅ Raw image fallback successful for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
+                } catch (rawError) {
+                  console.error(`❌ Raw image fallback failed for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, rawError);
+                  dataUrl = null;
+                }
               }
             }
 
@@ -3737,8 +4214,18 @@ const getOrderedRefs = useCallback((row) => {
             }
 
             // Convert data URL to blob
-            const blob = await dataUrlToBlob(dataUrl);
-            if (!blob) {
+            console.log(`   Converting data URL to blob...`);
+            let blob;
+            try {
+              blob = await dataUrlToBlob(dataUrl);
+              if (!blob || !(blob instanceof Blob)) {
+                console.error(`   ✗ ERROR: Failed to convert data URL to blob`);
+                failed += 1;
+                continue;
+              }
+              console.log(`   ✓ Blob created: ${blob.size} bytes, type: ${blob.type}`);
+            } catch (blobError) {
+              console.error(`   ✗ ERROR: Exception converting to blob:`, blobError);
               failed += 1;
               continue;
             }
@@ -3750,33 +4237,107 @@ const getOrderedRefs = useCallback((row) => {
             // This bypasses the /api/save-temp-image endpoint that's not working
 
             try {
+              console.log(`📷 Scene ${sceneNumber}, Image ${imageIndex + 1}: Processing...`);
+              console.log(`   DataURL length: ${dataUrl ? dataUrl.length : 0} characters`);
+              console.log(`   Blob: ${blob ? `${blob.size} bytes, type: ${blob.type}` : 'null'}`);
+              
+              // CRITICAL: Verify storage ref exists and is valid BEFORE using it
+              if (!imageStorageRef.current) {
+                console.warn(`   ⚠️ Storage ref was null, initializing new Map...`);
+                imageStorageRef.current = new Map();
+              }
+              if (!(imageStorageRef.current instanceof Map)) {
+                console.warn(`   ⚠️ Storage ref was not a Map, re-initializing...`);
+                imageStorageRef.current = new Map();
+              }
+              
+              // Verify blob is valid
+              if (!blob || !(blob instanceof Blob)) {
+                console.error(`   ✗ ERROR: Invalid blob! blob=${blob}, type=${typeof blob}`);
+                failed += 1;
+                continue;
+              }
+              
+              console.log(`   Storing blob to memory storage...`);
+              console.log(`   Storage before: ${imageStorageRef.current.size} image(s)`);
+              
               // Store the blob in memory using a Map
               imageStorageRef.current.set(fileName, blob);
+              
+              // Immediately verify it was stored (use a different variable to avoid confusion)
+              const verifyBlob = imageStorageRef.current.get(fileName);
+              
+              if (!verifyBlob) {
+                console.error(`   ✗ ERROR: Image NOT found in storage after setting!`);
+                console.error(`   Storage size: ${imageStorageRef.current.size}, keys:`, Array.from(imageStorageRef.current.keys()));
+                console.error(`   Attempted to save: ${fileName}`);
+                failed += 1;
+                continue;
+              }
+              
               saved += 1;
+              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Saved to browser memory as "${fileName}"`);
+              console.log(`   Blob size: ${blob.size} bytes (${(blob.size / 1024 / 1024).toFixed(2)} MB), type: ${blob.type}`);
+              console.log(`   ✓ Verified: Image is in storage (size: ${verifyBlob.size} bytes)`);
+              console.log(`   Storage now contains ${imageStorageRef.current.size} image(s)`);
+              console.log(`   Storage keys:`, Array.from(imageStorageRef.current.keys()));
             } catch (error) {
+              console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to save`, error);
+              console.error(`   Error details:`, error?.message);
+              console.error(`   Stack:`, error?.stack);
               failed += 1;
             }
 
             // Small delay between images
             await new Promise((resolve) => setTimeout(resolve, 200));
           } catch (error) {
+            console.error(`❌ Outer catch block - Scene ${sceneNumber}, Image ${imageIndex + 1}:`, error);
+            console.error(`   Error message:`, error?.message);
+            console.error(`   Error stack:`, error?.stack);
             failed += 1;
           }
         }
       }
 
+      console.log('\n==================================================');
+      console.log('✅ Save process complete!');
+      console.log(`   Total scenes: ${rows.length}`);
+      console.log(`   Successfully saved: ${saved}`);
+      console.log(`   Failed: ${failed}`);
+      console.log(`   Total images in storage: ${imageStorageRef.current.size}`);
+      console.log('   Images in storage:', Array.from(imageStorageRef.current.keys()));
+      console.log('==================================================\n');
+
       // No alerts - just console logs for background processing
     } catch (error) {
+      console.error('❌ Error in mergeAndDownloadAllImages:', error);
       // No alert - error will be handled by parent function
       throw error;
     }
 
     return failed;
-  }, [rows, getSceneImages, getVeo3ImageTabImages, findFrameForImage, mergeFrameToDataUrl, dataUrlToBlob]);
+  }, [
+    rows, 
+    selected, 
+    activeImageTab, 
+    imageStorageRef,
+    getSceneImages, 
+    getVeo3ImageTabImages, 
+    getAnchorAvatarImages,
+    getAvatarUrlsFromImageVersion,
+    buildImageEntries,
+    findFrameForImage, 
+    mergeFrameToDataUrl, 
+    dataUrlToBlob,
+    loadImageElement,
+    setSelected,
+    setActiveImageTab
+  ]);
 
   // Function to call save-all-frames API with temp folder images
   const callSaveAllFramesAPI = React.useCallback(async () => {
     try {
+      console.log('📦 Step 2: Starting save-all-frames API call...');
       
       const userId = localStorage.getItem('token');
       const sessionId = localStorage.getItem('session_id');
@@ -3784,6 +4345,8 @@ const getOrderedRefs = useCallback((row) => {
       if (!userId || !sessionId) {
         throw new Error('Missing user_id or session_id');
       }
+      
+      console.log('✅ User ID and Session ID found');
       
       // Build frame metadata based on rows
       const frameMetadata = [];
@@ -3800,7 +4363,8 @@ const getOrderedRefs = useCallback((row) => {
         const isVeo3 = modelUpper === 'VEO3';
         const isAnchor = modelUpper === 'ANCHOR';
         const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
-        const images = isVeo3 ? veo3ImageRefs : getSceneImages(row);
+        const anchorAvatarImages = isAnchor ? getAnchorAvatarImages(row) : [];
+        const images = isVeo3 ? veo3ImageRefs : (isAnchor ? anchorAvatarImages : getSceneImages(row));
         sceneImagesByIndex[sceneIndex] = images;
         
         const sceneMetadata = {
@@ -3857,6 +4421,30 @@ const getOrderedRefs = useCallback((row) => {
       // WORKAROUND: Read images from browser memory instead of server temp folder
       const imageFiles = [];
       
+      // Verify storage ref is valid before proceeding
+      if (!imageStorageRef.current) {
+        console.error('❌ ERROR: imageStorageRef.current is null! Re-initializing...');
+        imageStorageRef.current = new Map();
+      }
+      if (!(imageStorageRef.current instanceof Map)) {
+        console.error('❌ ERROR: imageStorageRef.current is not a Map! Re-initializing...');
+        imageStorageRef.current = new Map();
+      }
+      
+      console.log(`🔍 Checking browser memory storage...`);
+      const storageSize = imageStorageRef.current.size;
+      console.log(`   Total entries in storage: ${storageSize}`);
+      
+      if (storageSize === 0) {
+        console.error('❌ ERROR: Storage is EMPTY! No images were saved in Step 1.');
+        console.error('   This means mergeAndDownloadAllImages() did not save any images.');
+        console.error('   Please check Step 1 logs to see why images failed to save.');
+        throw new Error('No images found in browser memory storage. Images were not saved in Step 1.');
+      }
+      
+      const storageKeys = Array.from(imageStorageRef.current.keys());
+      console.log(`   Storage keys:`, storageKeys);
+      
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
         const row = rows[sceneIndex];
         const sceneNumber = row?.scene_number || (sceneIndex + 1);
@@ -3864,43 +4452,120 @@ const getOrderedRefs = useCallback((row) => {
         const isVeo3 = modelUpper === 'VEO3';
         const isAnchor = modelUpper === 'ANCHOR';
         const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
-        const images = sceneImagesByIndex[sceneIndex] || (isVeo3 ? veo3ImageRefs : getSceneImages(row));
+        const anchorAvatarImages = isAnchor ? getAnchorAvatarImages(row) : [];
+        const images = sceneImagesByIndex[sceneIndex] || (isVeo3 ? veo3ImageRefs : (isAnchor ? anchorAvatarImages : getSceneImages(row)));
         
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
           const fileKey = fileMap[fileName];
           
+          console.log(`🔍 Looking for file: ${fileName} (fileKey: ${fileKey})`);
+          
           // Get image from browser memory storage
           try {
-            const blob = imageStorageRef.current.get(fileName);
+            let blob = imageStorageRef.current.get(fileName);
             
+            if (!blob) {
+              console.warn(`⚠️ Image not found in storage: ${fileName}`);
+              // Try to find any matching file
+              const allKeys = Array.from(imageStorageRef.current.keys());
+              const matchingKey = allKeys.find(key => key.includes(`scene-${sceneNumber}`) && key.includes(`image-${imageIndex + 1}`));
+              if (matchingKey) {
+                console.log(`   Found alternative key: ${matchingKey}, using it instead`);
+                const altBlob = imageStorageRef.current.get(matchingKey);
+                if (altBlob) {
+                  // Use the alternative blob with the expected fileName
+                  imageStorageRef.current.set(fileName, altBlob);
+                  imageStorageRef.current.delete(matchingKey);
+                  blob = imageStorageRef.current.get(fileName);
+                  if (blob) {
+                    console.log(`   ✓ Corrected: Now using ${fileName}`);
+                  } else {
+                    console.error(`   ✗ Failed to correct storage for ${fileName}`);
+                    continue;
+                  }
+                } else {
+                  console.error(`   ✗ Alternative key ${matchingKey} also has no blob`);
+                  continue;
+                }
+              } else {
+                console.error(`   ✗ No matching key found for ${fileName}`);
+                continue;
+              }
+            } else {
+              console.log(`   ✓ Found image in storage: ${fileName} (${blob.size} bytes)`);
+            }
+            
+            // If we reach here, we have a valid blob
             if (!blob) {
               continue;
             }
 
-            // Optional: log data URL for debugging only (do not send as image_binary)
-            const base64Url = await blobToDataUrl(blob);
-             
-            const file = new File([blob], fileName, { type: 'image/png' });
-             
-            // Add to FormData with file key
-            formData.append('frames', file);
-            imageFiles.push(fileName);
+            // Create File object from blob
+            // IMPORTANT: Use window.File to avoid conflict with lucide-react File import
+            try {
+              // Use window.File to get the native browser File constructor
+              // (lucide-react File import was renamed to FileIcon to avoid shadowing)
+              const file = new window.File([blob], fileName, { type: 'image/png' });
+              
+              // Verify file was created
+              if (!file || file.size !== blob.size) {
+                console.error(`   ✗ ERROR: Failed to create File object for ${fileName}`);
+                // Fallback: use Blob directly with filename
+                formData.append('frames', blob, fileName);
+                imageFiles.push(fileName);
+                console.log(`   ✓ Added ${fileName} to FormData using Blob fallback (${blob.size} bytes)`);
+                continue;
+              }
+              
+              // Add to FormData with file key
+              formData.append('frames', file);
+              imageFiles.push(fileName);
+              console.log(`   ✓ Added ${fileName} to FormData (${file.size} bytes)`);
+              
+            } catch (fileError) {
+              console.error(`   ✗ ERROR: Failed to create File from blob for ${fileName}:`, fileError);
+              console.error(`   Error details:`, fileError?.message);
+              // Fallback: try using Blob directly with filename
+              try {
+                formData.append('frames', blob, fileName);
+                imageFiles.push(fileName);
+                console.log(`   ✓ Added ${fileName} to FormData using Blob fallback (${blob.size} bytes)`);
+              } catch (blobError) {
+                console.error(`   ✗ ERROR: Failed to add blob directly:`, blobError);
+                continue;
+              }
+            }
             
           } catch (error) {
+            console.error(`   ✗ ERROR: Exception processing ${fileName}:`, error);
           }
         }
       }
       
       if (imageFiles.length === 0) {
-        throw new Error('No images found in temp folder');
+        console.error('❌ ERROR: No images were added to FormData!');
+        console.error(`   Expected images based on metadata: ${frameMetadata.length} scene(s)`);
+        console.error(`   Storage size: ${imageStorageRef.current?.size || 0}`);
+        console.error(`   Storage keys:`, Array.from(imageStorageRef.current?.keys() || []));
+        throw new Error('No images found in browser memory storage. Check console for details.');
       }
+      
+      console.log(`✅ Found ${imageFiles.length} image(s) in browser memory:`, imageFiles);
+      console.log('📋 Frame metadata:', JSON.stringify(frameMetadata, null, 2));
       
       // Attach frame metadata (including any ANCHOR mappings) after it has been fully populated.
       formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
+      // Log FormData contents (without the actual file blobs)
+      console.log('📤 Sending FormData with:');
+      console.log('  - user_id:', userId);
+      console.log('  - session_id:', sessionId);
+      console.log('  - frames:', imageFiles.length, 'file(s)');
+      console.log('  - frame_metadata:', frameMetadata.length, 'scene(s)');
       
       // Call API
+      console.log('🌐 Calling save-all-frames API...');
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/save-all-frames';
       const apiResponse = await fetch(apiUrl, {
         method: 'POST',
@@ -3916,8 +4581,11 @@ const getOrderedRefs = useCallback((row) => {
       }
       
       if (!apiResponse.ok) {
+        console.error('❌ save-all-frames API failed:', apiResponse.status, responseData);
         throw new Error(`API request failed: ${apiResponse.status} ${JSON.stringify(responseData)}`);
       }
+      
+      console.log('✅ save-all-frames API succeeded:', responseData);
       
       // WORKAROUND: Clear images from browser memory instead of deleting from server
       for (const fileName of imageFiles) {
@@ -3932,9 +4600,12 @@ const getOrderedRefs = useCallback((row) => {
       return { success: true, response: responseData };
       
     } catch (error) {
+      console.error('❌ Error in callSaveAllFramesAPI:', error);
+      console.error('   Error message:', error?.message);
+      console.error('   Error stack:', error?.stack);
       throw error;
     }
-  }, [rows, getSceneImages, getVeo3ImageTabImages, getOrderedRefs, blobToDataUrl]);
+  }, [rows, imageStorageRef, getSceneImages, getVeo3ImageTabImages, getAnchorAvatarImages, getOrderedRefs, blobToDataUrl]);
 
   // Function to call /v1/videos/regenerate after save-all-frames succeeds
   const callVideosRegenerateAPI = React.useCallback(async () => {
@@ -4151,9 +4822,11 @@ const getOrderedRefs = useCallback((row) => {
       };
 
       // Log the payload to console
-      console.log('Generate Videos Queue API Payload:', JSON.stringify(body, null, 2));
+      console.log('📦 Step 3: Generate Videos Queue API Payload:');
+      console.log(JSON.stringify(body, null, 2));
 
       // Call generate-videos-queue API
+      console.log('🌐 Calling generate-videos-queue API...');
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -4170,16 +4843,20 @@ const getOrderedRefs = useCallback((row) => {
       }
 
       if (!response.ok) {
+        console.error('❌ generate-videos-queue API failed:', response.status, responseData);
         throw new Error(`generate-videos-queue failed: ${response.status} ${JSON.stringify(responseData)}`);
       }
 
+      console.log('✅ generate-videos-queue API succeeded:', responseData);
 
       // Extract job ID from response
       const jobId = responseData?.job_id || responseData?.jobId || responseData?.id || null;
 
       if (jobId) {
+        console.log('✅ Job ID received:', jobId);
         return jobId;
       } else {
+        console.warn('⚠️ No job ID in response:', responseData);
       return null;
       }
     } catch (error) {
@@ -4195,6 +4872,8 @@ const getOrderedRefs = useCallback((row) => {
   }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getSessionAspectRatioRaw, transitionPresets]);
 
   const handleGenerateVideosClick = React.useCallback(async (e) => {
+    console.log('🔵 handleGenerateVideosClick CALLED', { isPreparingDownloads });
+    
     // Prevent any default behavior and navigation
     if (e) {
       if (typeof e.preventDefault === 'function') {
@@ -4219,6 +4898,7 @@ const getOrderedRefs = useCallback((row) => {
     }
     
     if (isPreparingDownloads) {
+      console.log('⚠️ Already preparing downloads, exiting early');
       return false;
     }
     
@@ -4236,63 +4916,212 @@ const getOrderedRefs = useCallback((row) => {
     // Run everything in background - no alerts, no interruptions
     (async () => {
       try {
-        // Step 1: Save images to temp folder
+        console.log('🎬 Generate Videos button clicked - Starting flow...');
+        
+        // CLEANUP: Clear browser memory storage before starting to ensure fresh start
+        console.log('🧹 Step 0: Cleaning up browser memory storage...');
+        
+        // Verify and initialize storage ref
+        if (!imageStorageRef.current) {
+          console.warn('   ⚠️ Storage ref was null, initializing new Map...');
+          imageStorageRef.current = new Map();
+        }
+        if (!(imageStorageRef.current instanceof Map)) {
+          console.warn('   ⚠️ Storage ref was not a Map, re-initializing...');
+          imageStorageRef.current = new Map();
+        }
+        
+        const storageSizeBefore = imageStorageRef.current.size;
+        const storageKeysBefore = storageSizeBefore > 0 ? Array.from(imageStorageRef.current.keys()) : [];
+        console.log(`   Storage before cleanup: ${storageSizeBefore} image(s)`, storageKeysBefore);
+        
+        // Clear all existing images from storage
+        imageStorageRef.current.clear();
+        
+        const storageSizeAfter = imageStorageRef.current.size;
+        console.log(`   ✓ Storage cleared (was ${storageSizeBefore} image(s))`);
+        console.log(`   Storage after cleanup: ${storageSizeAfter} image(s)`);
+        
+        // Verify storage is ready
+        if (!imageStorageRef.current || !(imageStorageRef.current instanceof Map)) {
+          console.error('   ❌ ERROR: Storage ref is invalid after cleanup!');
+          imageStorageRef.current = new Map();
+          console.log('   ✓ Re-initialized storage Map');
+        }
+        
+        // Step 1: Save images to browser memory
+        console.log('📦 Step 1: Saving all images to browser memory...');
         setVideoGenProgress((prev) => ({
           ...prev,
           visible: true,
           percent: 10,
           status: 'saving',
           step: 'saving_images',
-          message: ''
+          message: 'Saving images to memory...'
         }));
-        const failedDownloads = await mergeAndDownloadAllImages();
+        
+        let failedDownloads = 0;
+        try {
+          failedDownloads = await mergeAndDownloadAllImages();
         
         if (failedDownloads > 0) {
-          setError('Some images could not be saved to temp folder.');
+            console.warn(`⚠️ ${failedDownloads} image(s) failed to save`);
+            setError(`Some images could not be saved (${failedDownloads} failed).`);
         } else {
+            console.log('✅ All images saved successfully to browser memory');
+          }
+        } catch (step1Error) {
+          console.error('❌ Step 1 failed with error:', step1Error);
+          console.error('   Error message:', step1Error?.message);
+          console.error('   Error stack:', step1Error?.stack);
+          // Check if any images were saved despite the error
+          const savedCount = imageStorageRef.current?.size || 0;
+          console.log(`   Images saved despite error: ${savedCount}`);
+          if (savedCount === 0) {
+            // No images saved, we should stop here
+            setError('Failed to save images to memory: ' + (step1Error?.message || 'Unknown error'));
+            setVideoGenProgress((prev) => ({
+              ...prev,
+              visible: true,
+              status: 'error',
+              step: 'error',
+              message: 'Failed to save images: ' + (step1Error?.message || 'Unknown error')
+            }));
+            throw step1Error;
+          }
+          // Some images were saved, continue with what we have
+          console.log(`   Continuing with ${savedCount} saved image(s)...`);
         }
         
         // Wait a bit to ensure all saves are complete
         await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Step 2: Call save-all-frames API
-        try {
-          await callSaveAllFramesAPI();
+        // CRITICAL: Verify storage ref still exists and is valid
+        if (!imageStorageRef.current) {
+          console.error('❌ CRITICAL ERROR: imageStorageRef.current is null after Step 1!');
+          imageStorageRef.current = new Map();
+        }
+        if (!(imageStorageRef.current instanceof Map)) {
+          console.error('❌ CRITICAL ERROR: imageStorageRef.current is not a Map after Step 1!');
+          imageStorageRef.current = new Map();
+        }
+        
+        // Verify images were actually saved to storage
+        const imagesInStorage = imageStorageRef.current.size;
+        const storageKeys = Array.from(imageStorageRef.current.keys());
+        
+        console.log(`\n📊 === STORAGE VERIFICATION BEFORE STEP 2 ===`);
+        console.log(`   Storage size: ${imagesInStorage} image(s)`);
+        console.log(`   Storage keys:`, storageKeys);
+        console.log(`   Storage ref valid: ${imageStorageRef.current instanceof Map}`);
+        console.log(`   Storage ref type: ${typeof imageStorageRef.current}`);
+        
+        if (imagesInStorage === 0) {
+          console.error('\n❌ ========== CRITICAL ERROR ==========');
+          console.error('   No images found in storage after Step 1!');
+          console.error('   This means Step 1 did not save any images to browser memory.');
+          console.error('\n   Possible reasons:');
+          console.error('   1. html2canvas capture failed for all images');
+          console.error('   2. Frame-based rendering failed for all images');
+          console.error('   3. Raw image fallback failed for all images');
+          console.error('   4. Blob conversion failed');
+          console.error('   5. Storage save failed');
+          console.error('\n   Please check the Step 1 console logs above to see:');
+          console.error('   - How many images were processed');
+          console.error('   - How many were successfully saved');
+          console.error('   - Any errors during html2canvas capture');
+          console.error('   - Any errors during blob conversion');
+          console.error('   - Any errors during storage save');
+          console.error('==========================================\n');
+          
+          setError('Failed to save images to memory. Please check console for details.');
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
-            percent: Math.max(prev.percent, 40),
-            status: 'uploading',
-            step: 'uploading_frames',
-            message: ''
+            status: 'error',
+            step: 'error',
+            message: 'No images were saved. Please check console logs.'
           }));
-
-          // Step 3: Call generate-videos-queue API
+          throw new Error('No images found in browser memory storage after Step 1. Check console for details.');
+        }
+        
+        console.log(`✅ Storage verification PASSED: ${imagesInStorage} image(s) ready for upload\n`);
+        
+        // Step 2: Call save-all-frames API (ALWAYS call this, even if Step 1 had errors)
+        console.log('📦 Step 2: Calling save-all-frames API...');
+        console.log('🔍 About to call callSaveAllFramesAPI function...');
+        
+        // Verify the function exists
+        if (typeof callSaveAllFramesAPI !== 'function') {
+          console.error('❌ callSaveAllFramesAPI is not a function!', typeof callSaveAllFramesAPI);
+          throw new Error('callSaveAllFramesAPI function not available');
+        }
+        
+        setVideoGenProgress((prev) => ({
+          ...prev,
+          visible: true,
+          percent: 30,
+          status: 'uploading',
+          step: 'uploading_frames',
+          message: 'Uploading frames to server...'
+        }));
+        
+        try {
+          console.log('🚀 EXECUTING callSaveAllFramesAPI() NOW...');
+          const saveAllFramesResult = await callSaveAllFramesAPI();
+          console.log('✅ save-all-frames API completed:', saveAllFramesResult);
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
             percent: Math.max(prev.percent, 50),
+            status: 'uploading',
+            step: 'uploading_frames',
+            message: 'Frames uploaded successfully'
+          }));
+        } catch (step2Error) {
+          console.error('❌ Step 2 (save-all-frames) failed:', step2Error);
+          setError('Failed to upload frames to server: ' + (step2Error?.message || 'Unknown error'));
+          setVideoGenProgress((prev) => ({
+            ...prev,
+            visible: true,
+            status: 'error',
+            step: 'error',
+            message: step2Error?.message || 'Failed to upload frames'
+          }));
+          // Don't continue to Step 3 if Step 2 failed
+          throw step2Error;
+        }
+
+          // Step 3: Call generate-videos-queue API
+        console.log('📦 Step 3: Calling generate-videos-queue API...');
+          setVideoGenProgress((prev) => ({
+            ...prev,
+            visible: true,
+          percent: Math.max(prev.percent, 60),
             status: 'queueing',
             step: 'queueing',
-            message: ''
+          message: 'Queueing video generation...'
           }));
 
+        try {
           const jobId = await callVideosRegenerateAPI();
           
           if (jobId) {
+            console.log('✅ Video generation queued successfully with job ID:', jobId);
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
-              percent: Math.max(prev.percent, 60),
+              percent: 100,
               status: 'queued',
               step: 'queued',
               jobId: jobId,
-              message: ''
+              message: `Video generation queued (Job ID: ${jobId})`
             }));
 
             // Start video redirect flow with job ID
             startVideoRedirectFlow(jobId);
           } else {
+            console.warn('⚠️ Job queued but no job ID returned');
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
@@ -4302,17 +5131,17 @@ const getOrderedRefs = useCallback((row) => {
               message: 'Job queued but no job ID returned'
             }));
           }
-
-        } catch (apiError) {
-          setError('API upload failed: ' + apiError.message);
+        } catch (step3Error) {
+          console.error('❌ Step 3 (generate-videos-queue) failed:', step3Error);
+          setError('Failed to queue video generation: ' + (step3Error?.message || 'Unknown error'));
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
             status: 'error',
             step: 'error',
-            message: apiError?.message || 'Failed to queue video generation'
+            message: step3Error?.message || 'Failed to queue video generation'
           }));
-          // No alert - just set error state
+          throw step3Error;
         }
         
       } catch (e) {
@@ -4666,7 +5495,62 @@ const getOrderedRefs = useCallback((row) => {
                 const isAvatarModel = selectedModel === 'VEO3';
 
                 if (selectedModel === 'ANCHOR') {
-                  if (firstSelectedUrl && isValidImageUrl(firstSelectedUrl)) return firstSelectedUrl;
+                  // For ANCHOR, getImg1 should return the background (non-avatar) image
+                  // Get ordered refs from current version
+                  if (currentRow) {
+                    const orderedRefs = getOrderedRefs(currentRow);
+                    
+                    // Extract URLs from selected.images (they are objects with image_url property)
+                    const selectedImageUrls = Array.isArray(selected?.images) 
+                      ? selected.images.map(img => {
+                          if (typeof img === 'string') return img.trim();
+                          return (img?.image_url || img?.imageUrl || img?.url || '').trim();
+                        }).filter(Boolean)
+                      : [];
+                    
+                    // Combine with row.refs and orderedRefs (all should be URLs)
+                    const candidateSources = [
+                      ...(Array.isArray(currentRow?.refs) ? currentRow.refs.map(r => typeof r === 'string' ? r : (r?.image_url || r?.url || '')).filter(Boolean) : []),
+                      ...orderedRefs,
+                      ...selectedImageUrls
+                    ];
+                    
+                    // Remove duplicates using normalizeSimpleUrl for consistency
+                    const uniqueCandidates = [];
+                    const seen = new Set();
+                    candidateSources.forEach((candidate) => {
+                      const normalized = normalizeSimpleUrl(candidate);
+                      if (normalized && !seen.has(normalized)) {
+                        uniqueCandidates.push(candidate);
+                        seen.add(normalized);
+                      }
+                    });
+                    
+                    // Get avatar URL set to filter them out (uses normalizeSimpleUrl internally)
+                    const avatarSet = getAvatarUrlSet(currentRow);
+                    
+                    // Filter out avatars - get only non-avatar images (background)
+                    const nonAvatar = uniqueCandidates.filter((url) => {
+                      const normalized = normalizeSimpleUrl(url);
+                      return normalized && !avatarSet.has(normalized) && isValidImageUrl(normalized);
+                    });
+                    
+                    if (nonAvatar.length > 0) {
+                      return nonAvatar[0];
+                    }
+                  }
+                  
+                  // Fallback: try firstSelectedUrl if it's not an avatar
+                  if (firstSelectedUrl && isValidImageUrl(firstSelectedUrl)) {
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(firstSelectedUrl);
+                    if (normalized && !avatarSet.has(normalized)) {
+                      return firstSelectedUrl;
+                    }
+                  }
+                  
+                  // Return empty if no non-avatar image found
+                  return '';
                 } else if (isAvatarModel) {
                   // For VEO3 Avatar tab, extract avatar URL from version object in session data images
                   // EXACT same extraction as list area (lines 2101-2112):
@@ -4846,13 +5730,141 @@ const getOrderedRefs = useCallback((row) => {
                 const currentRow = rows.find(r => 
                   (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
                 ) || rows[selected.index];
-                const isAvatarModel = selectedModel === 'VEO3';
+                const isVeo3Model = selectedModel === 'VEO3';
+                const isAnchorModel = selectedModel === 'ANCHOR';
 
-                if (selectedModel === 'ANCHOR') {
-                  return secondSelectedUrl && isValidImageUrl(secondSelectedUrl) ? secondSelectedUrl : '';
+                // For ANCHOR, getImg2 should return the avatar image
+                if (isAnchorModel) {
+                  // Priority 1: Get avatar from selected.images (they are objects with image_url property)
+                  if (selected?.imageVersionData && typeof selected.imageVersionData === 'object') {
+                    let imagesContainer = null;
+                    
+                    if (selected.imageVersionData.images && typeof selected.imageVersionData.images === 'object' && !Array.isArray(selected.imageVersionData.images)) {
+                      imagesContainer = selected.imageVersionData.images;
+                    } else if (selected.imageVersionData.current_version || selected.imageVersionData.v1 || selected.imageVersionData.v2) {
+                      imagesContainer = selected.imageVersionData;
+                    }
+                    
+                    if (imagesContainer) {
+                      const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || selected?.current_version || 'v1';
+                      const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                      const versionAvatars = verObj?.avatar_urls;
+                      
+                      if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+                        const avatarUrls = versionAvatars.map((av) => {
+                          if (typeof av === 'string') return av.trim();
+                          return (
+                            av?.imageurl ||
+                            av?.imageUrl ||
+                            av?.image_url ||
+                            av?.url ||
+                            av?.src ||
+                            av?.link ||
+                            av?.avatar_url ||
+                            ''
+                          );
+                        }).filter(url => url && typeof url === 'string' && url.trim());
+                        
+                        if (avatarUrls.length > 0) {
+                          const url = avatarUrls[0];
+                          const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                          const normalized = normalizeSimpleUrl(url);
+                          if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
+                            return url;
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Priority 2: Try to get from currentRow's imageVersionData
+                  if (currentRow && currentRow.imageVersionData && typeof currentRow.imageVersionData === 'object') {
+                    let imagesContainer = currentRow.imageVersionData;
+                    
+                    if (currentRow.imageVersionData.images && typeof currentRow.imageVersionData.images === 'object' && !Array.isArray(currentRow.imageVersionData.images)) {
+                      imagesContainer = currentRow.imageVersionData.images;
+                    }
+                    
+                    const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || currentRow?.current_version || 'v1';
+                    const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                    const versionAvatars = verObj?.avatar_urls;
+                    
+                    if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+                      const avatarUrls = versionAvatars.map((av) => {
+                        if (typeof av === 'string') return av.trim();
+                        return (
+                          av?.imageurl ||
+                          av?.imageUrl ||
+                          av?.image_url ||
+                          av?.url ||
+                          av?.src ||
+                          av?.link ||
+                          av?.avatar_url ||
+                          ''
+                        );
+                      }).filter(url => url && typeof url === 'string' && url.trim());
+                      
+                      if (avatarUrls.length > 0) {
+                        const url = avatarUrls[0];
+                        const avatarSet = getAvatarUrlSet(currentRow);
+                        const normalized = normalizeSimpleUrl(url);
+                        if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
+                          return url;
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Priority 3: Use helper function as fallback
+                  const avatarUrlsFromSelected = getAvatarUrlsFromImageVersion(
+                    selected?.imageVersionData || null,
+                    selected?.current_version || 'v1',
+                    selectedModel
+                  );
+                  if (avatarUrlsFromSelected.length > 0) {
+                    const url = avatarUrlsFromSelected[0];
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(url);
+                    if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
+                      return url;
+                    }
+                  }
+                  
+                  // Priority 4: Use selected.avatar_urls
+                  if (selected && Array.isArray(selected.avatar_urls) && selected.avatar_urls.length > 0) {
+                    const avatarUrl = selected.avatar_urls[0];
+                    const url =
+                      typeof avatarUrl === 'string'
+                        ? avatarUrl.trim()
+                        : (
+                            avatarUrl?.imageurl ||
+                            avatarUrl?.imageUrl ||
+                            avatarUrl?.image_url ||
+                            avatarUrl?.url ||
+                            avatarUrl?.src ||
+                            avatarUrl?.link ||
+                            ''
+                          ).trim();
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(url);
+                    if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
+                      return url;
+                    }
+                  }
+                  
+                  // Fallback: return secondSelectedUrl if it's an avatar
+                  if (secondSelectedUrl && isValidImageUrl(secondSelectedUrl)) {
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(secondSelectedUrl);
+                    if (normalized && avatarSet.has(normalized)) {
+                      return secondSelectedUrl;
+                    }
+                  }
+                  
+                  return '';
                 }
 
-                if (isAvatarModel) {
+                if (isVeo3Model) {
                   // For VEO3 Image tab, get the actual image (non-avatar)
                   // Use similar logic to getVeo3ImageTabImages: get ordered refs, filter out avatars
                   if (currentRow) {
@@ -5689,12 +6701,18 @@ const getOrderedRefs = useCallback((row) => {
               
               <div>
                 <div className="flex items-center justify-between mb-1">
-                <label className="text-sm text-gray-600">Description</label>
+                <label className="text-sm text-gray-600">
+                  {(() => {
+                    const modelUpper = String(selected?.model || '').toUpperCase();
+                    const isVEO3 = modelUpper === 'VEO3';
+                    return isVEO3 ? 'Scene Description' : 'Description';
+                  })()}
+                </label>
                   {(() => {
                     const modelUpper = String(selected?.model || '').toUpperCase();
                     const isVEO3 = modelUpper === 'VEO3';
                     
-                    // For non-VEO3 models, show popup button; for VEO3, show inline edit
+                    // For non-VEO3 models, show popup button; for VEO3, don't show edit button (read-only)
                     if (!isVEO3) {
                       return (
                         <button
@@ -5730,220 +6748,139 @@ const getOrderedRefs = useCallback((row) => {
                       );
                     }
                     
-                    // For VEO3, use inline edit
-                    return editingField !== 'description' ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingField('description');
-                          setEditedDescription(selected?.description || '');
-                        }}
-                        className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                        </svg>
-                        Edit
-                      </button>
-                    ) : null;
+                    // For VEO3, no edit button (read-only display)
+                    return null;
                   })()}
+                </div>
                   {(() => {
                     const modelUpper = String(selected?.model || '').toUpperCase();
                     const isVEO3 = modelUpper === 'VEO3';
-                    // Only show inline edit controls for VEO3
-                    return isVEO3 && editingField === 'description' ? (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingField(null);
-                          setEditedDescription('');
-                        }}
-                        disabled={isSavingField}
-                        className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                        setIsSavingField(true);
+                  
+                  if (isVEO3) {
+                    // For VEO3, show formatted Scene Description display (read-only) with all veo3_prompt_template data
+                    const sceneNumber = selected?.sceneNumber || selected?.scene_number;
+                    
+                    // First check selected state
+                    let veo3PromptTemplate = selected?.veo3_prompt_template || 
+                                             selected?.veo3PromptTemplate || 
+                                             selected?.veo3_prompt || 
+                                             selected?.veo3Prompt ||
+                                             null;
+                    
+                    // If not found, check rows
+                    if (!veo3PromptTemplate) {
+                      const matchingRow = rows.find(row => 
+                        String(row?.scene_number || row?.sceneNumber) === String(sceneNumber)
+                      );
+                      veo3PromptTemplate = matchingRow?.veo3_prompt_template || 
+                                          matchingRow?.veo3PromptTemplate || 
+                                          matchingRow?.veo3_prompt || 
+                                          matchingRow?.veo3Prompt ||
+                                          null;
+                    }
+                    
+                    // If still not found, check scriptsData directly
+                    if (!veo3PromptTemplate && Array.isArray(scriptsData) && scriptsData.length > 0) {
+                      const currentScript = scriptsData[0] || null;
+                      const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+                      const scriptScene = airesponse.find((scene, idx) => {
+                        const sceneNum = scene?.scene_number || scene?.scene_no || scene?.sceneNo || (idx + 1);
+                        return String(sceneNum) === String(sceneNumber);
+                      });
+                      
+                      if (scriptScene) {
+                        veo3PromptTemplate = scriptScene?.veo3_prompt_template || 
+                                            scriptScene?.veo3PromptTemplate || 
+                                            scriptScene?.veo3_prompt || 
+                                            scriptScene?.veo3Prompt ||
+                                            null;
+                      }
+                    }
+                    
+                    // Format the veo3_prompt_template object for display as key-value pairs
+                    const getTemplateFields = (template) => {
+                      if (!template) return [];
+                      
+                      // If it's a string, try to parse it as JSON
+                      if (typeof template === 'string') {
                         try {
-                          const user_id = localStorage.getItem('token');
-                          const session_id = localStorage.getItem('session_id');
-                          const scene_number = selected?.sceneNumber || selected?.scene_number || 1;
-                          
-                          if (!user_id || !session_id) {
-                            throw new Error('Missing user_id or session_id');
+                          const parsed = JSON.parse(template);
+                          if (typeof parsed === 'object' && parsed !== null) {
+                            return Object.entries(parsed);
                           }
-                          
-                          // First, fetch the complete user session data
-                          const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ user_id, session_id })
-                          });
-                          
-                          const sessionDataText = await sessionDataResp.text();
-                          let sessionData;
-                          try {
-                            sessionData = JSON.parse(sessionDataText);
-                          } catch {
-                            sessionData = sessionDataText;
-                          }
-                          
-                          if (!sessionDataResp.ok) {
-                            throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
-                          }
-                          
-                          // Extract the complete session and user objects from the response
-                          const fullSessionData = sessionData?.session_data || sessionData?.session || {};
-                          const fullUserData = sessionData?.user_data || sessionData?.user || {};
-                          
-                          // Normalize session object: ensure session_id exists (convert id to session_id if needed)
-                          let normalizedSession = {};
-                          if (fullSessionData && Object.keys(fullSessionData).length > 0) {
-                            normalizedSession = { ...fullSessionData };
-                            // If session has 'id' but no 'session_id', use 'id' as 'session_id'
-                            if (normalizedSession.id && !normalizedSession.session_id) {
-                              normalizedSession.session_id = normalizedSession.id;
-                              delete normalizedSession.id;
-                            }
-                            // Ensure session_id is set
-                            if (!normalizedSession.session_id) {
-                              normalizedSession.session_id = session_id;
-                            }
-                          } else {
-                            // Fallback to minimal session object
-                            normalizedSession = {
-                              session_id: session_id,
-                              user_id: user_id,
-                              title: '',
-                              video_duration: '60',
-                              created_at: '',
-                              updated_at: '',
-                              document_summary: [],
-                              messages: [],
-                              total_summary: [],
-                              scripts: [],
-                              videos: [],
-                              images: [],
-                              final_link: {},
-                              videoType: '',
-                              brand_style_interpretation: {},
-                              ...sessionAssets
-                            };
-                          }
-                          
-                          const session = normalizedSession;
-                          
-                          // Use the complete user object, or fallback to minimal if not available
-                          const user = fullUserData && Object.keys(fullUserData).length > 0
-                            ? fullUserData
-                            : {
-                                id: user_id,
-                                email: '',
-                                display_name: '',
-                                created_at: '',
-                                avatar_url: '',
-                                folder_url: '',
-                                brand_identity: {},
-                                tone_and_voice: {},
-                                look_and_feel: {},
-                                templates: [],
-                                voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
-                              };
-                          
-                          const payload = {
-                            user,
-                            session,
-                            scene_number: Number(scene_number),
-                            field_name: 'desc',
-                            new_value: editedDescription.trim()
-                          };
-                          
-                          const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                          });
-                          
-                          const text = await response.text();
-                          let data;
-                          try {
-                            data = JSON.parse(text);
-                          } catch {
-                            data = text;
-                          }
-                          
-                          if (!response.ok) {
-                            throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
-                          }
-                          
-                          // Update local state
-                          setSelected(prev => ({ ...prev, description: editedDescription.trim() }));
-                          setRows(prevRows => prevRows.map(row => {
-                            const rowSceneNumber = row?.scene_number || row?.sceneNumber;
-                            if (String(rowSceneNumber) === String(scene_number)) {
-                              return { ...row, description: editedDescription.trim() };
-                            }
-                            return row;
-                          }));
-                          
-                          setEditingField(null);
-                          setError('');
-                        } catch (error) {
-                          setError('Failed to update description: ' + (error?.message || 'Unknown error'));
-                        } finally {
-                          setIsSavingField(false);
+                          return [['content', template]];
+                        } catch {
+                          return [['content', template]];
                         }
-                      }}
-                      disabled={isSavingField}
-                      className="text-xs bg-[#13008B] text-white px-3 py-1 rounded hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                    >
-                      {isSavingField ? (
-                        <>
-                          <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                          Saving...
-                        </>
-                      ) : (
-                        <>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                          </svg>
-                          Save
-                        </>
-                      )}
-                      </button>
+                      }
+                      
+                      // If it's an object, return entries
+                      if (typeof template === 'object' && template !== null) {
+                        return Object.entries(template);
+                      }
+                      
+                      return [];
+                    };
+                    
+                    const templateFields = getTemplateFields(veo3PromptTemplate);
+                    
+                    return (
+                      <div className="w-full">
+                        {templateFields.length > 0 ? (
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            {templateFields.map(([key, value]) => {
+                              const displayValue = typeof value === 'string' 
+                                ? value 
+                                : (typeof value === 'object' && value !== null 
+                                    ? JSON.stringify(value, null, 2) 
+                                    : String(value || ''));
+                              
+                              // Format key: replace underscores with spaces and capitalize
+                              const formattedKey = key
+                                .replace(/_/g, ' ')
+                                .split(' ')
+                                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                                .join(' ')
+                                .toUpperCase();
+                              
+                              return (
+                                <div
+                                  key={key}
+                                  className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
+                                >
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-1">
+                                    {formattedKey}
+                                  </p>
+                                  <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                                    {displayValue || <span className="text-gray-400 italic">-</span>}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="w-full border border-gray-200 rounded-lg bg-white px-4 py-3 text-sm text-gray-400 italic">
+                            No scene description available
+                          </div>
+                        )}
                     </div>
-                    ) : null;
-                  })()}
-                </div>
+                    );
+                  }
+                  
+                  // For non-VEO3 models, show textarea as before
+                  return (
                 <textarea
-                  className={`w-full h-32 border rounded-lg px-3 py-2 text-sm ${(() => {
-                    const modelUpper = String(selected?.model || '').toUpperCase();
-                    const isVEO3 = modelUpper === 'VEO3';
-                    return isVEO3 && editingField === 'description' ? 'bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]' : 'bg-gray-50';
-                  })()}`}
-                  readOnly={(() => {
-                    const modelUpper = String(selected?.model || '').toUpperCase();
-                    const isVEO3 = modelUpper === 'VEO3';
-                    return !(isVEO3 && editingField === 'description');
-                  })()}
-                  value={(() => {
-                    const modelUpper = String(selected?.model || '').toUpperCase();
-                    const isVEO3 = modelUpper === 'VEO3';
-                    return isVEO3 && editingField === 'description' ? editedDescription : (selected?.description || '');
-                  })()}
+                      className="w-full h-32 border rounded-lg px-3 py-2 text-sm bg-gray-50"
+                      readOnly={editingField !== 'description'}
+                      value={editingField === 'description' ? editedDescription : (selected?.description || '')}
                   onChange={(e) => {
-                    const modelUpper = String(selected?.model || '').toUpperCase();
-                    const isVEO3 = modelUpper === 'VEO3';
-                    if (isVEO3 && editingField === 'description') {
+                        if (editingField === 'description') {
                       setEditedDescription(e.target.value);
                     }
                   }}
                 />
+                  );
+                })()}
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
@@ -7339,79 +8276,34 @@ const getOrderedRefs = useCallback((row) => {
         </div>
       )}
 
-      {/* Upload Background Popup */}
+      {/* Upload Background Popup - Asset Selection Modal */}
       {showUploadBackgroundPopup && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Close Button - Circle at top right */}
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[96%] max-w-5xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-[#13008B]">Choose Background Image</h3>
             <button
               onClick={() => {
                 if (!isUploadingBackground) {
                   setShowUploadBackgroundPopup(false);
-                  setUploadedBackgroundFile(null);
-                  setUploadedBackgroundPreview(null);
+                    setSelectedAssetUrl('');
+                    setSelectedTemplateUrls([]);
                   setUploadingBackgroundSceneNumber(null);
-                  setUploadFrames(['background']); // Reset to default
+                    setUploadFrames(['background']);
+                    setAssetsTab('preset_templates'); // Reset to default tab
                 }
               }}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Close"
+                className="px-3 py-1.5 rounded-lg border text-sm"
               disabled={isUploadingBackground}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
+                Close
             </button>
-
-            {/* Popup Content */}
-            <div className="flex-1 p-6 overflow-y-auto relative">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Upload Background</h3>
-
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select background image to upload
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setUploadedBackgroundFile(file);
-                      // Create preview
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        setUploadedBackgroundPreview(reader.result);
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  }}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                  disabled={isUploadingBackground}
-                />
-                {uploadedBackgroundPreview && (
-                  <div className="mt-4">
-                    <p className="text-sm font-medium text-gray-700 mb-2">Preview:</p>
-                    <img
-                      src={uploadedBackgroundPreview}
-                      alt="Background preview"
-                      className="max-w-full max-h-64 rounded-lg border border-gray-300"
-                    />
-                  </div>
-                )}
               </div>
 
-              {/* Frame Selection - Show for SORA, ANCHOR, PLOTLY scenes (not for VEO3) */}
-              {uploadingBackgroundSceneNumber && (() => {
-                const model = getSceneModel(uploadingBackgroundSceneNumber);
-                const modelUpper = String(model || '').toUpperCase();
-                const isVEO3 = isVEO3Model(model);
-                
-                // Only show frame selection for SORA, ANCHOR, PLOTLY (not VEO3)
-                if (!isVEO3) {
-                  return (
-                    <div className="mb-6">
+            {/* Frame Selection at Top - Always show opening and closing frame checkboxes */}
+            {uploadingBackgroundSceneNumber && (
+              <div className="px-4 pt-4 pb-3 border-b border-gray-100">
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         Frames to Upload
                       </label>
@@ -7449,14 +8341,191 @@ const getOrderedRefs = useCallback((row) => {
                           <span className="text-sm text-gray-700">Closing Frame</span>
                         </label>
                       </div>
-                      {uploadFrames.length === 0 && (
-                        <p className="text-xs text-red-600 mt-1">Please select at least one frame</p>
-                      )}
+              </div>
+            )}
+
+            {/* Asset Tabs */}
+            <div className="px-4 pt-3 border-b border-gray-100">
+              <div className="flex items-center gap-3 flex-wrap">
+                {[
+                  { key: 'preset_templates', label: 'Preset Templates' },
+                  { key: 'uploaded_templates', label: 'Uploaded Templates' },
+                  { key: 'uploaded_images', label: 'Uploaded Images' },
+                  { key: 'documents_images', label: 'Documents' },
+                  { key: 'generated_images', label: 'Generated Images' }
+                ].map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setAssetsTab(tab.key)}
+                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab===tab.key ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  >{tab.label}</button>
+                ))}
                     </div>
+            </div>
+
+            {/* Asset Grid Content */}
+            <div className="p-4 overflow-y-auto flex-1">
+              {(isAssetsLoading || (assetsTab === 'generated_images' && isLoadingGeneratedImages)) ? (
+                <div className="flex items-center justify-center py-16">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm text-gray-600">
+                      {assetsTab === 'generated_images' && isLoadingGeneratedImages ? 'Loading generated images...' 
+                        : 'Loading assets...'}
+                    </span>
+                  </div>
+                </div>
+              ) : (() => {
+                // Extract assets based on selected tab
+                let list = [];
+                
+                const inferAspectFromUrl = (url = '') => {
+                  try {
+                    const lower = String(url).toLowerCase();
+                    if (lower.includes('/16-9/') || lower.includes('16x9') || lower.includes('16-9')) return '16:9';
+                    if (lower.includes('/9-16/') || lower.includes('9x16') || lower.includes('9-16')) return '9:16';
+                  } catch (_) { /* noop */ }
+                  return '';
+                };
+                
+                const matchesAspectValue = (value, target) => {
+                  if (!target) return true;
+                  const normalizedTarget = normalizeTemplateAspectLabel(target);
+                  const normalizedValue = normalizeTemplateAspectLabel(
+                    typeof value === 'string' ? value : ''
                   );
+                  if (!normalizedTarget || normalizedTarget === 'Unspecified') return true;
+                  if (!normalizedValue || normalizedValue === 'Unspecified') return true;
+                  return normalizedValue === normalizedTarget;
+                };
+                
+                if (assetsTab === 'preset_templates' || assetsTab === 'uploaded_templates') {
+                  const extractedAssets = extractAssetsByType(assetsData.templates, assetsTab);
+                  list = extractedAssets;
+                } else if (assetsTab === 'uploaded_images') {
+                  const extractedAssets = extractAssetsByType(assetsData.templates, 'uploaded_images');
+                  const flatImages = Array.isArray(assetsData.uploaded_images) ? assetsData.uploaded_images : [];
+                  const allImages = [
+                    ...extractedAssets,
+                    ...flatImages.map((img, idx) => {
+                      const url = typeof img === 'string' ? img : (img?.image_url || img?.url || '');
+                      if (!url) return null;
+                      return {
+                        id: `uploaded-img-${idx}`,
+                        imageUrl: url,
+                        aspect: inferAspectFromUrl(url) || 'Unspecified',
+                        label: 'Uploaded Image',
+                        assetType: 'uploaded_images'
+                      };
+                    }).filter(Boolean)
+                  ];
+                  list = allImages;
+                } else if (assetsTab === 'documents_images') {
+                  const flatArray = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
+                  list = flatArray.map((item, idx) => {
+                    const url = typeof item === 'string' ? item : (item?.image_url || item?.url || '');
+                    if (!url) return null;
+                    return {
+                      id: `${assetsTab}-${idx}`,
+                      imageUrl: url,
+                      aspect: inferAspectFromUrl(url) || 'Unspecified',
+                      label: `${assetsTab.replace('_', ' ')} ${idx + 1}`,
+                      assetType: assetsTab
+                    };
+                  }).filter(Boolean);
+                } else if (assetsTab === 'generated_images') {
+                  const generatedImages = generatedImagesData.generated_images || {};
+                  const allGeneratedImages = [];
+                  
+                  Object.entries(generatedImages).forEach(([aspectRatio, urls]) => {
+                    if (Array.isArray(urls)) {
+                      urls.forEach((url, idx) => {
+                        if (typeof url === 'string' && url.trim()) {
+                          allGeneratedImages.push({
+                            id: `generated-${aspectRatio}-${idx}`,
+                            imageUrl: url.trim(),
+                            aspect: normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified',
+                            label: `Generated Image ${idx + 1}`,
+                            assetType: 'generated_images'
+                          });
+                        }
+                      });
+                    }
+                  });
+                  
+                  list = allGeneratedImages;
                 }
-                return null;
+                
+                const emptyMessage = list.length === 0 
+                  ? `No ${assetsTab.replace('_', ' ')} found.`
+                  : '';
+                
+                return (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      {list.length === 0 && (
+                        <div className="col-span-full text-sm text-gray-600">
+                          {emptyMessage}
+                        </div>
+                      )}
+                      {list.map((entry, idx) => {
+                        const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
+                        if (!imageUrl) return null;
+                        
+                        const isSelected = selectedTemplateUrls.includes(imageUrl) || selectedAssetUrl === imageUrl;
+                        
+                        const handleClick = () => {
+                          // For background selection, only allow single selection
+                          if (isSelected) {
+                            setSelectedTemplateUrls([]);
+                            setSelectedAssetUrl('');
+                          } else {
+                            setSelectedTemplateUrls([imageUrl]);
+                            setSelectedAssetUrl(imageUrl);
+                          }
+                        };
+                        
+                        return (
+                          <div
+                            key={entry.id || idx}
+                            className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                            onClick={handleClick}
+                            title={entry.label || `${entry.aspect || 'Unspecified'} • ${assetsTab.replace('_', ' ')}`}
+                          >
+                            <img src={imageUrl} alt={entry.label || `${assetsTab}-${idx}`} className="w-full h-28 object-cover" />
+                            <div className="p-2">
+                              <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
+                                {entry.label || `${assetsTab.replace('_', ' ')} ${idx + 1}`}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
               })()}
+            </div>
+
+            {/* Save Button */}
+            <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
+              <button
+                disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
+                onClick={async () => {
+                  // Save - call upload API with selected image
+                  if (selectedTemplateUrls.length === 0) return;
+                  const imageUrl = selectedTemplateUrls[0];
+                  await handleSaveBackgroundFromAsset(imageUrl);
+                }}
+                className={`px-3 py-2 rounded-lg text-sm text-white ${
+                  selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-[#13008B] hover:bg-blue-800'
+                }`}
+              >
+                {isUploadingBackground ? 'Saving...' : 'Save'}
+              </button>
+            </div>
 
               {/* Error Message */}
               {error && (
@@ -7505,28 +8574,6 @@ const getOrderedRefs = useCallback((row) => {
                   </div>
                 </div>
               )}
-
-              {/* Save Button - Bottom Right */}
-              <div className="flex justify-end">
-                <button
-                  onClick={handleUploadBackground}
-                  disabled={isUploadingBackground || !uploadedBackgroundFile || uploadFrames.length === 0}
-                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isUploadingBackground ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Uploading...
-                    </>
-                  ) : (
-                    'Save'
-                  )}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}

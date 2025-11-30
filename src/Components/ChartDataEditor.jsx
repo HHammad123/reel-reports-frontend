@@ -6,6 +6,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
   const [error, setError] = useState('');
   const [hoveredRow, setHoveredRow] = useState(null);
   const [hoveredCol, setHoveredCol] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Deep comparison function
   const deepEqual = (obj1, obj2) => {
@@ -160,33 +161,60 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     const newData = JSON.parse(JSON.stringify(localChartData));
     let current = newData;
     
+    // Navigate to the parent of the target property
     for (let i = 0; i < path.length - 1; i++) {
-      current = current[path[i]];
+      const key = path[i];
+      // Handle array indices
+      if (typeof key === 'number' || (typeof key === 'string' && /^\d+$/.test(key))) {
+        const index = parseInt(key, 10);
+        if (!Array.isArray(current)) {
+          console.error('[updateCell] Expected array at path index', i, 'but got', typeof current);
+          return;
+        }
+        // Ensure array is long enough
+        while (current.length <= index) {
+          if (path[i + 1] === 'y' || path[i + 1] === 'values') {
+            current.push(0);
+          } else {
+            current.push('');
+          }
+        }
+        current = current[index];
+      } else {
+        if (!current || typeof current !== 'object') {
+          console.error('[updateCell] Expected object at path index', i, 'but got', typeof current);
+          return;
+        }
+        current = current[key];
+      }
     }
+    
+    // Get the final key
+    const finalKey = path[path.length - 1];
     
     // For numeric paths (y, values), try to parse as number
     const isNumericPath = path.includes('y') || path.includes('values');
     if (isNumericPath) {
       const numValue = value === '' ? 0 : parseFloat(value);
-      current[path[path.length - 1]] = isNaN(numValue) ? 0 : numValue;
+      current[finalKey] = isNaN(numValue) ? 0 : numValue;
     } else {
-      current[path[path.length - 1]] = value;
+      current[finalKey] = value;
     }
     
     // Sync changes with formatting.series_info
     if (newData.formatting && newData.formatting.series_info) {
       // For pie/donut charts, sync label changes with formatting.series_info
       if ((chartType === 'pie' || chartType === 'donut') && path[0] === 'series' && path[1] === 'labels') {
-        const labelIndex = path[2];
-        if (newData.formatting.series_info[labelIndex]) {
+        const labelIndex = parseInt(path[2], 10);
+        if (!isNaN(labelIndex) && newData.formatting.series_info[labelIndex]) {
           newData.formatting.series_info[labelIndex].name = value;
         }
       }
       
       // For regular charts, sync series name changes with formatting.series_info
       if (path[0] === 'series' && path[1] === 'data' && path[3] === 'name') {
-        const seriesIndex = path[2];
-        if (newData.formatting.series_info[seriesIndex]) {
+        const seriesIndex = parseInt(path[2], 10);
+        if (!isNaN(seriesIndex) && newData.formatting.series_info[seriesIndex]) {
           newData.formatting.series_info[seriesIndex].name = value;
         }
       }
@@ -520,22 +548,41 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     const yValue = seriesY[rowIdx] ?? '';
                     
                     return (
-                      <td key={colIdx} style={cellStyle}>
-                        <input
-                          type="number"
+                    <td key={colIdx} style={cellStyle}>
+                      <input
+                        type="number"
                           value={yValue}
                           onChange={(e) => {
-                            // Ensure the array exists and is long enough
-                            const newY = [...seriesY];
-                            while (newY.length <= rowIdx) {
-                              newY.push('');
+                            const inputValue = e.target.value;
+                            // Update the specific cell value directly
+                            // First ensure the y array exists and has enough elements
+                            if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+                            
+                            const newData = JSON.parse(JSON.stringify(localChartData));
+                            if (!newData.series.data[colIdx]) return;
+                            
+                            // Ensure y array exists
+                            if (!Array.isArray(newData.series.data[colIdx].y)) {
+                              newData.series.data[colIdx].y = [];
                             }
-                            newY[rowIdx] = e.target.value;
-                            updateCell(['series', 'data', colIdx, 'y'], newY);
+                            
+                            // Ensure array is long enough
+                            while (newData.series.data[colIdx].y.length <= rowIdx) {
+                              newData.series.data[colIdx].y.push(0);
+                            }
+                            
+                            // Update the specific cell
+                            const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                            newData.series.data[colIdx].y[rowIdx] = isNaN(numValue) ? 0 : numValue;
+                            
+                            setLocalChartData(newData);
+                            if (onDataChange) {
+                              onDataChange(newData);
+                            }
                           }}
-                          style={inputStyle}
-                        />
-                      </td>
+                        style={inputStyle}
+                      />
+                    </td>
                     );
                   })}
                   <td style={cellStyle}></td>
@@ -655,7 +702,34 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     <input
                       type="number"
                       value={values[idx] ?? ''}
-                      onChange={(e) => updateCell(['series', 'data', 0, 'values', idx], e.target.value)}
+                      onChange={(e) => {
+                        const inputValue = e.target.value;
+                        if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+                        
+                        const newData = JSON.parse(JSON.stringify(localChartData));
+                        if (!newData.series.data[0]) {
+                          newData.series.data[0] = { values: [] };
+                        }
+                        
+                        // Ensure values array exists
+                        if (!Array.isArray(newData.series.data[0].values)) {
+                          newData.series.data[0].values = [];
+                        }
+                        
+                        // Ensure array is long enough
+                        while (newData.series.data[0].values.length <= idx) {
+                          newData.series.data[0].values.push(0);
+                        }
+                        
+                        // Update the specific cell
+                        const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                        newData.series.data[0].values[idx] = isNaN(numValue) ? 0 : numValue;
+                        
+                        setLocalChartData(newData);
+                        if (onDataChange) {
+                          onDataChange(newData);
+                        }
+                      }}
                       style={inputStyle}
                     />
                   </td>
@@ -775,14 +849,67 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     <input
                       type="number"
                       value={y[idx] ?? ''}
-                      onChange={(e) => updateCell(['series', 'data', 0, 'y', idx], e.target.value)}
+                      onChange={(e) => {
+                        const inputValue = e.target.value;
+                        if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+                        
+                        const newData = JSON.parse(JSON.stringify(localChartData));
+                        if (!newData.series.data[0]) {
+                          newData.series.data[0] = { y: [], measure: [] };
+                        }
+                        
+                        // Ensure y array exists
+                        if (!Array.isArray(newData.series.data[0].y)) {
+                          newData.series.data[0].y = [];
+                        }
+                        
+                        // Ensure array is long enough
+                        while (newData.series.data[0].y.length <= idx) {
+                          newData.series.data[0].y.push(0);
+                        }
+                        
+                        // Update the specific cell
+                        const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                        newData.series.data[0].y[idx] = isNaN(numValue) ? 0 : numValue;
+                        
+                        setLocalChartData(newData);
+                        if (onDataChange) {
+                          onDataChange(newData);
+                        }
+                      }}
                       style={inputStyle}
                     />
                   </td>
                   <td style={cellStyle}>
                     <select
                       value={measure[idx] ?? 'absolute'}
-                      onChange={(e) => updateCell(['series', 'data', 0, 'measure', idx], e.target.value)}
+                      onChange={(e) => {
+                        const inputValue = e.target.value;
+                        if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+                        
+                        const newData = JSON.parse(JSON.stringify(localChartData));
+                        if (!newData.series.data[0]) {
+                          newData.series.data[0] = { y: [], measure: [] };
+                        }
+                        
+                        // Ensure measure array exists
+                        if (!Array.isArray(newData.series.data[0].measure)) {
+                          newData.series.data[0].measure = [];
+                        }
+                        
+                        // Ensure array is long enough
+                        while (newData.series.data[0].measure.length <= idx) {
+                          newData.series.data[0].measure.push('absolute');
+                        }
+                        
+                        // Update the specific cell
+                        newData.series.data[0].measure[idx] = inputValue;
+                        
+                        setLocalChartData(newData);
+                        if (onDataChange) {
+                          onDataChange(newData);
+                        }
+                      }}
                       style={selectStyle}
                     >
                       <option value="absolute">absolute</option>
@@ -968,43 +1095,80 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     const measureValue = seriesMeasure[rowIdx] ?? 'absolute';
                     
                     return (
-                      <React.Fragment key={colIdx}>
-                        <td style={cellStyle}>
-                          <input
-                            type="number"
+                    <React.Fragment key={colIdx}>
+                      <td style={cellStyle}>
+                        <input
+                          type="number"
                             value={yValue}
                             onChange={(e) => {
-                              // Ensure the array exists and is long enough
-                              const newY = [...seriesY];
-                              while (newY.length <= rowIdx) {
-                                newY.push('');
+                              const inputValue = e.target.value;
+                              if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+                              
+                              const newData = JSON.parse(JSON.stringify(localChartData));
+                              if (!newData.series.data[colIdx]) {
+                                newData.series.data[colIdx] = { y: [], measure: [] };
                               }
-                              newY[rowIdx] = e.target.value;
-                              updateCell(['series', 'data', colIdx, 'y'], newY);
+                              
+                              // Ensure y array exists
+                              if (!Array.isArray(newData.series.data[colIdx].y)) {
+                                newData.series.data[colIdx].y = [];
+                              }
+                              
+                              // Ensure array is long enough
+                              while (newData.series.data[colIdx].y.length <= rowIdx) {
+                                newData.series.data[colIdx].y.push(0);
+                              }
+                              
+                              // Update the specific cell
+                              const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                              newData.series.data[colIdx].y[rowIdx] = isNaN(numValue) ? 0 : numValue;
+                              
+                              setLocalChartData(newData);
+                              if (onDataChange) {
+                                onDataChange(newData);
+                              }
                             }}
-                            style={inputStyle}
-                          />
-                        </td>
-                        <td style={cellStyle}>
-                          <select
+                          style={inputStyle}
+                        />
+                      </td>
+                      <td style={cellStyle}>
+                        <select
                             value={measureValue}
                             onChange={(e) => {
-                              // Ensure the array exists and is long enough
-                              const newMeasure = [...seriesMeasure];
-                              while (newMeasure.length <= rowIdx) {
-                                newMeasure.push('absolute');
+                              const inputValue = e.target.value;
+                              if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+                              
+                              const newData = JSON.parse(JSON.stringify(localChartData));
+                              if (!newData.series.data[colIdx]) {
+                                newData.series.data[colIdx] = { y: [], measure: [] };
                               }
-                              newMeasure[rowIdx] = e.target.value;
-                              updateCell(['series', 'data', colIdx, 'measure'], newMeasure);
+                              
+                              // Ensure measure array exists
+                              if (!Array.isArray(newData.series.data[colIdx].measure)) {
+                                newData.series.data[colIdx].measure = [];
+                              }
+                              
+                              // Ensure array is long enough
+                              while (newData.series.data[colIdx].measure.length <= rowIdx) {
+                                newData.series.data[colIdx].measure.push('absolute');
+                              }
+                              
+                              // Update the specific cell
+                              newData.series.data[colIdx].measure[rowIdx] = inputValue;
+                              
+                              setLocalChartData(newData);
+                              if (onDataChange) {
+                                onDataChange(newData);
+                              }
                             }}
-                            style={selectStyle}
-                          >
-                            <option value="absolute">absolute</option>
-                            <option value="relative">relative</option>
-                            <option value="total">total</option>
-                          </select>
-                        </td>
-                      </React.Fragment>
+                          style={selectStyle}
+                        >
+                          <option value="absolute">absolute</option>
+                          <option value="relative">relative</option>
+                          <option value="total">total</option>
+                        </select>
+                      </td>
+                    </React.Fragment>
                     );
                   })}
                 </tr>
@@ -1214,29 +1378,63 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   return (
     <div style={{width: '100%'}}>
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
       <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
         <h3 style={{margin: 0, fontSize: '16px', fontWeight: '600'}}>Chart Data Editor</h3>
-        {onSave && hasChanges() && (
+        {onSave && (
           <button
             onClick={async () => {
-              if (onSave) {
-                await onSave(localChartData);
-                // Update original data after successful save
-                setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
+              if (onSave && !isSaving) {
+                setIsSaving(true);
+                try {
+                  await onSave(localChartData);
+                  // Update original data after successful save
+                  setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
+                } catch (err) {
+                  console.error('Error saving chart data:', err);
+                  // Error is already handled by onSave callback
+                } finally {
+                  setIsSaving(false);
+                }
               }
             }}
+            disabled={isSaving}
             style={{
               padding: '8px 16px',
-              backgroundColor: '#10b981',
+              backgroundColor: isSaving ? '#9ca3af' : '#10b981',
               color: 'white',
               border: 'none',
               borderRadius: '6px',
-              cursor: 'pointer',
+              cursor: isSaving ? 'not-allowed' : 'pointer',
               fontWeight: '600',
-              fontSize: '14px'
+              fontSize: '14px',
+              opacity: isSaving ? 0.7 : 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
             }}
           >
-            💾 Save Changes
+            {isSaving ? (
+              <>
+                <div style={{
+                  width: '14px',
+                  height: '14px',
+                  border: '2px solid white',
+                  borderTop: '2px solid transparent',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                  flexShrink: 0
+                }} />
+                <span>Saving...</span>
+              </>
+            ) : (
+              '💾 Save Changes'
+            )}
           </button>
         )}
       </div>

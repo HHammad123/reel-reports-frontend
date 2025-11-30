@@ -69,27 +69,19 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     let cancelled = false;
     let timeoutId = null;
 
-    // Get silent video URL (video without audio) for primary layer
-    const getSilentVideoUrlFromEntry = (entry = {}) => {
-      // Check top-level first (most common structure)
-      if (entry?.silent_video_url) return entry.silent_video_url;
-      if (entry?.video_only_url) return entry.video_only_url;
-      if (entry?.video_without_audio_url) return entry.video_without_audio_url;
-      // Check nested structures
-      if (entry?.video?.silent_video_url) return entry.video.silent_video_url;
-      if (entry?.video?.video_only_url) return entry.video.video_only_url;
-      if (entry?.video?.v1?.silent_video_url) return entry.video.v1.silent_video_url;
-      if (entry?.video?.v1?.video_only_url) return entry.video.v1.video_only_url;
-      if (entry?.videos?.silent_video_url) return entry.videos.silent_video_url;
-      if (entry?.videos?.video_only_url) return entry.videos.video_only_url;
-      if (entry?.videos?.v1?.silent_video_url) return entry.videos.v1.silent_video_url;
-      if (entry?.videos?.v1?.video_only_url) return entry.videos.v1.video_only_url;
-      if (entry?.blobLink?.silent_video_link) return entry.blobLink.silent_video_link;
-      if (entry?.blobLink?.video_only_link) return entry.blobLink.video_only_link;
+    // Get video URL with logo and subtitles (preferred version)
+    const getVideoWithLogoAndSubtitlesUrlFromEntry = (entry = {}) => {
+      // Check for video_with_logo_and_subtitles_url in various locations
+      if (entry?.video_with_logo_and_subtitles_url) return entry.video_with_logo_and_subtitles_url;
+      if (entry?.video?.video_with_logo_and_subtitles_url) return entry.video.video_with_logo_and_subtitles_url;
+      if (entry?.videos?.video_with_logo_and_subtitles_url) return entry.videos.video_with_logo_and_subtitles_url;
+      if (entry?.videos?.v1?.video_with_logo_and_subtitles_url) return entry.videos.v1.video_with_logo_and_subtitles_url;
+      if (entry?.video?.v1?.video_with_logo_and_subtitles_url) return entry.video.v1.video_with_logo_and_subtitles_url;
+      if (entry?.blobLink?.video_with_logo_and_subtitles_link) return entry.blobLink.video_with_logo_and_subtitles_link;
       return null;
     };
 
-    // Get regular video URL (fallback if silent video not available)
+    // Get regular video URL (fallback if video with logo and subtitles not available)
     const getVideoUrlFromEntry = (entry = {}) =>
       entry?.video?.v1?.video_url ||
       entry?.video?.video_url ||
@@ -187,9 +179,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       const videosArr = Array.isArray(payload?.videos) ? payload.videos : [];
       return videosArr
         .map((videoEntry, videoIndex) => {
-          // Prefer silent video URL for primary layer, fallback to regular video URL
-          const silentVideoUrl = getSilentVideoUrlFromEntry(videoEntry);
-          const primaryVideoUrl = silentVideoUrl || getVideoUrlFromEntry(videoEntry);
+          // Prefer video with logo and subtitles URL for primary layer, fallback to regular video URL
+          const videoWithLogoAndSubtitlesUrl = getVideoWithLogoAndSubtitlesUrlFromEntry(videoEntry);
+          const primaryVideoUrl = videoWithLogoAndSubtitlesUrl || getVideoUrlFromEntry(videoEntry);
           const scenes = [];
 
           const appendScene = (sceneSource, fallbackLabel) => {
@@ -237,10 +229,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           // Debug logging for video URLs
           console.log(`📹 Video ${videoIndex + 1} URLs:`, {
             model: modelUpper,
-            silent_video_url: silentVideoUrl,
+            video_with_logo_and_subtitles_url: videoWithLogoAndSubtitlesUrl,
             primaryVideoUrl: primaryVideoUrl,
             chart_video_url: chartVideoUrl,
-            hasSilentVideo: !!silentVideoUrl,
+            hasVideoWithLogoAndSubtitles: !!videoWithLogoAndSubtitlesUrl,
             hasChartVideo: !!chartVideoUrl
           });
           
@@ -260,7 +252,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               videos_v1: videoEntry?.videos?.v1 ? {
                 audio_only_url: videoEntry.videos.v1?.audio_only_url,
                 audio_url: videoEntry.videos.v1?.audio_url,
-                silent_video_url: videoEntry.videos.v1?.silent_video_url
+                video_with_logo_and_subtitles_url: videoEntry.videos.v1?.video_with_logo_and_subtitles_url
               } : null,
               videos: videoEntry?.videos ? {
                 audio_only_url: videoEntry.videos?.audio_only_url,
@@ -285,7 +277,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           return {
             id: videoEntry?.id || videoEntry?.video_id || `video-${videoIndex}`,
             title: videoEntry?.title || videoEntry?.name || `Video ${videoIndex + 1}`,
-            url: primaryVideoUrl || scenes[0]?.url || '', // This will be silent_video_url if available
+            url: primaryVideoUrl || scenes[0]?.url || '', // This will be video_with_logo_and_subtitles_url if available
             description: videoEntry?.desc || videoEntry?.scene_description || '',
             narration: videoEntry?.narration || '',
             audioUrl: audioUrl,
@@ -593,7 +585,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       setIsConvertingVideos(true);
       try {
         const clips = [];
-        const overlayClips = []; // For chart_video_url overlays (PLOTLY)
+        const chartOverlayClips = []; // Dedicated chart overlay clips (PLOTLY)
         const audioClips = [];
         
         let primaryClipAccumulatedTime = 0; // Track accumulated time for primary clips positioning
@@ -618,7 +610,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 clips.push(clip);
                 
                 // Convert chart_video_url to overlay clip (for any video that has it)
-                // Only add chart overlay for PLOTLY clips so it stacks above the silent/base layer
+                // Only add chart overlay for PLOTLY clips so it stacks above the base video layer
                 if (item.model === 'PLOTLY' && item.chartVideoUrl) {
                   try {
                     console.log(`📊 Converting chart_video_url to overlay for video ${item.id} (model: ${item.model || 'unknown'}):`, item.chartVideoUrl);
@@ -644,6 +636,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                       chartClip.startTime = primaryClipStartTime;
                       // Persist the intended timeline start to survive matching fallbacks
                       chartClip.timelineStartTime = primaryClipStartTime;
+                      chartClip.isChartOverlay = true; // Mark as chart-only layer
                       
                       // Add transform property to position overlay on top of video (centered, full width)
                       // x: 50% (center), y: 50% (center), width: 100% (full width), opacity: 1.0
@@ -659,11 +652,11 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                       chartClip.primaryClipIndex = currentClipIndex; // Direct index reference (the index we just used)
                       chartClip.sourceItemId = item.id; // Store source item ID for direct matching
                       
-                      overlayClips.push(chartClip);
+                      chartOverlayClips.push(chartClip);
                       console.log(`✅ Chart overlay clip created and DIRECTLY linked to primary clip:`, {
                         itemId: item.id,
                         itemModel: item.model,
-                        itemUrl: item.url, // This should be silent_video_url
+                        itemUrl: item.url, // This should be video_with_logo_and_subtitles_url
                         chartClipId: chartClip.id,
                         chartClipUrl: chartClip.url,
                         chartClipDuration: chartClip.duration,
@@ -700,6 +693,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
           const currentVideoClip = clips[i];
+          let itemHasAudio = false;
           
           // Calculate start time for this video's scenes
           let sceneStartTime = accumulatedTime;
@@ -731,7 +725,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                   
                   if (audioClip) {
                     audioClip.startTime = sceneStartTime + (sceneIdx * sceneDuration);
+                    audioClip.linkedVideoId = item.id;
                     audioClips.push(audioClip);
+                    itemHasAudio = true;
                     
                     console.log(`✅ Audio clip created for scene:`, {
                       name: audioClip.name,
@@ -757,7 +753,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               const audioClip = await convertAudioUrlToClip(item.audioUrl, item.id, item.title);
               if (audioClip) {
                 audioClip.startTime = accumulatedTime;
+                audioClip.linkedVideoId = item.id;
                 audioClips.push(audioClip);
+                itemHasAudio = true;
                 console.log(`✅ Audio clip created from video-level:`, {
                   name: audioClip.name,
                   startTime: audioClip.startTime,
@@ -767,6 +765,50 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               }
             } catch (error) {
               console.error(`Failed to convert video-level audio ${item.id}:`, error);
+            }
+          }
+
+          // Fallback: For PLOTLY, if no audio added yet, try extracting audio from chart video
+          if (!itemHasAudio && item.model === 'PLOTLY' && item.chartVideoUrl) {
+            try {
+              console.log(`🎵 PLOTLY fallback audio from chart video for item ${i + 1}:`, item.chartVideoUrl);
+              const audioClip = await convertAudioUrlToClip(item.chartVideoUrl, `${item.id}-chart-audio`, `${item.title || 'Chart'} Audio`);
+              if (audioClip) {
+                audioClip.startTime = accumulatedTime;
+                audioClip.linkedVideoId = item.id;
+                audioClips.push(audioClip);
+                itemHasAudio = true;
+                console.log(`✅ Audio clip created from chart video:`, {
+                  name: audioClip.name,
+                  startTime: audioClip.startTime,
+                  duration: audioClip.duration,
+                  url: audioClip.url
+                });
+              }
+            } catch (error) {
+              console.error(`Failed to convert chart audio for PLOTLY item ${item.id}:`, error);
+            }
+          }
+
+          // Final fallback: derive audio from the primary video URL itself (if still no audio)
+          if (!itemHasAudio && item.url) {
+            try {
+              console.log(`🎵 Deriving audio from primary video for item ${i + 1}:`, item.url);
+              const audioClip = await convertAudioUrlToClip(item.url, `${item.id}-video-audio`, `${item.title || 'Video'} Audio`);
+              if (audioClip) {
+                audioClip.startTime = accumulatedTime;
+                audioClip.linkedVideoId = item.id;
+                audioClips.push(audioClip);
+                itemHasAudio = true;
+                console.log(`✅ Audio clip created from video source:`, {
+                  name: audioClip.name,
+                  startTime: audioClip.startTime,
+                  duration: audioClip.duration,
+                  url: audioClip.url
+                });
+              }
+            } catch (error) {
+              console.error(`Failed to derive audio from video for item ${item.id}:`, error);
             }
           }
           
@@ -779,11 +821,35 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         
         console.log(`🎵 Total audio clips created: ${audioClips.length}`, audioClips);
         
+        // Establish bidirectional linking between video and audio clips
+        // Video clips have sourceItemId, audio clips have linkedVideoId - match them
+        clips.forEach((videoClip) => {
+          if (videoClip.sourceItemId) {
+            // Find all audio clips linked to this video clip's source item
+            const linkedAudioClips = audioClips.filter(
+              (audioClip) => audioClip.linkedVideoId === videoClip.sourceItemId
+            );
+            
+            // Store array of linked audio clip IDs in the video clip
+            if (linkedAudioClips.length > 0) {
+              videoClip.linkedAudioClipIds = linkedAudioClips.map(ac => ac.id);
+              console.log(`🔗 Linked video clip ${videoClip.id} to ${linkedAudioClips.length} audio clip(s):`, 
+                linkedAudioClips.map(ac => ac.id));
+            }
+            
+            // Store the video clip ID in each linked audio clip
+            linkedAudioClips.forEach((audioClip) => {
+              audioClip.linkedVideoClipId = videoClip.id;
+              console.log(`🔗 Linked audio clip ${audioClip.id} to video clip ${videoClip.id}`);
+            });
+          }
+        });
+        
         console.log('📊 Final results:', {
           videoClips: clips.length,
-          overlayClips: overlayClips.length,
+          chartOverlayClips: chartOverlayClips.length,
           audioClips: audioClips.length,
-          overlayClipsDetails: overlayClips.map(oc => ({
+          overlayClipsDetails: chartOverlayClips.map(oc => ({
             id: oc.id,
             name: oc.name,
             url: oc.url,
@@ -794,14 +860,14 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             name: ac.name,
             url: ac.url,
             startTime: ac.startTime,
-            duration: ac.duration
+            duration: ac.duration,
+            linkedVideoClipId: ac.linkedVideoClipId
           }))
         });
         
-        // Set tracks: [0] = primary clips, [1+] = overlay clips (chart_video_url for PLOTLY)
-        // Each overlay clip needs its own track since VideoEditor expects tracks[trackIndex][0]
-        const overlayTracks = overlayClips.map(overlayClip => [overlayClip]);
-        setEditorTracks([clips, ...overlayTracks]);
+        // Set tracks: [0] = primary clips, [1+] = dedicated chart overlay tracks (one per chart clip)
+        const chartTracks = chartOverlayClips.map(chartClip => [chartClip]);
+        setEditorTracks([clips, ...chartTracks]);
         setEditorAudioTracks(audioClips);
         
         // Force a re-render by logging state update
