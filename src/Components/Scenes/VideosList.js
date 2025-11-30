@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import VideoEditor from '../../pages/VideoEditor';
 import { Zap, ChevronRight, X } from 'lucide-react';
 import LogoImage from '../../asset/mainLogo.png';
+import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
 
 // FFmpeg xfade filter transition types
 // Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
@@ -963,34 +964,37 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100%] w-full">
       {(showVideoLoader || isLoading) && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
-          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3">
-            <div className="relative w-20 h-20 mx-auto">
-              <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
-              <div className="absolute inset-2 rounded-full overflow-hidden">
-                <img 
-                  src={LogoImage} 
-                  alt="Logo" 
-                  className="w-full h-full object-contain animate-spin"
-                  style={{ animationDuration: '2s' }}
-                />
+        <>
+          <div className="absolute inset-0 z-30 bg-white" />
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
+              <div className="relative w-20 h-20 flex items-center justify-center">
+                <video
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                >
+                  <source src={LoadingAnimationVideo} type="video/mp4" />
+                </video>
+              </div>
+              <div className="space-y-2">
+                <p className="text-lg font-semibold text-[#13008B]">Generating Videos</p>
+                <p className="text-sm text-gray-600">
+                  {status === 'succeeded' || (jobProgress.phase === 'done' && jobProgress.percent >= 100)
+                    ? 'Refreshing video list...'
+                    : 'This may take a few moments. Please keep this tab open while we finish.'}
+                </p>
+                {jobProgress.phase && jobProgress.percent > 0 && (
+                  <p className="text-xs text-gray-500">
+                    {jobProgress.phase.toUpperCase()} • {Math.min(100, Math.max(0, Math.round(jobProgress.percent)))}%
+                  </p>
+                )}
               </div>
             </div>
-            <div className="text-lg font-semibold text-[#13008B]">
-              {status === 'succeeded' || (jobProgress.phase === 'done' && jobProgress.percent >= 100) 
-                ? 'Loading Videos...' 
-                : 'Generating Videos'}
-            </div>
-            <div className="text-sm text-gray-600">
-              {jobProgress.phase ? jobProgress.phase.toUpperCase() : 'PROCESSING'} • {Math.min(100, Math.max(0, Math.round(jobProgress.percent)))}%
-            </div>
-            <p className="text-xs text-gray-500">
-              {status === 'succeeded' || (jobProgress.phase === 'done' && jobProgress.percent >= 100)
-                ? 'Refreshing video list...'
-                : 'Please keep this tab open while we prepare your videos.'}
-            </p>
           </div>
-        </div>
+        </>
       )}
 
       {/* Success popup */}
@@ -1045,16 +1049,15 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         ) : isConvertingVideos ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="relative w-20 h-20 mx-auto mb-4">
-                <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
-                <div className="absolute inset-2 rounded-full overflow-hidden">
-                  <img 
-                    src={LogoImage} 
-                    alt="Logo" 
-                    className="w-full h-full object-contain animate-spin"
-                    style={{ animationDuration: '2s' }}
-                  />
-                </div>
+              <div className="w-20 h-20 mx-auto mb-4">
+                <video
+                  src={LoadingAnimationVideo}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div className="text-[#13008B] font-semibold">Loading video editor...</div>
             </div>
@@ -1073,7 +1076,16 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                   {isConvertingVideos ? (
                     <div className="w-full h-full flex items-center justify-center text-white">
                       <div className="text-center">
-                        <div className="w-16 h-16 rounded-full border-4 border-[#D8D3FF] border-t-[#13008B] animate-spin mx-auto mb-4" />
+                        <div className="w-16 h-16 mx-auto mb-4">
+                          <video
+                            src={LoadingAnimationVideo}
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
                         <div>Loading video editor...</div>
                       </div>
                     </div>

@@ -4,6 +4,7 @@ import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
 import ChartDataEditor from './ChartDataEditor';
 import LogoImage from '../asset/mainLogo.png';
+import LoadingAnimationVideo from '../asset/Loading animation.mp4';
 
 const GOOGLE_FONT_OPTIONS = [
   'Roboto',
@@ -821,6 +822,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [regenSuggestions, setRegenSuggestions] = useState([]);
   const [isSuggestingRegen, setIsSuggestingRegen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [isApplyingKeepDefault, setIsApplyingKeepDefault] = useState(false);
   // Only show 5 scene tabs at a time without scroll
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
   // Multiple selection of ref images by URL
@@ -6646,8 +6648,16 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         })();
         const targetSceneObj = cloned[targetIndex];
         if (targetSceneObj && typeof targetSceneObj === 'object') {
-          // Always include background_image and avatar_urls arrays (empty when not selected)
+          // Set background_image only if backgroundImageArray is provided (not undefined)
+          // If undefined, remove background_image field entirely
+          if (backgroundImageArray !== undefined) {
           targetSceneObj.background_image = Array.isArray(backgroundImageArray) ? backgroundImageArray : [];
+          } else {
+            // Remove background_image field if it exists
+            if ('background_image' in targetSceneObj) {
+              delete targetSceneObj.background_image;
+            }
+          }
           targetSceneObj.avatar_urls = Array.isArray(avatarUrlsForApiBody) ? avatarUrlsForApiBody : [];
           // Ensure avatar field is removed
           if ('avatar' in targetSceneObj) {
@@ -6689,9 +6699,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           userquery: originalUserquery,
           airesponse: airesponseWithVisuals,
           version: String(scriptVersion || 'v1')
-        },
-        // Always include background_image in request body; empty when not selected
-        background_image: Array.isArray(backgroundImageArray) ? backgroundImageArray : []
+        }
       };
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
@@ -6994,7 +7002,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
                             labels: x.slice(0, minLength).map(v => String(v || '')),
                             data: [{ values: yValues.slice(0, minLength).map(v => Number(v) || 0) }]
                           }
-                        };
+                };
                         newRows[sceneIdx].chart_data = transformedData;
                         newRows[sceneIdx].chartData = transformedData;
                         console.log('[regenerateChart] Transformed chart_data from bar/line to pie/donut format', {
@@ -7033,7 +7041,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
                           x: labels.slice(0, minLength),
                           data: [{ name: 'Series 1', y: values.slice(0, minLength) }]
                         }
-                      };
+                };
                       newRows[sceneIdx].chart_data = transformedData;
                       newRows[sceneIdx].chartData = transformedData;
                       console.log('[regenerateChart] Transformed chart_data from pie/donut to bar/line format', {
@@ -7121,7 +7129,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           preservedChartData = currentRows[sceneIdx].chart_data || currentRows[sceneIdx].chartData;
         }
       }
-      
+
       // Update local chart type with the final value (from response if available, otherwise requested)
       handleSceneUpdate(sceneIdx, 'chart_type', finalChartType);
       
@@ -9665,7 +9673,215 @@ const saveAnchorPromptTemplate = async () => {
                             </div>
                           );
                         }
-                        // Default: Description for non-Financial (non-PLOTLY) scenes
+                        // Check if VEO3 model - show veo3_prompt_template instead of description
+                        // Note: scene is already declared above at line 9523
+                        const modelUpper = scene ? String(scene?.model || scene?.mode || '').toUpperCase() : '';
+                        const isVEO3 = modelUpper === 'VEO3';
+                        
+                        // For VEO3: Show veo3_prompt_template fields (excluding description)
+                        if (isVEO3) {
+                          const veo3Template = scene?.veo3_prompt_template || {};
+                          const allFields = Object.entries(veo3Template).filter(([key]) => key !== 'description');
+                          
+                          // Sort fields: Subject, Background, Action first, then the rest
+                          const priorityOrder = ['subject', 'background', 'action'];
+                          const templateFields = allFields.sort(([keyA], [keyB]) => {
+                            const indexA = priorityOrder.indexOf(keyA.toLowerCase());
+                            const indexB = priorityOrder.indexOf(keyB.toLowerCase());
+                            
+                            // If both are in priority order, sort by priority
+                            if (indexA !== -1 && indexB !== -1) {
+                              return indexA - indexB;
+                            }
+                            // If only A is in priority, A comes first
+                            if (indexA !== -1) return -1;
+                            // If only B is in priority, B comes first
+                            if (indexB !== -1) return 1;
+                            // If neither is in priority, maintain original order
+                            return 0;
+                          });
+                          
+                          if (isEditingSceneData) {
+                            return (
+                              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
+                                {isSavingSceneData && (
+                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                                    <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                                      <div className="w-16 h-16 mx-auto">
+                                        <video
+                                          src={LoadingAnimationVideo}
+                                          autoPlay
+                                          loop
+                                          muted
+                                          playsInline
+                                          className="w-full h-full object-contain"
+                                        />
+                                      </div>
+                                      <div className="text-sm font-semibold text-[#13008B]">Updating Scene Description</div>
+                                      <p className="text-xs text-gray-500">Please wait...</p>
+                                    </div>
+                                  </div>
+                                )}
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4">Scene Description</h4>
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                  {templateFields.length > 0 ? (
+                                    templateFields.map(([key, value]) => {
+                                      const displayValue = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+                                      const onChange = (val) => {
+                                        const currentTemplate = {
+                                          ...(scene?.veo3_prompt_template || {})
+                                        };
+                                        try {
+                                          const parsed = JSON.parse(val);
+                                          currentTemplate[key] = parsed;
+                                        } catch {
+                                          currentTemplate[key] = val;
+                                        }
+                                        handleSceneUpdate(
+                                          currentSceneIndex,
+                                          'veo3_prompt_template',
+                                          currentTemplate
+                                        );
+                                      };
+                                      return (
+                                        <div
+                                          key={key}
+                                          className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
+                                        >
+                                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                            {key.replace(/_/g, ' ')}
+                                          </p>
+                                          <textarea
+                                            value={displayValue}
+                                            onChange={(e) => onChange(e.target.value)}
+                                            rows={3}
+                                            className="mt-1 w-full resize-y rounded-md border border-blue-200 px-3 py-2 text-sm text-gray-800 focus:border-transparent focus:ring-2 focus:ring-[#13008B]"
+                                            disabled={isSavingSceneData}
+                                          />
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div className="col-span-2 text-sm text-gray-500">No VEO3 prompt template fields available</div>
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-end gap-2 mt-4">
+                                  <button
+                                    type="button"
+                                    onClick={cancelSceneDataEdit}
+                                    disabled={isSavingSceneData}
+                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={saveSceneData}
+                                    disabled={isSavingSceneData}
+                                    className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                  >
+                                    {isSavingSceneData ? (
+                                      <>
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        <span>Saving...</span>
+                                      </>
+                                    ) : (
+                                      'Save'
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+                          
+                          return (
+                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
+                              {isSavingSceneData && (
+                                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                                  <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                                    <div className="w-16 h-16 mx-auto">
+                                      <video
+                                        src={LoadingAnimationVideo}
+                                        autoPlay
+                                        loop
+                                        muted
+                                        playsInline
+                                        className="w-full h-full object-contain"
+                                      />
+                                    </div>
+                                    <div className="text-sm font-semibold text-[#13008B]">Updating Scene Description</div>
+                                    <p className="text-xs text-gray-500">Please wait...</p>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-lg font-semibold text-gray-800">Scene Description</h4>
+                                {isEditingSceneData ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={cancelSceneDataEdit}
+                                      disabled={isSavingSceneData}
+                                      className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={saveSceneData}
+                                      disabled={isSavingSceneData}
+                                      className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                    >
+                                      {isSavingSceneData ? (
+                                        <>
+                                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                          <span>Saving...</span>
+                                        </>
+                                      ) : (
+                                        'Save'
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={beginSceneDataEdit}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                  >
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                {templateFields.length > 0 ? (
+                                  templateFields.map(([key, value]) => {
+                                    const displayValue = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+                                    return (
+                                      <div
+                                        key={key}
+                                        className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
+                                      >
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                          {key.replace(/_/g, ' ')}
+                                        </p>
+                                        <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
+                                          {displayValue || '-'}
+                                        </p>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <div className="col-span-2 text-sm text-gray-500">No VEO3 prompt template fields available</div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }
+                        
+                        // Default: Description for non-VEO3 scenes
                         const sceneDescription =
                           Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
                             ? scriptRows[currentSceneIndex].description || ''
@@ -9851,16 +10067,15 @@ const saveAnchorPromptTemplate = async () => {
                               {isSavingDescription && (
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                                    <div className="relative w-16 h-16 mx-auto">
-                                      <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
-                                      <div className="absolute inset-2 rounded-full overflow-hidden">
-                                        <img 
-                                          src={LogoImage} 
-                                          alt="Logo" 
-                                          className="w-full h-full object-contain animate-spin"
-                                          style={{ animationDuration: '2s' }}
-                                        />
-                                      </div>
+                                    <div className="w-16 h-16 mx-auto">
+                                      <video
+                                        src={LoadingAnimationVideo}
+                                        autoPlay
+                                        loop
+                                        muted
+                                        playsInline
+                                        className="w-full h-full object-contain"
+                                      />
                                     </div>
                                     <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
                                     <p className="text-xs text-gray-500">Please wait...</p>
@@ -11224,140 +11439,6 @@ const saveAnchorPromptTemplate = async () => {
                                             color: textEditorFormat.color
                                           }}
                                         />
-                                      </div>
-                                  </div>
-                                )}
-                                {isVeo && (
-                                  <div className="rounded-lg border border-gray-200 bg-white p-4">
-                                    <div className="mb-3 flex items-center justify-between">
-                                      <h5 className="text-sm font-semibold text-gray-800">VEO3 Prompt Template</h5>
-                                      <div className="flex items-center gap-2">
-                                        {isEditingSceneData ? (
-                                          <>
-                                            <button
-                                              type="button"
-                                              onClick={saveSceneData}
-                                              disabled={isSavingSceneData}
-                                              className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold text-white ${
-                                                isSavingSceneData ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
-                                              }`}
-                                            >
-                                              {isSavingSceneData ? 'Saving…' : 'Save'}
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={cancelSceneDataEdit}
-                                              disabled={isSavingSceneData}
-                                              className="text-xs font-medium text-gray-600 hover:text-gray-900"
-                                            >
-                                              Cancel
-                                            </button>
-                                          </>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            onClick={beginSceneDataEdit}
-                                            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                                          >
-                                            <CiPen className="w-3 h-3" />
-                                            <span>Edit</span>
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                      {/* Always show description */}
-                                      {(() => {
-                                        const descriptionValue = scene?.description || '';
-                                        const displayValue = typeof descriptionValue === 'string' ? descriptionValue : JSON.stringify(descriptionValue ?? '', null, 2);
-                                        if (isEditingSceneData) {
-                                          const onChange = (val) => {
-                                            handleSceneUpdate(currentSceneIndex, 'description', val);
-                                          };
-                                          return (
-                                            <div
-                                              key="description"
-                                              className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
-                                            >
-                                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
-                                                Description
-                                              </p>
-                                              <textarea
-                                                value={displayValue}
-                                                onChange={(e) => onChange(e.target.value)}
-                                                rows={3}
-                                                className="mt-1 w-full resize-y rounded-md border border-blue-200 px-3 py-2 text-sm text-gray-800 focus:border-transparent focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                          );
-                                        }
-                                        return (
-                                          <div
-                                            key="description"
-                                            className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
-                                          >
-                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                              Description
-                                            </p>
-                                            <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
-                                              {displayValue || 'No description provided'}
-                                            </p>
-                                          </div>
-                                        );
-                                      })()}
-                                      {/* Show other veo3_prompt_template fields if they exist */}
-                                      {scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object' && Object.keys(scene.veo3_prompt_template).length > 0 && (
-                                        <>
-                                      {Object.entries(scene.veo3_prompt_template).map(([key, value]) => {
-                                            // Skip description if it's already shown above
-                                            if (key === 'description') return null;
-                                        const displayValue =
-                                          typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
-                                        if (isEditingSceneData) {
-                                          const onChange = (val) => {
-                                            const currentTemplate = {
-                                              ...(scene.veo3_prompt_template || {})
-                                            };
-                                            currentTemplate[key] = val;
-                                            handleSceneUpdate(
-                                              currentSceneIndex,
-                                              'veo3_prompt_template',
-                                              currentTemplate
-                                            );
-                                          };
-                                          return (
-                                            <div
-                                              key={key}
-                                              className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
-                                            >
-                                              <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
-                                                {key.replace(/_/g, ' ')}
-                                              </p>
-                                              <textarea
-                                                value={displayValue}
-                                                onChange={(e) => onChange(e.target.value)}
-                                                rows={3}
-                                                className="mt-1 w-full resize-y rounded-md border border-blue-200 px-3 py-2 text-sm text-gray-800 focus:border-transparent focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                          );
-                                        }
-                                        return (
-                                          <div
-                                            key={key}
-                                            className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
-                                          >
-                                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                              {key.replace(/_/g, ' ')}
-                                            </p>
-                                            <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
-                                              {displayValue}
-                                            </p>
-                                          </div>
-                                        );
-                                      })}
-                                        </>
-                                      )}
                                     </div>
                                   </div>
                                 )}
@@ -11600,7 +11681,16 @@ const saveAnchorPromptTemplate = async () => {
       {isApplyingChartType && (
         <div className="fixed inset-0 z-[74] flex items-center justify-center bg-black/30">
           <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
-            <div className="w-6 h-6 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6">
+              <video
+                src={LoadingAnimationVideo}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
             <div className="text-sm font-medium text-gray-800">Applying chart type…</div>
           </div>
         </div>
@@ -12049,14 +12139,10 @@ const saveAnchorPromptTemplate = async () => {
                         const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
                           if (!imageUrl) return null;
                         
-                        // For template tabs (preset_templates, uploaded_templates), use template selection logic
-                        const isTemplateTab = ['preset_templates', 'uploaded_templates'].includes(assetsTab);
-                        const isSelected = isTemplateTab 
-                          ? selectedTemplateUrls.includes(imageUrl)
-                          : selectedAssetUrl === imageUrl;
+                        // Use selectedTemplateUrls for all tabs to support multiple selections
+                        const isSelected = selectedTemplateUrls.includes(imageUrl);
                         
                           const handleClick = () => {
-                          if (isTemplateTab) {
                             // Check model type to determine selection limits
                             const currentScene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                             const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
@@ -12076,17 +12162,13 @@ const saveAnchorPromptTemplate = async () => {
                               if (isVEO3) {
                                 return [imageUrl];
                               }
-                              // For SORA, allow up to 2 templates
-                              // For other models, also allow up to 2 templates
+                              // For all other cases, allow up to 2 selections (for Generate button)
                               const next = [...prev, imageUrl];
                               if (next.length > 2) {
                                 next.shift();
                               }
                               return next;
                             });
-                          } else {
-                            setSelectedAssetUrl(imageUrl);
-                          }
                           };
                         
                           return (
@@ -12123,7 +12205,7 @@ const saveAnchorPromptTemplate = async () => {
               })()}
               <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3">
                 <button
-                  disabled={['preset_templates', 'uploaded_templates'].includes(assetsTab) ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl}
+                  disabled={selectedTemplateUrls.length === 0}
                   onClick={async () => {
                     try {
                       const rows = [...scriptRows];
@@ -12135,117 +12217,45 @@ const saveAnchorPromptTemplate = async () => {
                       const isAnchor = modelUpper === 'ANCHOR';
                       const isPlotly = modelUpper === 'PLOTLY';
                       
-                      if (['preset_templates', 'uploaded_templates'].includes(assetsTab)) {
-                        // For templates, use selected templates (up to 2 for SORA, 1 for VEO3/ANCHOR, 1 for summary)
-                        const templatesToUse = isSummarySceneActive && selectedTemplateUrls.length > 0
-                          ? [selectedTemplateUrls[0]]
-                          : (isVEO3 && selectedTemplateUrls.length > 0 
-                            ? [selectedTemplateUrls[0]] 
-                            : (isSora && selectedTemplateUrls.length > 0 
-                              ? selectedTemplateUrls.slice(0, 2) 
-                              : (selectedTemplateUrls.length > 0 ? selectedTemplateUrls : (selectedAssetUrl ? [selectedAssetUrl] : []))));
-                        
-                        if (templatesToUse.length === 0) return;
-                        
-                        // For summary scripts, find the selected template to get template_id
-                        if (isSummarySceneActive) {
-                          const selectedImageUrl = templatesToUse[0];
-                          // Find the template object from summary templates
-                          const normalizedAspect = normalizeTemplateAspectLabel(effectiveTemplateAspect);
-                          const aspectTemplates = summaryTemplates[normalizedAspect];
-                          const presetTemplates = Array.isArray(aspectTemplates?.preset_templates) ? aspectTemplates.preset_templates : [];
-                          const selectedTemplate = presetTemplates.find(t => t?.image_url === selectedImageUrl);
-                          
-                          // Store as background_image array with template_id and image_url
-                          const backgroundImageArray = selectedTemplate ? [{
-                            template_id: selectedTemplate.template_id || '',
-                            image_url: selectedTemplate.image_url || selectedImageUrl
-                          }] : [{
-                            template_id: '',
-                            image_url: selectedImageUrl
-                          }];
-                          
-                          scene.background = selectedImageUrl;
-                          scene.background_image = backgroundImageArray;
-                          
-                          rows[currentSceneIndex] = scene;
-                          setScriptRows(rows);
-                          setSelectedRefImages([selectedImageUrl]);
-                          
-                          // Update scene with background_image array format - call API only once
-                          try {
-                            await updateSceneGenImageFlag(currentSceneIndex, {
-                              backgroundImageArrayOverride: backgroundImageArray
-                            });
-                          } catch (_) {}
-                        } else if (isAnchor || isPlotly) {
-                          scene.background = templatesToUse[0]; 
-                          scene.background_image = templatesToUse[0];
-                          rows[currentSceneIndex] = scene;
-                          setScriptRows(rows);
-                          setSelectedRefImages(templatesToUse);
-                        } else {
-                          scene.ref_image = templatesToUse;
-                          rows[currentSceneIndex] = scene;
-                          setScriptRows(rows);
-                          setSelectedRefImages(templatesToUse);
-                          if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
-                        }
-                      } else if (['uploaded_images', 'documents_images'].includes(assetsTab)) {
-                        // For images tab, use single selected asset
-                        const chosen = selectedAssetUrl;
-                        if (!chosen) return;
-                        if (isAnchor || isPlotly) {
-                          scene.background = chosen; 
-                          scene.background_image = chosen;
-                      } else {
-                          scene.ref_image = [chosen];
-                        }
-                        rows[currentSceneIndex] = scene;
-                        setScriptRows(rows);
-                        setSelectedRefImages([chosen]);
-                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
-                      } else {
-                        // For other tabs (legacy), use single selected asset
-                        const chosen = selectedAssetUrl;
-                        if (!chosen) return;
-                        if (isAnchor || isPlotly) {
-                          scene.background = chosen; 
-                          scene.background_image = chosen;
-                        } else {
-                          scene.ref_image = [chosen];
-                        }
-                        rows[currentSceneIndex] = scene;
-                        setScriptRows(rows);
-                        setSelectedRefImages([chosen]);
-                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
-                      }
+                      // For Keep Default, use only the first selected image (single selection)
+                      const imagesToUse = selectedTemplateUrls.length > 0 ? [selectedTemplateUrls[0]] : [];
+                      if (imagesToUse.length === 0) return;
                       
-                      // For Keep Default with Templates, persist via update-text setting gen_image=false and ref_image
-                      if (['preset_templates', 'uploaded_templates'].includes(assetsTab)) {
-                        try {
-                          // Build background_image array from selected templates
-                          // templatesToUse was already defined above
+                      // Update scene with selected image
+                        if (isAnchor || isPlotly) {
+                        scene.background = imagesToUse[0]; 
+                        scene.background_image = imagesToUse[0];
+                      } else {
+                        scene.ref_image = imagesToUse;
+                        }
+                        rows[currentSceneIndex] = scene;
+                        setScriptRows(rows);
+                      setSelectedRefImages(imagesToUse);
+                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      
+                      // Call update-text API for Keep Default
+                      try {
+                        setIsApplyingKeepDefault(true);
                           const refImagesToUse = isAnchor || isPlotly 
                             ? [scene.background || scene.background_image || ''] 
                             : (scene.ref_image || []);
                           
-                          const backgroundImageArray = refImagesToUse.filter(Boolean).map((url) => {
+                        // Build background_image array only for generated_images tab
+                        // For all other tabs, don't send background_image (remove it)
+                        let backgroundImageArray = undefined;
+                        if (assetsTab === 'generated_images') {
+                          // For generated images, format as [{template_id: "", image_url: "<url>"}]
+                          backgroundImageArray = refImagesToUse.filter(Boolean).map((url) => {
                             const trimmedUrl = typeof url === 'string' ? url.trim() : '';
                             if (!trimmedUrl) return null;
-                            const templateEntry = templateLookupByUrl.get(trimmedUrl);
-                            const rawTemplate = templateEntry?.raw || {};
-                            const templateId = 
-                              templateEntry?.id ||
-                              rawTemplate?.template_id ||
-                              rawTemplate?.templateId ||
-                              rawTemplate?.id ||
-                              '';
                             return {
-                              image_url: trimmedUrl,
-                              template_id: templateId ? String(templateId) : ''
+                              template_id: '',
+                              image_url: trimmedUrl
                             };
                           }).filter(item => item !== null);
+                        }
+                        // For all other tabs (preset_templates, uploaded_templates, uploaded_images, documents_images), 
+                        // don't send backgroundImageArray (keep it as undefined to remove background_image from API call)
 
                           // Get avatar_url from selected avatar or scene
                           const currentAvatarUrl = scene?.avatar || selectedAvatar || '';
@@ -12254,11 +12264,15 @@ const saveAnchorPromptTemplate = async () => {
                             genImage: false,
                             descriptionOverride: scene?.description ?? '',
                             refImagesOverride: refImagesToUse.filter(Boolean),
-                            backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined,
+                          backgroundImageArrayOverride: backgroundImageArray && backgroundImageArray.length > 0 ? backgroundImageArray : undefined,
                             avatarUrl: currentAvatarUrl || undefined
                           });
-                        } catch(_) { /* noop */ }
+                      } catch(_) { 
+                        console.error('Failed to update scene with Keep Default:', _);
+                      } finally {
+                        setIsApplyingKeepDefault(false);
                       }
+                      
                       // Keep Default: clear description and update gen_image to false in local state
                       try {
                         const r2 = [...rows];
@@ -12273,17 +12287,18 @@ const saveAnchorPromptTemplate = async () => {
                     } catch(_) { /* noop */ }
                   }}
                   className={`px-3 py-2 rounded-lg text-sm border ${
-                    (['preset_templates', 'uploaded_templates'].includes(assetsTab) ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl)
+                    selectedTemplateUrls.length === 0
                       ? 'bg-gray-50 text-gray-400 border-gray-200 cursor-not-allowed'
                       : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
                   }`}
                 >Keep Default</button>
                
                 <button
-                  disabled={['preset_templates', 'uploaded_templates'].includes(assetsTab) ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl}
+                  disabled={selectedTemplateUrls.length === 0}
                   onClick={async () => {
                     try {
-                      const multi = ['preset_templates', 'uploaded_templates'].includes(assetsTab) ? (selectedTemplateUrls.length > 0 ? selectedTemplateUrls : (selectedAssetUrl ? [selectedAssetUrl] : [])) : (selectedAssetUrl ? [selectedAssetUrl] : []);
+                      // For Generate, use up to 2 selected images
+                      const multi = selectedTemplateUrls.length > 0 ? selectedTemplateUrls.slice(0, 2) : [];
                       if (multi.length === 0 || !Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) return;
                       const rows = [...scriptRows];
                       const scene = { ...rows[currentSceneIndex] };
@@ -12312,8 +12327,8 @@ const saveAnchorPromptTemplate = async () => {
                       const refImagesToSet = isVEO3 && multi.length > 0 ? [multi[0]] : multi;
                       setSelectedRefImages(refImagesToSet);
                       if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
-                      setShowAssetsModal(false);
-                      if (['preset_templates', 'uploaded_templates'].includes(assetsTab)) {
+                      
+                      // For Generate button, call update-scene-visual API for all tabs
                         try {
                           setIsEnhancing(true);
                           // For VEO3, only send the first template (single selection enforced)
@@ -12348,78 +12363,14 @@ const saveAnchorPromptTemplate = async () => {
                         setSelectedAssetUrl('');
                         setSelectedTemplateUrls([]);
                         setShowAssetsModal(false);
-                        return;
-                      }
-                      setIsEnhancing(true);
-                      const sessionId = localStorage.getItem('session_id');
-                      const token = localStorage.getItem('token');
-                      if (!sessionId || !token) throw new Error('Missing session or user');
-                      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-                      });
-                      const sessionText = await sessionResp.text();
-                      let sessionData; try { sessionData = JSON.parse(sessionText); } catch(_) { sessionData = sessionText; }
-                      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessionText}`);
-                      const sd = (sessionData?.session_data || sessionData?.session || {});
-                      const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
-                      const sessionForBody = {
-                        session_id: sd?.session_id || sessionId,
-                        user_id: sd?.user_id || token,
-                        content: Array.isArray(sd?.content) ? sd.content : [],
-                        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-                        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-                        created_at: sd?.created_at || new Date().toISOString(),
-                        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-                        messages: Array.isArray(sd?.messages) ? sd.messages : [],
-                        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
-                        videos: Array.isArray(sd?.videos) ? sd.videos : [],
-                        images: Array.isArray(sd?.images) ? sd.images : [],
-                        final_link: sd?.final_link || '',
-                        videoType: sd?.videoType || sd?.video_type || '',
-                        brand_style_interpretation: sd?.brand_style_interpretation,
-                        additionalProp1: sd?.additionalProp1 || {}
-                      };
-                      const sceneNumber = scene?.scene_number ?? (currentSceneIndex + 1);
-                      const model = String(scene?.mode || scene?.model || '').toUpperCase();
-                      let reqBody = { user, session: sessionForBody, scene_number: sceneNumber };
-                      if (model === 'SORA') {
-                        reqBody = { ...reqBody, image_links: multi };
-                      } else if (model === 'VEO3') {
-                        // For visual updates from assets, keep presenter options empty
-                        reqBody = { ...reqBody, presenter_options: {} };
-                      } else if (model === 'PLOTLY') {
-                        const first = multi[0];
-                        reqBody = { ...reqBody, chart_type: scene?.chart_type || scene?.chartType || '', background_image: first };
-                      } else if (model === 'ANCHOR') {
-                        const first = multi[0];
-                        reqBody = { ...reqBody, background_image: first };
-                      } else {
-                        // Default to SORA-style image links if unknown
-                        reqBody = { ...reqBody, image_links: multi };
-                      }
-                      await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
-                      });
-                      // refresh
-                      try {
-                        const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-                        });
-                        const refreshText = await refreshResp.text();
-                        let refresh; try { refresh = JSON.parse(refreshText); } catch(_) { refresh = refreshText; }
-                        if (refresh && typeof refresh === 'object') {
-                          const sd2 = refresh?.session_data || refresh?.session || {};
-                          const scripts = Array.isArray(sd2?.scripts) ? sd2.scripts : [];
-                          const container = scripts[0]?.airesponse ? { script: scripts[0].airesponse } : { script: scripts };
-                          const normalized = normalizeScriptToRows(container);
-                          const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
-                          setScriptRows(newRows);
-                        }
-                      } finally { setIsEnhancing(false); setSelectedAssetUrl(''); setSelectedTemplateUrls([]); }
-                    } catch(_) { setIsEnhancing(false); /* noop */ }
+                    } catch (error) {
+                      console.error('Failed to generate scene with selected assets:', error);
+                      alert('Failed to apply selected assets. Please try again.');
+                      setIsEnhancing(false);
+                    }
                   }}
                    className={`px-3 py-2 rounded-lg text-sm text-white ${
-                    (['preset_templates', 'uploaded_templates'].includes(assetsTab) ? (selectedTemplateUrls.length===0 && !selectedAssetUrl) : !selectedAssetUrl)
+                    selectedTemplateUrls.length === 0
                       ? 'bg-blue-300 cursor-not-allowed'
                       : 'bg-[#13008B] hover:bg-blue-800'
                    }`}
@@ -12589,9 +12540,36 @@ const saveAnchorPromptTemplate = async () => {
       {isEnhancing && (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40">
           <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <h4 className="text-lg font-semibold text-gray-900">Enhancing description…</h4>
+            <div className="mx-auto mb-4 w-20 h-20">
+              <video
+                src={LoadingAnimationVideo}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <h4 className="text-lg font-semibold text-gray-900">Generating scene…</h4>
             <p className="mt-1 text-sm text-gray-600">Applying selected image to scene.</p>
+          </div>
+        </div>
+      )}
+      {isApplyingKeepDefault && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
+            <div className="mx-auto mb-4 w-20 h-20">
+              <video
+                src={LoadingAnimationVideo}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <h4 className="text-lg font-semibold text-gray-900">Applying changes…</h4>
+            <p className="mt-1 text-sm text-gray-600">Updating scene with selected image.</p>
           </div>
         </div>
       )}

@@ -74,14 +74,14 @@ const Typetabs = ({ onChangeVideoType }) => {
       } catch (e) {
         console.warn('Failed to load video type from session:', e);
         // Fallback: check for force_typetab_hybrid flag
-        try {
-          const flag = localStorage.getItem('force_typetab_hybrid') === 'true';
-          if (flag) {
-            setActiveTab('Hybrid Reel');
-            if (typeof onChangeVideoType === 'function') onChangeVideoType('Hybrid Reel');
-            localStorage.removeItem('force_typetab_hybrid');
-          }
-        } catch (_) { /* noop */ }
+    try {
+      const flag = localStorage.getItem('force_typetab_hybrid') === 'true';
+      if (flag) {
+        setActiveTab('Hybrid Reel');
+        if (typeof onChangeVideoType === 'function') onChangeVideoType('Hybrid Reel');
+        localStorage.removeItem('force_typetab_hybrid');
+      }
+    } catch (_) { /* noop */ }
       }
     };
 

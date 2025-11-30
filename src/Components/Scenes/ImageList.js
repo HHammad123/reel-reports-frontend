@@ -5,6 +5,7 @@ import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
 import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
+import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
 
 const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
   if (!ratio || typeof ratio !== 'string') return fallback;
@@ -321,25 +322,16 @@ const getSelectedImageUrl = (images, index = 0) => {
 
 const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
   if (!Array.isArray(sources) || sources.length === 0) {
-    console.log(`⚠️ ${fieldName?.toUpperCase?.() || fieldName} | scene ${sceneNumber} | no sources provided`)
     return ''
   }
 
   for (const source of sources) {
     const rawValue = typeof source?.value === 'string' ? source.value : ''
     if (rawValue && rawValue.trim()) {
-      console.log(
-        `✅ ${fieldName?.toUpperCase?.() || fieldName} | scene ${sceneNumber} | path: ${source.path}`,
-        rawValue
-      )
       return rawValue.trim()
     }
   }
 
-  console.log(
-    `⚠️ ${fieldName?.toUpperCase?.() || fieldName} | scene ${sceneNumber} | no value found. Paths checked:`,
-    sources.map((src) => src.path)
-  )
   return ''
 }
 
@@ -361,18 +353,12 @@ const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) 
     // Get the version object (same as: imagesContainer[versionKey] in list area)
     const versionObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
     
-    console.log(`🔍 getAvatarUrlsFromImageVersion: versionKey=${versionKey}`);
-    console.log(`🔍 Version object keys:`, Object.keys(versionObj));
-    
     // Extract avatar_urls from current version (same as: verObj?.avatar_urls in list area)
     let avatarUrls = versionObj?.avatar_urls;
-    
-    console.log(`🔍 Avatar URLs from version object (${versionKey}):`, avatarUrls);
     
     // If not found in version object, check root level (fallback)
     if (!avatarUrls || !Array.isArray(avatarUrls) || avatarUrls.length === 0) {
       avatarUrls = imageVersionData?.avatar_urls;
-      console.log(`🔍 Avatar URLs from root level (fallback):`, avatarUrls);
     }
     
     if (Array.isArray(avatarUrls) && avatarUrls.length > 0) {
@@ -391,27 +377,25 @@ const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) 
         );
       }).filter(url => url && typeof url === 'string' && url.trim());
       
-      console.log(`✅ Extracted avatar URLs from session data images:`, extracted);
       return extracted;
     }
   }
   
-  console.log(`❌ No avatar URLs found in imageVersionData from session data`);
   return [];
 }
 
 const getOrderedRefs = useCallback((row) => {
   const modelUpper = String(row?.model || '').toUpperCase()
-  
+    
   // ALWAYS prioritize imageFrames from current version
-  const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
+      const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
   
   // For SORA, VEO3, ANCHOR: Extract from imageFrames (current version)
   if (modelUpper === 'SORA' || modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
-    if (frames.length > 0) {
+      if (frames.length > 0) {
       const imageUrls = frames
         .map((frame) => {
-          const base = frame?.base_image || frame?.baseImage || {}
+        const base = frame?.base_image || frame?.baseImage || {}
           return base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || ''
         })
         .filter(Boolean)
@@ -479,7 +463,7 @@ const getOrderedRefs = useCallback((row) => {
   
   // For any other model, return empty (no fallback to old refs)
   return []
-}, [normalizeImageUrl])
+  }, [normalizeImageUrl])
 
   const getSceneImages = useCallback(
     (row) => {
@@ -551,23 +535,54 @@ const getOrderedRefs = useCallback((row) => {
 
   const getAvatarUrlSet = useCallback(
     (row) => {
-      return new Set(
-        (Array.isArray(row?.avatar_urls) ? row.avatar_urls : [])
-          .map((entry) => {
-            if (typeof entry === 'string') return normalizeSimpleUrl(entry)
-            return normalizeSimpleUrl(
-              entry?.imageurl ||
-                entry?.imageUrl ||
-                entry?.image_url ||
-                entry?.url ||
-                entry?.src ||
-                entry?.link ||
-                entry?.avatar_url ||
-                ''
-            )
-          })
-          .filter(Boolean)
-      )
+      const avatarUrls = [];
+      
+      // Priority 1: Get from row.avatar_urls
+      if (Array.isArray(row?.avatar_urls)) {
+        avatarUrls.push(...row.avatar_urls);
+      }
+      
+      // Priority 2: Extract from versioned structure (imageVersionData[current_version].avatar_urls)
+      if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
+        let imagesContainer = row.imageVersionData;
+        
+        // Check if imageVersionData has the images container structure (it.images)
+        if (row.imageVersionData.images && typeof row.imageVersionData.images === 'object' && !Array.isArray(row.imageVersionData.images)) {
+          imagesContainer = row.imageVersionData.images;
+        }
+        
+        // Get current version key
+        const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || row?.current_version || 'v1';
+        
+        // Get version object
+        const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+        
+        // Extract avatar_urls from version object
+        const versionAvatars = verObj?.avatar_urls;
+        
+        if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+          avatarUrls.push(...versionAvatars);
+        }
+      }
+      
+      // Normalize and deduplicate all avatar URLs
+      const normalizedUrls = avatarUrls
+        .map((entry) => {
+          if (typeof entry === 'string') return normalizeSimpleUrl(entry);
+          return normalizeSimpleUrl(
+            entry?.imageurl ||
+              entry?.imageUrl ||
+              entry?.image_url ||
+              entry?.url ||
+              entry?.src ||
+              entry?.link ||
+              entry?.avatar_url ||
+              ''
+          );
+        })
+        .filter(Boolean);
+      
+      return new Set(normalizedUrls);
     },
     [normalizeSimpleUrl]
   )
@@ -675,7 +690,10 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, []);
 
-  // Auto-select logo and voiceover based on session assets API response
+  // State to store videos data from session
+  const [videosData, setVideosData] = useState([]);
+
+  // Auto-select logo and voiceover based on videos array or session assets API response
   useEffect(() => {
     if (!sessionAssets) return;
     
@@ -717,8 +735,70 @@ const getOrderedRefs = useCallback((row) => {
       return hasChanges ? updated : prev;
     });
     
-    // Check voiceover match (requires brandAssets)
-    if (brandAssets) {
+    // Check voiceover: First check videos array, then fallback to session assets
+    const hasVideos = Array.isArray(videosData) && videosData.length > 0;
+    
+    if (hasVideos && brandAssets) {
+      // If videos array has videos, check voiceover from videos and match with brand assets
+      const brandVoiceovers = Array.isArray(brandAssets.voiceover) 
+        ? brandAssets.voiceover 
+        : Array.isArray(brandAssets.voiceovers) 
+        ? brandAssets.voiceovers 
+        : [];
+      
+      setSceneAdvancedOptions(prev => {
+        const updated = { ...prev };
+        let hasChanges = false;
+        
+        sceneNumbers.forEach(sceneNum => {
+          // Find video for this scene
+          const sceneVideo = videosData.find(v => {
+            const videoSceneNum = v?.scene_number || v?.sceneNumber || v?.scene;
+            return String(videoSceneNum) === String(sceneNum);
+          });
+          
+          if (sceneVideo) {
+            // Extract voiceover from video
+            const videoVoiceover = sceneVideo?.voiceover || 
+                                   sceneVideo?.voiceover_url || 
+                                   sceneVideo?.voice_url ||
+                                   sceneVideo?.narration_url ||
+                                   '';
+            
+            if (videoVoiceover && typeof videoVoiceover === 'string') {
+              const normalizedVideoVoice = normalizeUrl(videoVoiceover);
+              
+              // Find matching voiceover in brand assets
+              const matchingVoiceover = brandVoiceovers.find(vo => {
+                const voUrl = typeof vo === 'string' ? vo : (vo?.url || vo?.link || '');
+                if (!voUrl) return false;
+                const normalizedVoUrl = normalizeUrl(voUrl);
+                return normalizedVoUrl === normalizedVideoVoice;
+              });
+              
+              if (matchingVoiceover) {
+                const matchedUrl = typeof matchingVoiceover === 'string' 
+                  ? matchingVoiceover 
+                  : (matchingVoiceover?.url || matchingVoiceover?.link || '');
+                
+                const currentOptions = updated[sceneNum] || {};
+                if (currentOptions.voiceUrl !== matchedUrl) {
+                  updated[sceneNum] = {
+                    ...currentOptions,
+                    voiceUrl: matchedUrl,
+                    voiceOption: matchingVoiceover?.name || matchingVoiceover?.type || 'custom'
+                  };
+                  hasChanges = true;
+                }
+              }
+            }
+          }
+        });
+        
+        return hasChanges ? updated : prev;
+      });
+    } else if (!hasVideos && brandAssets) {
+      // If videos array is empty, use session assets API response
       const sessionVoiceUrl = sessionAssets.voice_url || (sessionAssets.voice_urls && Object.values(sessionAssets.voice_urls)[0]);
       if (sessionVoiceUrl) {
         const normalizedSessionVoice = normalizeUrl(sessionVoiceUrl);
@@ -747,20 +827,27 @@ const getOrderedRefs = useCallback((row) => {
           if (matchedUrl) {
             setSceneAdvancedOptions(prev => {
               const updated = { ...prev };
+              let hasChanges = false;
+              
               sceneNumbers.forEach(sceneNum => {
-                updated[sceneNum] = {
-                  ...(updated[sceneNum] || {}),
-                  voiceUrl: matchedUrl,
-                  voiceOption: matchingVoiceover?.name || matchingVoiceover?.type || 'custom'
-                };
+                const currentOptions = updated[sceneNum] || {};
+                if (currentOptions.voiceUrl !== matchedUrl) {
+                  updated[sceneNum] = {
+                    ...currentOptions,
+                    voiceUrl: matchedUrl,
+                    voiceOption: matchingVoiceover?.name || matchingVoiceover?.type || 'custom'
+                  };
+                  hasChanges = true;
+                }
               });
-              return updated;
+              
+              return hasChanges ? updated : prev;
             });
           }
         }
       }
     }
-  }, [sessionAssets, brandAssets, rows]);
+  }, [sessionAssets, brandAssets, rows, videosData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1394,6 +1481,11 @@ const getOrderedRefs = useCallback((row) => {
         
         // For VEO3: Check scripts data for avatar_urls (for scenes that may not yet have image arrays)
         const sessionData = sdata?.session_data || sdata?.session || {};
+        
+        // Extract videos array from session data
+        const videos = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
+        setVideosData(videos);
+        
         const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
         setScriptsData(scripts); // Store scripts data for console logging
         // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
@@ -1423,7 +1515,7 @@ const getOrderedRefs = useCallback((row) => {
         airesponse.forEach((scene, index) => {
           if (!scene || typeof scene !== 'object') return;
           const model = String(scene?.model || scene?.mode || '').toUpperCase();
-        const sceneNumber =
+          const sceneNumber =
             scene?.scene_number ||
             scene?.scene_no ||
             scene?.sceneNo ||
@@ -1441,12 +1533,12 @@ const getOrderedRefs = useCallback((row) => {
           // Also index VEO3/ANCHOR scenes separately for avatar_urls
           const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
           if (isVEO3) {
-            veo3ScriptScenesByNumber[sceneNumber] = {
-              ...scene,
-              scene_number: sceneNumber,
+          veo3ScriptScenesByNumber[sceneNumber] = {
+            ...scene,
+            scene_number: sceneNumber,
               model,
               __aiIndex: Math.max(0, Number(sceneNumber) - 1)
-            };
+          };
           }
         });
         
@@ -1463,26 +1555,6 @@ const getOrderedRefs = useCallback((row) => {
           const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
           
           // Console log current version in images object and scripts array
-          console.log('═══════════════════════════════════════════════════════════');
-          console.log(`🎯 INITIAL SCENE SELECTED: Scene ${firstScene?.scene_number || 1}`);
-          console.log('═══════════════════════════════════════════════════════════');
-          console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
-          console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
-          if (imageVersionData && imagesCurrentVersion) {
-            const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
-            console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
-          }
-          console.log(`📜 Scripts Array:`, scripts);
-          if (scripts && scripts.length > 0) {
-            scripts.forEach((script, idx) => {
-              const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
-              console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
-              if (scriptVersion && script[scriptVersion]) {
-                console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
-              }
-            });
-          }
-          console.log('═══════════════════════════════════════════════════════════');
           
           // Get avatar URLs from current version of image object for VEO3 scenes
           const avatarUrlsFromVersion = getAvatarUrlsFromImageVersion(
@@ -1554,19 +1626,39 @@ const getOrderedRefs = useCallback((row) => {
                   presetsData = [];
                 }
                 // Normalise possible API shapes to an array of presets.
-                // Examples:
-                // - [{ name: "...", preservation_notes: {...} }, ...]
-                // - { presets: [...] }
-                // - { data: [...] }
-                // - { transition_presets: { presets: [...], custom: [...] } }
-                const presetsRoot = (presetsData && presetsData.transition_presets) || presetsData || [];
+                // Handle various API response structures:
+                // - [{ name: "...", ... }] - direct array
+                // - { presets: [...] } - nested presets
+                // - { data: [...] } - nested data
+                // - { transition_presets: { presets: [...], custom: [...] } } - nested with custom
+                // - { transition_presets: [...] } - nested array
                 let presetsArray = [];
-                if (Array.isArray(presetsRoot)) {
-                  presetsArray = presetsRoot;
-                } else if (presetsRoot && Array.isArray(presetsRoot.presets)) {
-                  presetsArray = presetsRoot.presets;
-                } else if (presetsRoot && Array.isArray(presetsRoot.data)) {
-                  presetsArray = presetsRoot.data;
+                
+                if (Array.isArray(presetsData)) {
+                  // Direct array
+                  presetsArray = presetsData;
+                } else if (presetsData && typeof presetsData === 'object') {
+                  // Check for transition_presets wrapper
+                  const transitionPresetsWrapper = presetsData.transition_presets;
+                  
+                  if (Array.isArray(transitionPresetsWrapper)) {
+                    // transition_presets is an array
+                    presetsArray = transitionPresetsWrapper;
+                  } else if (transitionPresetsWrapper && typeof transitionPresetsWrapper === 'object') {
+                    // transition_presets is an object with nested arrays
+                    const nestedPresets = Array.isArray(transitionPresetsWrapper.presets) ? transitionPresetsWrapper.presets : [];
+                    const nestedCustom = Array.isArray(transitionPresetsWrapper.custom) ? transitionPresetsWrapper.custom : [];
+                    presetsArray = [...nestedPresets, ...nestedCustom];
+                  } else if (Array.isArray(presetsData.presets)) {
+                    // Direct presets array
+                    presetsArray = presetsData.presets;
+                  } else if (Array.isArray(presetsData.data)) {
+                    // Direct data array
+                    presetsArray = presetsData.data;
+                  } else if (Array.isArray(presetsData.custom)) {
+                    // Direct custom array
+                    presetsArray = presetsData.custom;
+                  }
                 }
                 
                 // Filter to ensure each preset has a name property
@@ -1621,6 +1713,11 @@ const getOrderedRefs = useCallback((row) => {
                 let sd; try { sd = JSON.parse(st); } catch (_) { sd = {}; }
                     // Extract VEO3 script scenes (avatar_urls) from scripts
                     const sessionData = sd?.session_data || sd?.session || {};
+                    
+                    // Extract videos array from session data
+                    const videos = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
+                    setVideosData(videos);
+                    
                     const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
                     setScriptsData(scripts); // Store scripts data for console logging
                     // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
@@ -1669,12 +1766,12 @@ const getOrderedRefs = useCallback((row) => {
                       // Also index VEO3/ANCHOR scenes separately for avatar_urls
                       const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
                       if (isVEO3) {
-                        veo3ScriptScenesByNumber[sceneNumber] = {
-                          ...scene,
-                          scene_number: sceneNumber,
+                      veo3ScriptScenesByNumber[sceneNumber] = {
+                        ...scene,
+                        scene_number: sceneNumber,
                           model,
                           __aiIndex: Math.max(0, Number(sceneNumber) - 1)
-                        };
+                      };
                       }
                     });
                     
@@ -1692,26 +1789,6 @@ const getOrderedRefs = useCallback((row) => {
                         const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
                         
                         // Console log current version in images object and scripts array
-                        console.log('═══════════════════════════════════════════════════════════');
-                        console.log(`🎯 SCENE SELECTED (After Polling): Scene ${firstScene?.scene_number || 1}`);
-                        console.log('═══════════════════════════════════════════════════════════');
-                        console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
-                        console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
-                        if (imageVersionData && imagesCurrentVersion) {
-                          const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
-                          console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
-                        }
-                        console.log(`📜 Scripts Array:`, scripts);
-                        if (scripts && scripts.length > 0) {
-                          scripts.forEach((script, idx) => {
-                            const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
-                            console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
-                            if (scriptVersion && script[scriptVersion]) {
-                              console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
-                            }
-                          });
-                        }
-                        console.log('═══════════════════════════════════════════════════════════');
                         
                       // Get avatar URLs from current version of image object for VEO3 scenes
                       const avatarUrlsFromVersion2 = getAvatarUrlsFromImageVersion(
@@ -1786,14 +1863,39 @@ const getOrderedRefs = useCallback((row) => {
                       presetsData = [];
                     }
                     // Normalise possible API shapes to an array of presets.
-                    const presetsRoot = (presetsData && presetsData.transition_presets) || presetsData || [];
+                    // Handle various API response structures:
+                    // - [{ name: "...", ... }] - direct array
+                    // - { presets: [...] } - nested presets
+                    // - { data: [...] } - nested data
+                    // - { transition_presets: { presets: [...], custom: [...] } } - nested with custom
+                    // - { transition_presets: [...] } - nested array
                     let presetsArray = [];
-                    if (Array.isArray(presetsRoot)) {
-                      presetsArray = presetsRoot;
-                    } else if (presetsRoot && Array.isArray(presetsRoot.presets)) {
-                      presetsArray = presetsRoot.presets;
-                    } else if (presetsRoot && Array.isArray(presetsRoot.data)) {
-                      presetsArray = presetsRoot.data;
+                    
+                    if (Array.isArray(presetsData)) {
+                      // Direct array
+                      presetsArray = presetsData;
+                    } else if (presetsData && typeof presetsData === 'object') {
+                      // Check for transition_presets wrapper
+                      const transitionPresetsWrapper = presetsData.transition_presets;
+                      
+                      if (Array.isArray(transitionPresetsWrapper)) {
+                        // transition_presets is an array
+                        presetsArray = transitionPresetsWrapper;
+                      } else if (transitionPresetsWrapper && typeof transitionPresetsWrapper === 'object') {
+                        // transition_presets is an object with nested arrays
+                        const nestedPresets = Array.isArray(transitionPresetsWrapper.presets) ? transitionPresetsWrapper.presets : [];
+                        const nestedCustom = Array.isArray(transitionPresetsWrapper.custom) ? transitionPresetsWrapper.custom : [];
+                        presetsArray = [...nestedPresets, ...nestedCustom];
+                      } else if (Array.isArray(presetsData.presets)) {
+                        // Direct presets array
+                        presetsArray = presetsData.presets;
+                      } else if (Array.isArray(presetsData.data)) {
+                        // Direct data array
+                        presetsArray = presetsData.data;
+                      } else if (Array.isArray(presetsData.custom)) {
+                        // Direct custom array
+                        presetsArray = presetsData.custom;
+                      }
                     }
                     
                     // Filter to ensure each preset has a name property
@@ -1854,7 +1956,7 @@ const getOrderedRefs = useCallback((row) => {
   }, []);
 
   // Expose load function for refresh - recreate the load logic without cancellation
-  const refreshLoad = React.useCallback(async () => {
+  const refreshLoad = React.useCallback(async (sceneNumberToSelect = null) => {
     try {
       setIsLoading(true);
       setIsPolling(false); // Refresh doesn't poll, it just loads data
@@ -1872,6 +1974,11 @@ const getOrderedRefs = useCallback((row) => {
       
       // For VEO3: Check scripts data for avatar_urls (for scenes that may not yet have image arrays)
       const sessionData = sdata?.session_data || sdata?.session || {};
+      
+      // Extract videos array from session data
+      const videos = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
+      setVideosData(videos);
+      
       const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : [];
       // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
       const currentScript = scripts[0] || null;
@@ -1898,12 +2005,12 @@ const getOrderedRefs = useCallback((row) => {
         };
         const isVEO3 = model === 'VEO3' || model === 'ANCHOR';
         if (isVEO3) {
-          veo3ScriptScenesByNumber[sceneNumber] = {
-            ...scene,
-            scene_number: sceneNumber,
+        veo3ScriptScenesByNumber[sceneNumber] = {
+          ...scene,
+          scene_number: sceneNumber,
             model,
             __aiIndex: Math.max(0, Number(sceneNumber) - 1)
-          };
+        };
         }
       });
       
@@ -2006,8 +2113,6 @@ const getOrderedRefs = useCallback((row) => {
             if (arr.length > 0) {
                 const modelUpper = String(imagesRoot?.model || imagesRoot?.mode || '').toUpperCase();
                 const isSora = modelUpper === 'SORA';
-                console.log(`📦 CURRENT_VERSION for single object:`, version);
-                console.log(`📋 VERSION OBJECT (${version}) for single object:`, JSON.stringify(vObj, null, 2));
               const refs = arr
                   .map((it) => {
                     const url = isSora
@@ -2103,9 +2208,6 @@ const getOrderedRefs = useCallback((row) => {
               const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
               
-              console.log(`📌 CURRENT_VERSION:`, versionKey);
-              console.log(`📋 VERSION OBJECT (${versionKey}):`, verObj);
-              
               if (arr.length > 0) {
                 const soraRefs = arr
                   .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
@@ -2196,9 +2298,6 @@ const getOrderedRefs = useCallback((row) => {
               const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
               
-              console.log(`📌 CURRENT_VERSION:`, versionKey);
-              console.log(`📋 VERSION OBJECT (${versionKey}):`, verObj);
-              
               // Explicitly check and log avatar_urls
               const versionAvatars = verObj?.avatar_urls;
               
@@ -2261,21 +2360,21 @@ const getOrderedRefs = useCallback((row) => {
               
               // Extract avatar_urls for VEO3 from script ONLY if not already extracted from versioned structure
               if (avatarUrlsForMeta.length === 0) {
-                avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
-                  ? scene.avatar_urls.map((av) => {
-                      if (typeof av === 'string') return av.trim();
-                      return (
-                        av?.imageurl ||
-                        av?.imageUrl ||
-                        av?.image_url ||
-                        av?.url ||
-                        av?.src ||
-                        av?.link ||
-                        av?.avatar_url ||
-                        ''
-                      );
-                    }).filter(url => url && typeof url === 'string' && url.trim())
-                  : [];
+              avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
+                ? scene.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim())
+                : [];
                 
                 // Store the first avatar URL found to use for all VEO3 scenes
                 if (avatarUrlsForMeta.length > 0 && !globalAvatarUrl) {
@@ -2312,9 +2411,6 @@ const getOrderedRefs = useCallback((row) => {
               if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
                 currentVersionKey = it.images.current_version || it.images.currentVersion || 'v1';
                 versionData = it.images[currentVersionKey] || it.images.v1 || it;
-                
-                console.log(`📌 CURRENT_VERSION:`, currentVersionKey);
-                console.log(`📋 VERSION OBJECT (${currentVersionKey}):`, versionData);
               }
               
               const baseImage = versionData?.base_image || versionData?.baseImage || it?.base_image || it?.baseImage || {};
@@ -2421,6 +2517,25 @@ const getOrderedRefs = useCallback((row) => {
               // For VEO3: ALWAYS use global avatar if available, otherwise use scene-specific avatar
               const finalAvatarUrls = (isVEO3 && globalAvatarUrl) ? [globalAvatarUrl] : (isVEO3 && avatarUrlsForMeta.length > 0 ? avatarUrlsForMeta : []);
               
+              // Extract imageFrames properly for versioned structures
+              let imageFramesArray = [];
+              let imageVersionDataForRow = it?.images || it;
+              
+              if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
+                // Versioned structure: extract frames from current version
+                const imgContainer = it.images;
+                const vKey = imgContainer.current_version || imgContainer.currentVersion || 'v1';
+                const vObj = imgContainer[vKey] || imgContainer.v1 || {};
+                imageFramesArray = Array.isArray(vObj?.images) ? vObj.images : [];
+                imageVersionDataForRow = imgContainer;
+              } else if (Array.isArray(it?.images)) {
+                // Array structure: use directly
+                imageFramesArray = it.images;
+              } else {
+                // Fallback: wrap in array
+                imageFramesArray = [it];
+              }
+              
               pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, refs, {
                 description,
                 narration,
@@ -2428,8 +2543,8 @@ const getOrderedRefs = useCallback((row) => {
                 imageDimensions,
                 textElements,
                 overlayElements,
-                imageVersionData: it?.images || it,
-                imageFrames: Array.isArray(it?.images) ? it.images : [it],
+                imageVersionData: imageVersionDataForRow,
+                imageFrames: imageFramesArray,
                 isEditable: true,
                 model: modelUpper,
                 // Store avatar_urls in metadata for VEO3 only - use global avatar if available
@@ -2547,67 +2662,60 @@ const getOrderedRefs = useCallback((row) => {
       const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber, allScriptScenesByNumber);
       if (sessionImages.length > 0) {
         setRows(sessionImages);
-        const initialImages = getSceneImages(sessionImages[0]);
+        
+        // Find the scene to select - use provided sceneNumberToSelect, or fallback to first scene
+        let sceneToSelect = sessionImages[0];
+        let sceneIndex = 0;
+        
+        if (sceneNumberToSelect !== null && sceneNumberToSelect !== undefined) {
+          const foundIndex = sessionImages.findIndex(
+            (row) => (row?.scene_number || row?.sceneNumber) === sceneNumberToSelect
+          );
+          if (foundIndex >= 0) {
+            sceneToSelect = sessionImages[foundIndex];
+            sceneIndex = foundIndex;
+          }
+        }
+        
+        const initialImages = getSceneImages(sceneToSelect);
         const first = initialImages[0] || '';
-        const model0 = String(sessionImages[0]?.model || '').toUpperCase();
+        const model0 = String(sceneToSelect?.model || '').toUpperCase();
         const imgs = initialImages;
-        const firstScene = sessionImages[0];
         
         // Get current version from images object
-        const imageVersionData = firstScene?.imageVersionData || null;
-        const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
+        const imageVersionData = sceneToSelect?.imageVersionData || null;
+        const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || sceneToSelect?.current_version || 'v1';
         
-        // Console log current version in images object and scripts array
-        console.log('═══════════════════════════════════════════════════════════');
-        console.log(`🎯 SCENE SELECTED (Refresh Load): Scene ${firstScene?.scene_number || 1}`);
-        console.log('═══════════════════════════════════════════════════════════');
-        console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
-        console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
-        if (imageVersionData && imagesCurrentVersion) {
-          const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
-          console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
-        }
-        console.log(`📜 Scripts Array:`, scriptsData);
-        if (scriptsData && scriptsData.length > 0) {
-          scriptsData.forEach((script, idx) => {
-            const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
-            console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
-            if (scriptVersion && script[scriptVersion]) {
-              console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
-            }
-          });
-        }
-        console.log('═══════════════════════════════════════════════════════════');
         
         // Get avatar URLs from current version of image object for VEO3 scenes
         const avatarUrlsFromVersion3 = getAvatarUrlsFromImageVersion(
           imageVersionData,
-          firstScene?.current_version || 'v1',
+          sceneToSelect?.current_version || 'v1',
           model0
         );
         const finalAvatarUrls3 = avatarUrlsFromVersion3.length > 0 
           ? avatarUrlsFromVersion3 
-          : (Array.isArray(firstScene?.avatar_urls) ? firstScene.avatar_urls : []);
+          : (Array.isArray(sceneToSelect?.avatar_urls) ? sceneToSelect.avatar_urls : []);
         
         setSelected({
-          index: 0,
+          index: sceneIndex,
           imageUrl: first,
-          images: buildImageEntries(imgs, firstScene?.imageFrames),
-          title: firstScene?.scene_title || 'Untitled',
-          sceneNumber: firstScene?.scene_number ?? '',
-          description: firstScene?.description || '',
-          narration: firstScene?.narration || '',
-          textToBeIncluded: firstScene?.textToBeIncluded || '',
+          images: buildImageEntries(imgs, sceneToSelect?.imageFrames),
+          title: sceneToSelect?.scene_title || 'Untitled',
+          sceneNumber: sceneToSelect?.scene_number ?? '',
+          description: sceneToSelect?.description || '',
+          narration: sceneToSelect?.narration || '',
+          textToBeIncluded: sceneToSelect?.textToBeIncluded || '',
           model: model0,
-          prompts: firstScene?.prompts || { opening_frame: {}, closing_frame: {} },
-          imageDimensions: firstScene?.imageDimensions || firstScene?.image_dimensions || null,
-          textElements: Array.isArray(firstScene?.textElements) ? firstScene.textElements : [],
-          overlayElements: Array.isArray(firstScene?.overlayElements) ? firstScene.overlayElements : [],
+          prompts: sceneToSelect?.prompts || { opening_frame: {}, closing_frame: {} },
+          imageDimensions: sceneToSelect?.imageDimensions || sceneToSelect?.image_dimensions || null,
+          textElements: Array.isArray(sceneToSelect?.textElements) ? sceneToSelect.textElements : [],
+          overlayElements: Array.isArray(sceneToSelect?.overlayElements) ? sceneToSelect.overlayElements : [],
           imageVersionData: imageVersionData,
-          imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
+          imageFrames: Array.isArray(sceneToSelect?.imageFrames) ? sceneToSelect.imageFrames : [],
           avatar_urls: finalAvatarUrls3,
-          current_version: firstScene?.current_version || 'v1',
-          isEditable: !!firstScene?.isEditable
+          current_version: sceneToSelect?.current_version || 'v1',
+          isEditable: !!sceneToSelect?.isEditable
         });
       }
       setIsLoading(false);
@@ -2777,8 +2885,10 @@ const getOrderedRefs = useCallback((row) => {
     const model = getSceneModel(sceneNumber);
     
     // Set default frames based on model
-    if (isVEO3Model(model) || isANCHORModel(model)) {
-      setRegenerateFrames(['background']); // VEO3/ANCHOR always use background
+    if (isVEO3Model(model)) {
+      setRegenerateFrames(['background']); // VEO3 always use background
+    } else if (isANCHORModel(model)) {
+      setRegenerateFrames(['opening', 'closing']); // ANCHOR uses opening and closing
     } else {
       // For all other models (SORA, PLOTLY, etc.): default to both frames
       setRegenerateFrames(['opening', 'closing']);
@@ -2823,11 +2933,11 @@ const getOrderedRefs = useCallback((row) => {
 
       // Determine frames to regenerate based on model
       let framesToRegenerate = [];
-      if (isVEO3Model(model) || isANCHORModel(model)) {
-        // VEO3/ANCHOR: always regenerate background only
+      if (isVEO3Model(model)) {
+        // VEO3: always regenerate background only
         framesToRegenerate = ['background'];
       } else {
-        // For all other models (SORA, PLOTLY, etc.): use selected frames (opening, closing, or both)
+        // For ANCHOR, SORA, PLOTLY, and other models: use selected frames (opening, closing, or both)
         framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
       }
 
@@ -2867,16 +2977,20 @@ const getOrderedRefs = useCallback((row) => {
       if (data && data.success) {
         
         // Close popup
-        setShowRegeneratePopup(false);
-        setRegenerateUserQuery('');
-        setRegeneratingSceneNumber(null);
+      setShowRegeneratePopup(false);
+      setRegenerateUserQuery('');
+      setRegeneratingSceneNumber(null);
         setIsRegenerateForDescription(false);
+        // Store scene number before resetting state
+        const sceneNumberToRefresh = regeneratingSceneNumber;
+        
         // Reset regenerate options to defaults
         setRegenerateFrames(['opening', 'closing']);
         setRegenerateSaveAsNewVersion(false);
         
-        // Reload the page after regenerate API completes
-        window.location.reload();
+        // Refresh images by calling user session data API instead of reloading
+        // Pass the scene number to maintain selection
+        await refreshLoad(sceneNumberToRefresh);
       } else {
         throw new Error('Regenerate API did not return success');
       }
@@ -3045,7 +3159,7 @@ const getOrderedRefs = useCallback((row) => {
         // VEO3: always use background only (no options)
         framesToUpload = ['background'];
       } else {
-        // SORA, ANCHOR, PLOTLY, and others: use selected frames (opening, closing, or both)
+        // For ANCHOR, SORA, PLOTLY, and others: use selected frames (opening, closing, or both)
         framesToUpload = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
       }
 
@@ -3081,14 +3195,18 @@ const getOrderedRefs = useCallback((row) => {
       }
 
       // Handle successful upload
+      // Store scene number before resetting state
+      const sceneNumberToRefresh = uploadingBackgroundSceneNumber;
+      
       // Close popup immediately
       setShowUploadBackgroundPopup(false);
       setUploadedBackgroundFile(null);
       setUploadedBackgroundPreview(null);
       setUploadingBackgroundSceneNumber(null);
       
-      // Reload the page after upload API completes
-      window.location.reload();
+      // Refresh images by calling user session data API instead of reloading
+      // Pass the scene number to maintain selection
+      await refreshLoad(sceneNumberToRefresh);
     } catch (e) {
       setError(e?.message || 'Failed to upload background');
     } finally {
@@ -3096,7 +3214,7 @@ const getOrderedRefs = useCallback((row) => {
       setIsUploadingBackground(false);
       setIsLoading(false);
     }
-  }, [uploadedBackgroundFile, uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model]);
+  }, [uploadedBackgroundFile, uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad]);
 
   // Reset active image tab when scene changes
   useEffect(() => {
@@ -3777,7 +3895,7 @@ const getOrderedRefs = useCallback((row) => {
       if (imageFiles.length === 0) {
         throw new Error('No images found in temp folder');
       }
-
+      
       // Attach frame metadata (including any ANCHOR mappings) after it has been fully populated.
       formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
@@ -3881,23 +3999,31 @@ const getOrderedRefs = useCallback((row) => {
         let voiceover = null;
         let voiceOption = '';
         const voiceoverUrl = sceneOptions.voiceUrl || '';
-        if (!isVEO3) {
+        
+        // Handle voiceover for all model types (including VEO3)
           if (voiceoverUrl) {
+          // If voice URL is selected, use it as voiceover string
             if (typeof voiceoverUrl === 'object') {
-              voiceover = voiceoverUrl;
+            // Extract voiceurl from object, or use url as fallback
+            const extractedUrl = voiceoverUrl.voiceurl || voiceoverUrl.url || '';
+            voiceover = extractedUrl || null;
             } else {
-              voiceover = {
-                name: sceneOptions.voiceOption || '',
-                type: 'audio',
-                url: voiceoverUrl,
-                created_at: new Date().toISOString()
-              };
-            }
+            // Just use the string URL directly
+            voiceover = voiceoverUrl;
+          }
+          // When voiceover URL is selected, voiceOption should be empty/null
+          voiceOption = '';
           } else {
+          // If no voice URL selected, voiceover is null and voiceOption is sent as string
+          voiceover = null;
+          if (!isVEO3) {
             voiceOption = sceneOptions.voiceOption || '';
             if (!voiceOption || voiceOption.trim() === '') {
               voiceOption = 'male';
             }
+          } else {
+            // For VEO3, if no voice URL, still set a default voiceOption
+            voiceOption = sceneOptions.voiceOption || 'male';
           }
         }
 
@@ -3937,10 +4063,35 @@ const getOrderedRefs = useCallback((row) => {
                 }
               });
             } else if (useCustom) {
-              const selectedCustomPreset = sceneOptions.transitionCustomPreset || null;
-              const customNotes = selectedCustomPreset?.preservation_notes || sceneOptions.customPreservationNotes || {};
-              const notes = {
-                camera_specifications: customNotes.camera_specifications || customNotes.cameraSpecifications || '',
+              // Check which tab is selected: 'describe' or 'fill'
+              const currentTab = designYourOwnTab[sceneNumber] || 'describe';
+              const isDescribeTab = currentTab === 'describe';
+              const isFillTab = currentTab === 'fill';
+              
+              let userQuery = '';
+              let notes = {};
+              
+              if (isDescribeTab) {
+                // "Describe it" tab: use customDescription as userQuery
+                userQuery = sceneOptions.customDescription || '';
+                // All preservation_notes fields empty, except geometric_preservation defaults to "l"
+                notes = {
+                  camera_specifications: '',
+                  subject_description: '',
+                  action_specification: '',
+                  scene_description: '',
+                  lighting: '',
+                  style_mood: '',
+                  geometric_preservation: '',
+                  transition_type: '',
+                  content_modification: ''
+                };
+              } else if (isFillTab) {
+                // "Fill the points" tab: userQuery is empty, fill all preservation_notes
+                userQuery = '';
+                const customNotes = sceneOptions.customPreservationNotes || {};
+                notes = {
+                  camera_specifications: customNotes.camera_specifications || '',
                 subject_description: customNotes.subject_description || '',
                 action_specification: customNotes.action_specification || '',
                 scene_description: customNotes.scene_description || '',
@@ -3948,28 +4099,23 @@ const getOrderedRefs = useCallback((row) => {
                 style_mood: customNotes.style_mood || '',
                 geometric_preservation: customNotes.geometric_preservation || '',
                 transition_type: customNotes.transition_type || '',
-                content_modification: customNotes.content_modification || '',
+                  content_modification: customNotes.content_modification || ''
               };
+              }
 
-              const userQuery = selectedCustomPreset ? '' : (sceneOptions.customDescription || '');
-              const savecustom = !selectedCustomPreset && !!sceneOptions.rememberCustomPreset;
+              const savecustom = !!sceneOptions.rememberCustomPreset;
               const customName = savecustom ? (sceneOptions.customPresetName || '') : '';
-              const name = selectedCustomPreset?.name || sceneOptions.customPresetName || 'Custom Transition';
-              const promptDescription =
-                selectedCustomPreset?.prompt_description ||
-                selectedCustomPreset?.promptDescription ||
-                userQuery;
 
               transitions.push({
                 is_preset: false,
-                userQuery,
                 parameters: {
-                  name,
+                  name: '',
                   preservation_notes: notes,
-                  prompt_description: promptDescription,
+                  prompt_description: ''
                 },
-                savecustom,
-                custom_name: customName,
+                userQuery: userQuery,
+                savecustom: savecustom,
+                custom_name: customName
               });
             } else if (transitionPresets.length > 0) {
               const firstPreset = transitionPresets[0];
@@ -3988,7 +4134,9 @@ const getOrderedRefs = useCallback((row) => {
           scenePayload.voiceoption = voiceOption;
           scenePayload.transitions = transitions;
         } else {
-          scenePayload.voiceover = null;
+          // For VEO3, also send voiceover if voice URL is selected
+          scenePayload.voiceover = voiceover;
+          scenePayload.voiceoption = voiceOption;
         }
 
         return scenePayload;
@@ -4002,8 +4150,10 @@ const getOrderedRefs = useCallback((row) => {
         scenes: scenesPayload,
       };
 
-      // Call generate-videos-queue API
+      // Log the payload to console
+      console.log('Generate Videos Queue API Payload:', JSON.stringify(body, null, 2));
 
+      // Call generate-videos-queue API
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -4353,39 +4503,21 @@ const getOrderedRefs = useCallback((row) => {
       {isLoading && isPolling && (
         <>
           <div className="absolute inset-0 z-30 bg-white" />
-          <style>{`
-            @keyframes spin-svg {
-              from { transform: rotate(0deg); }
-              to { transform: rotate(360deg); }
-            }
-            .spinner-circle {
-              animation: spin-svg 1.5s linear infinite;
-            }
-          `}</style>
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
-              <div className="relative w-20 h-20">
-                <svg className="w-20 h-20" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="45" stroke="#E5E7EB" strokeWidth="8" fill="none" />
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="45"
-                    stroke="#13008B"
-                    strokeWidth="8"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeDasharray="283"
-                    strokeDashoffset="70"
-                    className="spinner-circle"
-                  />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-3 h-3 bg-[#13008B] rounded-full animate-bounce" />
-                </div>
+              <div className="relative w-20 h-20 flex items-center justify-center">
+                <video
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                >
+                  <source src={LoadingAnimationVideo} type="video/mp4" />
+                </video>
               </div>
               <div className="space-y-2">
-                <p className="text-lg font-semibold text-[#13008B]">Generating your images…</p>
+                <p className="text-lg font-semibold text-[#13008B]">Generating Storyboard</p>
                 <p className="text-sm text-gray-600">
                   This may take a few moments. Please keep this tab open while we finish.
                 </p>
@@ -4451,8 +4583,10 @@ const getOrderedRefs = useCallback((row) => {
                         const modelUpper = String(model || '').toUpperCase();
                         if (isVEO3Model(model)) {
                           setUploadFrames(['background']); // VEO3 default to background (no options shown)
+                        } else if (isANCHORModel(model)) {
+                          setUploadFrames(['opening', 'closing']); // ANCHOR default to opening and closing
                         } else {
-                          // SORA, ANCHOR, PLOTLY, and others default to opening and closing
+                          // SORA, PLOTLY, and others default to opening and closing
                           setUploadFrames(['opening', 'closing']);
                         }
                         setUploadingBackgroundSceneNumber(sceneNum);
@@ -4486,7 +4620,7 @@ const getOrderedRefs = useCallback((row) => {
                       >
                         <Pencil className="w-4 h-4" />
                         <span className="text-sm font-medium">Manage Avatars</span>
-                      </button>
+                </button>
                     )}
                   </>
               )}
@@ -4580,8 +4714,10 @@ const getOrderedRefs = useCallback((row) => {
                         
                         if (avatarUrls.length > 0) {
                           const url = avatarUrls[0];
-                          if (url && isValidImageUrl(url)) {
-                            console.log('✅ Avatar tab: Using avatar URL from version object avatar_urls:', url);
+                          // Double-check: ensure this URL is actually an avatar (not a regular image)
+                          const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                          const normalized = normalizeSimpleUrl(url);
+                          if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
                             return url;
                           }
                         }
@@ -4592,28 +4728,21 @@ const getOrderedRefs = useCallback((row) => {
                   // Priority 2: Try to get from currentRow's imageVersionData (same structure as list area uses)
                   // This is the EXACT same extraction: it.images[current_version].avatar_urls
                   if (currentRow && currentRow.imageVersionData && typeof currentRow.imageVersionData === 'object') {
-                    console.log('🔍 Checking currentRow.imageVersionData:', currentRow.imageVersionData);
-                    
                     let imagesContainer = currentRow.imageVersionData;
                     
                     // Check if imageVersionData has the images container structure (it.images)
                     if (currentRow.imageVersionData.images && typeof currentRow.imageVersionData.images === 'object' && !Array.isArray(currentRow.imageVersionData.images)) {
                       imagesContainer = currentRow.imageVersionData.images;
-                      console.log('🔍 Found images container in row imageVersionData.images');
                     }
                     
                     // Get current version key (same as list area)
                     const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || currentRow?.current_version || 'v1';
-                    console.log('🔍 Row versionKey:', versionKey);
                     
                     // Get version object (same as: imagesContainer[versionKey] in list area)
                     const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
-                    console.log('🔍 Row version object:', verObj);
-                    console.log('🔍 Row version object keys:', Object.keys(verObj));
                     
                     // Extract avatar_urls from version object (EXACT same as list area line 2112)
                     const versionAvatars = verObj?.avatar_urls;
-                    console.log('🔍 Row avatar_urls from version object:', versionAvatars);
                     
                     if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
                       // Map avatar URLs (EXACT same as list area lines 2123-2135)
@@ -4631,12 +4760,12 @@ const getOrderedRefs = useCallback((row) => {
                         );
                       }).filter(url => url && typeof url === 'string' && url.trim());
                       
-                      console.log('🔍 Row mapped avatar URLs:', avatarUrls);
-                      
                       if (avatarUrls.length > 0) {
                         const url = avatarUrls[0];
-                        if (url && isValidImageUrl(url)) {
-                          console.log('✅ Avatar tab: Using avatar URL from row version object avatar_urls:', url);
+                        // Double-check: ensure this URL is actually an avatar (not a regular image)
+                        const avatarSet = getAvatarUrlSet(currentRow);
+                        const normalized = normalizeSimpleUrl(url);
+                        if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
                           return url;
                         }
                       }
@@ -4651,8 +4780,10 @@ const getOrderedRefs = useCallback((row) => {
                   );
                   if (avatarUrlsFromSelected.length > 0) {
                     const url = avatarUrlsFromSelected[0];
-                    if (url && isValidImageUrl(url)) {
-                      console.log('✅ Avatar tab: Using avatar URL from helper function:', url);
+                    // Double-check: ensure this URL is actually an avatar (not a regular image)
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(url);
+                    if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
                       return url;
                     }
                   }
@@ -4672,14 +4803,15 @@ const getOrderedRefs = useCallback((row) => {
                             avatarUrl?.link ||
                             ''
                           ).trim();
-                    if (url && isValidImageUrl(url)) {
-                      console.log('⚠️ Avatar tab: Using avatar URL from selected.avatar_urls (fallback):', url);
+                    // Double-check: ensure this URL is actually an avatar (not a regular image)
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(url);
+                    if (normalized && avatarSet.has(normalized) && isValidImageUrl(url)) {
                       return url;
                     }
                   }
                   
                   // For VEO3 Avatar tab, don't fall through to other image sources - return empty if no avatar found
-                  console.log('❌ Avatar tab: No avatar URL found in session data images');
                   return '';
                 }
 
@@ -4711,7 +4843,9 @@ const getOrderedRefs = useCallback((row) => {
               };
               const getImg2 = () => {
                 const secondSelectedUrl = getSelectedImageUrl(selected.images, 1);
-                const currentRow = rows[selected.index];
+                const currentRow = rows.find(r => 
+                  (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
+                ) || rows[selected.index];
                 const isAvatarModel = selectedModel === 'VEO3';
 
                 if (selectedModel === 'ANCHOR') {
@@ -4719,11 +4853,63 @@ const getOrderedRefs = useCallback((row) => {
                 }
 
                 if (isAvatarModel) {
-                  if (currentRow && Array.isArray(currentRow.refs) && currentRow.refs.length > 0) {
-                    const refUrl = typeof currentRow.refs[0] === 'string' ? currentRow.refs[0].trim() : '';
-                    if (refUrl && isValidImageUrl(refUrl)) return refUrl;
+                  // For VEO3 Image tab, get the actual image (non-avatar)
+                  // Use similar logic to getVeo3ImageTabImages: get ordered refs, filter out avatars
+                  if (currentRow) {
+                    // Get ordered refs from current version
+                    const orderedRefs = getOrderedRefs(currentRow);
+                    
+                    // Extract URLs from selected.images (they are objects with image_url property)
+                    const selectedImageUrls = Array.isArray(selected?.images) 
+                      ? selected.images.map(img => {
+                          if (typeof img === 'string') return img.trim();
+                          return (img?.image_url || img?.imageUrl || img?.url || '').trim();
+                        }).filter(Boolean)
+                      : [];
+                    
+                    // Combine with row.refs and orderedRefs (all should be URLs)
+                    const candidateSources = [
+                      ...(Array.isArray(currentRow?.refs) ? currentRow.refs.map(r => typeof r === 'string' ? r : (r?.image_url || r?.url || '')).filter(Boolean) : []),
+                      ...orderedRefs,
+                      ...selectedImageUrls
+                    ];
+                    
+                    // Remove duplicates using normalizeSimpleUrl for consistency
+                    const uniqueCandidates = [];
+                    const seen = new Set();
+                    candidateSources.forEach((candidate) => {
+                      const normalized = normalizeSimpleUrl(candidate);
+                      if (normalized && !seen.has(normalized)) {
+                        uniqueCandidates.push(normalized);
+                        seen.add(normalized);
+                      }
+                    });
+                    
+                    // Get avatar URL set to filter them out (uses normalizeSimpleUrl internally)
+                    const avatarSet = getAvatarUrlSet(currentRow);
+                    
+                    // Filter out avatars - get only non-avatar images
+                    const nonAvatar = uniqueCandidates.filter((url) => {
+                      const normalized = normalizeSimpleUrl(url);
+                      return normalized && !avatarSet.has(normalized) && isValidImageUrl(normalized);
+                    });
+                    
+                    if (nonAvatar.length > 0) {
+                      return nonAvatar[0];
+                    }
                   }
-                  if (secondSelectedUrl && isValidImageUrl(secondSelectedUrl)) return secondSelectedUrl;
+                  
+                  // Fallback: try secondSelectedUrl if it's not an avatar
+                  if (secondSelectedUrl && isValidImageUrl(secondSelectedUrl)) {
+                    const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
+                    const normalized = normalizeSimpleUrl(secondSelectedUrl);
+                    if (normalized && !avatarSet.has(normalized)) {
+                      return secondSelectedUrl;
+                    }
+                  }
+                  
+                  // Return empty if no non-avatar image found
+                  return '';
                 }
 
                 if (secondSelectedUrl && isValidImageUrl(secondSelectedUrl)) return secondSelectedUrl;
@@ -4744,6 +4930,10 @@ const getOrderedRefs = useCallback((row) => {
               const secondaryLabel = isVeoScene ? 'Avatar' : 'Image 2';
               const primaryFrameIndex = isVeoScene ? 1 : 0;
               const secondaryFrameIndex = isVeoScene ? 0 : 1;
+              
+              // Get current version for cache-busting avatar images
+              const currentVersion = selected?.current_version || selected?.imageVersionData?.current_version || selected?.imageVersionData?.currentVersion || 'v1';
+              const avatarCacheKey = isVeoScene && secondaryImg ? `${activeSceneNumber}_${currentVersion}_${secondaryImg}` : null;
               
               // Dual-image models (VEO3/ANCHOR) show tabs only if both images are available
               // Other models just need a second image
@@ -4974,11 +5164,15 @@ const getOrderedRefs = useCallback((row) => {
                           if (Array.isArray(effectiveTextEls1) && effectiveTextEls1.length > 0) {
                             effectiveTextEls1.forEach((el, idx) => {
                               if (el && typeof el === 'object') {
+                                // Prioritize layout.zIndex - use it if it exists (even if 0), otherwise fallback
+                                const zIndex = typeof el.layout?.zIndex === 'number' 
+                                  ? el.layout.zIndex 
+                                  : (typeof el.z_index === 'number' ? el.z_index : (typeof el.zIndex === 'number' ? el.zIndex : (idx + 1)));
                                 allElements.push({
                                   type: 'text',
                                   element: el,
                                   index: idx,
-                                  zIndex: el.z_index || el.zIndex || (idx + 1) // Text elements start at z-index 1
+                                  zIndex: zIndex
                                 });
                               }
                             });
@@ -4988,11 +5182,15 @@ const getOrderedRefs = useCallback((row) => {
                           if (Array.isArray(overlayEls1) && overlayEls1.length > 0) {
                             overlayEls1.forEach((ov, idx) => {
                               if (ov && typeof ov === 'object') {
+                                // Prioritize layout.zIndex - use it if it exists (even if 0), otherwise fallback
+                                const zIndex = typeof ov.layout?.zIndex === 'number' 
+                                  ? ov.layout.zIndex 
+                                  : (typeof ov.z_index === 'number' ? ov.z_index : (typeof ov.zIndex === 'number' ? ov.zIndex : (100 + idx + 1)));
                                 allElements.push({
                                   type: 'overlay',
                                   element: ov,
                                   index: idx,
-                                  zIndex: ov.z_index || ov.zIndex || (100 + idx + 1) // Overlays start at z-index 101
+                                  zIndex: zIndex
                                 });
                               }
                             });
@@ -5014,52 +5212,53 @@ const getOrderedRefs = useCallback((row) => {
                           if (allElements.length === 0) return null;
                           
                           return (
-                            <div className="absolute inset-0 pointer-events-none">
+                          <div className="absolute inset-0 pointer-events-none">
                               {allElements.map((item, globalIdx) => {
                                 if (item.type === 'text') {
                                   const el = item.element;
-                                  const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
-                                    el.bounding_box || {},
-                                    frameDims1 || selected?.imageDimensions || {}
-                                  );
-                                  const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
-                                  const fontSize =
-                                    fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
-                                      ? fontSizeBase * (Number((frameDims1 || selected?.imageDimensions)?.height) || 1)
-                                      : fontSizeBase;
-                                  const color = el.fill || '#ffffff';
-                                  const fontFamily = el.fontFamily || 'sans-serif';
-                                  const fontWeight = el.fontWeight || 'normal';
-                                  const lineHeight = el.lineHeight || 1.2;
-                                  const shadow = el.effects?.textShadow;
-                                  const textShadow =
-                                    shadow && shadow.enabled
+                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
+                                el.bounding_box || {},
+                                frameDims1 || selected?.imageDimensions || {}
+                              );
+                                  const zIndex = item;
+                              const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+                              const fontSize =
+                                fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
+                                  ? fontSizeBase * (Number((frameDims1 || selected?.imageDimensions)?.height) || 1)
+                                  : fontSizeBase;
+                              const color = el.fill || '#ffffff';
+                              const fontFamily = el.fontFamily || 'sans-serif';
+                              const fontWeight = el.fontWeight || 'normal';
+                              const lineHeight = el.lineHeight || 1.2;
+                              const shadow = el.effects?.textShadow;
+                              const textShadow =
+                                shadow && shadow.enabled
                                       ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
-                                      : undefined;
-                                  const anchor = el.layout?.anchor_point || 'top_left';
-                                  const boxStyle = {
-                                    position: 'absolute',
-                                    left: `${leftPct}%`,
-                                    top: `${topPct}%`,
-                                    width: widthPct != null ? `${widthPct}%` : 'auto',
-                                    height: heightPct != null ? `${heightPct}%` : 'auto',
+                                  : undefined;
+                              const anchor = el.layout?.anchor_point || 'top_left';
+                              const boxStyle = {
+                                position: 'absolute',
+                                left: `${leftPct}%`,
+                                top: `${topPct}%`,
+                                width: widthPct != null ? `${widthPct}%` : 'auto',
+                                height: heightPct != null ? `${heightPct}%` : 'auto',
                                     pointerEvents: 'none',
                                     zIndex: item.zIndex
-                                  };
-                                  const textStyle = {
-                                    color,
-                                    fontFamily,
-                                    fontWeight,
-                                    fontSize,
-                                    lineHeight,
-                                    textShadow,
-                                    whiteSpace: 'pre-wrap'
-                                  };
-                                  return (
+                              };
+                              const textStyle = {
+                                color,
+                                fontFamily,
+                                fontWeight,
+                                fontSize,
+                                lineHeight,
+                                textShadow,
+                                whiteSpace: 'pre-wrap'
+                              };
+                              return (
                                     <div key={`text-1-${item.index}`} style={boxStyle} className="pointer-events-none">
-                                      <div style={textStyle}>{el.text || ''}</div>
-                                    </div>
-                                  );
+                                  <div style={textStyle}>{el.text || ''}</div>
+                                </div>
+                              );
                                 } else if (item.type === 'overlay') {
                                   const ov = item.element;
                                   const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(
@@ -5067,55 +5266,55 @@ const getOrderedRefs = useCallback((row) => {
                                     frameDims1 || selected?.imageDimensions || {}
                                   );
                                   // Check for file_url (for shapes) first, then overlay_image.image_url, then other fields
-                                  let overlayUrl =
+                              let overlayUrl =
                                     ov?.file_url ||
                                     ov?.fileUrl ||
-                                    ov?.overlay_image?.image_url ||
-                                    ov?.overlay_image?.imageUrl ||
-                                    ov?.image_url ||
-                                    ov?.imageUrl ||
-                                    ov?.url ||
-                                    ov?.src ||
-                                    ov?.link ||
-                                    '';
-                                  if (!overlayUrl) return null;
-                                  
-                                  const isChartOverlay = ov?.element_id === 'chart_overlay' || 
-                                                        ov?.label_name === 'Chart' ||
-                                                        overlayUrl.includes('chart') ||
-                                                        (selectedModel === 'PLOTLY' && overlayUrl);
-                                  
-                                  if (isChartOverlay) {
-                                    const separator = overlayUrl.includes('?') ? '&' : '?';
-                                    overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
-                                  }
+                                ov?.overlay_image?.image_url ||
+                                ov?.overlay_image?.imageUrl ||
+                                ov?.image_url ||
+                                ov?.imageUrl ||
+                                ov?.url ||
+                                ov?.src ||
+                                ov?.link ||
+                                '';
+                              if (!overlayUrl) return null;
+                              
+                              const isChartOverlay = ov?.element_id === 'chart_overlay' || 
+                                                    ov?.label_name === 'Chart' ||
+                                                    overlayUrl.includes('chart') ||
+                                                    (selectedModel === 'PLOTLY' && overlayUrl);
+                              
+                              if (isChartOverlay) {
+                                const separator = overlayUrl.includes('?') ? '&' : '?';
+                                overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                              }
 
-                                  const displayUrl = isAnchorModel
-                                    ? getOverlayBackgroundRemovedUrl(overlayUrl)
-                                    : overlayUrl;
-                                  
-                                  const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
-                                  return (
-                                    <img
+                              const displayUrl = isAnchorModel
+                                ? getOverlayBackgroundRemovedUrl(overlayUrl)
+                                : overlayUrl;
+                              
+                              const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
+                              return (
+                                <img
                                       key={`overlay-1-${item.index}-${overlayUrl}`}
-                                      src={displayUrl}
-                                      alt="overlay"
-                                      className="absolute"
-                                      crossOrigin="anonymous"
-                                      style={{
-                                        left: `${leftPct}%`,
-                                        top: `${topPct}%`,
-                                        width: widthPct != null ? `${widthPct}%` : 'auto',
-                                        height: heightPct != null ? `${heightPct}%` : 'auto',
+                                  src={displayUrl}
+                                  alt="overlay"
+                                  className="absolute"
+                                  crossOrigin="anonymous"
+                                  style={{
+                                    left: `${leftPct}%`,
+                                    top: `${topPct}%`,
+                                    width: widthPct != null ? `${widthPct}%` : 'auto',
+                                    height: heightPct != null ? `${heightPct}%` : 'auto',
                                         opacity,
                                         zIndex: item.zIndex
-                                      }}
-                                    />
-                                  );
+                                  }}
+                                />
+                              );
                                 }
                                 return null;
-                              })}
-                            </div>
+                            })}
+                          </div>
                           );
                         })()}
                       </>
@@ -5182,13 +5381,23 @@ const getOrderedRefs = useCallback((row) => {
                         )}
                         {secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() ? (
                           <img
-                            src={secondaryImg}
+                            src={(() => {
+                              // Add cache-busting for avatar images (VEO3) to prevent stale cache
+                              if (isVeoScene && secondaryImg) {
+                                const separator = secondaryImg.includes('?') ? '&' : '?';
+                                // Use scene number and current version to ensure fresh avatar
+                                const cacheBuster = `${separator}_cb=${activeSceneNumber}_${currentVersion}`;
+                                return `${secondaryImg}${cacheBuster}`;
+                              }
+                              return secondaryImg;
+                            })()}
                             alt={`scene-${selected.sceneNumber}-secondary`}
                             className="w-full h-full object-contain"
                             crossOrigin={secondaryImg.startsWith('http') && !secondaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
                               handleNaturalSize(secondaryImg, e.target);
                             }}
+                            key={avatarCacheKey || `avatar-${activeSceneNumber}-${secondaryImg}`}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
@@ -5313,11 +5522,15 @@ const getOrderedRefs = useCallback((row) => {
                           if (Array.isArray(effectiveTextEls2) && effectiveTextEls2.length > 0) {
                             effectiveTextEls2.forEach((el, idx) => {
                               if (el && typeof el === 'object') {
+                                // Prioritize layout.zIndex - use it if it exists (even if 0), otherwise fallback
+                                const zIndex = typeof el.layout?.zIndex === 'number' 
+                                  ? el.layout.zIndex 
+                                  : (typeof el.z_index === 'number' ? el.z_index : (typeof el.zIndex === 'number' ? el.zIndex : (idx + 1)));
                                 allElements.push({
                                   type: 'text',
                                   element: el,
                                   index: idx,
-                                  zIndex: el.z_index || el.zIndex || (idx + 1) // Text elements start at z-index 1
+                                  zIndex: zIndex
                                 });
                               }
                             });
@@ -5327,11 +5540,15 @@ const getOrderedRefs = useCallback((row) => {
                           if (Array.isArray(overlayEls2) && overlayEls2.length > 0) {
                             overlayEls2.forEach((ov, idx) => {
                               if (ov && typeof ov === 'object') {
+                                // Prioritize layout.zIndex - use it if it exists (even if 0), otherwise fallback
+                                const zIndex = typeof ov.layout?.zIndex === 'number' 
+                                  ? ov.layout.zIndex 
+                                  : (typeof ov.z_index === 'number' ? ov.z_index : (typeof ov.zIndex === 'number' ? ov.zIndex : (100 + idx + 1)));
                                 allElements.push({
                                   type: 'overlay',
                                   element: ov,
                                   index: idx,
-                                  zIndex: ov.z_index || ov.zIndex || (100 + idx + 1) // Overlays start at z-index 101
+                                  zIndex: zIndex
                                 });
                               }
                             });
@@ -5353,52 +5570,52 @@ const getOrderedRefs = useCallback((row) => {
                           if (allElements.length === 0) return null;
                           
                           return (
-                            <div className="absolute inset-0 pointer-events-none">
+                          <div className="absolute inset-0 pointer-events-none">
                               {allElements.map((item, globalIdx) => {
                                 if (item.type === 'text') {
                                   const el = item.element;
-                                  const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
-                                    el.bounding_box || {},
-                                    frameDims2 || selected?.imageDimensions || {}
-                                  );
-                                  const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
-                                  const fontSize =
-                                    fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
-                                      ? fontSizeBase * (Number((frameDims2 || selected?.imageDimensions)?.height) || 1)
-                                      : fontSizeBase;
-                                  const color = el.fill || '#ffffff';
-                                  const fontFamily = el.fontFamily || 'sans-serif';
-                                  const fontWeight = el.fontWeight || 'normal';
-                                  const lineHeight = el.lineHeight || 1.2;
-                                  const shadow = el.effects?.textShadow;
-                                  const textShadow =
-                                    shadow && shadow.enabled
+                              const { leftPct, topPct, widthPct, heightPct, mode } = computeBoxPercents(
+                                el.bounding_box || {},
+                                frameDims2 || selected?.imageDimensions || {}
+                              );
+                              const fontSizeBase = Number.isFinite(el.fontSize) ? Number(el.fontSize) : 16;
+                              const fontSize =
+                                fontSizeBase > 0 && fontSizeBase <= 2 && mode === 'normalized'
+                                  ? fontSizeBase * (Number((frameDims2 || selected?.imageDimensions)?.height) || 1)
+                                  : fontSizeBase;
+                              const color = el.fill || '#ffffff';
+                              const fontFamily = el.fontFamily || 'sans-serif';
+                              const fontWeight = el.fontWeight || 'normal';
+                              const lineHeight = el.lineHeight || 1.2;
+                              const shadow = el.effects?.textShadow;
+                              const textShadow =
+                                shadow && shadow.enabled
                                       ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
-                                      : undefined;
-                                  const anchor = el.layout?.anchor_point || 'top_left';
-                                  const boxStyle = {
-                                    position: 'absolute',
-                                    left: `${leftPct}%`,
-                                    top: `${topPct}%`,
-                                    width: widthPct != null ? `${widthPct}%` : 'auto',
-                                    height: heightPct != null ? `${heightPct}%` : 'auto',
+                                  : undefined;
+                              const anchor = el.layout?.anchor_point || 'top_left';
+                              const boxStyle = {
+                                position: 'absolute',
+                                left: `${leftPct}%`,
+                                top: `${topPct}%`,
+                                width: widthPct != null ? `${widthPct}%` : 'auto',
+                                height: heightPct != null ? `${heightPct}%` : 'auto',
                                     pointerEvents: 'none',
                                     zIndex: item.zIndex
-                                  };
-                                  const textStyle = {
-                                    color,
-                                    fontFamily,
-                                    fontWeight,
-                                    fontSize,
-                                    lineHeight,
-                                    textShadow,
-                                    whiteSpace: 'pre-wrap'
-                                  };
-                                  return (
+                              };
+                              const textStyle = {
+                                color,
+                                fontFamily,
+                                fontWeight,
+                                fontSize,
+                                lineHeight,
+                                textShadow,
+                                whiteSpace: 'pre-wrap'
+                              };
+                              return (
                                     <div key={`text-2-${item.index}`} style={boxStyle} className="pointer-events-none">
-                                      <div style={textStyle}>{el.text || ''}</div>
-                                    </div>
-                                  );
+                                  <div style={textStyle}>{el.text || ''}</div>
+                                </div>
+                              );
                                 } else if (item.type === 'overlay') {
                                   const ov = item.element;
                                   const { leftPct, topPct, widthPct, heightPct } = computeBoxPercents(
@@ -5406,55 +5623,55 @@ const getOrderedRefs = useCallback((row) => {
                                     frameDims2 || selected?.imageDimensions || {}
                                   );
                                   // Check for file_url (for shapes) first, then overlay_image.image_url, then other fields
-                                  let overlayUrl =
+                              let overlayUrl =
                                     ov?.file_url ||
                                     ov?.fileUrl ||
-                                    ov?.overlay_image?.image_url ||
-                                    ov?.overlay_image?.imageUrl ||
-                                    ov?.image_url ||
-                                    ov?.imageUrl ||
-                                    ov?.url ||
-                                    ov?.src ||
-                                    ov?.link ||
-                                    '';
-                                  if (!overlayUrl) return null;
-                                  
-                                  const isChartOverlay = ov?.element_id === 'chart_overlay' || 
-                                                        ov?.label_name === 'Chart' ||
-                                                        overlayUrl.includes('chart') ||
-                                                        (selectedModel === 'PLOTLY' && overlayUrl);
-                                  
-                                  if (isChartOverlay) {
-                                    const separator = overlayUrl.includes('?') ? '&' : '?';
-                                    overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
-                                  }
+                                ov?.overlay_image?.image_url ||
+                                ov?.overlay_image?.imageUrl ||
+                                ov?.image_url ||
+                                ov?.imageUrl ||
+                                ov?.url ||
+                                ov?.src ||
+                                ov?.link ||
+                                '';
+                              if (!overlayUrl) return null;
+                              
+                              const isChartOverlay = ov?.element_id === 'chart_overlay' || 
+                                                    ov?.label_name === 'Chart' ||
+                                                    overlayUrl.includes('chart') ||
+                                                    (selectedModel === 'PLOTLY' && overlayUrl);
+                              
+                              if (isChartOverlay) {
+                                const separator = overlayUrl.includes('?') ? '&' : '?';
+                                overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
+                              }
 
-                                  const displayUrl = isAnchorModel
-                                    ? getOverlayBackgroundRemovedUrl(overlayUrl)
-                                    : overlayUrl;
-                                  
-                                  const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
-                                  return (
-                                    <img
+                              const displayUrl = isAnchorModel
+                                ? getOverlayBackgroundRemovedUrl(overlayUrl)
+                                : overlayUrl;
+                              
+                              const opacity = typeof ov.opacity === 'number' ? ov.opacity : 1;
+                              return (
+                                <img
                                       key={`overlay-2-${item.index}-${overlayUrl}`}
-                                      src={displayUrl}
-                                      alt="overlay"
-                                      className="absolute"
-                                      crossOrigin="anonymous"
-                                      style={{
-                                        left: `${leftPct}%`,
-                                        top: `${topPct}%`,
-                                        width: widthPct != null ? `${widthPct}%` : 'auto',
-                                        height: heightPct != null ? `${heightPct}%` : 'auto',
+                                  src={displayUrl}
+                                  alt="overlay"
+                                  className="absolute"
+                                  crossOrigin="anonymous"
+                                  style={{
+                                    left: `${leftPct}%`,
+                                    top: `${topPct}%`,
+                                    width: widthPct != null ? `${widthPct}%` : 'auto',
+                                    height: heightPct != null ? `${heightPct}%` : 'auto',
                                         opacity,
                                         zIndex: item.zIndex
-                                      }}
-                                    />
-                                  );
+                                  }}
+                                />
+                              );
                                 }
                                 return null;
-                              })}
-                            </div>
+                            })}
+                          </div>
                           );
                         })()}
                       </>
@@ -5472,7 +5689,7 @@ const getOrderedRefs = useCallback((row) => {
               
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-sm text-gray-600">Description</label>
+                <label className="text-sm text-gray-600">Description</label>
                   {(() => {
                     const modelUpper = String(selected?.model || '').toUpperCase();
                     const isVEO3 = modelUpper === 'VEO3';
@@ -5561,39 +5778,82 @@ const getOrderedRefs = useCallback((row) => {
                             throw new Error('Missing user_id or session_id');
                           }
                           
-                          // Construct minimal user and session objects
-                          const user = {
-                            id: user_id,
-                            email: '',
-                            display_name: '',
-                            created_at: '',
-                            avatar_url: '',
-                            folder_url: '',
-                            brand_identity: {},
-                            tone_and_voice: {},
-                            look_and_feel: {},
-                            templates: [],
-                            voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
-                          };
+                          // First, fetch the complete user session data
+                          const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id, session_id })
+                          });
                           
-                          const session = {
-                            session_id: session_id,
-                            user_id: user_id,
-                            title: '',
-                            video_duration: '60',
-                            created_at: '',
-                            updated_at: '',
-                            document_summary: [],
-                            messages: [],
-                            total_summary: [],
-                            scripts: [],
-                            videos: [],
-                            images: [],
-                            final_link: {},
-                            videoType: '',
-                            brand_style_interpretation: {},
-                            ...sessionAssets
-                          };
+                          const sessionDataText = await sessionDataResp.text();
+                          let sessionData;
+                          try {
+                            sessionData = JSON.parse(sessionDataText);
+                          } catch {
+                            sessionData = sessionDataText;
+                          }
+                          
+                          if (!sessionDataResp.ok) {
+                            throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
+                          }
+                          
+                          // Extract the complete session and user objects from the response
+                          const fullSessionData = sessionData?.session_data || sessionData?.session || {};
+                          const fullUserData = sessionData?.user_data || sessionData?.user || {};
+                          
+                          // Normalize session object: ensure session_id exists (convert id to session_id if needed)
+                          let normalizedSession = {};
+                          if (fullSessionData && Object.keys(fullSessionData).length > 0) {
+                            normalizedSession = { ...fullSessionData };
+                            // If session has 'id' but no 'session_id', use 'id' as 'session_id'
+                            if (normalizedSession.id && !normalizedSession.session_id) {
+                              normalizedSession.session_id = normalizedSession.id;
+                              delete normalizedSession.id;
+                            }
+                            // Ensure session_id is set
+                            if (!normalizedSession.session_id) {
+                              normalizedSession.session_id = session_id;
+                            }
+                          } else {
+                            // Fallback to minimal session object
+                            normalizedSession = {
+                              session_id: session_id,
+                              user_id: user_id,
+                              title: '',
+                              video_duration: '60',
+                              created_at: '',
+                              updated_at: '',
+                              document_summary: [],
+                              messages: [],
+                              total_summary: [],
+                              scripts: [],
+                              videos: [],
+                              images: [],
+                              final_link: {},
+                              videoType: '',
+                              brand_style_interpretation: {},
+                              ...sessionAssets
+                            };
+                          }
+                          
+                          const session = normalizedSession;
+                          
+                          // Use the complete user object, or fallback to minimal if not available
+                          const user = fullUserData && Object.keys(fullUserData).length > 0
+                            ? fullUserData
+                            : {
+                                id: user_id,
+                                email: '',
+                                display_name: '',
+                                created_at: '',
+                                avatar_url: '',
+                                folder_url: '',
+                                brand_identity: {},
+                                tone_and_voice: {},
+                                look_and_feel: {},
+                                templates: [],
+                                voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+                              };
                           
                           const payload = {
                             user,
@@ -5687,7 +5947,7 @@ const getOrderedRefs = useCallback((row) => {
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-sm text-gray-600">Narration</label>
+                <label className="text-sm text-gray-600">Narration</label>
                   {editingField !== 'narration' ? (
                     <button
                       type="button"
@@ -5729,39 +5989,82 @@ const getOrderedRefs = useCallback((row) => {
                             throw new Error('Missing user_id or session_id');
                           }
                           
-                          // Construct minimal user and session objects
-                          const user = {
-                            id: user_id,
-                            email: '',
-                            display_name: '',
-                            created_at: '',
-                            avatar_url: '',
-                            folder_url: '',
-                            brand_identity: {},
-                            tone_and_voice: {},
-                            look_and_feel: {},
-                            templates: [],
-                            voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
-                          };
+                          // First, fetch the complete user session data
+                          const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id, session_id })
+                          });
                           
-                          const session = {
-                            session_id: session_id,
-                            user_id: user_id,
-                            title: '',
-                            video_duration: '60',
-                            created_at: '',
-                            updated_at: '',
-                            document_summary: [],
-                            messages: [],
-                            total_summary: [],
-                            scripts: [],
-                            videos: [],
-                            images: [],
-                            final_link: {},
-                            videoType: '',
-                            brand_style_interpretation: {},
-                            ...sessionAssets
-                          };
+                          const sessionDataText = await sessionDataResp.text();
+                          let sessionData;
+                          try {
+                            sessionData = JSON.parse(sessionDataText);
+                          } catch {
+                            sessionData = sessionDataText;
+                          }
+                          
+                          if (!sessionDataResp.ok) {
+                            throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
+                          }
+                          
+                          // Extract the complete session and user objects from the response
+                          const fullSessionData = sessionData?.session_data || sessionData?.session || {};
+                          const fullUserData = sessionData?.user_data || sessionData?.user || {};
+                          
+                          // Normalize session object: ensure session_id exists (convert id to session_id if needed)
+                          let normalizedSession = {};
+                          if (fullSessionData && Object.keys(fullSessionData).length > 0) {
+                            normalizedSession = { ...fullSessionData };
+                            // If session has 'id' but no 'session_id', use 'id' as 'session_id'
+                            if (normalizedSession.id && !normalizedSession.session_id) {
+                              normalizedSession.session_id = normalizedSession.id;
+                              delete normalizedSession.id;
+                            }
+                            // Ensure session_id is set
+                            if (!normalizedSession.session_id) {
+                              normalizedSession.session_id = session_id;
+                            }
+                          } else {
+                            // Fallback to minimal session object
+                            normalizedSession = {
+                              session_id: session_id,
+                              user_id: user_id,
+                              title: '',
+                              video_duration: '60',
+                              created_at: '',
+                              updated_at: '',
+                              document_summary: [],
+                              messages: [],
+                              total_summary: [],
+                              scripts: [],
+                              videos: [],
+                              images: [],
+                              final_link: {},
+                              videoType: '',
+                              brand_style_interpretation: {},
+                              ...sessionAssets
+                            };
+                          }
+                          
+                          const session = normalizedSession;
+                          
+                          // Use the complete user object, or fallback to minimal if not available
+                          const user = fullUserData && Object.keys(fullUserData).length > 0
+                            ? fullUserData
+                            : {
+                                id: user_id,
+                                email: '',
+                                display_name: '',
+                                created_at: '',
+                                avatar_url: '',
+                                folder_url: '',
+                                brand_identity: {},
+                                tone_and_voice: {},
+                                look_and_feel: {},
+                                templates: [],
+                                voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+                              };
                           
                           const payload = {
                             user,
@@ -6321,7 +6624,15 @@ const getOrderedRefs = useCallback((row) => {
                                 <div className="border rounded-lg p-3 bg-gray-50">
                                   <button
                                     type="button"
-                                    onClick={() => toggleAdvancedOptions('designYourOwn')}
+                                    onClick={() => {
+                                      const isCurrentlyOpen = showAdvancedOptions[sceneNumber]?.designYourOwn;
+                                      toggleAdvancedOptions('designYourOwn');
+                                      // Set transitionCustom to 'custom' and clear preset when opening Design Your Own
+                                      if (!isCurrentlyOpen) {
+                                        updateSceneOption('transitionCustom', 'custom');
+                                        updateSceneOption('transitionPreset', null);
+                                      }
+                                    }}
                                     className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
                                   >
                                     <span>Design Your Own</span>
@@ -6333,7 +6644,12 @@ const getOrderedRefs = useCallback((row) => {
                                       <div className="flex border-b border-gray-200">
                                         <button
                                           type="button"
-                                          onClick={() => setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'describe' }))}
+                                          onClick={() => {
+                                            setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'describe' }));
+                                            // Clear preset selection when switching to Design Your Own
+                                            updateSceneOption('transitionPreset', null);
+                                            updateSceneOption('transitionCustom', 'custom');
+                                          }}
                                           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${(designYourOwnTab[sceneNumber] || 'describe') === 'describe'
                                               ? 'border-[#13008B] text-[#13008B]'
                                               : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -6343,7 +6659,12 @@ const getOrderedRefs = useCallback((row) => {
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'fill' }))}
+                                          onClick={() => {
+                                            setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'fill' }));
+                                            // Clear preset selection when switching to Design Your Own
+                                            updateSceneOption('transitionPreset', null);
+                                            updateSceneOption('transitionCustom', 'custom');
+                                          }}
                                           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${designYourOwnTab[sceneNumber] === 'fill'
                                               ? 'border-[#13008B] text-[#13008B]'
                                               : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -6376,10 +6697,17 @@ const getOrderedRefs = useCallback((row) => {
                                               <input
                                                 type="text"
                                                 value={sceneOptions.customPreservationNotes?.lighting || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                onChange={(e) => {
+                                                  updateSceneOption('customPreservationNotes', {
                                                   ...sceneOptions.customPreservationNotes,
                                                   lighting: e.target.value
-                                                })}
+                                                  });
+                                                  // Clear preset selection when user starts typing in Design Your Own
+                                                  if (e.target.value.trim().length > 0) {
+                                                    updateSceneOption('transitionPreset', null);
+                                                    updateSceneOption('transitionCustom', 'custom');
+                                                  }
+                                                }}
                                                 placeholder="e.g., Clean minimal lighting, flat graphic style"
                                                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
                                               />
@@ -6486,8 +6814,7 @@ const getOrderedRefs = useCallback((row) => {
                                           </div>
                                         )}
 
-                                        {/* Remember custom design as preset */}
-                                        {hasCustomDesignInput && (
+                                        {/* Save this preset */}
                                           <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
                                             <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                                               <input
@@ -6496,7 +6823,7 @@ const getOrderedRefs = useCallback((row) => {
                                                 onChange={(e) => updateSceneOption('rememberCustomPreset', e.target.checked)}
                                                 className="w-4 h-4 text-[#13008B]"
                                               />
-                                              <span>Remember this design as a preset</span>
+                                            <span>Save this preset</span>
                                             </label>
                                             {sceneOptions.rememberCustomPreset && (
                                               <div className="mt-1">
@@ -6511,7 +6838,6 @@ const getOrderedRefs = useCallback((row) => {
                                               </div>
                                             )}
                                           </div>
-                                        )}
                                       </div>
                                     </div>
                                   )}
@@ -6555,27 +6881,6 @@ const getOrderedRefs = useCallback((row) => {
                     const imageVersionData = r?.imageVersionData || null;
                     const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || r?.current_version || 'v1';
                     
-                    // Console log current version in images object and scripts array
-                    console.log('═══════════════════════════════════════════════════════════');
-                    console.log(`🎯 SCENE SELECTED: Scene ${r.scene_number || r.sceneNumber || i + 1}`);
-                    console.log('═══════════════════════════════════════════════════════════');
-                    console.log(`📦 CURRENT_VERSION in images object:`, imagesCurrentVersion);
-                    console.log(`📋 Images Object (imageVersionData):`, imageVersionData);
-                    if (imageVersionData && imagesCurrentVersion) {
-                      const versionObj = imageVersionData[imagesCurrentVersion] || imageVersionData.v1 || {};
-                      console.log(`📋 Version Object (${imagesCurrentVersion}):`, JSON.stringify(versionObj, null, 2));
-                    }
-                    console.log(`📜 Scripts Array:`, scriptsData);
-                    if (scriptsData && scriptsData.length > 0) {
-                      scriptsData.forEach((script, idx) => {
-                        const scriptVersion = script?.current_version || script?.currentVersion || 'v1';
-                        console.log(`📜 Script ${idx + 1} - Current Version:`, scriptVersion);
-                        if (scriptVersion && script[scriptVersion]) {
-                          console.log(`📜 Script ${idx + 1} - Version Object (${scriptVersion}):`, JSON.stringify(script[scriptVersion], null, 2));
-                        }
-                      });
-                    }
-                    console.log('═══════════════════════════════════════════════════════════');
                     
                     // Get avatar URLs from current version of image object for VEO3 scenes
                     const avatarUrlsFromVersion5 = getAvatarUrlsFromImageVersion(
@@ -6733,15 +7038,15 @@ const getOrderedRefs = useCallback((row) => {
                 />
               </div>
 
-              {/* Frame Selection - Show for all models except VEO3/ANCHOR */}
+              {/* Frame Selection - Show for all models except VEO3 */}
               {regeneratingSceneNumber && (() => {
                 const model = getSceneModel(regeneratingSceneNumber);
                 const modelUpper = String(model || '').toUpperCase();
                 const isVEO3 = modelUpper === 'VEO3';
-                const isANCHOR = modelUpper === 'ANCHOR';
                 
-                // Show frame selection for all models except VEO3/ANCHOR (which use background)
-                if (!isVEO3 && !isANCHOR) {
+                // Show frame selection for all models except VEO3 (which uses background)
+                // ANCHOR and other models use opening/closing frames
+                if (!isVEO3) {
                   return (
                     <div className="mb-6">
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -6820,38 +7125,18 @@ const getOrderedRefs = useCallback((row) => {
               {isRegenerating && (
                 <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
                   <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                    <div className="relative w-16 h-16">
-                      <svg className="w-16 h-16" viewBox="0 0 100 100">
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          stroke="#E5E7EB"
-                          strokeWidth="8"
-                          fill="none"
-                        />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          stroke="#13008B"
-                          strokeWidth="8"
-                          fill="none"
-                          strokeLinecap="round"
-                          strokeDasharray="283"
-                          strokeDashoffset="70"
-                          className="animate-spin"
-                          style={{
-                            transformOrigin: '50% 50%',
-                            animation: 'spin 1.5s linear infinite'
-                          }}
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-3 h-3 bg-[#13008B] rounded-full" />
-                      </div>
+                    <div className="relative w-16 h-16 flex items-center justify-center">
+                      <video
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="w-full h-full object-contain"
+                      >
+                        <source src={LoadingAnimationVideo} type="video/mp4" />
+                      </video>
                     </div>
-                    <p className="text-lg font-semibold text-[#13008B]">Regenerating Image...</p>
+                    <p className="text-lg font-semibold text-[#13008B]">Regenerating Storyboard</p>
                     <p className="text-sm text-gray-600">Please wait while we create your new image...</p>
                   </div>
                 </div>
@@ -6863,13 +7148,13 @@ const getOrderedRefs = useCallback((row) => {
                   onClick={handleGenerateImage}
                   disabled={(() => {
                     if (isRegenerating || !regenerateUserQuery.trim()) return true;
-                    // For non-VEO3/ANCHOR models, require at least one frame selected
+                    // For non-VEO3 models, require at least one frame selected
+                    // VEO3 uses background, ANCHOR and others use opening/closing frames
                     if (regeneratingSceneNumber) {
                       const model = getSceneModel(regeneratingSceneNumber);
                       const modelUpper = String(model || '').toUpperCase();
                       const isVEO3 = modelUpper === 'VEO3';
-                      const isANCHOR = modelUpper === 'ANCHOR';
-                      if (!isVEO3 && !isANCHOR && regenerateFrames.length === 0) return true;
+                      if (!isVEO3 && regenerateFrames.length === 0) return true;
                     }
                     return false;
                   })()}
@@ -6977,10 +7262,10 @@ const getOrderedRefs = useCallback((row) => {
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                               <polyline points="20 6 9 17 4 12"></polyline>
                             </svg>
-                          </div>
-                        )}
-                      </div>
-                    );
+        </div>
+      )}
+    </div>
+  );
                   })}
                 </div>
                 <p className="text-xs text-gray-500 mt-3">

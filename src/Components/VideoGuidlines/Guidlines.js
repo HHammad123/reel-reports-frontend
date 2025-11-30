@@ -1499,22 +1499,22 @@ const Guidlines = () => {
                             
                             return sortedColors.map((color) => {
                               const isSelected = isColorSelected(color);
-                              return (
-                                <button
-                                  key={color}
-                                  onClick={() => toggleColor(color)}
-                                  className={`w-8 h-8 rounded-full border-2 ${isSelected
-                                    ? "border-blue-500 ring-2 ring-blue-300"
-                                    : "border-gray-300"
-                                    } flex items-center justify-center transition-all duration-150`}
-                                  style={{ backgroundColor: color }}
-                                  title={color}
-                                >
-                                  {isSelected && (
-                                    <span className="text-white text-xs">✓</span>
-                                  )}
-                                </button>
-                              );
+                            return (
+                              <button
+                                key={color}
+                                onClick={() => toggleColor(color)}
+                                className={`w-8 h-8 rounded-full border-2 ${isSelected
+                                  ? "border-blue-500 ring-2 ring-blue-300"
+                                  : "border-gray-300"
+                                  } flex items-center justify-center transition-all duration-150`}
+                                style={{ backgroundColor: color }}
+                                title={color}
+                              >
+                                {isSelected && (
+                                  <span className="text-white text-xs">✓</span>
+                                )}
+                              </button>
+                            );
                             });
                           })()}
                         </div>

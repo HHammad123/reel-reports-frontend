@@ -1,12 +1,13 @@
 import React from 'react'
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { FaImage, FaPlay, FaThLarge, FaDollarSign, FaUsers, FaUserPlus, FaBars } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
 import { useSidebar } from '../Contexts/SidebarContext';
-import LogoImage from "../asset/mainLogo.png"
+import LogoImage from "../asset/mainLogo.png";
+import { MoreVertical } from 'lucide-react';
 
 const Sidebar = () => {
    const { sidebarOpen, setSidebarOpen } = useSidebar();
@@ -29,6 +30,17 @@ const Sidebar = () => {
   const [sessions, setSessions] = useState([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsError, setSessionsError] = useState('');
+  
+  // Menu and dialog states
+  const [openMenuId, setOpenMenuId] = useState(null);
+  const [showRenameDialog, setShowRenameDialog] = useState(false);
+  const [renameSessionId, setRenameSessionId] = useState(null);
+  const [renameNewTitle, setRenameNewTitle] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteSessionId, setDeleteSessionId] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const menuRef = useRef(null);
 
   const fetchSessions = useCallback(async () => {
       try {
@@ -88,6 +100,129 @@ const Sidebar = () => {
     window.addEventListener('session-title-updated', onTitleUpdated);
     return () => window.removeEventListener('session-title-updated', onTitleUpdated);
   }, [fetchSessions]);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setOpenMenuId(null);
+      }
+    };
+    if (openMenuId) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [openMenuId]);
+
+  // Handle rename session
+  const handleRenameSession = async () => {
+    if (!renameSessionId || !renameNewTitle.trim()) {
+      alert('Please enter a valid session name');
+      return;
+    }
+    
+    try {
+      setIsRenaming(true);
+      const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
+      if (!token) {
+        alert('Please login to rename session.');
+        return;
+      }
+      
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: renameSessionId,
+          user_id: token,
+          new_title: renameNewTitle.trim()
+        })
+      });
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`Rename failed: ${response.status} ${text}`);
+      }
+      
+      // Refresh sessions list
+      await fetchSessions();
+      
+      // Close dialog and reset state
+      setShowRenameDialog(false);
+      setRenameSessionId(null);
+      setRenameNewTitle('');
+      setOpenMenuId(null);
+    } catch (error) {
+      console.error('Failed to rename session:', error);
+      alert('Failed to rename session. Please try again.');
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
+  // Handle delete session
+  const handleDeleteSession = async () => {
+    if (!deleteSessionId) return;
+    
+    try {
+      setIsDeleting(true);
+      const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
+      if (!token) {
+        alert('Please login to delete session.');
+        return;
+      }
+      
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: deleteSessionId,
+          user_id: token
+        })
+      });
+      
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`Delete failed: ${response.status} ${text}`);
+      }
+      
+      // If deleted session is the current one, navigate away
+      const currentSessionId = localStorage.getItem('session_id');
+      if (deleteSessionId === currentSessionId) {
+        localStorage.removeItem('session_id');
+        navigate('/');
+      }
+      
+      // Refresh sessions list
+      await fetchSessions();
+      
+      // Close dialog and reset state
+      setShowDeleteDialog(false);
+      setDeleteSessionId(null);
+      setOpenMenuId(null);
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      alert('Failed to delete session. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Don't auto-close sidebar on pathname change since it's now always partially visible
   // React.useEffect(() => {
@@ -291,24 +426,77 @@ const Sidebar = () => {
                       // Also check localStorage as fallback
                       const localStorageSessionId = localStorage.getItem('session_id');
                       const isActive = id && (id === urlSessionId || id === localStorageSessionId);
+                      const isMenuOpen = openMenuId === id;
+                      
                       return (
-                        <button
+                        <div
                           key={id || index}
-                          type="button"
-                          className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white transition ${
+                          className="relative group"
+                        >
+                          <div className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white transition flex items-center justify-between gap-2 ${
                             isActive 
                               ? 'bg-white/25 shadow-lg shadow-black/10 font-medium' 
                               : 'bg-white/10 hover:bg-white/20'
-                          }`}
-                          onClick={() => {
-                            if (!id) return;
-                            try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
-                            navigate(`/chat/${id}`);
-                          }}
-                          title={label}
-                        >
-                          {label}
-                        </button>
+                          }`}>
+                            <button
+                              type="button"
+                              className="flex-1 truncate text-left"
+                              onClick={() => {
+                                if (!id) return;
+                                try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
+                                navigate(`/chat/${id}`);
+                              }}
+                              title={label}
+                            >
+                              {label}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMenuId(isMenuOpen ? null : id);
+                              }}
+                              className="flex-shrink-0 p-1 rounded hover:bg-white/20 transition-colors"
+                              title="More options"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </button>
+                          </div>
+                          
+                          {/* Dropdown Menu */}
+                          {isMenuOpen && (
+                            <div
+                              ref={menuRef}
+                              className="absolute right-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] overflow-hidden"
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenameSessionId(id);
+                                  setRenameNewTitle(label);
+                                  setShowRenameDialog(true);
+                                  setOpenMenuId(null);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                              >
+                                Rename
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteSessionId(id);
+                                  setShowDeleteDialog(true);
+                                  setOpenMenuId(null);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -328,6 +516,111 @@ const Sidebar = () => {
           </div>
         </div>
       </aside>
+
+      {/* Rename Dialog */}
+      {showRenameDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4">
+            <div className="p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-4">Rename Session</h3>
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Session Name
+                </label>
+                <input
+                  type="text"
+                  value={renameNewTitle}
+                  onChange={(e) => setRenameNewTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isRenaming) {
+                      handleRenameSession();
+                    } else if (e.key === 'Escape') {
+                      setShowRenameDialog(false);
+                      setRenameSessionId(null);
+                      setRenameNewTitle('');
+                    }
+                  }}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                  placeholder="Enter session name"
+                  autoFocus
+                  disabled={isRenaming}
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRenameDialog(false);
+                    setRenameSessionId(null);
+                    setRenameNewTitle('');
+                  }}
+                  disabled={isRenaming}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRenameSession}
+                  disabled={isRenaming || !renameNewTitle.trim()}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#13008B] rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isRenaming ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      Renaming...
+                    </>
+                  ) : (
+                    'Rename'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4">
+            <div className="p-6">
+              <h3 className="text-xl font-semibold text-gray-800 mb-2">Delete Session</h3>
+              <p className="text-sm text-gray-600 mb-6">
+                Are you sure you want to delete this session? This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteDialog(false);
+                    setDeleteSessionId(null);
+                  }}
+                  disabled={isDeleting}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteSession}
+                  disabled={isDeleting}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isDeleting ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
