@@ -354,6 +354,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   const recordedChunksRef = useRef([]);
   const exportCanvasRef = useRef(null);
   const overlayElementCacheRef = useRef(new Map()); // Cache for overlay elements
+  const totalDurationRef = useRef(0); // Use ref to avoid dependency issues in playback loop
+  const isPlayingRef = useRef(false); // Use ref to track playing state in loop
+  const globalTimeRef = useRef(0); // Use ref to track time without triggering re-renders
+  const lastStateUpdateRef = useRef(0); // Track last time we updated state
 
   // --- Derived State: The Active Clips for all layers ---
     const { v1ClipInfo, activeOverlayClips, v1TotalDuration } = useMemo(() => {
@@ -361,15 +365,19 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     let v1ClipInfo = null;
     const EPSILON = 0.05; // small tolerance to avoid flicker from float rounding
 
+    // Use ref for globalTime to avoid dependency issues - fallback to state if ref not initialized
+    // Define at the top so it's available throughout the entire useMemo
+    const currentGlobalTime = globalTimeRef.current !== undefined ? globalTimeRef.current : globalTime;
+
     // --- V1 (Primary) Track Logic ---
     tracks[0].forEach((clip, i) => {
       const trimmedDuration = clip.trimEnd - clip.trimStart;
       const speed = clip.speed || 1.0;
       const effectiveDuration = trimmedDuration / speed; // Faster speed = shorter timeline duration
       
-      if (globalTime >= accumulatedTime && globalTime < accumulatedTime + effectiveDuration) {
+      if (currentGlobalTime >= accumulatedTime && currentGlobalTime < accumulatedTime + effectiveDuration) {
         // Calculate local time accounting for speed
-        const timelineOffset = globalTime - accumulatedTime;
+        const timelineOffset = currentGlobalTime - accumulatedTime;
         const localTime = clip.trimStart + (timelineOffset * speed);
         
         v1ClipInfo = { 
@@ -436,7 +444,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         if (overlayClip.primaryClipIndex !== undefined && overlayClip.primaryClipIndex >= 0) {
           matchedPrimaryClip = primaryClipPositions[overlayClip.primaryClipIndex] || null;
           if (matchedPrimaryClip) {
-            console.log(`📊 Chart overlay ${overlayClip.id} matched by index ${overlayClip.primaryClipIndex} to primary clip ${matchedPrimaryClip.clip.id}`);
           }
         }
 
@@ -448,7 +455,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           
           if (matchesActiveClip) {
             matchedPrimaryClip = activePrimaryClip;
-            console.log(`📊 Chart overlay ${overlayClip.id} matched active primary clip ${activePrimaryClip.clip.id}`);
           }
         }
         
@@ -456,7 +462,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         if (!matchedPrimaryClip && overlayClip.sourceItemId) {
           matchedPrimaryClip = primaryClipMapBySourceItemId.get(overlayClip.sourceItemId);
           if (matchedPrimaryClip) {
-            console.log(`✅ Chart overlay ${overlayClip.id} DIRECTLY matched by sourceItemId "${overlayClip.sourceItemId}" to primary clip ${matchedPrimaryClip.clip.id}`);
           }
         }
         
@@ -464,7 +469,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         if (!matchedPrimaryClip && overlayClip.primaryClipId) {
           matchedPrimaryClip = primaryClipMapById.get(overlayClip.primaryClipId);
           if (matchedPrimaryClip) {
-            console.log(`📊 Chart overlay ${overlayClip.id} matched by primaryClipId to primary clip ${overlayClip.primaryClipId}`);
           }
         }
         
@@ -474,22 +478,8 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           overlayEndTime = matchedPrimaryClip.endTime;
           primaryClipDuration = matchedPrimaryClip.endTime - matchedPrimaryClip.startTime;
           // Check if the primary clip is active at the current globalTime
-          isPrimaryClipActive = (globalTime + EPSILON) >= matchedPrimaryClip.startTime && (globalTime - EPSILON) < matchedPrimaryClip.endTime;
+          isPrimaryClipActive = (currentGlobalTime + EPSILON) >= matchedPrimaryClip.startTime && (currentGlobalTime - EPSILON) < matchedPrimaryClip.endTime;
           
-          console.log(`📊 Chart overlay ${overlayClip.id} timing:`, {
-            sourceItemId: overlayClip.sourceItemId,
-            primaryClipId: overlayClip.primaryClipId,
-            primaryClipIndex: overlayClip.primaryClipIndex,
-            matchedPrimaryClipId: matchedPrimaryClip.clip.id,
-            matchedPrimaryClipSourceItemId: matchedPrimaryClip.clip.sourceItemId,
-            primaryClipStartTime: matchedPrimaryClip.startTime,
-            primaryClipEndTime: matchedPrimaryClip.endTime,
-            primaryClipDuration,
-            overlayStartTime,
-            overlayEndTime,
-            globalTime,
-            isPrimaryClipActive
-          });
         } else if (overlayClip.sourceItemId || overlayClip.primaryClipId || (overlayClip.primaryClipIndex !== undefined && overlayClip.primaryClipIndex >= 0)) {
           // Chart overlay but primary clip not found - fall back to its own timelineStartTime if available
           overlayStartTime = overlayClip.timelineStartTime ?? overlayStartTime;
@@ -505,12 +495,12 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         // For chart overlays, must match primary clip timing exactly
         // For other overlays, check if globalTime is within the overlay's time range
         const isActive = isPrimaryClipActive && 
-          (globalTime + EPSILON) >= overlayStartTime && 
-          (globalTime - EPSILON) < overlayEndTime;
+          (currentGlobalTime + EPSILON) >= overlayStartTime && 
+          (currentGlobalTime - EPSILON) < overlayEndTime;
         
         if (isActive) {
           // Calculate local time for the overlay
-          const timeOffset = globalTime - overlayStartTime;
+          const timeOffset = currentGlobalTime - overlayStartTime;
           const overlayTimelineDuration = Math.max(0.001, effectiveDuration);
           const shouldLoop = matchedPrimaryClip && !overlayClip.isChartOverlay; // Chart overlays should never loop to avoid flicker
           const playbackOffset = shouldLoop
@@ -523,15 +513,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           );
           
           // For chart overlays, log matching details
-          if (overlayClip.primaryClipIndex !== undefined) {
-            console.log(`✅ Chart overlay ${overlayClip.id} is ACTIVE:`, {
-              globalTime,
-              overlayStartTime,
-              overlayEndTime,
-              timeOffset,
-              localTime: clampedLocalTime,
-              primaryClipIndex: overlayClip.primaryClipIndex
-            });
+          if (overlayClip.primaryClipIndex !== undefined || overlayClip.isChartOverlay) {
           }
           
           activeOverlayClips.push({
@@ -543,19 +525,12 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           });
         } else if (overlayClip.primaryClipIndex !== undefined) {
           // Log why chart overlay is not active
-          console.log(`❌ Chart overlay ${overlayClip.id} is NOT ACTIVE:`, {
-            globalTime,
-            overlayStartTime,
-            overlayEndTime,
-            isPrimaryClipActive,
-            primaryClipIndex: overlayClip.primaryClipIndex
-          });
         }
       }
     }
     
     return { v1ClipInfo, activeOverlayClips, v1TotalDuration: calculatedV1TotalDuration };
-  }, [globalTime, tracks]);
+  }, [globalTime, tracks]); // Keep globalTime in deps for initial render, but use ref inside
 
   // Backward compatibility: v2ClipInfo for existing code
   const v2ClipInfo = activeOverlayClips[0] || null;
@@ -662,8 +637,18 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   useEffect(() => {
     if (v1TotalDuration !== totalDuration) {
       setTotalDuration(v1TotalDuration);
+      totalDurationRef.current = v1TotalDuration; // Update ref as well
     }
   }, [v1TotalDuration, totalDuration]);
+  
+  // Update refs when state changes
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+  
+  useEffect(() => {
+    totalDurationRef.current = totalDuration;
+  }, [totalDuration]);
 
   // --- Handlers (File Upload, Delete, Drag/Drop - Simplified for space) ---
 
@@ -935,34 +920,85 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   
   // --- Playback Engine (Core) ---
 
-  // Main Loop for Timeline Sync
+  // Update globalTimeRef when globalTime changes (for initial sync)
   useEffect(() => {
+    globalTimeRef.current = globalTime;
+  }, [globalTime]);
+
+  // Main Loop for Timeline Sync
+  // Use refs to avoid dependency issues that cause infinite loops
+  // Throttle state updates to prevent infinite loops
+  useEffect(() => {
+    // Cancel any existing loop first
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    
     if (isPlaying) { 
       lastTimeRef.current = Date.now();
+      lastStateUpdateRef.current = Date.now();
       
       const loop = () => {
+        // Check if still playing using ref to avoid stale closure
+        if (!isPlayingRef.current) {
+          animationFrameRef.current = null;
+          return;
+        }
+        
         const now = Date.now();
         const delta = (now - lastTimeRef.current) / 1000;
         lastTimeRef.current = now;
 
-        setGlobalTime(prev => {
-          const nextTime = prev + delta;
-          if (nextTime >= totalDuration && totalDuration > 0) {
-            setIsPlaying(false);
-            return totalDuration; 
-          }
-          return nextTime;
-        });
+        // Use ref for totalDuration to avoid dependency issues
+        const currentTotalDuration = totalDurationRef.current;
         
-        animationFrameRef.current = requestAnimationFrame(loop);
+        // Update ref immediately (no re-render)
+        const nextTime = globalTimeRef.current + delta;
+        globalTimeRef.current = nextTime;
+        
+        // Check if we should stop
+        if (nextTime >= currentTotalDuration && currentTotalDuration > 0) {
+          // Use ref to check if still playing before stopping
+          if (isPlayingRef.current) {
+            setIsPlaying(false);
+          }
+          globalTimeRef.current = currentTotalDuration;
+        }
+        
+        // Throttle state updates: only update React state every 50ms (20fps)
+        // This prevents infinite loops while still keeping UI responsive
+        const timeSinceLastUpdate = now - lastStateUpdateRef.current;
+        if (timeSinceLastUpdate >= 50) {
+          setGlobalTime(globalTimeRef.current);
+          lastStateUpdateRef.current = now;
+        }
+        
+        // Only continue loop if still playing
+        if (isPlayingRef.current) {
+          animationFrameRef.current = requestAnimationFrame(loop);
+        } else {
+          animationFrameRef.current = null;
+          // Final state update when stopping
+          setGlobalTime(globalTimeRef.current);
+        }
       };
       animationFrameRef.current = requestAnimationFrame(loop);
     } else {
-      cancelAnimationFrame(animationFrameRef.current);
+      // Ensure loop is cancelled when not playing
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
     }
 
-    return () => cancelAnimationFrame(animationFrameRef.current);
-  }, [isPlaying, totalDuration]);
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [isPlaying]); // Only depend on isPlaying, use refs for totalDuration
 
   // Sync V1 Video Element
   useEffect(() => {
@@ -1894,8 +1930,32 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         const overlayClip = overlayInfo.clip;
         const trackIndex = overlayInfo.trackIndex;
         
-        if (!overlayClip || !overlayClip.transform) continue;
-        const { x, y, width, opacity } = overlayClip.transform;
+        if (!overlayClip) {
+          continue;
+        }
+        
+        // For chart overlays, provide default transform if missing
+        // Chart overlays should cover the full canvas area by default
+        let transform = overlayClip.transform;
+        if (!transform && overlayClip.isChartOverlay) {
+          transform = {
+            x: 50,      // Center horizontally
+            y: 50,      // Center vertically
+            width: 100, // Full width
+            opacity: 1.0 // Full opacity
+          };
+          // Set the transform on the clip so it persists
+          overlayClip.transform = transform;
+        }
+        
+        if (!transform) {
+          if (overlayClip?.isChartOverlay) {
+            console.warn('⚠️ Chart overlay skipped - missing transform:', overlayClip);
+          }
+          continue;
+        }
+        
+        const { x, y, width, opacity } = transform;
         
         // Find overlay media element in DOM or use cached
         let overlayElementToDraw = null;
@@ -1929,6 +1989,8 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         
         // Create element if still not found
         if (!overlayElementToDraw && overlayClip.url) {
+          if (overlayClip.isChartOverlay) {
+          }
           const cacheKey = `${trackIndex}-${overlayClip.url}`;
           try {
             if (overlayClip.type === 'video') {
@@ -1936,12 +1998,31 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               tempVideo.crossOrigin = 'anonymous'; // Must be set BEFORE src
               tempVideo.src = overlayClip.url;
               tempVideo.muted = true;
-              tempVideo.preload = 'auto';
+              tempVideo.preload = 'auto'; // Preload to reduce flickering
               tempVideo.playsInline = true;
+              tempVideo.loop = false; // Don't loop chart overlays
+              // For chart overlays, ensure video stays loaded and visible
+              const isChartOverlay = overlayClip.isChartOverlay;
+              if (isChartOverlay) {
+                // Preload more aggressively for chart overlays
+                tempVideo.preload = 'auto';
+                // Add event listeners to ensure video stays ready and visible
+                tempVideo.addEventListener('loadedmetadata', () => {
+                  // Video metadata loaded, ensure it's ready for drawing
+                }, { once: true });
+                tempVideo.addEventListener('loadeddata', () => {
+                  // Video data loaded, ready for playback
+                }, { once: true });
+                // Also listen for canplay to ensure video is ready
+                tempVideo.addEventListener('canplay', () => {
+                }, { once: true });
+              }
               // Preload video to reduce flickering
               tempVideo.load();
               overlayElementCacheRef.current.set(cacheKey, tempVideo);
               overlayElementToDraw = tempVideo;
+              if (isChartOverlay) {
+              }
             } else if (overlayClip.type === 'image') {
               const tempImg = new Image();
               tempImg.crossOrigin = 'anonymous'; // Must be set BEFORE src
@@ -1950,19 +2031,52 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               overlayElementToDraw = tempImg;
             }
           } catch (e) {
-            console.warn('Could not create overlay element:', e);
+            if (overlayClip.isChartOverlay) {
+              console.error('❌ Could not create chart overlay element:', e, {
+                id: overlayClip.id,
+                url: overlayClip.url,
+                trackIndex: trackIndex
+              });
+            } else {
+              console.warn('Could not create overlay element:', e);
+            }
           }
+        }
+        
+        // Debug: Log if chart overlay element is missing
+        if (overlayClip.isChartOverlay && !overlayElementToDraw) {
+          console.error('❌ Chart overlay video element is missing:', {
+            id: overlayClip.id,
+            url: overlayClip.url,
+            trackIndex: trackIndex,
+            cacheKey: `${trackIndex}-${overlayClip.url}`
+          });
+          continue; // Skip drawing if element is missing
         }
         
         if (overlayElementToDraw) {
           // Update video time for overlay videos
           let shouldDraw = true;
+          const isChartOverlay = overlayClip.isChartOverlay;
+          
           if (overlayElementToDraw.tagName === 'VIDEO') {
-            // Ensure video is loaded before seeking to prevent flickering
-            if (overlayElementToDraw.readyState < 2) {
-              // Video not ready yet, skip drawing this frame
-              shouldDraw = false;
+            // For chart overlays, always allow drawing - don't check readyState during playback
+            // This ensures chart overlays stay visible during playback
+            // For other overlays, require readyState >= 2
+            if (!isChartOverlay) {
+              const minReadyState = 2; // HAVE_CURRENT_DATA for non-chart overlays
+              if (overlayElementToDraw.readyState < minReadyState) {
+                // Video not ready yet, skip drawing this frame (only for non-chart overlays)
+                shouldDraw = false;
+              } else {
+                // Video is ready, proceed
+              }
             } else {
+              // For chart overlays, always set shouldDraw to true to ensure visibility
+              shouldDraw = true;
+            }
+            
+            if (shouldDraw) {
               // Set playback speed
               const speed = overlayClip.speed || 1.0;
               if (Math.abs(overlayElementToDraw.playbackRate - speed) > 0.01) {
@@ -1982,14 +2096,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                   const currentTime = overlayElementToDraw.currentTime;
                   const timeDiff = Math.abs(currentTime - targetTime);
                   
-                  // Only seek if:
-                  // 1. Video is ready (readyState >= 3 for HAVE_FUTURE_DATA is better, but 2 is minimum)
-                  // 2. Time difference is significant (increased threshold to reduce flickering)
-                  // 3. Target time has changed significantly from last seek
-                  const seekThreshold = 0.2; // Increased from 0.05/0.1 to reduce flickering
+                  // For chart overlays, use larger threshold and less strict readyState to prevent flicker
+                  // For other overlays, use stricter checks
+                  const seekThreshold = isChartOverlay ? 0.5 : 0.2; // Larger threshold for chart overlays
+                  const minSeekReadyState = isChartOverlay ? 2 : 3; // Less strict for chart overlays
                   const timeChanged = Math.abs(lastSeekTime - targetTime) > 0.1;
                   
-                  if (overlayElementToDraw.readyState >= 3 && (timeDiff > seekThreshold || isNaN(currentTime)) && timeChanged) {
+                  // Only seek if video is ready enough and time difference is significant
+                  if (overlayElementToDraw.readyState >= minSeekReadyState && (timeDiff > seekThreshold || isNaN(currentTime)) && timeChanged) {
                     overlayElementToDraw.currentTime = targetTime;
                     overlayElementCacheRef.current.set(cacheKey, targetTime);
                   }
@@ -2001,8 +2115,15 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           }
           
           // Only proceed with drawing if video is ready (or if it's an image)
-          if (!shouldDraw) {
+          // For chart overlays, always try to draw during playback to ensure visibility
+          // Chart overlays should be visible even if readyState is low
+          if (!shouldDraw && !isChartOverlay) {
             continue;
+          }
+          // For chart overlays, ALWAYS force shouldDraw to true to ensure visibility
+          // This prevents the overlay from disappearing during playback
+          if (isChartOverlay) {
+            shouldDraw = true;
           }
           try {
             // Calculate overlay position and size from transform values
@@ -2016,13 +2137,18 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             let overlayHeight;
             let isReady = false;
             
+            const isChartOverlay = overlayClip.isChartOverlay;
+            
             if (overlayElementToDraw.videoWidth && overlayElementToDraw.videoWidth > 0) {
               // It's a video
               const overlayAspect = overlayElementToDraw.videoWidth / overlayElementToDraw.videoHeight;
               overlayHeight = overlayWidth / overlayAspect;
-              // Use HAVE_FUTURE_DATA (readyState >= 3) for smoother video rendering
-              // This ensures enough data is buffered to prevent flickering
-              isReady = overlayElementToDraw.readyState >= 3;
+              // For chart overlays, ALWAYS consider ready if we have dimensions
+              // This ensures chart overlays stay visible during playback - never skip
+              // For other overlays, require HAVE_FUTURE_DATA (readyState >= 3) for smoother rendering
+              isReady = isChartOverlay 
+                ? true // Chart overlays are ALWAYS ready if they have dimensions - never skip during playback
+                : overlayElementToDraw.readyState >= 3; // HAVE_FUTURE_DATA for other overlays
             } else if (overlayElementToDraw.naturalWidth && overlayElementToDraw.naturalWidth > 0) {
               // It's an image
               const overlayAspect = overlayElementToDraw.naturalWidth / overlayElementToDraw.naturalHeight;
@@ -2031,10 +2157,25 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             } else {
               // Use aspect ratio from clip if available
               overlayHeight = overlayWidth;
-              isReady = true; // Draw anyway, might improve on next frame
+              // For chart overlays, try to draw even without dimensions
+              isReady = isChartOverlay ? overlayElementToDraw.readyState >= 0 : true; // Draw anyway, might improve on next frame
+              
+              if (isChartOverlay) {
+                console.warn(`⚠️ Chart overlay video has no dimensions:`, {
+                  id: overlayClip.id,
+                  readyState: overlayElementToDraw.readyState,
+                  videoWidth: overlayElementToDraw.videoWidth,
+                  videoHeight: overlayElementToDraw.videoHeight,
+                  url: overlayClip.url,
+                  tagName: overlayElementToDraw.tagName
+                });
+              }
             }
             
-            if (isReady) {
+            // For chart overlays, ALWAYS try to draw to ensure visibility during playback
+            // For other overlays, require full readiness
+            // Chart overlays should never be skipped - always attempt to draw
+            if (isChartOverlay || isReady) {
               // Apply opacity
               ctx.globalAlpha = opacity !== undefined ? opacity : 1.0;
               
@@ -2042,11 +2183,27 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               const drawX = overlayX - overlayWidth / 2;
               const drawY = overlayY - overlayHeight / 2;
               
+              if (isChartOverlay) {
+              }
+              
               try {
                 ctx.drawImage(overlayElementToDraw, drawX, drawY, overlayWidth, overlayHeight);
+                
+                if (isChartOverlay) {
+                }
               } catch (drawError) {
                 // If draw fails, might be CORS or not ready - try next frame
-                console.warn('Could not draw overlay this frame:', drawError);
+                if (isChartOverlay) {
+                  console.warn('⚠️ Could not draw chart overlay:', drawError, {
+                    id: overlayClip.id,
+                    readyState: overlayElementToDraw.readyState,
+                    videoWidth: overlayElementToDraw.videoWidth,
+                    videoHeight: overlayElementToDraw.videoHeight,
+                    url: overlayClip.url
+                  });
+                } else {
+                  console.warn('Could not draw overlay this frame:', drawError);
+                }
               }
               
               // Reset alpha
@@ -3409,6 +3566,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     const rafRef = useRef(null); // For requestAnimationFrame-based updates
     const overlayInfoRef = useRef(null); // Store latest overlayInfo for RAF callback
     const isPlayingRef = useRef(false); // Store latest isPlaying state for RAF callback
+    const isActiveRef = useRef(false); // Store latest isActive state to prevent dependency issues
+    const lastPlayStateRef = useRef(null); // Track last play state to prevent rapid toggles
+    const frameCountRef = useRef(0); // Track frame count to throttle updates
+    const chartOverlayHandlersRef = useRef({ play: null, pause: null }); // Store event handlers for cleanup
 
     // Sync V2 Video playback time
     // Use overlayInfo if provided (for chart overlays), otherwise fall back to v2ClipInfo
@@ -3416,10 +3577,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     const isActive = Boolean(overlayInfo && overlayInfo.clip.id === clip.id);
     const isChartOverlay = clip.isChartOverlay;
     
-    // Update refs whenever they change
+    // Update refs whenever they change - use refs to avoid dependency issues
     useEffect(() => {
       overlayInfoRef.current = activeOverlayInfo;
-    }, [activeOverlayInfo]);
+      isActiveRef.current = isActive;
+    }, [activeOverlayInfo, isActive]);
     
     useEffect(() => {
       isPlayingRef.current = isPlaying;
@@ -3456,6 +3618,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     }, [clip?.url, clip?.type, clip?.isChartOverlay]);
 
     // FIXED: Simplified and more stable sync mechanism for chart overlays
+    // Use refs for isActive and isPlaying to prevent infinite loops
     useEffect(() => {
       if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
       const videoElement = elementRef.current;
@@ -3476,15 +3639,23 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         seekDebounceRef.current = null;
       }
 
-      // For chart overlays, use a more stable approach with RAF
+      // Get current values from refs to avoid dependency issues
+      const currentIsActive = isActiveRef.current;
+      const currentIsPlaying = isPlayingRef.current;
+      const currentOverlayInfo = overlayInfoRef.current;
+
+      // For chart overlays, use interval-based approach instead of RAF for more stability
+      // This prevents flickering from constant frame-by-frame checks
       if (isChartOverlay) {
-        // Mark as ready once video is loaded
-        if (videoElement.readyState >= 2 && !isVideoReadyRef.current) {
+        // Mark as ready once video has metadata (readyState >= 1) for faster visibility
+        // Use refs to track if we've already set state to prevent infinite loops
+        // Check readyState once and set state only if not already set
+        if (videoElement.readyState >= 1 && !isVideoReadyRef.current) {
           isVideoReadyRef.current = true;
-          if (!isVideoReady) {
-            setHasShownOnce(true);
-            setIsVideoReady(true);
-          }
+          // Only update state once - use ref check to prevent multiple updates
+          // Don't check hasShownOnce state as it causes re-renders
+          setHasShownOnce(true);
+          setIsVideoReady(true);
         }
 
         // Set playback speed once
@@ -3493,86 +3664,181 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           videoElement.playbackRate = speed;
         }
 
-        // Use RAF for smooth updates instead of intervals
-        const updateChartOverlay = () => {
-          // Check if still active using the latest overlayInfo
-          const currentOverlayInfo = overlayInfoRef.current;
-          const currentlyActive = Boolean(currentOverlayInfo && currentOverlayInfo.clip.id === clip.id);
+        // For chart overlays, use event-based sync instead of polling
+        // This prevents flickering by only syncing when needed, not constantly
+        const primaryVideoElement = videoRef.current;
+        
+        // Sync play/pause state immediately when primary video state changes
+        const syncPlayPause = () => {
+          if (!videoElement || videoElement.readyState < 2) return;
           
-          if (!videoElement || !currentlyActive) {
-            if (videoElement && !videoElement.paused) {
+          const latestOverlayInfo = overlayInfoRef.current;
+          const currentlyActive = Boolean(latestOverlayInfo && latestOverlayInfo.clip.id === clip.id);
+          
+          if (!currentlyActive) {
+            if (!videoElement.paused) {
               videoElement.pause();
             }
-            rafRef.current = null;
             return;
           }
-
-          if (videoElement.readyState < 2) {
-            rafRef.current = requestAnimationFrame(updateChartOverlay);
-            return;
-          }
-
-          // Get latest localTime from ref
-          const localTime = currentOverlayInfo?.localTime ?? clip.trimStart;
-          const start = clip.trimStart || 0;
-          const end = clip.trimEnd ?? clip.duration ?? start;
-          const targetTime = Math.min(end, Math.max(start, localTime));
-
-          // Only seek if localTime changed significantly (more than 0.5s) to prevent flicker
-          const lastTime = lastLocalTimeRef.current;
-          const timeChanged = lastTime === null || Math.abs(lastTime - localTime) > 0.5;
           
-          if (timeChanged) {
-            const currentTime = videoElement.currentTime || 0;
-            const timeDiff = Math.abs(currentTime - targetTime);
+          if (primaryVideoElement && primaryVideoElement.readyState >= 2) {
+            const primaryIsPlaying = !primaryVideoElement.paused;
+            const lastPlayState = lastPlayStateRef.current;
             
-            // Only seek if difference is significant (more than 0.5s) to prevent flicker
-            if (timeDiff > 0.5) {
-              try {
-                videoElement.currentTime = targetTime;
-                lastTimeRef.current = targetTime;
-                lastLocalTimeRef.current = localTime;
-              } catch (e) {
-                // Ignore seek errors
+            // Only sync if state changed
+            if (lastPlayState !== primaryIsPlaying) {
+              lastPlayStateRef.current = primaryIsPlaying;
+              
+              if (primaryIsPlaying && videoElement.paused) {
+                videoElement.play().catch(() => {});
+              } else if (!primaryIsPlaying && !videoElement.paused) {
+                videoElement.pause();
               }
-            } else {
-              // Update localTime ref even if we don't seek
-              lastLocalTimeRef.current = localTime;
+            }
+            
+            // Sync playback rate
+            const primarySpeed = primaryVideoElement.playbackRate || 1.0;
+            const overlaySpeed = clip.speed || 1.0;
+            const targetSpeed = primarySpeed !== 1.0 ? primarySpeed : overlaySpeed;
+            if (Math.abs(videoElement.playbackRate - targetSpeed) > 0.01) {
+              videoElement.playbackRate = targetSpeed;
             }
           }
-
-          // Control playback - use ref to get latest value
-          const currentIsPlaying = isPlayingRef.current;
-          if (currentIsPlaying && videoElement.paused && videoElement.readyState >= 2) {
-            videoElement.play().catch(() => {});
-          } else if (!currentIsPlaying && !videoElement.paused) {
-            videoElement.pause();
-          }
-
-          rafRef.current = requestAnimationFrame(updateChartOverlay);
         };
-
-        if (isActive) {
-          updateChartOverlay();
-        } else {
-          if (videoElement && !videoElement.paused) {
-            videoElement.pause();
+        
+        // Initial sync
+        syncPlayPause();
+        
+        // Set up event listeners on primary video for play/pause events
+        // This is much more efficient than polling
+        const handlePrimaryPlay = () => {
+          const latestOverlayInfo = overlayInfoRef.current;
+          const currentlyActive = Boolean(latestOverlayInfo && latestOverlayInfo.clip.id === clip.id);
+          
+          if (!currentlyActive || !videoElement || videoElement.readyState < 2) return;
+          
+          if (!videoElement.paused) {
+            // Already playing, just sync rate
+            const primarySpeed = primaryVideoElement?.playbackRate || 1.0;
+            const overlaySpeed = clip.speed || 1.0;
+            const targetSpeed = primarySpeed !== 1.0 ? primarySpeed : overlaySpeed;
+            if (Math.abs(videoElement.playbackRate - targetSpeed) > 0.01) {
+              videoElement.playbackRate = targetSpeed;
+            }
+          } else {
+            videoElement.play().catch(() => {});
+            lastPlayStateRef.current = true;
           }
+        };
+        
+        const handlePrimaryPause = () => {
+          const latestOverlayInfo = overlayInfoRef.current;
+          const currentlyActive = Boolean(latestOverlayInfo && latestOverlayInfo.clip.id === clip.id);
+          
+          if (!currentlyActive || !videoElement) return;
+          
+          if (!videoElement.paused) {
+            videoElement.pause();
+            lastPlayStateRef.current = false;
+          }
+        };
+        
+        // Store handlers in ref for cleanup
+        chartOverlayHandlersRef.current.play = handlePrimaryPlay;
+        chartOverlayHandlersRef.current.pause = handlePrimaryPause;
+        
+        // Add event listeners to primary video
+        if (primaryVideoElement) {
+          primaryVideoElement.addEventListener('play', handlePrimaryPlay);
+          primaryVideoElement.addEventListener('pause', handlePrimaryPause);
         }
+        
+        // Use a very long interval (2 seconds) only for initial time sync when paused
+        // When playing, let the video play naturally without any time syncing
+        const updateChartOverlay = () => {
+          if (!videoElement || videoElement.readyState < 2) return;
+          
+          const latestOverlayInfo = overlayInfoRef.current;
+          const currentlyActive = Boolean(latestOverlayInfo && latestOverlayInfo.clip.id === clip.id);
+          
+          if (!currentlyActive) {
+            if (!videoElement.paused) {
+              videoElement.pause();
+              lastPlayStateRef.current = false;
+            }
+            return;
+          }
+          
+          // Only sync time when paused (for scrubbing)
+          // When playing, let the video play naturally - no time syncing to prevent flicker
+          if (primaryVideoElement && primaryVideoElement.readyState >= 2) {
+            const isPrimaryPlaying = !primaryVideoElement.paused;
+            
+            // Only sync time when paused - when playing, let it play naturally
+            if (!isPrimaryPlaying) {
+              // Primary is paused, sync time for scrubbing (only if overlay is also paused)
+              if (videoElement.paused) {
+              const latestOverlayInfo = overlayInfoRef.current;
+              let targetTime = clip.trimStart;
+              
+              if (latestOverlayInfo && latestOverlayInfo.localTime !== undefined) {
+                const localTime = latestOverlayInfo.localTime;
+                const start = clip.trimStart || 0;
+                const end = clip.trimEnd ?? clip.duration ?? start;
+                targetTime = Math.min(end, Math.max(start, localTime));
+              } else {
+                const primaryCurrentTime = primaryVideoElement.currentTime || 0;
+                const start = clip.trimStart || 0;
+                const end = clip.trimEnd ?? clip.duration ?? start;
+                targetTime = Math.min(end, Math.max(start, primaryCurrentTime));
+              }
+              
+              const currentTime = videoElement.currentTime || 0;
+              const timeDiff = Math.abs(currentTime - targetTime);
+              
+                // Only seek if difference is significant (0.5s when paused)
+                if (timeDiff > 0.5) {
+                  videoElement.currentTime = targetTime;
+                  lastTimeRef.current = targetTime;
+                  lastLocalTimeRef.current = targetTime;
+                }
+              }
+            }
+          }
+        };
+        
+        // Use a very long interval (2 seconds) - only for paused time sync
+        // This minimizes intervention when playing
+        syncIntervalRef.current = setInterval(updateChartOverlay, 2000);
 
         lastIsActiveRef.current = isActive;
         return () => {
-          if (rafRef.current) {
-            cancelAnimationFrame(rafRef.current);
-            rafRef.current = null;
+          if (syncIntervalRef.current) {
+            clearInterval(syncIntervalRef.current);
+            syncIntervalRef.current = null;
+          }
+          // Remove event listeners using stored references
+          const currentPrimaryVideo = videoRef.current;
+          if (currentPrimaryVideo && chartOverlayHandlersRef.current) {
+            if (chartOverlayHandlersRef.current.play) {
+              currentPrimaryVideo.removeEventListener('play', chartOverlayHandlersRef.current.play);
+            }
+            if (chartOverlayHandlersRef.current.pause) {
+              currentPrimaryVideo.removeEventListener('pause', chartOverlayHandlersRef.current.pause);
+            }
           }
         };
       }
 
       // Non-chart overlay handling (existing logic)
-      const localTime = activeOverlayInfo?.localTime ?? clip.trimStart;
+      // Use refs to get latest values to avoid dependency issues
+      const latestOverlayInfo = overlayInfoRef.current;
+      const latestIsActive = isActiveRef.current;
+      const latestIsPlaying = isPlayingRef.current;
+      const localTime = latestOverlayInfo?.localTime ?? clip.trimStart;
 
-      if (isActive && videoElement.readyState >= 2) {
+      if (latestIsActive && videoElement.readyState >= 2) {
         // Update ready state only if it actually changed to prevent flicker
         const currentReadyState = videoElement.readyState;
         if (currentReadyState !== lastReadyStateRef.current) {
@@ -3580,10 +3846,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           if (currentReadyState >= 2 && !isVideoReadyRef.current) {
             isVideoReadyRef.current = true;
             // Only update React state once when becoming ready to minimize re-renders
-            if (!isVideoReady) {
-              setHasShownOnce(true); // Mark as shown once
-              setIsVideoReady(true);
-            }
+            // Use ref to prevent multiple state updates - don't check state
+            setHasShownOnce(true); // Mark as shown once
+            setIsVideoReady(true);
           }
         }
 
@@ -3606,17 +3871,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           }
           
           // Ensure ready state is set - once shown, keep it shown
-          if (videoElement.readyState >= 2) {
-            if (!isVideoReadyRef.current) {
-              isVideoReadyRef.current = true;
-              setHasShownOnce(true); // Mark as shown once
-              if (!isVideoReady) {
-                setIsVideoReady(true);
-              }
-            }
+          // Use ref to prevent multiple state updates
+          if (videoElement.readyState >= 2 && !isVideoReadyRef.current) {
+            isVideoReadyRef.current = true;
+            setHasShownOnce(true); // Mark as shown once
+            setIsVideoReady(true);
           }
           
-          const currentLocalTime = activeOverlayInfo?.localTime ?? clip.trimStart;
+          const currentLocalTime = latestOverlayInfo?.localTime ?? clip.trimStart;
           if (isNaN(currentLocalTime)) return;
 
           const start = clip.trimStart || 0;
@@ -3648,10 +3910,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           }
         }, syncInterval);
 
-        // FIXED: Only control playback if state changes
-        if (isPlaying && videoElement.paused && videoElement.readyState >= 2) {
+        // FIXED: Only control playback if state changes - use ref to avoid dependency issues
+        if (latestIsPlaying && videoElement.paused && videoElement.readyState >= 2) {
           videoElement.play().catch(() => {});
-        } else if (!isPlaying && !videoElement.paused) {
+        } else if (!latestIsPlaying && !videoElement.paused) {
           videoElement.pause();
         }
       } else {
@@ -3660,18 +3922,17 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           videoElement.pause();
         }
         // FIXED: Only mark not ready if readyState is critically low
-        if (videoElement && videoElement.readyState < 1) {
+        // Use ref to prevent multiple state updates
+        if (videoElement && videoElement.readyState < 1 && isVideoReadyRef.current) {
           isVideoReadyRef.current = false;
           hasInitialFrameRef.current = false;
-          if (isVideoReady) {
-            setIsVideoReady(false);
-          }
+          setIsVideoReady(false);
         }
         lastTimeRef.current = null;
       }
       
-      wasActiveRef.current = isActive;
-      lastIsActiveRef.current = isActive;
+      wasActiveRef.current = latestIsActive;
+      lastIsActiveRef.current = latestIsActive;
       
       return () => {
         if (syncIntervalRef.current) {
@@ -3687,7 +3948,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           rafRef.current = null;
         }
       };
-    }, [isActive, isPlaying, clip?.id, clip?.trimStart, clip?.trimEnd, clip?.duration, clip?.speed, clip?.isChartOverlay, isChartOverlay]);
+    }, [clip?.id, clip?.url, clip?.trimStart, clip?.trimEnd, clip?.duration, clip?.speed, clip?.isChartOverlay, clip?.transform]);
 
     // FIXED: Better initial frame handling - only run on URL change, not on every localTime change
     useEffect(() => {
@@ -3696,7 +3957,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       
       const syncTime = () => {
         if (videoElement && videoElement.readyState >= 2) {
-          const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
+          // Use ref to get latest overlayInfo to avoid dependency issues
+          const latestOverlayInfo = overlayInfoRef.current;
+          const localTime = latestOverlayInfo?.localTime ?? clip.trimStart ?? 0;
           if (!isNaN(localTime)) {
             try {
               videoElement.currentTime = localTime;
@@ -3715,7 +3978,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           }
         }
         
-        if (isActive && isPlaying && videoElement && videoElement.readyState >= 2) {
+        // Use refs to get latest values to avoid dependency issues
+        const latestIsActive = isActiveRef.current;
+        const latestIsPlaying = isPlayingRef.current;
+        if (latestIsActive && latestIsPlaying && videoElement && videoElement.readyState >= 2) {
           videoElement.play().catch(() => {});
         }
       };
@@ -3818,13 +4084,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 }}
                 style={{ 
                   pointerEvents: isActive ? 'auto' : 'none',
-                  // For chart overlays: once shown, keep shown (unless truly inactive) to prevent flicker
+                  // For chart overlays: always show once loaded (opacity 1) to prevent flicker
+                  // Don't change opacity based on isActive - keep it stable
                   // For other overlays: show when ready
                   opacity: clip.isChartOverlay
-                    ? (hasShownOnce || isActive ? 1 : 0)
+                    ? (hasShownOnce ? 1 : 0) // Once shown, always show - don't toggle based on isActive
                     : (isActive && (clip.type === 'image' || hasShownOnce || (isVideoReady && hasInitialFrameRef.current))) ? 1 : 0,
-                  willChange: 'opacity',
-                  // FIXED: No transition for chart overlays to prevent flicker
+                  // FIXED: No willChange or transition for chart overlays to prevent flicker
+                  willChange: clip.isChartOverlay ? 'auto' : 'opacity',
                   transition: clip.isChartOverlay ? 'none' : 'opacity 0.1s ease-out',
                   objectFit: 'contain',
                   width: '100%',

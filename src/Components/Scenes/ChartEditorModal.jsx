@@ -1902,6 +1902,54 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       }
       // Apply background colors AFTER layoutOverrides to ensure they take precedence
       applyBackground(fig, mergedSections)
+      
+      // Re-apply title and subtitle from sectionsState AFTER layoutOverrides to ensure they take precedence
+      // This ensures that when user changes title/subtitle, it updates the chart immediately
+      applyTitle(fig, mergedSections)
+      
+      // Re-apply subtitle annotation (it's in annotations array)
+      const subtitleText = getConfig(mergedSections, 'subtitle', 'text')
+      if (subtitleText) {
+        // Find and update existing subtitle annotation, or add new one
+        if (!fig.layout.annotations) {
+          fig.layout.annotations = []
+        }
+        const subtitleIndex = fig.layout.annotations.findIndex(ann => 
+          ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom'
+        )
+        const subtitleAnnotation = {
+          text: subtitleText,
+          xref: 'paper',
+          yref: 'paper',
+          x: 0.5,
+          y: 1,
+          xanchor: 'center',
+          yanchor: 'bottom',
+          showarrow: false,
+          font: {
+            family: resolveBrandFont(getConfig(mergedSections, 'subtitle', 'font_family')),
+            size: getConfig(mergedSections, 'subtitle', 'font_size') || 14,
+            color: getConfig(mergedSections, 'subtitle', 'font_color') || '#666666'
+          }
+        }
+        if (subtitleIndex >= 0) {
+          fig.layout.annotations[subtitleIndex] = subtitleAnnotation
+        } else {
+          // Remove any existing subtitle annotations first, then add new one
+          fig.layout.annotations = fig.layout.annotations.filter(ann => 
+            !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
+          )
+          // Add subtitle at the beginning (before center value for donut)
+          fig.layout.annotations.unshift(subtitleAnnotation)
+        }
+      } else {
+        // Remove subtitle annotation if text is empty
+        if (fig.layout.annotations) {
+          fig.layout.annotations = fig.layout.annotations.filter(ann => 
+            !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
+          )
+        }
+      }
       setFigure(fig)
       setError('')
     } catch (err) {

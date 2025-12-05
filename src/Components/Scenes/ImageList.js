@@ -3502,10 +3502,33 @@ const getOrderedRefs = useCallback((row) => {
 
   // Handle regenerate image with popup
   const handleRegenerateClick = useCallback(async (sceneNumber) => {
-    setRegeneratingSceneNumber(sceneNumber);
-    setRegenerateUserQuery('');
+    // Reset all regenerate states to ensure clean state
+    setIsRegenerating(false);
     setError(''); // Clear any previous errors
+    setRegeneratingSceneNumber(sceneNumber);
     setIsRegenerateForDescription(false); // Mark that this is for regenerate (not edit description)
+    
+    // Get the original user query from the script
+    let originalUserQuery = '';
+    if (Array.isArray(scriptsData) && scriptsData.length > 0) {
+      const currentScript = scriptsData[0] || null;
+      const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
+      const firstUserQuery = userQueryArr[0] || {};
+      
+      // Try to extract query text from various possible fields
+      if (typeof firstUserQuery === 'string') {
+        originalUserQuery = firstUserQuery;
+      } else if (typeof firstUserQuery === 'object') {
+        originalUserQuery = firstUserQuery?.query || 
+                           firstUserQuery?.text || 
+                           firstUserQuery?.user_query || 
+                           firstUserQuery?.userQuery ||
+                           '';
+      }
+    }
+    
+    // Pre-populate with original user query
+    setRegenerateUserQuery(originalUserQuery);
     
     // Get the model for this scene
     const model = getSceneModel(sceneNumber);
@@ -3524,7 +3547,7 @@ const getOrderedRefs = useCallback((row) => {
     setRegenerateSaveAsNewVersion(false);
     
     setShowRegeneratePopup(true);
-  }, [getSceneModel, isSORAModel, isVEO3Model, isANCHORModel]);
+  }, [getSceneModel, isSORAModel, isVEO3Model, isANCHORModel, scriptsData]);
 
   // Handle regenerate API call
   const handleGenerateImage = React.useCallback(async () => {
@@ -3567,6 +3590,28 @@ const getOrderedRefs = useCallback((row) => {
         framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
       }
 
+      // Get the original user query from the script as fallback
+      let originalUserQuery = '';
+      if (Array.isArray(scriptsData) && scriptsData.length > 0) {
+        const currentScript = scriptsData[0] || null;
+        const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
+        const firstUserQuery = userQueryArr[0] || {};
+        
+        // Try to extract query text from various possible fields
+        if (typeof firstUserQuery === 'string') {
+          originalUserQuery = firstUserQuery;
+        } else if (typeof firstUserQuery === 'object') {
+          originalUserQuery = firstUserQuery?.query || 
+                             firstUserQuery?.text || 
+                             firstUserQuery?.user_query || 
+                             firstUserQuery?.userQuery ||
+                             '';
+        }
+      }
+
+      // Use user-entered query if available, otherwise fallback to original query
+      const finalUserQuery = regenerateUserQuery.trim() || originalUserQuery.trim();
+
       // Build request payload
       const payload = {
         user_id: user_id,
@@ -3574,7 +3619,7 @@ const getOrderedRefs = useCallback((row) => {
         scene_number: regeneratingSceneNumber,
         model: model,
         action: 'regenerate',
-        user_query: regenerateUserQuery.trim(),
+        user_query: finalUserQuery,
         frames_to_regenerate: framesToRegenerate,
         save_as_new_version: regenerateSaveAsNewVersion,
         aspect_ratio: aspectRatio
@@ -3602,13 +3647,15 @@ const getOrderedRefs = useCallback((row) => {
       // Handle successful response
       if (data && data.success) {
         
-        // Close popup
+        // Store scene number before resetting state
+        const sceneNumberToRefresh = regeneratingSceneNumber;
+        
+        // Close popup and reset all states
       setShowRegeneratePopup(false);
       setRegenerateUserQuery('');
       setRegeneratingSceneNumber(null);
         setIsRegenerateForDescription(false);
-        // Store scene number before resetting state
-        const sceneNumberToRefresh = regeneratingSceneNumber;
+        setIsRegenerating(false);
         
         // Reset regenerate options to defaults
         setRegenerateFrames(['opening', 'closing']);
@@ -3635,7 +3682,8 @@ const getOrderedRefs = useCallback((row) => {
     isVEO3Model, 
     isANCHORModel, 
     getAspectRatio, 
-    refreshLoad
+    refreshLoad,
+    scriptsData
   ]);
 
 
@@ -6775,12 +6823,75 @@ const getOrderedRefs = useCallback((row) => {
                               const fontFamily = el.fontFamily || 'sans-serif';
                               const fontWeight = el.fontWeight || 'normal';
                               const lineHeight = el.lineHeight || 1.2;
+                              const opacity = typeof el.textOpacity === 'number' ? el.textOpacity : 1;
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
                                       ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
+                              
+                              // Text alignment (support multiple field names)
+                              const textAlign = el.textAlign || el.align || el?.layout?.text_align || el?.layout?.alignment || 'left';
+                              
+                              // Additional text properties
+                              const fontStyle = el.fontStyle || 'normal';
+                              const textDecoration = el.textDecoration || 'none';
+                              const letterSpacing = el.letterSpacing ? `${el.letterSpacing}px` : 'normal';
+                              const backgroundColor = el.backgroundColor || 'transparent';
+                              const padding = backgroundColor && backgroundColor !== 'transparent' ? '2px 4px' : '0';
+                              const borderRadius = backgroundColor && backgroundColor !== 'transparent' ? '2px' : '0';
+                              
+                              // Text Glow effect
+                              const textGlow = el.textGlow || 'none';
+                              let glowFilter = 'none';
+                              switch(textGlow) {
+                                case 'subtle':
+                                  glowFilter = 'drop-shadow(0 0 4px rgba(255, 255, 255, 0.6))';
+                                  break;
+                                case 'medium':
+                                  glowFilter = 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 12px rgba(124, 58, 237, 0.6))';
+                                  break;
+                                case 'strong':
+                                  glowFilter = 'drop-shadow(0 0 12px rgba(255, 255, 255, 1)) drop-shadow(0 0 16px rgba(124, 58, 237, 0.8))';
+                                  break;
+                                case 'neon':
+                                  glowFilter = 'drop-shadow(0 0 10px rgba(255, 255, 255, 1)) drop-shadow(0 0 20px rgba(124, 58, 237, 1)) drop-shadow(0 0 30px rgba(124, 58, 237, 0.8))';
+                                  break;
+                                default:
+                                  glowFilter = 'none';
+                              }
+                              
+                              // Word Art styles
+                              const wordArt = el.wordArt || 'none';
+                              let wordArtStyles = {};
+                              switch(wordArt) {
+                                case 'gradient':
+                                  wordArtStyles.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                                  wordArtStyles.WebkitBackgroundClip = 'text';
+                                  wordArtStyles.WebkitTextFillColor = 'transparent';
+                                  break;
+                                case 'outline':
+                                  wordArtStyles.WebkitTextStroke = `2px ${color}`;
+                                  wordArtStyles.color = 'transparent';
+                                  break;
+                                case '3d':
+                                  wordArtStyles.textShadow = '1px 1px 0 rgba(255, 255, 255, 0.5), -1px -1px 0 rgba(0, 0, 0, 0.3), 2px 2px 4px rgba(0, 0, 0, 0.5)';
+                                  break;
+                                case 'metallic':
+                                  wordArtStyles.background = 'linear-gradient(180deg, #ffffff 0%, #333333 50%, #ffffff 100%)';
+                                  wordArtStyles.WebkitBackgroundClip = 'text';
+                                  wordArtStyles.WebkitTextFillColor = 'transparent';
+                                  break;
+                                case 'gradient-rainbow':
+                                  wordArtStyles.background = 'linear-gradient(90deg, #ff0000 0%, #ff7f00 16.66%, #ffff00 33.33%, #00ff00 50%, #0000ff 66.66%, #4b0082 83.33%, #9400d3 100%)';
+                                  wordArtStyles.WebkitBackgroundClip = 'text';
+                                  wordArtStyles.WebkitTextFillColor = 'transparent';
+                                  break;
+                                default:
+                                  wordArtStyles = {};
+                              }
+                              
                               const boxStyle = {
                                 position: 'absolute',
                                 left: `${leftPct}%`,
@@ -6795,8 +6906,18 @@ const getOrderedRefs = useCallback((row) => {
                                 fontFamily,
                                 fontWeight,
                                 fontSize,
+                                fontStyle,
+                                textDecoration,
+                                textAlign: ['left', 'center', 'right', 'start', 'end', 'justify'].includes(textAlign) ? textAlign : 'left',
                                 lineHeight,
+                                letterSpacing,
+                                opacity,
+                                backgroundColor,
+                                padding,
+                                borderRadius,
                                 textShadow,
+                                filter: glowFilter !== 'none' ? glowFilter : undefined,
+                                ...wordArtStyles,
                                 whiteSpace: 'pre-wrap'
                               };
                               return (
@@ -6834,7 +6955,11 @@ const getOrderedRefs = useCallback((row) => {
                                 overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
                               }
 
-                              const displayUrl = isAnchorModel
+                              // Check if background was already removed (saved flag)
+                              // If background_removed is true, use the URL directly (it's already processed)
+                              // Otherwise, apply background removal for ANCHOR models
+                              const isBackgroundRemoved = ov?.background_removed === true;
+                              const displayUrl = (isAnchorModel && !isBackgroundRemoved)
                                 ? getOverlayBackgroundRemovedUrl(overlayUrl)
                                 : overlayUrl;
                               
@@ -6928,16 +7053,28 @@ const getOrderedRefs = useCallback((row) => {
                       : [];
                     const effectiveTextEls2 = textElsFromFrame2.length > 0 ? textElsFromFrame2 : fallbackText2;
                     
-                    // For ANCHOR models, add avatar as overlay element if it exists
-                    let overlayEls2 = fallbackFrame2 ? (
-                      Array.isArray(fallbackFrame2?.overlay_elements)
-                        ? fallbackFrame2.overlay_elements
-                        : Array.isArray(fallbackFrame2?.overlayElements)
-                        ? fallbackFrame2.overlayElements
+                    // Get overlay elements from the matched frame/image object (for ANCHOR models, use frameForImg2 specifically)
+                    // Prioritize frameForImg2 (the exact match) over fallbackFrame2
+                    const frameForOverlays2 = frameForImg2 || fallbackFrame2;
+                    let overlayEls2 = frameForOverlays2 ? (
+                      Array.isArray(frameForOverlays2?.overlay_elements)
+                        ? frameForOverlays2.overlay_elements
+                        : Array.isArray(frameForOverlays2?.overlayElements)
+                        ? frameForOverlays2.overlayElements
                         : []
                     ) : [];
                     
+                    // Fallback to selected level overlay elements if frame doesn't have any
+                    if (overlayEls2.length === 0) {
+                      overlayEls2 = Array.isArray(selected?.overlayElements) 
+                        ? selected.overlayElements 
+                        : Array.isArray(selected?.overlay_elements)
+                        ? selected.overlay_elements
+                        : [];
+                    }
+                    
                     // For ANCHOR models, if secondaryImg (avatar) exists and is different from background, add it as overlay
+                    // Only add avatar if it's not already in overlay elements
                     if (selectedModel === 'ANCHOR' && secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() && displayImgUrl2 !== secondaryImg.trim()) {
                       const currentRow = rows.find(r => 
                         (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
@@ -6946,14 +7083,22 @@ const getOrderedRefs = useCallback((row) => {
                         const avatarSet = getAvatarUrlSet(currentRow);
                         const normalized = normalizeSimpleUrl(secondaryImg.trim());
                         if (normalized && avatarSet.has(normalized)) {
+                          // Check if avatar is already in overlay elements
+                          const avatarAlreadyInOverlays = overlayEls2.some(ov => {
+                            const ovUrl = ov?.overlay_image?.image_url || ov?.file_url || ov?.fileUrl || ov?.image_url || ov?.url || '';
+                            return normalizeSimpleUrl(ovUrl) === normalized;
+                          });
+                          
+                          if (!avatarAlreadyInOverlays) {
                           // Add avatar as overlay element
                           overlayEls2 = [...overlayEls2, {
                             overlay_image: {
                               image_url: secondaryImg.trim()
                             },
-                            bounding_box: fallbackFrame2?.overlay_elements?.[0]?.bounding_box || fallbackFrame2?.overlayElements?.[0]?.bounding_box || {},
-                            layout: fallbackFrame2?.overlay_elements?.[0]?.layout || fallbackFrame2?.overlayElements?.[0]?.layout || {}
+                              bounding_box: frameForOverlays2?.overlay_elements?.[0]?.bounding_box || frameForOverlays2?.overlayElements?.[0]?.bounding_box || {},
+                              layout: frameForOverlays2?.overlay_elements?.[0]?.layout || frameForOverlays2?.overlayElements?.[0]?.layout || {}
                           }];
+                          }
                         }
                       }
                     }
@@ -7180,12 +7325,75 @@ const getOrderedRefs = useCallback((row) => {
                               const fontFamily = el.fontFamily || 'sans-serif';
                               const fontWeight = el.fontWeight || 'normal';
                               const lineHeight = el.lineHeight || 1.2;
+                              const opacity = typeof el.textOpacity === 'number' ? el.textOpacity : 1;
                               const shadow = el.effects?.textShadow;
                               const textShadow =
                                 shadow && shadow.enabled
                                       ? `${shadow.offsetX || 0}px ${shadow.offsetY || 0}px ${shadow.blur || 0}px ${shadow.color || 'rgba(0,0,0,0.5)'}`
                                   : undefined;
                               const anchor = el.layout?.anchor_point || 'top_left';
+                              
+                              // Text alignment (support multiple field names)
+                              const textAlign = el.textAlign || el.align || el?.layout?.text_align || el?.layout?.alignment || 'left';
+                              
+                              // Additional text properties
+                              const fontStyle = el.fontStyle || 'normal';
+                              const textDecoration = el.textDecoration || 'none';
+                              const letterSpacing = el.letterSpacing ? `${el.letterSpacing}px` : 'normal';
+                              const backgroundColor = el.backgroundColor || 'transparent';
+                              const padding = backgroundColor && backgroundColor !== 'transparent' ? '2px 4px' : '0';
+                              const borderRadius = backgroundColor && backgroundColor !== 'transparent' ? '2px' : '0';
+                              
+                              // Text Glow effect
+                              const textGlow = el.textGlow || 'none';
+                              let glowFilter = 'none';
+                              switch(textGlow) {
+                                case 'subtle':
+                                  glowFilter = 'drop-shadow(0 0 4px rgba(255, 255, 255, 0.6))';
+                                  break;
+                                case 'medium':
+                                  glowFilter = 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.8)) drop-shadow(0 0 12px rgba(124, 58, 237, 0.6))';
+                                  break;
+                                case 'strong':
+                                  glowFilter = 'drop-shadow(0 0 12px rgba(255, 255, 255, 1)) drop-shadow(0 0 16px rgba(124, 58, 237, 0.8))';
+                                  break;
+                                case 'neon':
+                                  glowFilter = 'drop-shadow(0 0 10px rgba(255, 255, 255, 1)) drop-shadow(0 0 20px rgba(124, 58, 237, 1)) drop-shadow(0 0 30px rgba(124, 58, 237, 0.8))';
+                                  break;
+                                default:
+                                  glowFilter = 'none';
+                              }
+                              
+                              // Word Art styles
+                              const wordArt = el.wordArt || 'none';
+                              let wordArtStyles = {};
+                              switch(wordArt) {
+                                case 'gradient':
+                                  wordArtStyles.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+                                  wordArtStyles.WebkitBackgroundClip = 'text';
+                                  wordArtStyles.WebkitTextFillColor = 'transparent';
+                                  break;
+                                case 'outline':
+                                  wordArtStyles.WebkitTextStroke = `2px ${color}`;
+                                  wordArtStyles.color = 'transparent';
+                                  break;
+                                case '3d':
+                                  wordArtStyles.textShadow = '1px 1px 0 rgba(255, 255, 255, 0.5), -1px -1px 0 rgba(0, 0, 0, 0.3), 2px 2px 4px rgba(0, 0, 0, 0.5)';
+                                  break;
+                                case 'metallic':
+                                  wordArtStyles.background = 'linear-gradient(180deg, #ffffff 0%, #333333 50%, #ffffff 100%)';
+                                  wordArtStyles.WebkitBackgroundClip = 'text';
+                                  wordArtStyles.WebkitTextFillColor = 'transparent';
+                                  break;
+                                case 'gradient-rainbow':
+                                  wordArtStyles.background = 'linear-gradient(90deg, #ff0000 0%, #ff7f00 16.66%, #ffff00 33.33%, #00ff00 50%, #0000ff 66.66%, #4b0082 83.33%, #9400d3 100%)';
+                                  wordArtStyles.WebkitBackgroundClip = 'text';
+                                  wordArtStyles.WebkitTextFillColor = 'transparent';
+                                  break;
+                                default:
+                                  wordArtStyles = {};
+                              }
+                              
                               const boxStyle = {
                                 position: 'absolute',
                                 left: `${leftPct}%`,
@@ -7200,8 +7408,18 @@ const getOrderedRefs = useCallback((row) => {
                                 fontFamily,
                                 fontWeight,
                                 fontSize,
+                                fontStyle,
+                                textDecoration,
+                                textAlign: ['left', 'center', 'right', 'start', 'end', 'justify'].includes(textAlign) ? textAlign : 'left',
                                 lineHeight,
+                                letterSpacing,
+                                opacity,
+                                backgroundColor,
+                                padding,
+                                borderRadius,
                                 textShadow,
+                                filter: glowFilter !== 'none' ? glowFilter : undefined,
+                                ...wordArtStyles,
                                 whiteSpace: 'pre-wrap'
                               };
                               return (
@@ -7239,7 +7457,11 @@ const getOrderedRefs = useCallback((row) => {
                                 overlayUrl = `${overlayUrl}${separator}_cb=${chartCacheBuster}`;
                               }
 
-                              const displayUrl = isAnchorModel
+                              // Check if background was already removed (saved flag)
+                              // If background_removed is true, use the URL directly (it's already processed)
+                              // Otherwise, apply background removal for ANCHOR models
+                              const isBackgroundRemoved = ov?.background_removed === true;
+                              const displayUrl = (isAnchorModel && !isBackgroundRemoved)
                                 ? getOverlayBackgroundRemovedUrl(overlayUrl)
                                 : overlayUrl;
                               
@@ -10083,6 +10305,8 @@ const getOrderedRefs = useCallback((row) => {
                   setRegenerateUserQuery('');
                   setRegeneratingSceneNumber(null);
                   setIsRegenerateForDescription(false);
+                  setIsRegenerating(false);
+                  setError('');
                 }
               }}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"

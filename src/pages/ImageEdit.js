@@ -2220,31 +2220,24 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                   <Icon name="crop" size={12} />
                 </button>
               )}
-              {/* Remove background button */}
-              {!isCropping && (
+              {/* Remove background button - only show if background is not already removed */}
+              {!isCropping && overlayLayerBackgroundRemoved.get(overlayLayer.id) !== true && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     setSelectedOverlayLayer(overlayLayer)
                     setSelectedLayer(null)
                     setSelectedShape(null)
-                    const isBgRemoved = overlayLayerBackgroundRemoved.get(overlayLayer.id)
-                    if (isBgRemoved) {
-                      undoOverlayLayerBackground()
-                    } else {
-                      removeOverlayLayerBackground()
-                    }
+                    removeOverlayLayerBackground()
                     setHoveredOverlayLayerId(null)
                   }}
                   disabled={isRemovingOverlayLayerBackground}
                   className={`w-6 h-6 rounded-full flex items-center justify-center shadow-md transition ${
                     isRemovingOverlayLayerBackground
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      : overlayLayerBackgroundRemoved.get(overlayLayer.id)
-                        ? 'bg-white/90 border border-gray-500 text-gray-700 hover:bg-gray-50'
-                        : 'bg-white/90 border border-rose-500 text-rose-600 hover:bg-rose-50'
+                      : 'bg-white/90 border border-rose-500 text-rose-600 hover:bg-rose-50'
                   }`}
-                  title={overlayLayerBackgroundRemoved.get(overlayLayer.id) ? 'Restore Background' : 'Remove Background'}
+                  title="Remove Background"
                   onMouseEnter={() => {
                     if (overlayHoverTimeoutRef.current) {
                       clearTimeout(overlayHoverTimeoutRef.current)
@@ -2254,11 +2247,34 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 >
                   {isRemovingOverlayLayerBackground ? (
                     <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  ) : overlayLayerBackgroundRemoved.get(overlayLayer.id) ? (
-                    <Icon name="undo" size={12} />
                   ) : (
                     <Icon name="imageCut" size={12} />
                   )}
+                </button>
+              )}
+              
+              {/* Restore background button - only show if background was removed */}
+              {!isCropping && overlayLayerBackgroundRemoved.get(overlayLayer.id) === true && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setSelectedOverlayLayer(overlayLayer)
+                    setSelectedLayer(null)
+                    setSelectedShape(null)
+                    undoOverlayLayerBackground()
+                    setHoveredOverlayLayerId(null)
+                  }}
+                  disabled={isRemovingOverlayLayerBackground}
+                  className="w-6 h-6 rounded-full flex items-center justify-center shadow-md transition bg-white/90 border border-gray-500 text-gray-700 hover:bg-gray-50"
+                  title="Restore Background"
+                  onMouseEnter={() => {
+                    if (overlayHoverTimeoutRef.current) {
+                      clearTimeout(overlayHoverTimeoutRef.current)
+                      overlayHoverTimeoutRef.current = null
+                    }
+                  }}
+                >
+                  <Icon name="undo" size={12} />
                 </button>
               )}
               {/* Delete button */}
@@ -3909,6 +3925,23 @@ const handleTemplateJsonLoad = () => {
       })
       const { x, y, width, height } = bbPercent
       
+      // Parse textShadow
+      const shadow = element.effects?.textShadow;
+      let textShadowValue = 'none';
+      if (shadow && shadow.enabled) {
+        textShadowValue = 'drop';
+      }
+      
+      // Parse letter spacing
+      let letterSpacingValue = 'normal';
+      if (element.letterSpacing !== undefined && element.letterSpacing !== null) {
+        if (typeof element.letterSpacing === 'number') {
+          letterSpacingValue = `${element.letterSpacing}px`;
+        } else if (typeof element.letterSpacing === 'string' && element.letterSpacing !== 'normal') {
+          letterSpacingValue = element.letterSpacing;
+        }
+      }
+      
       return {
         id: Date.now() + index,
         text: element.text,
@@ -3920,10 +3953,22 @@ const handleTemplateJsonLoad = () => {
         fontFamily: element.fontFamily || 'Arial',
         color: element.fill || '#000000',
         fontWeight: element.fontWeight || 'normal',
-        textAlign: element.layout?.alignment || 'center',
-        textShadow: element.effects?.textShadow?.enabled ? 'drop' : 'none',
-        textGlow: 'none',
-        wordArt: 'none',
+        fontStyle: element.fontStyle || 'normal', // Restore fontStyle
+        textDecoration: element.textDecoration || 'none', // Restore textDecoration
+        textAlign: element.textAlign || element.align || element.layout?.alignment || element.layout?.text_align || 'center', // Restore textAlign
+        lineHeight: element.lineHeight || 1.2, // Restore lineHeight
+        textOpacity: element.textOpacity !== undefined ? element.textOpacity : 1, // Restore textOpacity
+        letterSpacing: letterSpacingValue, // Restore letterSpacing
+        backgroundColor: element.backgroundColor || 'transparent', // Restore backgroundColor
+        textShadow: textShadowValue,
+        textGlow: element.textGlow || 'none', // Restore textGlow
+        wordArt: element.wordArt || 'none', // Restore wordArt
+        shadowProperties: shadow && shadow.enabled ? {
+          offsetX: shadow.offsetX || 2,
+          offsetY: shadow.offsetY || 2,
+          blur: shadow.blur || 4,
+          color: shadow.color || 'rgba(0, 0, 0, 0.5)'
+        } : null,
         overlayImage: element.overlay_image?.enabled ? {
           enabled: true,
           imageUrl: element.overlay_image.image_url || '',
@@ -3968,6 +4013,14 @@ const handleTemplateJsonLoad = () => {
             fileUrl: ovUrl // Store the file URL
           }
           loadedOverlays.push(overlayLayer)
+          
+          // Restore background removal state - explicitly set true or false
+          const bgRemoved = ov.background_removed === true;
+          setOverlayLayerBackgroundRemoved(prev => {
+            const newMap = new Map(prev);
+            newMap.set(overlayLayer.id, bgRemoved);
+            return newMap;
+          });
           
           // Load image asynchronously
         const oImg = new Image()
@@ -4492,7 +4545,7 @@ const handleTemplateJsonLoad = () => {
     
     setOverlayLayerBackgroundRemoved(prev => {
       const newMap = new Map(prev)
-      newMap.delete(selectedOverlayLayer.id)
+      newMap.set(selectedOverlayLayer.id, false) // Set to false when background is restored
       return newMap
     })
     
@@ -4605,6 +4658,16 @@ const handleTemplateJsonLoad = () => {
                     ? element.layout.zIndex 
                     : (typeof element.z_index === 'number' ? element.z_index : (typeof element.zIndex === 'number' ? element.zIndex : (index + 1)));
                   
+                  // Parse letter spacing - could be a number (px value) or undefined
+                  let letterSpacingValue = 'normal';
+                  if (element.letterSpacing !== undefined && element.letterSpacing !== null) {
+                    if (typeof element.letterSpacing === 'number') {
+                      letterSpacingValue = `${element.letterSpacing}px`;
+                    } else if (typeof element.letterSpacing === 'string' && element.letterSpacing !== 'normal') {
+                      letterSpacingValue = element.letterSpacing;
+                    }
+                  }
+                  
                   const layer = {
                     id: Date.now() + index,
                     text: element.text || '',
@@ -4616,10 +4679,16 @@ const handleTemplateJsonLoad = () => {
                     fontFamily: element.fontFamily || 'Arial',
                     color: element.fill || '#000000',
                     fontWeight: element.fontWeight || 'normal',
-                    textAlign: element.layout?.alignment || 'center',
+                    fontStyle: element.fontStyle || 'normal', // Restore fontStyle
+                    textDecoration: element.textDecoration || 'none', // Restore textDecoration
+                    textAlign: element.textAlign || element.align || element.layout?.alignment || element.layout?.text_align || 'center', // Restore textAlign
+                    lineHeight: element.lineHeight || 1.2, // Restore lineHeight
+                    textOpacity: element.textOpacity !== undefined ? element.textOpacity : 1, // Restore textOpacity
+                    letterSpacing: letterSpacingValue, // Restore letterSpacing
+                    backgroundColor: element.backgroundColor || 'transparent', // Restore backgroundColor
                     textShadow: textShadowValue,
-                    textGlow: 'none',
-                    wordArt: 'none',
+                    textGlow: element.textGlow || 'none', // Restore textGlow
+                    wordArt: element.wordArt || 'none', // Restore wordArt
                     shadowProperties: shadow && shadow.enabled ? {
                       offsetX: shadow.offsetX || 2,
                       offsetY: shadow.offsetY || 2,
@@ -4706,6 +4775,14 @@ const handleTemplateJsonLoad = () => {
                       }
                       loadedOverlays.push(overlayLayer)
                       allLayersWithZIndex.push({ layer: overlayLayer, zIndex, type: 'overlay' })
+                      
+                      // Restore background removal state - explicitly set true or false
+                      const bgRemoved = ov.background_removed === true;
+                      setOverlayLayerBackgroundRemoved(prev => {
+                        const newMap = new Map(prev);
+                        newMap.set(overlayLayer.id, bgRemoved);
+                        return newMap;
+                      });
                       
                       // Load image asynchronously
                     const oImg = new Image();
@@ -4834,7 +4911,60 @@ const handleTemplateJsonLoad = () => {
       const layerOrderIndex = layerOrder.findIndex(l => l.type === 'text' && l.id === layer.id);
       const zIndex = layerOrderIndex >= 0 ? layerOrderIndex + 1 : textLayers.length + 1;
       
-      // Reconstruct text element structure
+      // Parse letter spacing from layer (could be 'normal', '8px', or number)
+      let letterSpacingValue = 1;
+      if (layer.letterSpacing && layer.letterSpacing !== 'normal') {
+        if (typeof layer.letterSpacing === 'string' && layer.letterSpacing.includes('px')) {
+          letterSpacingValue = parseFloat(layer.letterSpacing) || 1;
+        } else {
+          letterSpacingValue = parseFloat(layer.letterSpacing) || 1;
+        }
+      }
+      
+      // Parse textShadow - could be shadowProperties object, CSS string, or preset name
+      let shadowProperties = null;
+      if (layer.shadowProperties) {
+        // Already in shadowProperties format
+        shadowProperties = {
+          blur: layer.shadowProperties.blur || 4,
+          color: layer.shadowProperties.color || 'rgba(0, 0, 0, 0.5)',
+          enabled: true,
+          offsetX: layer.shadowProperties.offsetX || 2,
+          offsetY: layer.shadowProperties.offsetY || 2
+        };
+      } else if (layer.textShadow && typeof layer.textShadow === 'string') {
+        // Check if it's a CSS string like '3px 3px 0px #dc2626'
+        const cssShadowMatch = layer.textShadow.match(/(\d+(?:\.\d+)?)px\s+(\d+(?:\.\d+)?)px\s+(\d+(?:\.\d+)?)px\s+(.+)/);
+        if (cssShadowMatch) {
+          shadowProperties = {
+            offsetX: parseFloat(cssShadowMatch[1]) || 2,
+            offsetY: parseFloat(cssShadowMatch[2]) || 2,
+            blur: parseFloat(cssShadowMatch[3]) || 0,
+            color: cssShadowMatch[4].trim() || 'rgba(0, 0, 0, 0.5)',
+            enabled: true
+          };
+        } else {
+          // It's a preset name like 'hard', 'drop', etc. - convert to shadowProperties
+          switch(layer.textShadow) {
+            case 'hard':
+              shadowProperties = { offsetX: 2, offsetY: 2, blur: 0, color: 'rgba(0, 0, 0, 0.8)', enabled: true };
+              break;
+            case 'drop':
+              shadowProperties = { offsetX: 2, offsetY: 2, blur: 4, color: 'rgba(0, 0, 0, 0.5)', enabled: true };
+              break;
+            case 'soft':
+              shadowProperties = { offsetX: 0, offsetY: 2, blur: 8, color: 'rgba(0, 0, 0, 0.3)', enabled: true };
+              break;
+            case 'multiple':
+              shadowProperties = { offsetX: 1, offsetY: 1, blur: 0, color: 'rgba(255, 255, 255, 0.8)', enabled: true };
+              break;
+            default:
+              shadowProperties = { enabled: false };
+          }
+        }
+      }
+      
+      // Reconstruct text element structure with ALL CSS properties
       const textElement = {
         fill: layer.color,
         text: layer.text,
@@ -4843,30 +4973,31 @@ const handleTemplateJsonLoad = () => {
           zIndex: zIndex,
           rotation: 0,
           alignment: layer.textAlign,
-          anchor_point: 'center'
+          anchor_point: 'center',
+          text_align: layer.textAlign // Also save as text_align for compatibility
         },
         offset: {
           x: x,
           y: y
         },
         effects: {
-          textShadow: layer.shadowProperties ? {
-            blur: layer.shadowProperties.blur || 4,
-            color: layer.shadowProperties.color || 'rgba(0, 0, 0, 0.5)',
-            enabled: true,
-            offsetX: layer.shadowProperties.offsetX || 2,
-            offsetY: layer.shadowProperties.offsetY || 2
-          } : {
-            enabled: false
-          }
+          textShadow: shadowProperties || { enabled: false }
         },
         fontSize: layer.fontSize,
         textStyle: layer.fontWeight === 'bold' ? 'bold' : 'normal',
         element_id: null,
         fontFamily: layer.fontFamily,
         fontWeight: layer.fontWeight,
-        lineHeight: 1.2,
-        textOpacity: 1,
+        fontStyle: layer.fontStyle || 'normal', // Save fontStyle (italic)
+        textDecoration: layer.textDecoration || 'none', // Save textDecoration
+        textAlign: layer.textAlign, // Save textAlign at root level
+        align: layer.textAlign, // Also save as align for compatibility
+        lineHeight: layer.lineHeight || 1.2, // Use layer's lineHeight if available
+        textOpacity: layer.textOpacity !== undefined ? layer.textOpacity : 1, // Save textOpacity
+        letterSpacing: letterSpacingValue, // Save parsed letterSpacing
+        backgroundColor: layer.backgroundColor || 'transparent', // Save backgroundColor
+        textGlow: layer.textGlow || 'none', // Save textGlow (subtle, medium, strong, neon)
+        wordArt: layer.wordArt || 'none', // Save wordArt (gradient, outline, 3d, metallic, gradient-rainbow)
         textTexture: {
           enabled: false,
           image_path: ''
@@ -4883,7 +5014,6 @@ const handleTemplateJsonLoad = () => {
           colors: [],
           enabled: false
         },
-        letterSpacing: 1,
         overlay_image: {
           enabled: false,
           scaling: {
@@ -5131,6 +5261,11 @@ const handleTemplateJsonLoad = () => {
           continue;
         }
         
+        // Check if background was removed for this overlay layer
+        // Explicitly check if the value is true (not just truthy)
+        const bgRemovedState = overlayLayerBackgroundRemoved.get(overlayLayer.id);
+        const isBackgroundRemoved = bgRemovedState === true;
+        
         // Overlay position and size are in natural pixel coordinates
         const naturalX = overlayLayer.x;
         const naturalY = overlayLayer.y;
@@ -5151,12 +5286,13 @@ const handleTemplateJsonLoad = () => {
             height: originalHeight > 0 ? naturalHeight / originalHeight : 0
           },
           overlay_image: {
-            image_url: fileUrl, // Use the uploaded file URL
+            image_url: fileUrl, // Use the uploaded file URL (already background-removed if isBackgroundRemoved is true)
             image_dimensions: {
               width: imageWidth,
               height: imageHeight
             }
           },
+          background_removed: isBackgroundRemoved === true, // Save flag - explicitly true or false
           layout: {
             zIndex: zIndex,
             rotation: 0,
@@ -5189,12 +5325,13 @@ const handleTemplateJsonLoad = () => {
               height: originalHeight > 0 ? naturalHeight / originalHeight : 0
             },
             overlay_image: {
-              image_url: finalOverlayUrl, // Use the uploaded URL
+              image_url: finalOverlayUrl, // Use the uploaded URL (already background-removed if overlayBackgroundRemoved is true)
               image_dimensions: {
                 width: overlayImage.width,
                 height: overlayImage.height
               }
             },
+            background_removed: overlayBackgroundRemoved === true, // Save flag indicating background was removed (explicitly true or false)
             layout: {
               zIndex: 1000, // Default z-index for main overlay (not in layerOrder)
               rotation: 0,
@@ -5431,42 +5568,66 @@ const handleTemplateJsonLoad = () => {
               />
               {cropShape === 'circle' ? 'Circle Crop' : 'Square Crop'}
             </button>
-            <button
-              type="button"
-              onClick={overlayBackgroundRemoved ? undoOverlayBackground : removeOverlayBackground}
-              disabled={
-                !overlaySelected ||
-                !overlayVisible ||
-                !overlayImageUrl ||
-                isRemovingBackground ||
-                (overlayBackgroundRemoved && !overlayOriginalBeforeBgRemoval)
-              }
-              className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
-                overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground
-                  ? overlayBackgroundRemoved
-                    ? 'border-gray-500 text-gray-700 hover:bg-gray-100'
-                    : 'border-rose-500 text-rose-600 hover:bg-rose-50'
-                  : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
-              }`}
-              title={
-                overlaySelected && overlayVisible && overlayImageUrl
-                  ? isRemovingBackground
-                    ? 'Processing background change...'
-                    : overlayBackgroundRemoved
-                      ? 'Restore original overlay background'
+            {/* Remove Background button - only show if background is not already removed */}
+            {overlayBackgroundRemoved !== true && (
+              <button
+                type="button"
+                onClick={removeOverlayBackground}
+                disabled={
+                  !overlaySelected ||
+                  !overlayVisible ||
+                  !overlayImageUrl ||
+                  isRemovingBackground
+                }
+                className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
+                  overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground
+                    ? 'border-rose-500 text-rose-600 hover:bg-rose-50'
+                    : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
+                }`}
+                title={
+                  overlaySelected && overlayVisible && overlayImageUrl
+                    ? isRemovingBackground
+                      ? 'Processing background removal...'
                       : 'Remove overlay background'
-                  : 'Select an overlay image to modify background'
-              }
-            >
-              {isRemovingBackground ? (
-                <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              ) : overlayBackgroundRemoved ? (
+                    : 'Select an overlay image to modify background'
+                }
+              >
+                {isRemovingBackground ? (
+                  <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Icon name="imageCut" size={16} />
+                )}
+                Remove BG
+              </button>
+            )}
+            
+            {/* Restore Background button - only show if background was removed */}
+            {overlayBackgroundRemoved === true && (
+              <button
+                type="button"
+                onClick={undoOverlayBackground}
+                disabled={
+                  !overlaySelected ||
+                  !overlayVisible ||
+                  !overlayImageUrl ||
+                  isRemovingBackground ||
+                  !overlayOriginalBeforeBgRemoval
+                }
+                className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
+                  overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground && overlayOriginalBeforeBgRemoval
+                    ? 'border-gray-500 text-gray-700 hover:bg-gray-100'
+                    : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
+                }`}
+                title={
+                  overlaySelected && overlayVisible && overlayImageUrl
+                    ? 'Restore original overlay background'
+                    : 'Select an overlay image to modify background'
+                }
+              >
                 <Icon name="undo" size={16} />
-              ) : (
-                <Icon name="imageCut" size={16} />
-              )}
-              {overlayBackgroundRemoved ? 'Undo BG' : 'Remove BG'}
-            </button>
+                Undo BG
+              </button>
+            )}
             <button
               onClick={isCropping && croppingTarget === 'overlay' ? applyCrop : handleSaveChanges}
               disabled={isSaving}
