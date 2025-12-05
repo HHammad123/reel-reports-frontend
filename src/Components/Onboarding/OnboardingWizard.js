@@ -69,6 +69,7 @@ const OnboardingWizard = () => {
   const [newIconUrl, setNewIconUrl] = useState('');
   const [newTemplateUrl, setNewTemplateUrl] = useState('');
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved
+  const [isSkipping, setIsSkipping] = useState(false); // Track skip loading state
 
   // Endpoint labels for sliders
   const getSliderEndpoints = (section, key, name) => {
@@ -186,6 +187,61 @@ const OnboardingWizard = () => {
       handleContinue();
     } else if (step === 2) {
       navigate('/');
+    }
+  };
+  const handleSkip = async () => {
+    if (isSkipping) return; // Prevent multiple clicks
+    
+    try {
+      setIsSkipping(true);
+      
+      // Get user_id
+      const userId = reduxToken || (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+      if (!userId) {
+        alert('Missing user session. Please log in again.');
+        setIsSkipping(false);
+        return;
+      }
+
+      // Use profileName if available, otherwise use default
+      const finalProfileName = profileName && profileName.trim() 
+        ? profileName.trim() 
+        : 'Default Profile';
+
+      // Prepare form data in x-www-form-urlencoded format
+      const params = new URLSearchParams();
+      params.append('user_id', userId);
+      params.append('profile_name', finalProfileName);
+      params.append('set_as_active', 'true');
+
+      // Make API call
+      const API_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1';
+      const response = await fetch(`${API_BASE}/users/brand-assets/profiles/create-blank`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString()
+      });
+
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (_) {
+        responseData = responseText;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Failed to create blank profile: ${response.status} ${responseText}`);
+      }
+
+      // Navigate to brand guidelines page after successful API call
+      navigate('/brandguidelines');
+    } catch (error) {
+      console.error('Error creating blank profile:', error);
+      alert(`Failed to skip onboarding: ${error.message || 'Please try again.'}`);
+      setIsSkipping(false);
     }
   };
 
@@ -503,7 +559,16 @@ const OnboardingWizard = () => {
           >
             Back
           </button>
-          <div className='text-sm text-gray-600'>Step {step} of 2</div>
+          <div className='flex items-center gap-4'>
+            <div className='text-sm text-gray-600'>Step {step} of 2</div>
+            <button
+              onClick={handleSkip}
+              disabled={isSkipping}
+              className={`px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm ${isSkipping ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
+              {isSkipping ? 'Skipping...' : 'Skip'}
+            </button>
+          </div>
           <button
             onClick={onNext}
             disabled={loading}
@@ -557,7 +622,16 @@ const OnboardingWizard = () => {
           >
             Back
           </button>
-          <div className='text-sm text-gray-600'>Step {step} of 2</div>
+          <div className='flex items-center gap-4'>
+            <div className='text-sm text-gray-600'>Step {step} of 2</div>
+            <button
+              onClick={handleSkip}
+              disabled={isSkipping}
+              className={`px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm ${isSkipping ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
+              {isSkipping ? 'Skipping...' : 'Skip'}
+            </button>
+          </div>
           <button
             onClick={handleSave}
             className={`px-4 py-2 rounded-lg border ${saveStatus==='saving' ? 'opacity-60 cursor-wait' : 'hover:bg-gray-50'}`}

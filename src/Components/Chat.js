@@ -307,39 +307,58 @@ const computeWordCount = (text) => {
 };
 
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
+  // Start with a deep copy to preserve ALL fields including nested structures
   const base =
     sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)
-      ? { ...sessionData }
+      ? JSON.parse(JSON.stringify(sessionData)) // Deep copy to preserve all nested fields
       : {};
+  
+  // Only normalize/transform specific fields, preserve everything else
   if (base.id && !base.session_id) base.session_id = base.id;
   delete base.id;
   base.session_id = base.session_id || sessionId || '';
   base.user_id = base.user_id || token || '';
+  
+  // Normalize video_duration but preserve if already exists
   if (base.videoduration && !base.video_duration) base.video_duration = base.videoduration;
   base.video_duration = String(base.video_duration || '60');
-  base.created_at = base.created_at || new Date().toISOString();
-  base.updated_at = base.updated_at || new Date().toISOString();
-  base.content = Array.isArray(base.content) ? base.content : [];
-  base.document_summary = Array.isArray(base.document_summary) ? base.document_summary : [];
-  base.messages = Array.isArray(base.messages) ? base.messages : [];
+  
+  // Ensure dates exist
+  if (!base.created_at) base.created_at = new Date().toISOString();
+  if (!base.updated_at) base.updated_at = new Date().toISOString();
+  
+  // Ensure arrays exist (but preserve their contents including all nested fields)
+  if (!Array.isArray(base.content)) base.content = [];
+  if (!Array.isArray(base.document_summary)) base.document_summary = [];
+  if (!Array.isArray(base.messages)) base.messages = [];
   if (Array.isArray(base.totalsummary) && !Array.isArray(base.total_summary)) {
     base.total_summary = base.totalsummary;
   }
-  base.total_summary = Array.isArray(base.total_summary) ? base.total_summary : [];
-  base.scripts = Array.isArray(base.scripts) ? base.scripts : [];
-  base.videos = Array.isArray(base.videos) ? base.videos : [];
-  base.images = Array.isArray(base.images) ? base.images : [];
-  if (!base.final_link) base.final_link = base.final_link || '';
+  if (!Array.isArray(base.total_summary)) base.total_summary = [];
+  if (!Array.isArray(base.scripts)) base.scripts = [];
+  if (!Array.isArray(base.videos)) base.videos = [];
+  if (!Array.isArray(base.images)) base.images = [];
+  
+  // Preserve final_link if it exists
+  if (base.final_link === undefined || base.final_link === null) base.final_link = '';
+  
+  // Normalize videoType
   if (!base.videoType && base.video_type) base.videoType = base.video_type;
+  
+  // Ensure brand_style_interpretation is an object
   if (!base.brand_style_interpretation || typeof base.brand_style_interpretation !== 'object') {
     base.brand_style_interpretation = {};
   }
+  
+  // Remove unwanted fields but preserve all others (including opening_frame, closing_frame, background_frame, animation_desc in scripts)
   if ('additionalProp1' in base) delete base.additionalProp1;
   if ('user_data' in base) delete base.user_data;
   if ('user' in base) delete base.user;
   delete base.videoduration;
   delete base.video_type;
   delete base.totalsummary;
+  
+  // All other fields (including nested structures in scripts/scenes) are preserved
   return base;
 };
 
@@ -403,35 +422,150 @@ const formatUserForVisual = (userData = {}, token = '') => {
 };
 
 const formatSessionForVisual = (sessionData = {}, sessionId = '', token = '') => {
-  const ensureArray = (arr, fallback) =>
-    Array.isArray(arr) && arr.length > 0 ? arr : fallback;
-  return {
-    session_id: sessionData?.session_id || sessionId,
-    user_id: sessionData?.user_id || token,
-    title: sessionData?.title || '',
-    video_duration: String(sessionData?.video_duration || '60'),
-    created_at: sessionData?.created_at || new Date().toISOString(),
-    updated_at: sessionData?.updated_at || new Date().toISOString(),
-    document_summary: ensureArray(sessionData?.document_summary, [{ additionalProp1: {} }]),
-    messages: ensureArray(sessionData?.messages, [{ additionalProp1: {} }]),
-    total_summary: ensureArray(
-      sessionData?.total_summary,
-      ensureArray(sessionData?.totalsummary, [''])
-    ),
-    scripts: ensureArray(sessionData?.scripts, ['']),
-    videos: ensureArray(sessionData?.videos, [{ additionalProp1: {} }]),
-    images: ensureArray(sessionData?.images, ['']),
-    final_link: sessionData?.final_link || '',
-    videoType: sessionData?.videoType || sessionData?.video_type || '',
-    brand_style_interpretation:
-      sessionData?.brand_style_interpretation && typeof sessionData.brand_style_interpretation === 'object'
-        ? sessionData.brand_style_interpretation
-        : { additionalProp1: {} },
-    additionalProp1:
-      sessionData?.additionalProp1 && typeof sessionData.additionalProp1 === 'object'
-        ? sessionData.additionalProp1
+  // Start with a deep copy to preserve ALL fields including nested structures
+  const base = sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)
+    ? JSON.parse(JSON.stringify(sessionData)) // Deep copy to preserve all nested fields
+    : {};
+  
+  // Only normalize/transform specific fields, preserve everything else
+  const result = {
+    ...base, // Preserve all original fields first
+    session_id: base.session_id || sessionId,
+    user_id: base.user_id || token,
+    title: base.title || '',
+    video_duration: String(base.video_duration || '60'),
+    created_at: base.created_at || new Date().toISOString(),
+    updated_at: base.updated_at || new Date().toISOString(),
+    document_summary: Array.isArray(base.document_summary) ? base.document_summary : (base.document_summary ? [base.document_summary] : []),
+    messages: Array.isArray(base.messages) ? base.messages : (base.messages ? [base.messages] : []),
+    total_summary: Array.isArray(base.total_summary) ? base.total_summary : (Array.isArray(base.totalsummary) ? base.totalsummary : []),
+    scripts: Array.isArray(base.scripts) ? base.scripts : (base.scripts ? [base.scripts] : []),
+    videos: Array.isArray(base.videos) ? base.videos : (base.videos ? [base.videos] : []),
+    images: Array.isArray(base.images) ? base.images : (base.images ? [base.images] : []),
+    final_link: base.final_link || '',
+    videoType: base.videoType || base.video_type || '',
+    brand_style_interpretation: base.brand_style_interpretation && typeof base.brand_style_interpretation === 'object'
+      ? base.brand_style_interpretation
         : {}
   };
+  
+  // Remove unwanted fields
+  delete result.additionalProp1;
+  delete result.user_data;
+  delete result.user;
+  delete result.videoduration;
+  delete result.video_type;
+  delete result.totalsummary;
+  delete result.id; // Remove id if present, we use session_id
+  
+  // All other fields (including nested structures in scripts/scenes like opening_frame, closing_frame, background_frame, animation_desc) are preserved
+  return result;
+};
+
+// Helper function to parse description into sections
+const parseDescription = (description) => {
+  if (!description || typeof description !== 'string') return [];
+  
+  // Check if description contains **Title**: pattern
+  if (!description.includes('**')) {
+    return [{ type: 'text', content: description }];
+  }
+  
+  // Match all **Title**: content patterns
+  const pattern = /\*\*([^*]+?)\*\*:\s*([^*]+?)(?=\s*\*\*|$)/g;
+  const sections = [];
+  let lastIndex = 0;
+  let match;
+  
+  while ((match = pattern.exec(description)) !== null) {
+    // Add any text before this match
+    if (match.index > lastIndex) {
+      const prefix = description.substring(lastIndex, match.index).trim();
+      if (prefix) {
+        sections.push({ type: 'text', content: prefix });
+      }
+    }
+    
+    // Add the title and content
+    const title = match[1].trim();
+    const content = match[2].trim();
+    if (title && content) {
+      sections.push({ type: 'section', title, content });
+    }
+    
+    lastIndex = pattern.lastIndex;
+  }
+  
+  // Add any remaining text after last match
+  if (lastIndex < description.length) {
+    const suffix = description.substring(lastIndex).trim();
+    if (suffix) {
+      sections.push({ type: 'text', content: suffix });
+    }
+  }
+  
+  // If no sections found, return as text
+  if (sections.length === 0) {
+    return [{ type: 'text', content: description }];
+  }
+  
+  return sections;
+};
+
+// Helper function to merge sections back into description format (keeps ** marks)
+const mergeDescriptionSections = (sections) => {
+  if (!sections || sections.length === 0) return '';
+  
+  // Filter out empty sections and merge them
+  const validSections = sections.filter(section => {
+    if (section.type === 'section') {
+      return section.title && section.title.trim() && section.content && section.content.trim();
+    } else {
+      return section.content && section.content.trim();
+    }
+  });
+  
+  return validSections.map(section => {
+    if (section.type === 'section') {
+      return `**${section.title.trim()}**: ${section.content.trim()}`;
+    } else {
+      return section.content.trim();
+    }
+  }).join(' ').trim();
+};
+
+// Helper function to format description for display (hides ** marks, shows bold titles)
+const formatDescription = (description) => {
+  const sections = parseDescription(description);
+  
+  // If no sections found, return original
+  if (sections.length === 0) {
+    return <div className="text-sm text-gray-600 whitespace-pre-wrap">{description}</div>;
+  }
+  
+  // Render formatted sections - each title and description in separate divs, one below another
+  return (
+    <div className="space-y-4">
+      {sections.map((section, index) => {
+        if (section.type === 'section') {
+          return (
+            <div key={index} className="border-b border-gray-200 pb-3 last:border-b-0 last:pb-0">
+              <div className="text-sm font-bold text-gray-800 mb-2">
+                {section.title}
+              </div>
+              <div className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed pl-0">
+                {section.content}
+              </div>
+            </div>
+          );
+        } else {
+          return (
+            <div key={index} className="text-sm text-gray-600 whitespace-pre-wrap">{section.content}</div>
+          );
+        }
+      })}
+    </div>
+  );
 };
 
 const extractAspectRatioFromSessionPayload = (payload) => {
@@ -570,6 +704,125 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [pendingPresenterPresetLabel, setPendingPresenterPresetLabel] = useState('');
   const [isSavingPresenterPreset, setIsSavingPresenterPreset] = useState(false);
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(false);
+  // Accordion states for Opening, Closing Frame, Background, and Animation Description
+  const [openingAccordionOpen, setOpeningAccordionOpen] = useState(false);
+  const [closingFrameAccordionOpen, setClosingFrameAccordionOpen] = useState(false);
+  const [backgroundAccordionOpen, setBackgroundAccordionOpen] = useState(false);
+  const [animationDescAccordionOpen, setAnimationDescAccordionOpen] = useState(false);
+  
+  // Editing states for frame data
+  const [isEditingOpeningFrame, setIsEditingOpeningFrame] = useState(false);
+  const [isEditingClosingFrame, setIsEditingClosingFrame] = useState(false);
+  const [isEditingBackgroundFrame, setIsEditingBackgroundFrame] = useState(false);
+  const [isEditingAnimationDesc, setIsEditingAnimationDesc] = useState(false);
+  const [isSavingFrameData, setIsSavingFrameData] = useState(false);
+  
+  // Edited data states
+  const [editedOpeningFrame, setEditedOpeningFrame] = useState({});
+  const [editedClosingFrame, setEditedClosingFrame] = useState({});
+  const [editedBackgroundFrame, setEditedBackgroundFrame] = useState({});
+  const [editedAnimationDesc, setEditedAnimationDesc] = useState({});
+  
+  // Helper function to save frame data (opening_frame, closing_frame, background_frame, animation_desc)
+  const saveFrameData = async (fieldName, fieldData) => {
+    if (isSavingFrameData) return;
+    setIsSavingFrameData(true);
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+
+      // Load session snapshot
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessionResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
+      const rawSession = sessJson?.session_data || sessJson?.session || {};
+      const sessionForBody = sanitizeSessionSnapshot(rawSession, sessionId, token);
+      const rawUser = sessJson?.user_data || rawSession?.user_data || rawSession?.user || {};
+      const user = normalizeUserSnapshot(rawUser, token);
+      const scriptsSource = Array.isArray(sessionForBody?.scripts) ? sessionForBody.scripts : [];
+      const primaryScript = scriptsSource[0] || {};
+      const originalUserquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+      const scriptVersion = primaryScript?.version || sessionForBody?.version || 'v1';
+      const airesponseSource = Array.isArray(primaryScript?.airesponse)
+        ? primaryScript.airesponse.map((item) => (item && typeof item === 'object' ? { ...item } : item))
+        : [];
+      const rows = Array.isArray(scriptRows) ? scriptRows : [];
+      const targetRow = rows[currentSceneIndex] || {};
+      const targetSceneNumber = targetRow?.scene_number ?? (currentSceneIndex + 1);
+
+      // Update the specific scene's field
+      let matchedScene = false;
+      const airesponse = airesponseSource.map((scene, idx) => {
+        if (!scene || typeof scene !== 'object') return scene;
+        const sceneNumber =
+          scene?.scene_number ??
+          scene?.scene_no ??
+          scene?.sceneNo ??
+          scene?.scene ??
+          (idx + 1);
+        if (sceneNumber !== targetSceneNumber) {
+          return { ...scene };
+        }
+        matchedScene = true;
+        const clone = { ...scene };
+        
+        // Update the specific field
+        clone[fieldName] = fieldData;
+        
+        return clone;
+      });
+
+      // If scene not found, add it as a new scene
+      const finalAiresponse = matchedScene ? airesponse : (() => {
+        const fallbackRow = rows[currentSceneIndex] || {};
+        const fallbackScene = {
+          scene_number: targetSceneNumber,
+          scene_title: fallbackRow?.scene_title ?? '',
+          model: fallbackRow?.mode ?? fallbackRow?.model ?? '',
+          timeline: fallbackRow?.timeline ?? '',
+          [fieldName]: fieldData
+        };
+        return [...airesponse, fallbackScene];
+      })();
+
+      const requestBody = {
+        user,
+        session: sessionForBody,
+        changed_script: {
+          userquery: originalUserquery,
+          airesponse: finalAiresponse,
+          version: String(scriptVersion || 'v1')
+        }
+      };
+
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+      });
+      const txt = await resp.text();
+      let data;
+      try { data = JSON.parse(txt); } catch(_) { data = txt; }
+      if (!resp.ok || resp.status !== 200) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+      
+      const container = data?.script ? { script: data.script } : data;
+      const normalized = normalizeScriptToRows(container);
+      const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+      setScriptRows(newRows);
+      try {
+        localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+        localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+      } catch(_) {}
+    } catch(e) {
+      console.error('saveFrameData failed:', e);
+      alert(`Failed to save ${fieldName}. Please try again.`);
+      throw e;
+    } finally {
+      setIsSavingFrameData(false);
+    }
+  };
 
   // Move scene left/right utilities for tab controls
   const moveSceneLeft = (index) => {
@@ -689,6 +942,14 @@ useEffect(() => {
   setIsEditingAdvancedStyles(false);
   setIsEditingSceneData(false);
   setIsEditingAnchorPrompt(false);
+  setIsEditingOpeningFrame(false);
+  setIsEditingClosingFrame(false);
+  setIsEditingBackgroundFrame(false);
+  setIsEditingAnimationDesc(false);
+  setEditedOpeningFrame({});
+  setEditedClosingFrame({});
+  setEditedBackgroundFrame({});
+  setEditedAnimationDesc({});
   advancedStylesBackupRef.current = null;
   sceneDataBackupRef.current = null;
   anchorPromptBackupRef.current = null;
@@ -778,22 +1039,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${text}`);
       const sd = json?.session_data || json?.session || {};
       const user = json?.user_data || sd?.user_data || sd?.user || {};
-      const sessionForBody = {
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-        content: Array.isArray(sd?.content) ? sd.content : [],
-        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
-        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-        created_at: sd?.created_at || new Date().toISOString(),
-        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-        messages: Array.isArray(sd?.messages) ? sd.messages : [],
-        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [],
-        videos: Array.isArray(sd?.videos) ? sd.videos : [],
-        images: Array.isArray(sd?.images) ? sd.images : [],
-        final_link: sd?.final_link || '',
-        videoType: sd?.videoType || sd?.video_type || '',
-        brand_style_interpretation: sd?.brand_style_interpretation
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
       const suggestBody = {
         session: sessionForBody,
         user,
@@ -851,6 +1098,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [isDescriptionEditing, setIsDescriptionEditing] = useState(false);
   const [pendingDescription, setPendingDescription] = useState('');
   const [descriptionSceneIndex, setDescriptionSceneIndex] = useState(null);
+  const [editableSections, setEditableSections] = useState([]);
   const [isNarrationEditing, setIsNarrationEditing] = useState(false);
   const [pendingNarration, setPendingNarration] = useState('');
   const [narrationSceneIndex, setNarrationSceneIndex] = useState(null);
@@ -3152,7 +3400,14 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             ? row.word_count
             : computeWordCount(narration || description || '');
 
+        // Start with a deep copy of the original row to preserve ALL fields
+        const preservedRow = row && typeof row === 'object' && !Array.isArray(row)
+          ? JSON.parse(JSON.stringify(row)) // Deep copy to preserve all nested fields
+          : {};
+        
+        // Build normalized row, preserving all original fields and only overriding specific ones
         return {
+          ...preservedRow, // Preserve ALL original fields first (including opening_frame, closing_frame, animation_desc, etc.)
           scene_number: sceneNumber,
           mode,
           // Always preserve ref_image from API responses (e.g., from update-text API)
@@ -3587,7 +3842,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const sd = (sessJson?.session_data || sessJson?.session || {});
       const userPayload = (sessJson?.user_data) || (sd?.user_data) || {};
       // New undo schema: send user and session_id only
-      const reqBody = { user: userPayload, session_id: sd?.session_id || sessionId };
+      const reqBody = { user: userPayload, session_id: sd?.id || sd?.session_id || sessionId };
       // 2) Call undo with user + session_id
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/undo', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
@@ -3618,7 +3873,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const sd2 = (sessJson?.session_data || sessJson?.session || {});
       const userPayload = (sessJson?.user_data) || (sd2?.user_data) || {};
       // New redo schema: send user and session_id only
-      const reqBody = { user: userPayload, session_id: sd2?.session_id || sessionId };
+      const reqBody = { user: userPayload, session_id: sd2?.id || sd2?.session_id || sessionId };
       // 2) Call redo with user + session_id
       const resp = await fetch('https://coreappservicerr-aseahgexgk​e8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
@@ -3824,23 +4079,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
       const regenPath = 'scripts/regenerate-scene';
 
-      const sessionForBody = {
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-        content: Array.isArray(sd?.content) ? sd.content : [],
-        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-        created_at: sd?.created_at || new Date().toISOString(),
-        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-        messages: Array.isArray(sd?.messages) ? sd.messages : [],
-        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
-        videos: Array.isArray(sd?.videos) ? sd.videos : [],
-        images: Array.isArray(sd?.images) ? sd.images : [],
-        final_link: sd?.final_link || '',
-        videoType: sd?.videoType || sd?.video_type || '',
-        brand_style_interpretation: sd?.brand_style_interpretation,
-        additionalProp1: sd?.additionalProp1 || {}
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
       let userForBody;
       if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
         userForBody = sessionDataResponse.user_data;
@@ -4008,12 +4248,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       //    - Map session_data -> session
       //    - Do NOT include user_data/session_data at the top-level
       //    - Include scene_number as a top-level field per requirement
-      const sessionForBody = {
-        ...(sd || {}),
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-        brand_style_interpretation: sd?.brand_style_interpretation,
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
       const body = { user: userPayload, session: sessionForBody, scene_number: sceneNumber };
       try { console.log('[delete-scene] endpoint:', deleteEndpointPath, 'body:', body); } catch (_) { /* noop */ }
       // 5) Call unified delete endpoint
@@ -4202,44 +4438,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     if (!resp.ok) throw new Error(`user-session/data failed: ${resp.status} ${text}`);
     const sd = json?.session_data || json?.session || {};
     const user = json?.user_data || sd?.user_data || sd?.user || {};
-    const totalSummaryArr = Array.isArray(sd?.total_summary)
-      ? sd.total_summary
-      : (Array.isArray(sd?.totalsummary) ? sd.totalsummary : []);
-    const documentSummaryArr = Array.isArray(sd?.document_summary)
-      ? sd.document_summary
-      : [{ additionalProp1: {} }];
-    const messagesArr = Array.isArray(sd?.messages)
-      ? sd.messages
-      : [{ additionalProp1: {} }];
-    const scriptsArr = Array.isArray(sd?.scripts)
-      ? sd.scripts
-      : [''];
-    const videosArr = Array.isArray(sd?.videos)
-      ? sd.videos
-      : [{ additionalProp1: {} }];
-    const imagesArr = Array.isArray(sd?.images)
-      ? sd.images
-      : [''];
-    const session = {
-      session_id: sd?.session_id || sessionId,
-      user_id: sd?.user_id || token,
-      title: sd?.title || '',
-      content: Array.isArray(sd?.content) ? sd.content : [],
-      document_summary: documentSummaryArr,
-      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-      created_at: sd?.created_at || new Date().toISOString(),
-      updated_at: sd?.updated_at || new Date().toISOString(),
-      totalsummary: totalSummaryArr,
-      total_summary: totalSummaryArr,
-      messages: messagesArr,
-      scripts: scriptsArr,
-      videos: videosArr,
-      images: imagesArr,
-      final_link: sd?.final_link || '',
-      videoType: sd?.videoType || sd?.video_type || '',
-      brand_style_interpretation: sd?.brand_style_interpretation,
-      additionalProp1: sd?.additionalProp1 || {}
-    };
+    // Preserve ALL fields from session_data, including nested structures
+    const session = sanitizeSessionSnapshot(sd, sessionId, token);
     return { session, user, rawSession: sd, rawUser: user };
   };
 
@@ -4616,7 +4816,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           resolvedVideoTone = sd?.video_tone || sd?.videoTone || 'professional';
           const resolvedVideoType = sd?.videoType || sd?.video_type || '';
           sessionPayload = {
-            session_id: sd?.session_id || sessionId || '',
+            session_id: sd?.id || sd?.session_id || sessionId || '',
             user_id: sd?.user_id || token || '',
             title: sd?.title || '',
             video_duration: resolvedVideoDuration,
@@ -4939,7 +5139,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           const sd = json?.session_data || json?.session || {};
           // Normalize to required schema
           sessionObj = {
-            session_id: sd.session_id || sessionId,
+            session_id: sd.id || sd.session_id || sessionId,
             user_id: sd.user_id || token,
             content: Array.isArray(sd.content) ? sd.content : [],
             document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
@@ -5145,7 +5345,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           let jsonAll; try { jsonAll = JSON.parse(textAll); } catch (_) { jsonAll = {}; }
           const sdAll = jsonAll?.session_data || jsonAll?.session || {};
           sessionObjAll = {
-            session_id: sdAll.session_id || sessionId,
+            session_id: sdAll.id || sdAll.session_id || sessionId,
             user_id: sdAll.user_id || token,
             content: Array.isArray(sdAll.content) ? sdAll.content : [],
             document_summary: Array.isArray(sdAll.document_summary) ? sdAll.document_summary : [{ additionalProp1: {} }],
@@ -5795,20 +5995,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           }
         } catch (_) { userForBody = {}; }
       }
-      const sessionForBody = {
-        session_id: sessionId,
-        user_id: token,
-        title: sd.title ?? null,
-        video_duration: sd.video_duration,
-        created_at: sd.created_at,
-        updated_at: sd.updated_at,
-        document_summary: sd.document_summary,
-        content: sd.content,
-        total_summary: sd.total_summary,
-        brand_style_interpretation: sd.brand_style_interpretation,
-        messages: sd.messages,
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : undefined,
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
 
       // 2) Build switch-model request body
       const requestBody = {
@@ -5956,23 +6144,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const sessionDataResponse = await sessionResp.json();
       const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
       // Build session object to match required schema
-      const sessionForBody = {
-        session_id: sd?.session_id || sessionId,
-        user_id: sd?.user_id || token,
-        content: Array.isArray(sd?.content) ? sd.content : [],
-        document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-        video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-        created_at: sd?.created_at || new Date().toISOString(),
-        totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-        messages: Array.isArray(sd?.messages) ? sd.messages : [],
-        scripts: Array.isArray(sd?.scripts) ? sd.scripts : [{ additionalProp1: {} }],
-        videos: Array.isArray(sd?.videos) ? sd.videos : [],
-        images: Array.isArray(sd?.images) ? sd.images : [],
-        final_link: sd?.final_link || '',
-        videoType: sd?.videoType || sd?.video_type || '',
-        brand_style_interpretation: sd?.brand_style_interpretation,
-        additionalProp1: sd?.additionalProp1 || {}
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
 
       // Use exact user object from user-session-data
       let userForBody = undefined;
@@ -6004,7 +6177,9 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       };
       const airesponse = rows.map((r, idx) => {
         const narrationVal = r?.narration ?? '';
-        const descriptionVal = r?.description ?? '';
+        const modelUpper = String(r?.mode ?? r?.model ?? '').toUpperCase();
+        const isVEO3 = modelUpper === 'VEO3';
+        const descriptionVal = isVEO3 ? '' : (r?.description ?? '');
         const durationCandidate =
           (typeof r?.duration === 'number' && Number.isFinite(r.duration))
             ? Math.round(r.duration)
@@ -6251,10 +6426,13 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         matchedScene = true;
         const clone = { ...scene };
 
-        const descriptionVal =
-          typeof descriptionOverride === 'string'
+        const modelUpper = String((clone.model || clone.mode || targetRow?.mode) ?? targetRow?.model ?? '').toUpperCase();
+        const isVEO3 = modelUpper === 'VEO3';
+        const descriptionVal = isVEO3 
+          ? '' 
+          : (typeof descriptionOverride === 'string'
             ? descriptionOverride
-            : (targetRow?.description ?? clone.desc ?? clone.description ?? '');
+              : (targetRow?.description ?? clone.desc ?? clone.description ?? ''));
         const narrationVal =
           typeof narrationOverride === 'string'
             ? narrationOverride
@@ -6375,7 +6553,6 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           }];
         }
         // Handle presenter_options - ensure preset_id is included for ANCHOR models
-        const modelUpper = String(clone.model || clone.mode || '').toUpperCase();
         if (targetRow?.presenter_options) {
           clone.presenter_options = { ...targetRow.presenter_options };
           // For ANCHOR models, ensure preset_id is included if a preset is selected
@@ -6430,10 +6607,13 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           : Array.isArray(fallbackRow?.ref_image)
             ? filterImageUrls(fallbackRow.ref_image)
             : [];
-        const descriptionVal =
-          typeof descriptionOverride === 'string'
+        const fallbackModelUpper = String(fallbackRow?.mode ?? fallbackRow?.model ?? '').toUpperCase();
+        const isFallbackVEO3 = fallbackModelUpper === 'VEO3';
+        const descriptionVal = isFallbackVEO3
+          ? ''
+          : (typeof descriptionOverride === 'string'
             ? descriptionOverride
-            : (fallbackRow?.description ?? '');
+              : (fallbackRow?.description ?? ''));
         const backgroundVal =
           backgroundOverride ??
           backgroundImageOverride ??
@@ -8007,7 +8187,7 @@ const saveAnchorPromptTemplate = async () => {
                           let sj; try { sj = JSON.parse(st); } catch(_) { sj = {}; }
                           const sd = sj?.session_data || sj?.session || {};
                           sessionObj = {
-                            session_id: sd.session_id || sessionId,
+                            session_id: sd.id || sd.session_id || sessionId,
                             user_id: sd.user_id || userId,
                             content: Array.isArray(sd.content) ? sd.content : [],
                             document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
@@ -8276,7 +8456,7 @@ const saveAnchorPromptTemplate = async () => {
                           let sj; try { sj = JSON.parse(st); } catch(_) { sj = {}; }
                           const sd = sj?.session_data || sj?.session || {};
                           sessionObj = {
-                            session_id: sd.session_id || sessionId,
+                            session_id: sd.id || sd.session_id || sessionId,
                             user_id: sd.user_id || userId,
                             content: Array.isArray(sd.content) ? sd.content : [],
                             document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
@@ -8785,22 +8965,8 @@ const saveAnchorPromptTemplate = async () => {
                                 if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${text}`);
                                 const sd = json?.session_data || json?.session || {};
                                 const user = json?.user_data || sd?.user_data || sd?.user || {};
-                                const sessionForBody = {
-                                  session_id: sd?.session_id || sessionId,
-                                  user_id: sd?.user_id || token,
-                                  content: Array.isArray(sd?.content) ? sd.content : [],
-                                  document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
-                                  video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-                                  created_at: sd?.created_at || new Date().toISOString(),
-                                  totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-                                  messages: Array.isArray(sd?.messages) ? sd.messages : [],
-                                  scripts: Array.isArray(sd?.scripts) ? sd.scripts : [],
-                                  videos: Array.isArray(sd?.videos) ? sd.videos : [],
-                                  images: Array.isArray(sd?.images) ? sd.images : [],
-                                  final_link: sd?.final_link || '',
-                                  videoType: sd?.videoType || sd?.video_type || '',
-                                  brand_style_interpretation: sd?.brand_style_interpretation
-                                };
+                                // Preserve ALL fields from session_data, including nested structures
+                                const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
                                 const suggestBody = {
                                   session: sessionForBody,
                                   user,
@@ -9372,7 +9538,10 @@ const saveAnchorPromptTemplate = async () => {
                              </div>
                            )}
                          </div>
-                         <div className="md:col-span-2">
+                         {/* Narration and Description in same row */}
+                         <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                           {/* Narration Section */}
+                           <div>
                            {(() => {
                              const sceneNarration =
                                Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
@@ -9549,12 +9718,13 @@ const saveAnchorPromptTemplate = async () => {
                              );
                            })()}
                          </div>
-                         {/* Description section for PLOTLY - appears below narration and above charts */}
+                           {/* Description Section - Hidden for VEO3 */}
                          {(() => {
                            const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                            const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                           const isPlotly = sceneModelUpper === 'PLOTLY';
-                           if (!isPlotly) return null;
+                             const isVEO3 = sceneModelUpper === 'VEO3';
+                             // Don't show description for VEO3
+                             if (isVEO3) return null;
                            
                            const sceneDescription =
                              Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
@@ -9565,31 +9735,174 @@ const saveAnchorPromptTemplate = async () => {
                              isDescriptionEditing &&
                              descriptionSceneIndex === currentSceneIndex;
                            const startInlineEditing = () => {
-                             setPendingDescription(sceneDescription);
+                             // Parse description into sections for editing
+                             const sections = parseDescription(sceneDescription);
+                             setEditableSections(sections);
                              setDescriptionSceneIndex(currentSceneIndex);
                              setIsDescriptionEditing(true);
                            };
                            const cancelInlineEditing = () => {
-                             setPendingDescription(sceneDescription);
+                             setEditableSections([]);
                              setIsDescriptionEditing(false);
                              setDescriptionSceneIndex(null);
                            };
+                           const updateSection = (index, field, value) => {
+                             setEditableSections(prev => {
+                               const updated = [...prev];
+                               if (updated[index]) {
+                                 if (field === 'title') {
+                                   updated[index] = { ...updated[index], title: value };
+                                 } else if (field === 'content') {
+                                   updated[index] = { ...updated[index], content: value };
+                                 }
+                               }
+                               return updated;
+                             });
+                           };
+                           const addNewSection = () => {
+                             setEditableSections(prev => [...prev, { type: 'section', title: '', content: '' }]);
+                           };
+                           const removeSection = (index) => {
+                             setEditableSections(prev => prev.filter((_, i) => i !== index));
+                           };
                            const saveInlineDescription = async () => {
-                             try {
                                setIsSavingDescription(true);
-                               const scene =
+                               try {
+                                 const saveScene =
                                  Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
                                    ? scriptRows[currentSceneIndex]
                                    : null;
-                               const sceneNumber = (scene?.scene_number ?? (currentSceneIndex + 1)) || 0;
-                               const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-                               const nextDescription = pendingDescription || '';
-                               const narrationText = scene?.narration || '';
+                                 const sceneNumber = (saveScene?.scene_number ?? (currentSceneIndex + 1)) || 0;
+                                 const modelUpper = String(saveScene?.model || saveScene?.mode || '').toUpperCase();
+                               // Merge sections back into description format (keeps ** marks)
+                               const nextDescription = mergeDescriptionSections(editableSections);
+                                 const narrationText = saveScene?.narration || '';
                                const computedWordCount = computeWordCount(narrationText || nextDescription);
                                handleSceneUpdate(currentSceneIndex, 'description', nextDescription);
                                handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
 
-                               // Use update-text API for PLOTLY
+                                 if (modelUpper === 'VEO3') {
+                                   try {
+                                     const { session, user } = await buildSessionAndUserForScene();
+                                     const token = localStorage.getItem('token') || '';
+                                     const formattedUser = formatUserForVisual(user, token);
+                                     const formattedSession = formatSessionForVisual(
+                                       session,
+                                       session?.session_id,
+                                       session?.user_id
+                                     );
+                                     const payload = {
+                                       user: formattedUser,
+                                       session: formattedSession,
+                                       scene_number: Number(sceneNumber) || 0,
+                                       custom_desc: nextDescription
+                                     };
+                                     
+                                     // Call custom-desc API
+                                     const customDescResp = await fetch(
+                                       'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/custom-desc',
+                                       {
+                                         method: 'POST',
+                                         headers: { 'Content-Type': 'application/json' },
+                                         body: JSON.stringify(payload)
+                                       }
+                                     );
+                                     const customDescText = await customDescResp.text();
+                                     let customDescData;
+                                     try {
+                                       customDescData = JSON.parse(customDescText);
+                                     } catch (_) {
+                                       customDescData = customDescText;
+                                     }
+                                     if (!customDescResp.ok) {
+                                       throw new Error(`custom-desc failed: ${customDescResp.status} ${customDescText}`);
+                                     }
+
+                                     // Small delay to ensure backend has processed the update
+                                     await new Promise(resolve => setTimeout(resolve, 500));
+
+                                     // After custom-desc API succeeds, call user-session-data API
+                                     const sessionId = localStorage.getItem('session_id');
+                                     const userId = localStorage.getItem('token');
+                                     if (sessionId && userId) {
+                                       const sessionResp = await fetch(
+                                         'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data',
+                                         {
+                                           method: 'POST',
+                                           headers: { 'Content-Type': 'application/json' },
+                                           body: JSON.stringify({ user_id: userId, session_id: sessionId })
+                                         }
+                                       );
+                                       const sessionText = await sessionResp.text();
+                                       let sessionData;
+                                       try {
+                                         sessionData = JSON.parse(sessionText);
+                                       } catch (_) {
+                                         sessionData = sessionText;
+                                       }
+                                       if (sessionResp.ok && sessionData) {
+                                         // Update scriptRows from session data
+                                         const sd = sessionData?.session_data || sessionData?.session || {};
+                                         const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+                                         if (scripts.length > 0) {
+                                           const currentScript = scripts[0];
+                                           const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+                                           if (airesponse.length > 0) {
+                                             // Find the scene with matching scene_number and update its description
+                                             // Use the description we sent (nextDescription) as the source of truth
+                                             // but also check session data for any other updates
+                                             const updatedAiresponse = airesponse.map((scene) => {
+                                               const sceneNum = scene?.scene_number ?? scene?.scene_no ?? scene?.sceneNo ?? scene?.scene;
+                                               if (Number(sceneNum) === Number(sceneNumber)) {
+                                                 // Prioritize custom_desc from session, fallback to nextDescription we just sent
+                                                 const updatedDesc = scene?.custom_desc || scene?.desc || scene?.description || nextDescription;
+                                                 return {
+                                                   ...scene,
+                                                   description: updatedDesc,
+                                                   desc: updatedDesc,
+                                                   custom_desc: updatedDesc
+                                                 };
+                                               }
+                                               return scene;
+                                             });
+                                             
+                                             const scriptContainer = { script: { airesponse: updatedAiresponse } };
+                                             applyScriptContainer(scriptContainer);
+                                             
+                                             // Also update the local state directly after a small delay to ensure description is preserved
+                                             // This ensures the description is updated even if applyScriptContainer normalization doesn't pick it up
+                                             setTimeout(() => {
+                                               setScriptRows((prevRows) => {
+                                                 if (!Array.isArray(prevRows)) return prevRows;
+                                                 return prevRows.map((row, idx) => {
+                                                   const rowSceneNum = row?.scene_number ?? (idx + 1);
+                                                   if (Number(rowSceneNum) === Number(sceneNumber)) {
+                                                     return {
+                                                       ...row,
+                                                       description: nextDescription,
+                                                       desc: nextDescription
+                                                     };
+                                                   }
+                                                   return row;
+                                                 });
+                                               });
+                                             }, 100);
+                                           }
+                                         }
+                                       }
+                                     }
+                                   } catch (err) {
+                                     console.warn('custom-desc update failed:', err);
+                                     alert(err?.message || 'Failed to save description. Please try again.');
+                                   } finally {
+                                     setIsSavingDescription(false);
+                                     // Close editing state after loading completes for VEO3
+                                     setIsDescriptionEditing(false);
+                                     setDescriptionSceneIndex(null);
+                                     setEditableSections([]);
+                                   }
+                                 } else if (modelUpper === 'ANCHOR' || modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
+                                   // Use update-text API for ANCHOR, SORA, and PLOTLY
                                try {
                                  await updateSceneGenImageFlag(currentSceneIndex, {
                                    descriptionOverride: nextDescription
@@ -9598,8 +9911,21 @@ const saveAnchorPromptTemplate = async () => {
                                  console.warn('update-text description failed:', err);
                                  alert('Failed to save description. Please try again.');
                                }
+                                 } else {
+                                   // Default to update-text flow for any other models
+                                   try {
+                                     await updateSceneGenImageFlag(currentSceneIndex, {
+                                       descriptionOverride: nextDescription
+                                     });
+                                   } catch (err) {
+                                     console.warn('description update failed:', err);
+                                     alert('Failed to save description. Please try again.');
+                                   }
+                                 }
+                                 // Close editing state after API completes
                                setIsDescriptionEditing(false);
                                setDescriptionSceneIndex(null);
+                               setEditableSections([]);
                              } catch (err) {
                                console.error('Error saving description:', err);
                                alert('Failed to save description. Please try again.');
@@ -9607,9 +9933,9 @@ const saveAnchorPromptTemplate = async () => {
                                setIsSavingDescription(false);
                              }
                            };
-                           
+                             if (isEditingScene) {
                            return (
-                             <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative mt-4 w-full">
+                                 <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
                                {/* Loading Overlay */}
                                {isSavingDescription && (
                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
@@ -9623,6 +9949,43 @@ const saveAnchorPromptTemplate = async () => {
                                          playsInline
                                          className="w-full h-full object-contain"
                                        />
+                                         </div>
+                                         <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
+                                         <p className="text-xs text-gray-500">Please wait...</p>
+                                       </div>
+                                     </div>
+                                   )}
+                                   <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
+                                   {!isInlineEditing && (
+                                   <p className="mt-2 text-xs text-gray-500">Double-click the description to edit.</p>
+                                 )}
+                                   <textarea
+                                     value={sceneDescription}
+                                     onChange={(e) => handleSceneUpdate(currentSceneIndex, 'description', e.target.value)}
+                                     className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent !font-medium ${isSavingDescription ? 'opacity-60' : ''}`}
+                                     rows={4}
+                                     placeholder="Enter scene description"
+                                     readOnly={isSavingDescription}
+                                   />
+                                 </div>
+                               );
+                             }
+                             return (
+                               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
+                                 {/* Loading Overlay */}
+                                 {isSavingDescription && (
+                                   <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                                     <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                                       <div className="relative w-16 h-16 mx-auto">
+                                         <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
+                                         <div className="absolute inset-2 rounded-full overflow-hidden">
+                                           <img 
+                                             src={LogoImage} 
+                                             alt="Logo" 
+                                             className="w-full h-full object-contain animate-spin"
+                                             style={{ animationDuration: '2s' }}
+                                           />
+                                         </div>
                                      </div>
                                      <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
                                      <p className="text-xs text-gray-500">Please wait...</p>
@@ -9643,9 +10006,9 @@ const saveAnchorPromptTemplate = async () => {
                                      </button>
                                      <button
                                        type="button"
+                                         className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                        onClick={saveInlineDescription}
                                        disabled={isSavingDescription}
-                                       className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                      >
                                        {isSavingDescription ? (
                                          <>
@@ -9661,23 +10024,593 @@ const saveAnchorPromptTemplate = async () => {
                                    <p className="text-xs text-gray-500">Double-click the description to edit.</p>
                                  )}
                                </div>
+                               {isInlineEditing ? (
+                                 <div className="space-y-4">
+                                   {editableSections.map((section, index) => {
+                                     if (section.type === 'section') {
+                                       return (
+                                         <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                           <div>
+                                             <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Title</label>
+                                           </div>
+                                           <input
+                                             type="text"
+                                             value={section.title || ''}
+                                             onChange={(e) => updateSection(index, 'title', e.target.value)}
+                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm font-semibold text-gray-800"
+                                             placeholder="Enter title"
+                                             disabled={isSavingDescription}
+                                           />
+                                           <div>
+                                             <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Description</label>
                                <textarea
-                                 value={isInlineEditing ? pendingDescription : sceneDescription}
-                                 onChange={(e) => setPendingDescription(e.target.value)}
-                                 onDoubleClick={startInlineEditing}
-                                 readOnly={!isInlineEditing || isSavingDescription}
-                                 className={`w-full px-3 py-2 rounded-lg border ${
-                                   isInlineEditing
-                                     ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
-                                     : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
-                                 } ${isSavingDescription ? 'opacity-60' : ''}`}
-                                 rows={4}
-                                 placeholder="Double-click to edit description"
-                               />
+                                               value={section.content || ''}
+                                               onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                               className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                               rows={3}
+                                               placeholder="Enter description"
+                                               disabled={isSavingDescription}
+                                             />
+                                           </div>
+                                         </div>
+                                       );
+                                     } else {
+                                       return (
+                                         <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                           <div>
+                                             <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">Text Content</label>
+                                           </div>
+                                           <textarea
+                                             value={section.content || ''}
+                                             onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                             rows={2}
+                                             placeholder="Enter text content"
+                                             disabled={isSavingDescription}
+                                           />
+                                         </div>
+                                       );
+                                     }
+                                   })}
+                                 </div>
+                               ) : (
+                                 <div
+                                   onDoubleClick={startInlineEditing}
+                                     className={`w-full px-4 py-3 rounded-lg border border-gray-200 bg-white text-gray-600 min-h-[100px] cursor-pointer ${isSavingDescription ? 'opacity-60' : ''}`}
+                                 >
+                                   {sceneDescription ? (
+                                     formatDescription(sceneDescription) || (
+                                         <div className="text-sm text-gray-600 whitespace-pre-wrap">{sceneDescription}</div>
+                                     )
+                                   ) : (
+                                     <p className="text-sm text-gray-400 italic">Double-click to add description</p>
+                                   )}
+                                 </div>
+                               )}
                              </div>
                            );
                          })()}
                        </div>
+                     </div>
+                         {/* Accordions for Opening, Choosing Frame (SORA/ANCHOR) and Background (PLOTLY) */}
+                         {(() => {
+                           const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                           if (!scene) return null;
+                           const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                           const isSora = sceneModelUpper === 'SORA';
+                           const isAnchor = sceneModelUpper === 'ANCHOR';
+                           const isPlotly = sceneModelUpper === 'PLOTLY';
+                           
+                           // Only show accordions for SORA, ANCHOR, or PLOTLY
+                           if (!isSora && !isAnchor && !isPlotly) return null;
+                           
+                           return (
+                             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                              {/* Scene Visual Section for SORA/ANCHOR */}
+                              {(isSora || isAnchor) && (
+                                <>
+                                  <div className="md:col-span-2 mb-3">
+                                    <h3 className="text-base font-semibold text-gray-800">Scene Visual</h3>
+                                  </div>
+                                  {/* Opening Frame Accordion */}
+                                  <div className="bg-white rounded-lg border border-gray-200">
+                                    <div className="flex items-center justify-between p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => setOpeningAccordionOpen(!openingAccordionOpen)}
+                                        className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
+                                      >
+                                        <span className="text-sm font-semibold text-gray-800">Opening Frame</span>
+                                        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${openingAccordionOpen ? 'rotate-180' : ''}`} />
+                                      </button>
+                                      {openingAccordionOpen && (
+                                        <div className="ml-2 flex items-center gap-2">
+                                          {isEditingOpeningFrame ? (
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setIsEditingOpeningFrame(false);
+                                                  setEditedOpeningFrame({});
+                                                }}
+                                                disabled={isSavingFrameData}
+                                                className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              >
+                                                Cancel
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={async () => {
+                                                  try {
+                                                    await saveFrameData('opening_frame', editedOpeningFrame);
+                                                    setIsEditingOpeningFrame(false);
+                                                  } catch (e) {
+                                                    console.error('Failed to save opening frame:', e);
+                                                  }
+                                                }}
+                                                disabled={isSavingFrameData}
+                                                className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                              >
+                                                {isSavingFrameData ? (
+                                                  <>
+                                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                    <span>Saving...</span>
+                                                  </>
+                                                ) : (
+                                                  'Save'
+                                                )}
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const openingData = scene?.opening_frame || scene?.openingFrame || scene?.opening || {};
+                                                setEditedOpeningFrame(typeof openingData === 'object' && !Array.isArray(openingData) ? { ...openingData } : {});
+                                                setIsEditingOpeningFrame(true);
+                                              }}
+                                              className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                            >
+                                              Edit
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                     {openingAccordionOpen && (
+                                       <div className="px-4 pb-4">
+                                         {(() => {
+                                           const normalizeOpeningData = (data) => {
+                                             if (!data) return {};
+                                             if (typeof data === 'string') {
+                                               try {
+                                                 const parsed = JSON.parse(data);
+                                                 if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                                               } catch (_) {
+                                                 return {};
+                                               }
+                                             }
+                                             if (Array.isArray(data)) {
+                                               const collected = {};
+                                               data.forEach((item) => {
+                                                 if (item && typeof item === 'object') {
+                                                   Object.entries(item).forEach(([k, v]) => {
+                                                     if (collected[k] === undefined) collected[k] = v;
+                                                   });
+                                                 }
+                                               });
+                                               return collected;
+                                             }
+                                             return typeof data === 'object' ? data : {};
+                                           };
+                                           // Check for opening_frame first, then fallback to opening
+                                           const currentData = isEditingOpeningFrame ? editedOpeningFrame : normalizeOpeningData(scene?.opening_frame || scene?.openingFrame || scene?.opening);
+                                           const formatTitle = (key) => {
+                                             const cleaned = key.replace(/_/g, ' ').trim();
+                                             if (!cleaned) return '';
+                                             return cleaned
+                                               .split(' ')
+                                               .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                                               .join(' ');
+                                           };
+                                           const formatValue = (val) => {
+                                             if (val == null) return '';
+                                             if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                                             return String(val);
+                                           };
+                                           const openingFields = Object.entries(currentData);
+                                           const priorityOrder = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                                           const sortedFields = openingFields.sort(([keyA], [keyB]) => {
+                                             const indexA = priorityOrder.indexOf(keyA.toLowerCase());
+                                             const indexB = priorityOrder.indexOf(keyB.toLowerCase());
+                                             if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                                             if (indexA !== -1) return -1;
+                                             if (indexB !== -1) return 1;
+                                             return 0;
+                                           });
+                                           
+                                           return openingFields.length > 0 ? (
+                                             <>
+                                               <div className="grid grid-cols-1 gap-4">
+                                                 {sortedFields.map(([key, value]) => {
+                                                   const title = formatTitle(key);
+                                                   const displayValue = formatValue(value);
+                                                   return (
+                                                     <div
+                                                       key={key}
+                                                       className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                                     >
+                                                       <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                                         {title}
+                                                       </h5>
+                                                       {isEditingOpeningFrame ? (
+                                                         <textarea
+                                                           value={displayValue}
+                                                           onChange={(e) => {
+                                                             const newData = { ...editedOpeningFrame };
+                                                             newData[key] = e.target.value;
+                                                             setEditedOpeningFrame(newData);
+                                                           }}
+                                                           className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                                           rows={3}
+                                                           disabled={isSavingFrameData}
+                                                         />
+                                                       ) : (
+                                                         <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
+                                                           {displayValue || '-'}
+                                                         </div>
+                                                       )}
+                                                     </div>
+                                                   );
+                                                 })}
+                                               </div>
+                                             </>
+                                           ) : (
+                                             <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-500">
+                                               No opening data available
+                                             </div>
+                                           );
+                                         })()}
+                                       </div>
+                                     )}
+                                   </div>
+                                  {/* Closing Frame Accordion */}
+                                  <div className="bg-white rounded-lg border border-gray-200">
+                                    <div className="flex items-center justify-between p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => setClosingFrameAccordionOpen(!closingFrameAccordionOpen)}
+                                        className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
+                                      >
+                                        <span className="text-sm font-semibold text-gray-800">Closing Frame</span>
+                                        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${closingFrameAccordionOpen ? 'rotate-180' : ''}`} />
+                                      </button>
+                                      {closingFrameAccordionOpen && (
+                                        <div className="ml-2 flex items-center gap-2">
+                                          {isEditingClosingFrame ? (
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setIsEditingClosingFrame(false);
+                                                  setEditedClosingFrame({});
+                                                }}
+                                                disabled={isSavingFrameData}
+                                                className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              >
+                                                Cancel
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={async () => {
+                                                  try {
+                                                    await saveFrameData('closing_frame', editedClosingFrame);
+                                                    setIsEditingClosingFrame(false);
+                                                  } catch (e) {
+                                                    console.error('Failed to save closing frame:', e);
+                                                  }
+                                                }}
+                                                disabled={isSavingFrameData}
+                                                className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                              >
+                                                {isSavingFrameData ? (
+                                                  <>
+                                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                    <span>Saving...</span>
+                                                  </>
+                                                ) : (
+                                                  'Save'
+                                                )}
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const closingData = scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame || {};
+                                                setEditedClosingFrame(typeof closingData === 'object' && !Array.isArray(closingData) ? { ...closingData } : {});
+                                                setIsEditingClosingFrame(true);
+                                              }}
+                                              className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                            >
+                                              Edit
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {closingFrameAccordionOpen && (
+                                       <div className="px-4 pb-4">
+                                         {(() => {
+                                          const normalizeClosingFrameData = (data) => {
+                                            if (!data) return {};
+                                            if (typeof data === 'string') {
+                                              try {
+                                                const parsed = JSON.parse(data);
+                                                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                                              } catch (_) {
+                                                return {};
+                                              }
+                                            }
+                                            if (Array.isArray(data)) {
+                                              const collected = {};
+                                              data.forEach((item) => {
+                                                if (item && typeof item === 'object') {
+                                                  Object.entries(item).forEach(([k, v]) => {
+                                                    if (collected[k] === undefined) collected[k] = v;
+                                                  });
+                                                }
+                                              });
+                                              return collected;
+                                            }
+                                            return typeof data === 'object' ? data : {};
+                                          };
+                                          // Check for closing_frame first, then fallback to choosing_frame (for backward compatibility)
+                                          const currentData = isEditingClosingFrame ? editedClosingFrame : normalizeClosingFrameData(scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame);
+                                          const formatTitle = (key) => {
+                                            const cleaned = key.replace(/_/g, ' ').trim();
+                                            if (!cleaned) return '';
+                                            return cleaned
+                                              .split(' ')
+                                              .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                                              .join(' ');
+                                          };
+                                          const formatValue = (val) => {
+                                            if (val == null) return '';
+                                            if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                                            return String(val);
+                                          };
+                                          const closingFrameFields = Object.entries(currentData);
+                                          const priorityOrder = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                                          const sortedFields = closingFrameFields.sort(([keyA], [keyB]) => {
+                                            const indexA = priorityOrder.indexOf(keyA.toLowerCase());
+                                            const indexB = priorityOrder.indexOf(keyB.toLowerCase());
+                                            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                                            if (indexA !== -1) return -1;
+                                            if (indexB !== -1) return 1;
+                                            return 0;
+                                          });
+                                          
+                                          return closingFrameFields.length > 0 ? (
+                                             <>
+                                               <div className="grid grid-cols-1 gap-4">
+                                                 {sortedFields.map(([key, value]) => {
+                                                   const title = formatTitle(key);
+                                                   const displayValue = formatValue(value);
+                                                   return (
+                                                     <div
+                                                       key={key}
+                                                       className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                                     >
+                                                       <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                                         {title}
+                                                       </h5>
+                                                       {isEditingClosingFrame ? (
+                                                         <textarea
+                                                           value={displayValue}
+                                                           onChange={(e) => {
+                                                             const newData = { ...editedClosingFrame };
+                                                             newData[key] = e.target.value;
+                                                             setEditedClosingFrame(newData);
+                                                           }}
+                                                           className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                                           rows={3}
+                                                           disabled={isSavingFrameData}
+                                                         />
+                                                       ) : (
+                                                         <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
+                                                           {displayValue || '-'}
+                                                         </div>
+                                                       )}
+                                                     </div>
+                                                   );
+                                                 })}
+                                               </div>
+                                             </>
+                                           ) : (
+                                            <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-500">
+                                              No closing frame data available
+                                            </div>
+                                           );
+                                         })()}
+                                       </div>
+                                     )}
+                                   </div>
+                                 </>
+                               )}
+                              {/* Scene Visual Section for PLOTLY */}
+                              {isPlotly && (
+                                <>
+                                  <div className="md:col-span-2 mb-3">
+                                    <h3 className="text-base font-semibold text-gray-800">Scene Visual</h3>
+                                  </div>
+                                  {/* Background Frame Accordion */}
+                                  <div className="bg-white rounded-lg border border-gray-200 md:col-span-2">
+                                    <div className="flex items-center justify-between p-4">
+                                      <button
+                                        type="button"
+                                        onClick={() => setBackgroundAccordionOpen(!backgroundAccordionOpen)}
+                                        className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
+                                      >
+                                        <span className="text-sm font-semibold text-gray-800">Background Frame</span>
+                                        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${backgroundAccordionOpen ? 'rotate-180' : ''}`} />
+                                      </button>
+                                      {backgroundAccordionOpen && (
+                                        <div className="ml-2 flex items-center gap-2">
+                                          {isEditingBackgroundFrame ? (
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setIsEditingBackgroundFrame(false);
+                                                  setEditedBackgroundFrame({});
+                                                }}
+                                                disabled={isSavingFrameData}
+                                                className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              >
+                                                Cancel
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={async () => {
+                                                  try {
+                                                    await saveFrameData('background_frame', editedBackgroundFrame);
+                                                    setIsEditingBackgroundFrame(false);
+                                                  } catch (e) {
+                                                    console.error('Failed to save background frame:', e);
+                                                  }
+                                                }}
+                                                disabled={isSavingFrameData}
+                                                className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                              >
+                                                {isSavingFrameData ? (
+                                                  <>
+                                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                    <span>Saving...</span>
+                                                  </>
+                                                ) : (
+                                                  'Save'
+                                                )}
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const backgroundData = scene?.background_frame || scene?.backgroundFrame || scene?.background || {};
+                                                setEditedBackgroundFrame(typeof backgroundData === 'object' && !Array.isArray(backgroundData) ? { ...backgroundData } : {});
+                                                setIsEditingBackgroundFrame(true);
+                                              }}
+                                              className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                            >
+                                              Edit
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {backgroundAccordionOpen && (
+                                      <div className="px-4 pb-4">
+                                        {(() => {
+                                          const normalizeBackgroundFrameData = (data) => {
+                                            if (!data) return {};
+                                            if (typeof data === 'string') {
+                                              try {
+                                                const parsed = JSON.parse(data);
+                                                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                                              } catch (_) {
+                                                return {};
+                                              }
+                                            }
+                                            if (Array.isArray(data)) {
+                                              const collected = {};
+                                              data.forEach((item) => {
+                                                if (item && typeof item === 'object') {
+                                                  Object.entries(item).forEach(([k, v]) => {
+                                                    if (collected[k] === undefined) collected[k] = v;
+                                                  });
+                                                }
+                                              });
+                                              return collected;
+                                            }
+                                            return typeof data === 'object' ? data : {};
+                                          };
+                                          // Check for background_frame first, then fallback to background (for backward compatibility)
+                                          const currentData = isEditingBackgroundFrame ? editedBackgroundFrame : normalizeBackgroundFrameData(scene?.background_frame || scene?.backgroundFrame || scene?.background || {});
+                                          const formatTitle = (key) => {
+                                            const cleaned = key.replace(/_/g, ' ').trim();
+                                            if (!cleaned) return '';
+                                            return cleaned
+                                              .split(' ')
+                                              .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                                              .join(' ');
+                                          };
+                                          const formatValue = (val) => {
+                                            if (val == null) return '';
+                                            if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                                            return String(val);
+                                          };
+                                          const backgroundFrameFields = Object.entries(currentData);
+                                          const priorityOrder = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                                          const sortedFields = backgroundFrameFields.sort(([keyA], [keyB]) => {
+                                            const indexA = priorityOrder.indexOf(keyA.toLowerCase());
+                                            const indexB = priorityOrder.indexOf(keyB.toLowerCase());
+                                            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                                            if (indexA !== -1) return -1;
+                                            if (indexB !== -1) return 1;
+                                            return 0;
+                                          });
+                                          
+                                          return backgroundFrameFields.length > 0 ? (
+                                            <>
+                                              <div className="grid grid-cols-1 gap-4">
+                                                {sortedFields.map(([key, value]) => {
+                                                  const title = formatTitle(key);
+                                                  const displayValue = formatValue(value);
+                                                  return (
+                                                    <div
+                                                      key={key}
+                                                      className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                                    >
+                                                      <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                                        {title}
+                                                      </h5>
+                                                      {isEditingBackgroundFrame ? (
+                                                        <textarea
+                                                          value={displayValue}
+                                                          onChange={(e) => {
+                                                            const newData = { ...editedBackgroundFrame };
+                                                            newData[key] = e.target.value;
+                                                            setEditedBackgroundFrame(newData);
+                                                          }}
+                                                          className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                                          rows={3}
+                                                          disabled={isSavingFrameData}
+                                                        />
+                                                      ) : (
+                                                        <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
+                                                          {displayValue || '-'}
+                                                        </div>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </>
+                                          ) : (
+                                            <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-500">
+                                              No background frame data available
+                                            </div>
+                                          );
+                                        })()}
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                             </div>
+                           );
+                         })()}
                      </div>
 
                       {(() => {
@@ -9895,13 +10828,64 @@ const saveAnchorPromptTemplate = async () => {
                         const isVEO3 = modelUpper === 'VEO3';
                         const isPlotlyForDescription = modelUpper === 'PLOTLY';
                         
-                        // For VEO3: Show veo3_prompt_template fields (excluding description)
+                        // For VEO3: Show veo3_prompt_template fields (DESC TEMPLATE only - exclude description, mode, presenter_options)
                         if (isVEO3) {
-                          const veo3Template = scene?.veo3_prompt_template || {};
-                          const allFields = Object.entries(veo3Template).filter(([key]) => key !== 'description');
+                          const normalizeVeo3Template = (tpl) => {
+                            if (!tpl) return {};
+                            if (typeof tpl === 'string') {
+                              try {
+                                const parsed = JSON.parse(tpl);
+                                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                              } catch (_) {
+                                // Best-effort parse for non-strict JSON (e.g., newline separated key: value)
+                                const map = {};
+                                const pairs = tpl.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+                                pairs.forEach((line) => {
+                                  const match = line.match(/^\s*"?([^":]+)"?\s*:\s*"?(.+?)"?\s*[,}]?$/);
+                                  if (match) {
+                                    map[match[1].trim()] = match[2].trim();
+                                  }
+                                });
+                                if (Object.keys(map).length > 0) return map;
+                                return {};
+                              }
+                            }
+                            if (Array.isArray(tpl)) {
+                              const collected = {};
+                              tpl.forEach((item) => {
+                                if (item && typeof item === 'object') {
+                                  Object.entries(item).forEach(([k, v]) => {
+                                    if (collected[k] === undefined) collected[k] = v;
+                                  });
+                                }
+                              });
+                              return collected;
+                            }
+                            return typeof tpl === 'object' ? tpl : {};
+                          };
+                          const veo3Template = normalizeVeo3Template(scene?.veo3_prompt_template);
+                          const priorityOrder = ['subject', 'background', 'action', 'style', 'camera', 'preset', 'ambiance', 'composition', 'focus_and_lens', 'focus', 'lens', 'lighting'];
+                          const formatTitle = (key) => {
+                            const cleaned = key.replace(/_/g, ' ').trim();
+                            if (!cleaned) return '';
+                            return cleaned
+                              .split(' ')
+                              .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                              .join(' ');
+                          };
+                          const formatValue = (val) => {
+                            if (val == null) return '';
+                            if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                            return String(val);
+                          };
+                          // Filter out description, mode, presenter_options, and any other non-DESC-TEMPLATE fields
+                          const excludedKeys = ['description', 'mode', 'presenter_options', 'presenterOptions', 'MODE', 'PRESENTER_OPTIONS'];
+                          const allFields = Object.entries(veo3Template).filter(([key]) => {
+                            const keyLower = key.toLowerCase();
+                            return !excludedKeys.some(excluded => excluded.toLowerCase() === keyLower);
+                          });
                           
                           // Sort fields: Subject, Background, Action first, then the rest
-                          const priorityOrder = ['subject', 'background', 'action'];
                           const templateFields = allFields.sort(([keyA], [keyB]) => {
                             const indexA = priorityOrder.indexOf(keyA.toLowerCase());
                             const indexB = priorityOrder.indexOf(keyB.toLowerCase());
@@ -9939,21 +10923,44 @@ const saveAnchorPromptTemplate = async () => {
                                     </div>
                                   </div>
                                 )}
-                                <h4 className="text-lg font-semibold text-gray-800 mb-4">Scene Description</h4>
-                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div className="flex items-center justify-between mb-3">
+                                  <h4 className="text-lg font-semibold text-gray-800">DESC TEMPLATE</h4>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={cancelSceneDataEdit}
+                                      disabled={isSavingSceneData}
+                                      className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={saveSceneData}
+                                      disabled={isSavingSceneData}
+                                      className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                    >
+                                      {isSavingSceneData ? (
+                                        <>
+                                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                          <span>Saving...</span>
+                                        </>
+                                      ) : (
+                                        'Save'
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   {templateFields.length > 0 ? (
                                     templateFields.map(([key, value]) => {
-                                      const displayValue = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+                                      const displayValue = typeof value === 'string' ? value : (typeof value === 'object' && value !== null ? JSON.stringify(value, null, 2) : String(value || ''));
+                                      const title = key.replace(/_/g, ' ').split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
                                       const onChange = (val) => {
                                         const currentTemplate = {
                                           ...(scene?.veo3_prompt_template || {})
                                         };
-                                        try {
-                                          const parsed = JSON.parse(val);
-                                          currentTemplate[key] = parsed;
-                                        } catch {
-                                          currentTemplate[key] = val;
-                                        }
+                                        currentTemplate[key] = val;
                                         handleSceneUpdate(
                                           currentSceneIndex,
                                           'veo3_prompt_template',
@@ -9963,56 +10970,32 @@ const saveAnchorPromptTemplate = async () => {
                                       return (
                                         <div
                                           key={key}
-                                          className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
+                                          className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
                                         >
-                                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
-                                            {key.replace(/_/g, ' ')}
-                                          </p>
+                                          <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide flex items-center justify-between">
+                                            {title}
+                                          </h5>
                                           <textarea
                                             value={displayValue}
                                             onChange={(e) => onChange(e.target.value)}
                                             rows={3}
-                                            className="mt-1 w-full resize-y rounded-md border border-blue-200 px-3 py-2 text-sm text-gray-800 focus:border-transparent focus:ring-2 focus:ring-[#13008B]"
+                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
                                             disabled={isSavingSceneData}
+                                            placeholder="Enter description"
                                           />
                                         </div>
                                       );
                                     })
                                   ) : (
-                                    <div className="col-span-2 text-sm text-gray-500">No VEO3 prompt template fields available</div>
+                                    <div className="text-sm text-gray-500">No VEO3 prompt template fields available</div>
                                   )}
-                                </div>
-                                <div className="flex items-center justify-end gap-2 mt-4">
-                                  <button
-                                    type="button"
-                                    onClick={cancelSceneDataEdit}
-                                    disabled={isSavingSceneData}
-                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={saveSceneData}
-                                    disabled={isSavingSceneData}
-                                    className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                                  >
-                                    {isSavingSceneData ? (
-                                      <>
-                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                        <span>Saving...</span>
-                                      </>
-                                    ) : (
-                                      'Save'
-                                    )}
-                                  </button>
                                 </div>
                               </div>
                             );
                           }
                           
                           return (
-                            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
+                            <div className="bg-gray-50 rounded-xl p-5 border border-gray-200 relative">
                               {isSavingSceneData && (
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
@@ -10031,8 +11014,8 @@ const saveAnchorPromptTemplate = async () => {
                                   </div>
                                 </div>
                               )}
-                              <div className="flex items-center justify-between mb-3">
-                                <h4 className="text-lg font-semibold text-gray-800">Scene Description</h4>
+                              <div className="flex items-center justify-between mb-4">
+                                <h4 className="text-2xl font-semibold text-gray-800">Scene Description</h4>
                                 {isEditingSceneData ? (
                                   <div className="flex items-center gap-2">
                                     <button
@@ -10072,38 +11055,41 @@ const saveAnchorPromptTemplate = async () => {
                                   </button>
                                 )}
                               </div>
-                              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {templateFields.length > 0 ? (
                                   templateFields.map(([key, value]) => {
-                                    const displayValue = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
+                                    const title = formatTitle(key);
+                                    const displayValue = formatValue(value);
                                     return (
                                       <div
                                         key={key}
-                                        className="rounded-md border border-gray-100 bg-gray-50 px-3 py-2"
+                                        className="border border-gray-200 rounded-xl bg-white p-4 space-y-2 shadow-sm"
                                       >
-                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                          {key.replace(/_/g, ' ')}
-                                        </p>
-                                        <p className="mt-1 text-sm text-gray-800 break-words whitespace-pre-line">
+                                        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                          {title}
+                                        </div>
+                                        <div className="text-base text-gray-900 break-words whitespace-pre-line leading-relaxed">
                                           {displayValue || '-'}
-                                        </p>
+                                        </div>
                                       </div>
                                     );
                                   })
                                 ) : (
-                                  <div className="col-span-2 text-sm text-gray-500">No VEO3 prompt template fields available</div>
+                                  <div className="text-sm text-gray-500">No VEO3 prompt template fields available</div>
                                 )}
                               </div>
                             </div>
                           );
                         }
                         
-                        // Default: Description for non-VEO3 and non-PLOTLY scenes (PLOTLY has its own description section above charts)
+                        // Default: Description for non-VEO3, non-PLOTLY, and non-SORA/ANCHOR scenes
+                        // SORA/ANCHOR have opening_frame and closing_frame accordions, so skip description section
                         const defaultScene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                         const modelUpperForDefault = defaultScene ? String(defaultScene?.model || defaultScene?.mode || '').toUpperCase() : '';
                         const isPlotlyForDefault = modelUpperForDefault === 'PLOTLY';
-                        // Skip default description for PLOTLY since it has its own section above charts
-                        if (isPlotlyForDefault) {
+                        const isSoraOrAnchorForDefault = modelUpperForDefault === 'SORA' || modelUpperForDefault === 'ANCHOR';
+                        // Skip default description for PLOTLY, SORA, and ANCHOR
+                        if (isPlotlyForDefault || isSoraOrAnchorForDefault) {
                           return null;
                         }
                         
@@ -10116,16 +11102,38 @@ const saveAnchorPromptTemplate = async () => {
                           isDescriptionEditing &&
                           descriptionSceneIndex === currentSceneIndex;
                         const startInlineEditing = () => {
-                          setPendingDescription(sceneDescription);
+                          // Parse description into sections for editing
+                          const sections = parseDescription(sceneDescription);
+                          setEditableSections(sections);
                           setDescriptionSceneIndex(currentSceneIndex);
                           setIsDescriptionEditing(true);
                         };
                         const cancelInlineEditing = () => {
-                          setPendingDescription(sceneDescription);
+                          setEditableSections([]);
                           setIsDescriptionEditing(false);
                           setDescriptionSceneIndex(null);
                         };
+                        const updateSection = (index, field, value) => {
+                          setEditableSections(prev => {
+                            const updated = [...prev];
+                            if (updated[index]) {
+                              if (field === 'title') {
+                                updated[index] = { ...updated[index], title: value };
+                              } else if (field === 'content') {
+                                updated[index] = { ...updated[index], content: value };
+                              }
+                            }
+                            return updated;
+                          });
+                        };
+                        const addNewSection = () => {
+                          setEditableSections(prev => [...prev, { type: 'section', title: '', content: '' }]);
+                        };
+                        const removeSection = (index) => {
+                          setEditableSections(prev => prev.filter((_, i) => i !== index));
+                        };
                         const saveInlineDescription = async () => {
+                          setIsSavingDescription(true);
                           try {
                             const saveScene =
                               Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
@@ -10133,14 +11141,14 @@ const saveAnchorPromptTemplate = async () => {
                                 : null;
                             const sceneNumber = (saveScene?.scene_number ?? (currentSceneIndex + 1)) || 0;
                             const modelUpper = String(saveScene?.model || saveScene?.mode || '').toUpperCase();
-                            const nextDescription = pendingDescription || '';
+                            // Merge sections back into description format (keeps ** marks)
+                            const nextDescription = mergeDescriptionSections(editableSections);
                             const narrationText = saveScene?.narration || '';
                             const computedWordCount = computeWordCount(narrationText || nextDescription);
                             handleSceneUpdate(currentSceneIndex, 'description', nextDescription);
                             handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
 
                             if (modelUpper === 'VEO3') {
-                              setIsSavingDescription(true);
                               try {
                                 const { session, user } = await buildSessionAndUserForScene();
                                 const token = localStorage.getItem('token') || '';
@@ -10258,6 +11266,7 @@ const saveAnchorPromptTemplate = async () => {
                                 // Close editing state after loading completes for VEO3
                                 setIsDescriptionEditing(false);
                                 setDescriptionSceneIndex(null);
+                                setEditableSections([]);
                               }
                             } else if (modelUpper === 'ANCHOR' || modelUpper === 'SORA' || modelUpper === 'PLOTLY') {
                               // Use update-text API for ANCHOR, SORA, and PLOTLY
@@ -10267,9 +11276,8 @@ const saveAnchorPromptTemplate = async () => {
                                 });
                               } catch (err) {
                                 console.warn('update-text description failed:', err);
+                                alert('Failed to save description. Please try again.');
                               }
-                              setIsDescriptionEditing(false);
-                              setDescriptionSceneIndex(null);
                             } else {
                               // Default to update-text flow for any other models
                               try {
@@ -10278,12 +11286,18 @@ const saveAnchorPromptTemplate = async () => {
                                 });
                               } catch (err) {
                                 console.warn('description update failed:', err);
+                                alert('Failed to save description. Please try again.');
                               }
+                            }
+                            // Close editing state after API completes
                               setIsDescriptionEditing(false);
                               setDescriptionSceneIndex(null);
-                            }
-                          } catch (_) {
-                            /* noop */
+                            setEditableSections([]);
+                          } catch (err) {
+                            console.error('Error saving description:', err);
+                            alert('Failed to save description. Please try again.');
+                          } finally {
+                            setIsSavingDescription(false);
                           }
                         };
                         if (isEditingScene) {
@@ -10377,19 +11391,69 @@ const saveAnchorPromptTemplate = async () => {
                                 <p className="text-xs text-gray-500">Double-click the description to edit.</p>
                               )}
                             </div>
+                            {isInlineEditing ? (
+                              <div className="space-y-4">
+                                {editableSections.map((section, index) => {
+                                  if (section.type === 'section') {
+                                    return (
+                                      <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                        <div>
+                                          <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Title</label>
+                                        </div>
+                                        <input
+                                          type="text"
+                                          value={section.title || ''}
+                                          onChange={(e) => updateSection(index, 'title', e.target.value)}
+                                          className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm font-semibold text-gray-800"
+                                          placeholder="Enter title"
+                                          disabled={isSavingDescription}
+                                        />
+                                        <div>
+                                          <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Description</label>
                             <textarea
-                              value={isInlineEditing ? pendingDescription : sceneDescription}
-                              onChange={(e) => setPendingDescription(e.target.value)}
-                              onDoubleClick={startInlineEditing}
-                              readOnly={!isInlineEditing || isSavingDescription}
-                              className={`w-full px-3 py-2 rounded-lg border ${
-                                isInlineEditing
-                                  ? 'border-[#13008B] bg-white focus:ring-2 focus:ring-[#13008B]'
-                                  : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
-                              } ${isSavingDescription ? 'opacity-60' : ''}`}
-                              rows={4}
-                              placeholder="Double-click to edit description"
-                            />
+                                            value={section.content || ''}
+                                            onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                            rows={3}
+                                            placeholder="Enter description"
+                                            disabled={isSavingDescription}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  } else {
+                                    return (
+                                      <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                        <div>
+                                          <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">Text Content</label>
+                                        </div>
+                                        <textarea
+                                          value={section.content || ''}
+                                          onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                          className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                          rows={2}
+                                          placeholder="Enter text content"
+                                          disabled={isSavingDescription}
+                                        />
+                                      </div>
+                                    );
+                                  }
+                                })}
+                              </div>
+                            ) : (
+                              <div
+                                onDoubleClick={startInlineEditing}
+                                className={`w-full px-4 py-3 rounded-lg border border-gray-200 bg-white text-gray-600 min-h-[100px] cursor-pointer ${isSavingDescription ? 'opacity-60' : ''}`}
+                              >
+                                {sceneDescription ? (
+                                  formatDescription(sceneDescription) || (
+                                    <div className="text-sm text-gray-600 whitespace-pre-wrap">{sceneDescription}</div>
+                                  )
+                                ) : (
+                                  <p className="text-sm text-gray-400 italic">Double-click to add description</p>
+                                )}
+                              </div>
+                            )}
                             
                           </div>
                         );
@@ -11750,6 +12814,177 @@ const saveAnchorPromptTemplate = async () => {
                                       </div>
                                     </div>
                                   )}
+                                  {/* Animation Description Accordion */}
+                                  {(() => {
+                                    const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+                                    const animationDesc = scene?.animation_desc || scene?.animationDesc || {};
+                                    const hasAnimationDesc = animationDesc && typeof animationDesc === 'object' && Object.keys(animationDesc).length > 0;
+                                    
+                                    if (!hasAnimationDesc) return null;
+                                    
+                                    return (
+                                      <div className="bg-white rounded-lg border border-gray-200 mt-4">
+                                        <div className="flex items-center justify-between p-4">
+                                          <button
+                                            type="button"
+                                            onClick={() => setAnimationDescAccordionOpen(!animationDescAccordionOpen)}
+                                            className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
+                                          >
+                                            <span className="text-sm font-semibold text-gray-800">Animation description</span>
+                                            <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${animationDescAccordionOpen ? 'rotate-180' : ''}`} />
+                                          </button>
+                                          {animationDescAccordionOpen && (
+                                            <div className="ml-2 flex items-center gap-2">
+                                              {isEditingAnimationDesc ? (
+                                                <>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setIsEditingAnimationDesc(false);
+                                                      setEditedAnimationDesc({});
+                                                    }}
+                                                    disabled={isSavingFrameData}
+                                                    className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                  >
+                                                    Cancel
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                      try {
+                                                        await saveFrameData('animation_desc', editedAnimationDesc);
+                                                        setIsEditingAnimationDesc(false);
+                                                      } catch (e) {
+                                                        console.error('Failed to save animation description:', e);
+                                                      }
+                                                    }}
+                                                    disabled={isSavingFrameData}
+                                                    className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                                  >
+                                                    {isSavingFrameData ? (
+                                                      <>
+                                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                        <span>Saving...</span>
+                                                      </>
+                                                    ) : (
+                                                      'Save'
+                                                    )}
+                                                  </button>
+                                                </>
+                                              ) : (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const animationData = scene?.animation_desc || scene?.animationDesc || {};
+                                                    setEditedAnimationDesc(typeof animationData === 'object' && !Array.isArray(animationData) ? { ...animationData } : {});
+                                                    setIsEditingAnimationDesc(true);
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                                >
+                                                  Edit
+                                                </button>
+                                  )}
+                                </div>
+                                          )}
+                                        </div>
+                                        {animationDescAccordionOpen && (
+                                          <div className="px-4 pb-4">
+                                            {(() => {
+                                              const normalizeAnimationDescData = (data) => {
+                                                if (!data) return {};
+                                                if (typeof data === 'string') {
+                                                  try {
+                                                    const parsed = JSON.parse(data);
+                                                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                                                  } catch (_) {
+                                                    return {};
+                                                  }
+                                                }
+                                                if (Array.isArray(data)) {
+                                                  const collected = {};
+                                                  data.forEach((item) => {
+                                                    if (item && typeof item === 'object') {
+                                                      Object.entries(item).forEach(([k, v]) => {
+                                                        if (collected[k] === undefined) collected[k] = v;
+                                                      });
+                                                    }
+                                                  });
+                                                  return collected;
+                                                }
+                                                return typeof data === 'object' ? data : {};
+                                              };
+                                              const currentData = isEditingAnimationDesc ? editedAnimationDesc : normalizeAnimationDescData(animationDesc);
+                                              const formatTitle = (key) => {
+                                                const cleaned = key.replace(/_/g, ' ').trim();
+                                                if (!cleaned) return '';
+                                                return cleaned
+                                                  .split(' ')
+                                                  .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                                                  .join(' ');
+                                              };
+                                              const formatValue = (val) => {
+                                                if (val == null) return '';
+                                                if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                                                return String(val);
+                                              };
+                                              const animationDescFields = Object.entries(currentData);
+                                              const priorityOrder = ['lighting', 'style_mood', 'transition_type', 'scene_description', 'subject_description', 'action_specification', 'content_modification', 'camera_specifications', 'geometric_preservation'];
+                                              const sortedFields = animationDescFields.sort(([keyA], [keyB]) => {
+                                                const indexA = priorityOrder.indexOf(keyA.toLowerCase());
+                                                const indexB = priorityOrder.indexOf(keyB.toLowerCase());
+                                                if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                                                if (indexA !== -1) return -1;
+                                                if (indexB !== -1) return 1;
+                                                return 0;
+                                              });
+                                              
+                                              return animationDescFields.length > 0 ? (
+                                                <>
+                                                  <div className="grid grid-cols-1 gap-4">
+                                                    {sortedFields.map(([key, value]) => {
+                                                      const title = formatTitle(key);
+                                                      const displayValue = formatValue(value);
+                                                      return (
+                                                        <div
+                                                          key={key}
+                                                          className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                                        >
+                                                          <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                                            {title}
+                                                          </h5>
+                                                          {isEditingAnimationDesc ? (
+                                                            <textarea
+                                                              value={displayValue}
+                                                              onChange={(e) => {
+                                                                const newData = { ...editedAnimationDesc };
+                                                                newData[key] = e.target.value;
+                                                                setEditedAnimationDesc(newData);
+                                                              }}
+                                                              className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                                              rows={3}
+                                                              disabled={isSavingFrameData}
+                                                            />
+                                                          ) : (
+                                                            <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
+                                                              {displayValue || '-'}
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </>
+                                              ) : (
+                                                <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-500">
+                                                  No animation description data available
+                                                </div>
+                                              );
+                                            })()}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                             )}
@@ -11864,24 +13099,8 @@ const saveAnchorPromptTemplate = async () => {
                     const st = await sessionResp.text(); let sjson; try { sjson = JSON.parse(st); } catch(_) { sjson = st; }
                     const sd = (sjson?.session_data || sjson?.session || {});
                     const user = sjson?.user_data || sd?.user_data || sd?.user || {};
-                    const sessionForBody = {
-                      session_id: sd?.session_id || sessionId,
-                      user_id: sd?.user_id || token,
-                      title: sd?.title || '',
-                      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-                      created_at: sd?.created_at || new Date().toISOString(),
-                      updated_at: sd?.updated_at || new Date().toISOString(),
-                      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-                      messages: Array.isArray(sd?.messages) ? sd.messages : [{ additionalProp1: {} }],
-                      total_summary: Array.isArray(sd?.total_summary) ? sd.total_summary : (Array.isArray(sd?.totalsummary) ? sd.totalsummary : []),
-                      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [''],
-                      videos: Array.isArray(sd?.videos) ? sd.videos : [{ additionalProp1: {} }],
-                      images: Array.isArray(sd?.images) ? sd.images : [''],
-                      final_link: sd?.final_link || '',
-                      videoType: sd?.videoType || sd?.video_type || '',
-                      brand_style_interpretation: sd?.brand_style_interpretation || { additionalProp1: {} },
-                      additionalProp1: sd?.additionalProp1 || {}
-                    };
+                    // Preserve ALL fields from session_data, including nested structures
+                    const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
                     const sceneNumber = r?.scene_number ?? (currentSceneIndex + 1);
                     const visualBody = { user, session: sessionForBody, scene_number: sceneNumber, chart_type: sel };
                     // 1) Update scene visual for Plotly chart type change
@@ -12515,7 +13734,8 @@ const saveAnchorPromptTemplate = async () => {
                   }`}
                 >Keep Default</button>
                
-                <button
+                {/* Generate button commented out for now */}
+                {/* <button
                   disabled={selectedTemplateUrls.length === 0}
                   onClick={async () => {
                     try {
@@ -12528,7 +13748,7 @@ const saveAnchorPromptTemplate = async () => {
                       const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
                       
                       // For all models, use up to 2 images
-                      scene.ref_image = multi;
+                        scene.ref_image = multi;
                       // For models that use background field, also set it
                       if (modelUpper === 'ANCHOR' || modelUpper === 'PLOTLY' || isVEO3) {
                         scene.background = multi[0]; 
@@ -12553,10 +13773,10 @@ const saveAnchorPromptTemplate = async () => {
                           
                           // Send all selected images (up to 2) to update-scene-visual API for all tabs
                           if (templatesToSend.length > 0) {
-                            await sendUpdateSceneVisualWithTemplates(
-                              scene?.scene_number ?? (currentSceneIndex + 1),
-                              templatesToSend
-                            );
+                          await sendUpdateSceneVisualWithTemplates(
+                            scene?.scene_number ?? (currentSceneIndex + 1),
+                            templatesToSend
+                          );
                           }
                           
                           // Build background_image array for image tabs to also send via updateSceneGenImageFlag
@@ -12613,7 +13833,7 @@ const saveAnchorPromptTemplate = async () => {
                       ? 'bg-blue-300 cursor-not-allowed'
                       : 'bg-[#13008B] hover:bg-blue-800'
                    }`}
-                >Generate</button>
+                >Generate</button> */}
               </div>
             </div>
           </div>

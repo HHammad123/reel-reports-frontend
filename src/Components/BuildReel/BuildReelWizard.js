@@ -6,6 +6,63 @@ import { toast } from 'react-hot-toast';
 import ImageList from '../Scenes/ImageList';
 import VideosList from '../Scenes/VideosList';
 
+// Helper to preserve ALL fields from session_data including nested structures
+const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
+  // Start with a deep copy to preserve ALL fields including nested structures
+  const base =
+    sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)
+      ? JSON.parse(JSON.stringify(sessionData)) // Deep copy to preserve all nested fields
+      : {};
+  
+  // Only normalize/transform specific fields, preserve everything else
+  if (base.id && !base.session_id) base.session_id = base.id;
+  delete base.id;
+  base.session_id = base.session_id || sessionId || '';
+  base.user_id = base.user_id || token || '';
+  
+  // Normalize video_duration but preserve if already exists
+  if (base.videoduration && !base.video_duration) base.video_duration = base.videoduration;
+  base.video_duration = String(base.video_duration || '60');
+  
+  // Ensure dates exist
+  if (!base.created_at) base.created_at = new Date().toISOString();
+  if (!base.updated_at) base.updated_at = new Date().toISOString();
+  
+  // Ensure arrays exist (but preserve their contents including all nested fields)
+  if (!Array.isArray(base.content)) base.content = [];
+  if (!Array.isArray(base.document_summary)) base.document_summary = [];
+  if (!Array.isArray(base.messages)) base.messages = [];
+  if (Array.isArray(base.totalsummary) && !Array.isArray(base.total_summary)) {
+    base.total_summary = base.totalsummary;
+  }
+  if (!Array.isArray(base.total_summary)) base.total_summary = [];
+  if (!Array.isArray(base.scripts)) base.scripts = [];
+  if (!Array.isArray(base.videos)) base.videos = [];
+  if (!Array.isArray(base.images)) base.images = [];
+  
+  // Preserve final_link if it exists
+  if (base.final_link === undefined || base.final_link === null) base.final_link = '';
+  
+  // Normalize videoType
+  if (!base.videoType && base.video_type) base.videoType = base.video_type;
+  
+  // Ensure brand_style_interpretation is an object
+  if (!base.brand_style_interpretation || typeof base.brand_style_interpretation !== 'object') {
+    base.brand_style_interpretation = {};
+  }
+  
+  // Remove unwanted fields but preserve all others (including opening_frame, closing_frame, background_frame, animation_desc in scripts)
+  if ('additionalProp1' in base) delete base.additionalProp1;
+  if ('user_data' in base) delete base.user_data;
+  if ('user' in base) delete base.user;
+  delete base.videoduration;
+  delete base.video_type;
+  delete base.totalsummary;
+  
+  // All other fields (including nested structures in scripts/scenes) are preserved
+  return base;
+};
+
 // Module-scope helpers so both StepOne (generate) and StepTwo can use them
 const getPerSceneDurationGlobal = (type) => (String(type).toLowerCase() === 'avatar based' ? 8 : 10);
 const computeTimelineForIndex = (arr, idx) => {
@@ -877,21 +934,8 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
     if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
     const sd = data?.session_data || data?.session || {};
     const user = data?.user_data || sd?.user_data || sd?.user || {};
-    const sessionForBody = {
-      session_id: sd?.session_id || sessionId,
-      user_id: sd?.user_id || token,
-      content: Array.isArray(sd?.content) ? sd.content : [],
-      document_summary: Array.isArray(sd?.document_summary) ? sd.document_summary : [],
-      video_duration: String(sd?.video_duration || sd?.videoduration || '60'),
-      created_at: sd?.created_at || new Date().toISOString(),
-      totalsummary: Array.isArray(sd?.totalsummary) ? sd.totalsummary : (Array.isArray(sd?.total_summary) ? sd.total_summary : []),
-      messages: Array.isArray(sd?.messages) ? sd.messages : [],
-      scripts: Array.isArray(sd?.scripts) ? sd.scripts : [],
-      videos: Array.isArray(sd?.videos) ? sd.videos : [],
-      images: Array.isArray(sd?.images) ? sd.images : [],
-      final_link: sd?.final_link || '',
-      videoType: sd?.videoType || ''
-    };
+    // Preserve ALL fields from session_data, including nested structures
+    const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
     return { user, sessionForBody, sd };
   };
 
@@ -1690,26 +1734,8 @@ const BuildReelWizard = () => {
       let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
       const sd = sessData?.session_data || {};
-      const sessionForBody = {
-        id: sd.session_id || sessionId,
-        user_id: token,
-        title: sd.title || '',
-        video_duration: String(sd.video_duration ?? 60),
-        created_at: sd.created_at || new Date().toISOString(),
-        updated_at: sd.updated_at || new Date().toISOString(),
-        document_summary: sd.document_summary || [],
-        messages: Array.isArray(sd.messages) ? sd.messages : [],
-        total_summary: sd.total_summary || [],
-        scripts: [
-          {
-            userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
-            airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
-            version: sd?.scripts?.[0]?.version || 'v1'
-          }
-        ],
-        videos: sd.videos || [],
-        images: Array.isArray(sd.images) ? sd.images : (sd.images || [])
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
       const body = { session: sessionForBody };
       const genResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/generate-from-session', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -1744,21 +1770,8 @@ const BuildReelWizard = () => {
       let sessionData; try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
       if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessionText}`);
       const sd = sessionData?.session_data || {};
-      const sessionForBody = {
-        id: sd.session_id || sessionId,
-        user_id: token,
-        title: sd.title || sd.session_title || 'My Video',
-        videoduration: (sd.video_duration?.toString?.() || '60'),
-        created_at: sd.created_at || new Date().toISOString(),
-        updated_at: sd.updated_at || new Date().toISOString(),
-        document_summary: sd.document_summary || sd.summarydocument || [],
-        messages: sd.messages || [],
-        content: sd.content || [],
-        total_summary: sd.total_summary || [],
-        scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
-        videos: sd.videos || [],
-        images: sd.images || [],
-      };
+      // Preserve ALL fields from session_data, including nested structures
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
       const body = { session: sessionForBody };
       const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/merge', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)

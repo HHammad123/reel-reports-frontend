@@ -48,6 +48,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   // Transitions state: key is video index (transition between video[index] and video[index+1])
   const [transitions, setTransitions] = useState({}); // { 0: "fade", 1: "slideleft", ... }
   const [transitionDuration, setTransitionDuration] = useState(0.5);
+  // Logo and Subtitle toggle states (default both on)
+  const [logoEnabled, setLogoEnabled] = useState(true);
+  const [subtitleEnabled, setSubtitleEnabled] = useState(true);
   
   // Wrapper for setTransitions to add debugging
   const handleTransitionsChange = useCallback((newTransitions) => {
@@ -69,7 +72,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     let cancelled = false;
     let timeoutId = null;
 
-    // Get video URL with logo and subtitles (preferred version)
+    // Get video URL with logo and subtitles
     const getVideoWithLogoAndSubtitlesUrlFromEntry = (entry = {}) => {
       // Check for video_with_logo_and_subtitles_url in various locations
       if (entry?.video_with_logo_and_subtitles_url) return entry.video_with_logo_and_subtitles_url;
@@ -81,7 +84,40 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       return null;
     };
 
-    // Get regular video URL (fallback if video with logo and subtitles not available)
+    // Get silent video URL (no logo, no subtitles)
+    const getSilentVideoUrlFromEntry = (entry = {}) => {
+      if (entry?.silent_video_url) return entry.silent_video_url;
+      if (entry?.video?.silent_video_url) return entry.video.silent_video_url;
+      if (entry?.videos?.silent_video_url) return entry.videos.silent_video_url;
+      if (entry?.videos?.v1?.silent_video_url) return entry.videos.v1.silent_video_url;
+      if (entry?.video?.v1?.silent_video_url) return entry.video.v1.silent_video_url;
+      if (entry?.blobLink?.silent_video_link) return entry.blobLink.silent_video_link;
+      return null;
+    };
+
+    // Get video URL with logo only (no subtitles)
+    const getVideoWithLogoUrlFromEntry = (entry = {}) => {
+      if (entry?.video_with_logo_url) return entry.video_with_logo_url;
+      if (entry?.video?.video_with_logo_url) return entry.video.video_with_logo_url;
+      if (entry?.videos?.video_with_logo_url) return entry.videos.video_with_logo_url;
+      if (entry?.videos?.v1?.video_with_logo_url) return entry.videos.v1.video_with_logo_url;
+      if (entry?.video?.v1?.video_with_logo_url) return entry.video.v1.video_with_logo_url;
+      if (entry?.blobLink?.video_with_logo_link) return entry.blobLink.video_with_logo_link;
+      return null;
+    };
+
+    // Get video URL with subtitles only (no logo)
+    const getVideoWithSubtitlesUrlFromEntry = (entry = {}) => {
+      if (entry?.video_with_subtitles_url) return entry.video_with_subtitles_url;
+      if (entry?.video?.video_with_subtitles_url) return entry.video.video_with_subtitles_url;
+      if (entry?.videos?.video_with_subtitles_url) return entry.videos.video_with_subtitles_url;
+      if (entry?.videos?.v1?.video_with_subtitles_url) return entry.videos.v1.video_with_subtitles_url;
+      if (entry?.video?.v1?.video_with_subtitles_url) return entry.video.v1.video_with_subtitles_url;
+      if (entry?.blobLink?.video_with_subtitles_link) return entry.blobLink.video_with_subtitles_link;
+      return null;
+    };
+
+    // Get regular video URL (fallback if specific version not available)
     const getVideoUrlFromEntry = (entry = {}) =>
       entry?.video?.v1?.video_url ||
       entry?.video?.video_url ||
@@ -90,6 +126,36 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       entry?.video_url ||
       entry?.blobLink?.video_link ||
       entry?.url;
+
+    // Get video URL based on logo and subtitle toggle states
+    const getVideoUrlBasedOnToggles = (entry = {}) => {
+      // 1. Both on: video_with_logo_and_subtitles_url
+      if (logoEnabled && subtitleEnabled) {
+        const url = getVideoWithLogoAndSubtitlesUrlFromEntry(entry);
+        if (url) return url;
+      }
+      
+      // 2. Both off: silent_video_url
+      if (!logoEnabled && !subtitleEnabled) {
+        const url = getSilentVideoUrlFromEntry(entry);
+        if (url) return url;
+      }
+      
+      // 3. Logo on, subtitle off: video_with_logo_url
+      if (logoEnabled && !subtitleEnabled) {
+        const url = getVideoWithLogoUrlFromEntry(entry);
+        if (url) return url;
+      }
+      
+      // 4. Logo off, subtitle on: video_with_subtitles_url
+      if (!logoEnabled && subtitleEnabled) {
+        const url = getVideoWithSubtitlesUrlFromEntry(entry);
+        if (url) return url;
+      }
+      
+      // Fallback to regular video URL if specific version not available
+      return getVideoUrlFromEntry(entry);
+    };
 
     // Get chart video URL (for PLOTLY model overlay)
     const getChartVideoUrlFromEntry = (entry = {}) => {
@@ -179,9 +245,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       const videosArr = Array.isArray(payload?.videos) ? payload.videos : [];
       return videosArr
         .map((videoEntry, videoIndex) => {
-          // Prefer video with logo and subtitles URL for primary layer, fallback to regular video URL
-          const videoWithLogoAndSubtitlesUrl = getVideoWithLogoAndSubtitlesUrlFromEntry(videoEntry);
-          const primaryVideoUrl = videoWithLogoAndSubtitlesUrl || getVideoUrlFromEntry(videoEntry);
+          // Get video URL based on logo and subtitle toggle states
+          const primaryVideoUrl = getVideoUrlBasedOnToggles(videoEntry);
           const scenes = [];
 
           const appendScene = (sceneSource, fallbackLabel) => {
@@ -229,10 +294,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           // Debug logging for video URLs
           console.log(`📹 Video ${videoIndex + 1} URLs:`, {
             model: modelUpper,
-            video_with_logo_and_subtitles_url: videoWithLogoAndSubtitlesUrl,
+            logoEnabled,
+            subtitleEnabled,
             primaryVideoUrl: primaryVideoUrl,
             chart_video_url: chartVideoUrl,
-            hasVideoWithLogoAndSubtitles: !!videoWithLogoAndSubtitlesUrl,
             hasChartVideo: !!chartVideoUrl
           });
           
@@ -479,7 +544,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
 
     load();
     return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
-  }, [jobId]);
+  }, [jobId, logoEnabled, subtitleEnabled]);
 
   useEffect(() => {
     if (selectedIndex >= items.length && items.length > 0) {
@@ -1077,10 +1142,52 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           </div>
         </div>
       )}
-      {/* <div className="flex items-center justify-between p-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
-        {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back</button>)}
-      </div> */}
+      {/* Toggle buttons for Logo and Subtitle */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
+        <div className="flex items-center gap-4">
+          <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
+          <div className="flex items-center gap-4">
+            {/* Logo Toggle */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700">Logo</label>
+              <button
+                onClick={() => setLogoEnabled(!logoEnabled)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  logoEnabled ? 'bg-[#13008B]' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    logoEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            
+            {/* Subtitle Toggle */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-gray-700">Subtitle</label>
+              <button
+                onClick={() => setSubtitleEnabled(!subtitleEnabled)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  subtitleEnabled ? 'bg-[#13008B]' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    subtitleEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+        {onClose && (
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50">
+            Back
+          </button>
+        )}
+      </div>
       <div className="flex-1 flex flex-col overflow-hidden">
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 m-4">

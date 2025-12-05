@@ -462,6 +462,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [isOverlayUploading, setIsOverlayUploading] = useState(false)
   const [overlaySelected, setOverlaySelected] = useState(false)
   const [overlayOriginalBeforeBgRemoval, setOverlayOriginalBeforeBgRemoval] = useState(null)
+  // Store pending uploads (shapes and overlay images) to upload on save
+  const [pendingShapeUploads, setPendingShapeUploads] = useState(new Map()) // Map<shapeId, {blob, shape}>
+  const [pendingOverlayUploads, setPendingOverlayUploads] = useState(new Map()) // Map<overlayId, {blob, overlayLayer}>
   // Overlay layer background removal tracking
   const [overlayLayerBackgroundRemoved, setOverlayLayerBackgroundRemoved] = useState(new Map()) // Map<layerId, boolean>
   const [overlayLayerOriginalBeforeBgRemoval, setOverlayLayerOriginalBeforeBgRemoval] = useState(new Map()) // Map<layerId, {imageUrl, image}>
@@ -514,26 +517,23 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     const isPortrait9x16 = normalizedAspectRatio === '9 / 16' || normalizedAspectRatio === '9:16' || normalizedAspectRatio === '9/16';
     
     if (isPortrait9x16) {
-      // For 9:16 images, match the image container size from ImageList (500px width)
-      // Let the aspect ratio determine the height naturally without maxHeight constraint
-      // This ensures the full image is visible and not cut off
+      // For 9:16 images, match the image container size from ImageList exactly
+      // Same dimensions as ImageList: width: '500px', maxWidth: '500px', height: '100%'
       return {
         aspectRatio: normalizedAspectRatio,
         width: '500px',
         maxWidth: '500px',
-        height: 'auto',
-        minHeight: '200px'
-        // Removed maxHeight to allow full image height
+        height: '100%'
       };
     }
     
-    // For other aspect ratios, use the original sizing
+    // For other aspect ratios (16:9), match ImageList exactly
+    // Same dimensions as ImageList: width: 'min(100%, 860px)', maxWidth: '860px', height: '100%'
     return {
-    aspectRatio: normalizedAspectRatio,
-    width: 'min(100%, 860px)',
-    maxWidth: '860px',
-    maxHeight: '72vh',
-    minHeight: '200px'
+      aspectRatio: normalizedAspectRatio,
+      width: 'min(100%, 860px)',
+      maxWidth: '860px',
+      height: '100%'
     };
   }, [normalizedAspectRatio])
 
@@ -1310,52 +1310,51 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     return parts.length > 1 ? parts[1] : parts[0]
   }
 
+  // Helper to convert base64 to blob
+  const base64ToBlob = (base64DataUrl) => {
+    const arr = base64DataUrl.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
+
   const uploadCroppedOverlayLayer = useCallback(async (base64Src, layerId) => {
     if (!base64Src) return null
     try {
       setIsOverlayUploading(true)
-      const payload = {
-        base64_image: extractBase64Payload(base64Src)
+      
+      // Convert base64 to blob and store for later upload (on save)
+      const blob = base64ToBlob(base64Src);
+      
+      // Get the overlay layer
+      const overlayLayer = overlayLayers.find(ol => ol.id === layerId);
+      if (!overlayLayer) {
+        console.error('Overlay layer not found:', layerId);
+        return null;
       }
-      const response = await fetch(BF_REMOVE_UPLOAD_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      })
-
-      const responseText = await response.text()
-      let responseData
-      try {
-        responseData = JSON.parse(responseText)
-      } catch (_) {
-        responseData = null
-      }
-
-      if (!response.ok) {
-        throw new Error(`bf_remove upload failed: ${response.status} ${responseText}`)
-      }
-
-      const replacementUrl =
-        responseData?.image_url ||
-        responseData?.url ||
-        responseData?.link ||
-        responseData?.data?.image_url ||
-        responseData?.data?.url ||
-        responseData?.data?.link ||
-        responseData?.result?.image_url ||
-        responseData?.result?.url ||
-        responseData?.result?.link
-
-      return replacementUrl || null
+      
+      // Store blob in pending uploads instead of uploading now
+      setPendingOverlayUploads(prev => {
+        const newMap = new Map(prev);
+        newMap.set(layerId, { blob, overlayLayer: { ...overlayLayer, imageUrl: base64Src } });
+        return newMap;
+      });
+      
+      // Return the base64 data URL as temporary URL (will be replaced with uploaded URL on save)
+      console.log('✅ Cropped overlay layer stored for upload on save');
+      return base64Src; // Return data URL as temporary URL
     } catch (error) {
-      console.error('Failed to upload cropped overlay layer:', error)
+      console.error('Failed to process cropped overlay layer:', error)
       return null
     } finally {
       setIsOverlayUploading(false)
     }
-  }, [])
+  }, [overlayLayers])
 
   const uploadCroppedOverlay = useCallback(async (base64Src) => {
     if (!base64Src) return
@@ -1686,12 +1685,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setImageUrl(originalImageUrl)
   }
 
-  // Unified Layer Management - Sync layerOrder with text/shape layers
+  // Unified Layer Management - Sync layerOrder with text/shape/overlay layers
   useEffect(() => {
     // Build unified layer order if it's empty or doesn't match current layers
     const currentIds = new Set([
       ...textLayers.map(l => `text-${l.id}`),
-      ...shapeLayers.map(s => `shape-${s.id}`)
+      ...shapeLayers.map(s => `shape-${s.id}`),
+      ...overlayLayers.map(o => `overlay-${o.id}`)
     ])
     
     const orderIds = new Set(layerOrder.map(l => `${l.type}-${l.id}`))
@@ -1725,23 +1725,33 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         }
       })
       
+      overlayLayers.forEach(overlay => {
+        const key = `overlay-${overlay.id}`
+        if (currentIds.has(key)) {
+          newOrder.push({ type: 'overlay', id: overlay.id, visible: true })
+        }
+      })
+      
       setLayerOrder(newOrder)
     }
-  }, [textLayers, shapeLayers, layerOrder])
+  }, [textLayers, shapeLayers, overlayLayers, layerOrder])
 
   // Get all layers in render order
   const getAllLayers = useMemo(() => {
-    return layerOrder.map(item => {
+    return layerOrder.map((item, index) => {
       if (item.type === 'text') {
         const layer = textLayers.find(l => l.id === item.id)
-        return layer ? { ...layer, type: 'text', visible: item.visible } : null
+        return layer ? { ...layer, type: 'text', visible: item.visible, zIndex: 50 + index } : null
       } else if (item.type === 'shape') {
         const shape = shapeLayers.find(s => s.id === item.id)
-        return shape ? { ...shape, type: 'shape', visible: item.visible } : null
+        return shape ? { ...shape, type: 'shape', visible: item.visible, zIndex: 50 + index } : null
+      } else if (item.type === 'overlay') {
+        const overlay = overlayLayers.find(o => o.id === item.id)
+        return overlay ? { ...overlay, type: 'overlay', visible: item.visible, zIndex: 50 + index } : null
       }
       return null
     }).filter(Boolean)
-  }, [layerOrder, textLayers, shapeLayers])
+  }, [layerOrder, textLayers, shapeLayers, overlayLayers])
 
   // Unified layer ordering functions
   const moveLayerUp = (type, id) => {
@@ -1800,6 +1810,10 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       const newShapes = shapeLayers.filter(s => s.id !== id)
       setShapeLayers(newShapes)
       if (selectedShape?.id === id) setSelectedShape(null)
+    } else if (type === 'overlay') {
+      const newOverlays = overlayLayers.filter(o => o.id !== id)
+      setOverlayLayers(newOverlays)
+      if (selectedOverlayLayer?.id === id) setSelectedOverlayLayer(null)
     }
     // layerOrder will auto-sync via useEffect
   }
@@ -1810,6 +1824,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       if (layer) {
         setSelectedLayer(layer)
         setSelectedShape(null)
+        setSelectedOverlayLayer(null)
         setActivePanel('text')
       }
     } else if (type === 'shape') {
@@ -1817,7 +1832,15 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       if (shape) {
         setSelectedShape(shape)
         setSelectedLayer(null)
+        setSelectedOverlayLayer(null)
         setActivePanel('shapes')
+      }
+    } else if (type === 'overlay') {
+      const overlay = overlayLayers.find(o => o.id === id)
+      if (overlay) {
+        setSelectedOverlayLayer(overlay)
+        setSelectedLayer(null)
+        setSelectedShape(null)
       }
     }
   }
@@ -2010,7 +2033,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         backgroundColor: '',
         textDecoration: 'none',
         letterSpacing: line.letterSpacing || 'normal',
-        groupId: groupId // Add group ID for synchronized movement
+        groupId: groupId, // Add group ID for synchronized movement
+        presetId: preset.id // Store preset ID for identification
       }
       
       newLayers.push(newLayer)
@@ -2099,6 +2123,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     overlayLayers.forEach((overlayLayer) => {
       if (!overlayLayer.image && !overlayLayer.imageUrl) return
       
+      // Get z-index from layer order
+      const layerOrderIndex = layerOrder.findIndex(l => l.type === 'overlay' && l.id === overlayLayer.id)
+      const layerData = layerOrder.find(l => l.type === 'overlay' && l.id === overlayLayer.id)
+      const isVisible = layerData?.visible !== false
+      
+      if (!isVisible) return // Hide if visibility is off
+      
       const widthPx = Math.max(overlayLayer.width * scaleX, 1)
       const heightPx = Math.max(overlayLayer.height * scaleY, 1)
       const isSelected = selectedOverlayLayer?.id === overlayLayer.id
@@ -2107,7 +2138,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         <div
           key={`overlay-layer-${overlayLayer.id}`}
           data-overlay-layer={overlayLayer.id}
-          className="absolute z-5"
+          className="absolute"
           style={{
             position: 'absolute',
             left: overlayLayer.x * scaleX,
@@ -2117,7 +2148,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             transformOrigin: 'top left',
             border: isSelected ? '2px solid #7c3aed' : '2px solid transparent',
             boxSizing: 'border-box',
-            cursor: 'move'
+            cursor: 'move',
+            zIndex: 50 + layerOrderIndex // Use layer order for z-index
           }}
           onClick={(e) => {
             e.stopPropagation()
@@ -2159,7 +2191,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               height: '100%',
               display: 'block',
               objectFit: 'fill',
-              pointerEvents: 'none'
+              pointerEvents: 'auto'
             }}
           />
           {/* Action buttons - top-right */}
@@ -3174,25 +3206,31 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setSelectedShape(baseShape)
     setSelectedLayer(null)
 
-    // Convert shape to PNG and upload
+    // Convert shape to PNG and store for later upload (on save)
     try {
       const blob = await convertShapeToPNG(baseShape)
-      const fileUrl = await uploadShapePNG(blob, baseShape.id)
       
-      // Update shape with file URL
-      const updatedShape = { ...baseShape, fileUrl, isUploading: false }
+      // Store blob for later upload instead of uploading now
+      setPendingShapeUploads(prev => {
+        const newMap = new Map(prev)
+        newMap.set(baseShape.id, { blob, shape: baseShape })
+        return newMap
+      })
+      
+      // Update shape to mark it as pending upload (not uploaded yet)
+      const updatedShape = { ...baseShape, fileUrl: null, isUploading: false, pendingUpload: true }
       const updatedLayers = newLayers.map(s => s.id === baseShape.id ? updatedShape : s)
       setShapeLayers(updatedLayers)
       setSelectedShape(updatedShape)
       
-      console.log('✅ Shape uploaded successfully:', fileUrl)
+      console.log('✅ Shape converted to PNG, will upload on save')
     } catch (error) {
-      console.error('❌ Failed to upload shape:', error)
+      console.error('❌ Failed to convert shape to PNG:', error)
       // Remove isUploading flag even on error
       const updatedShape = { ...baseShape, isUploading: false }
       const updatedLayers = newLayers.map(s => s.id === baseShape.id ? updatedShape : s)
       setShapeLayers(updatedLayers)
-      alert('Failed to upload shape. Please try again.')
+      alert('Failed to convert shape. Please try again.')
     }
 
     saveToHistory('shape_add', {
@@ -3203,7 +3241,28 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     })
   }
 
-  const handleShapeStyleChange = (property, value) => {
+  // Helper function to regenerate PNG blob for a shape and update pending uploads
+  const regenerateShapePNG = async (shape) => {
+    if (!shape) return
+    
+    try {
+      const blob = await convertShapeToPNG(shape)
+      
+      // Update pending uploads with the latest shape blob
+      setPendingShapeUploads(prev => {
+        const newMap = new Map(prev)
+        newMap.set(shape.id, { blob, shape })
+        return newMap
+      })
+      
+      console.log('✅ Shape PNG regenerated for upload:', shape.id)
+    } catch (error) {
+      console.error('❌ Failed to regenerate shape PNG:', error)
+      // Don't block the UI update if PNG generation fails
+    }
+  }
+
+  const handleShapeStyleChange = async (property, value) => {
     if (!selectedShape) return
 
     const previousLayers = [...shapeLayers]
@@ -3216,6 +3275,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
 
     setShapeLayers(updatedLayers)
     setSelectedShape(newSelected)
+
+    // Regenerate PNG blob with updated shape properties for upload
+    const updatedShape = updatedLayers.find(s => s.id === selectedShape.id)
+    if (updatedShape) {
+      await regenerateShapePNG(updatedShape)
+    }
 
     saveToHistory('shape_edit', {
       previousLayers,
@@ -3470,8 +3535,19 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setTextLayers(updatedLayers)
       setSelectedLayer({ ...selectedLayer, width: newWidth, height: newHeight })
     } else if (isDraggingShape && selectedShape) {
-      const newX = layerStart.x + (deltaX / (scaleX || 1))
-      const newY = layerStart.y + (deltaY / (scaleY || 1))
+      // Get original image dimensions for boundary constraints
+      const imgEl = imageRef.current
+      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1
+      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1
+      
+      let newX = layerStart.x + (deltaX / (scaleX || 1))
+      let newY = layerStart.y + (deltaY / (scaleY || 1))
+      
+      // Clamp position to keep shape within image bounds
+      const currentWidth = selectedShape.width || layerStart.width
+      const currentHeight = selectedShape.height || layerStart.height
+      newX = Math.max(0, Math.min(newX, originalWidth - currentWidth))
+      newY = Math.max(0, Math.min(newY, originalHeight - currentHeight))
 
       const updatedShapes = shapeLayers.map(shape =>
         shape.id === selectedShape.id ? { ...shape, x: newX, y: newY } : shape
@@ -3479,8 +3555,19 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setShapeLayers(updatedShapes)
       setSelectedShape({ ...selectedShape, x: newX, y: newY })
     } else if (isResizingShape && selectedShape) {
-      const newWidth = Math.max(20, layerStart.width + (deltaX / (scaleX || 1)))
-      const newHeight = Math.max(20, layerStart.height + (deltaY / (scaleY || 1)))
+      // Get original image dimensions for boundary constraints
+      const imgEl = imageRef.current
+      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1
+      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1
+      
+      let newWidth = Math.max(20, layerStart.width + (deltaX / (scaleX || 1)))
+      let newHeight = Math.max(20, layerStart.height + (deltaY / (scaleY || 1)))
+      
+      // Clamp size to keep shape within image bounds
+      const maxWidth = originalWidth - layerStart.x
+      const maxHeight = originalHeight - layerStart.y
+      newWidth = Math.min(newWidth, maxWidth)
+      newHeight = Math.min(newHeight, maxHeight)
 
       const updatedShapes = shapeLayers.map(shape =>
         shape.id === selectedShape.id ? { ...shape, width: newWidth, height: newHeight } : shape
@@ -3501,9 +3588,19 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     } else if (isDraggingOverlayLayer && selectedOverlayLayer) {
-      // Drag overlay layer
-      const newX = layerStart.x + (deltaX / (scaleX || 1))
-      const newY = layerStart.y + (deltaY / (scaleY || 1))
+      // Drag overlay layer with boundary constraints
+      const imgEl = imageRef.current
+      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1
+      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1
+      
+      let newX = layerStart.x + (deltaX / (scaleX || 1))
+      let newY = layerStart.y + (deltaY / (scaleY || 1))
+      
+      // Clamp position to keep overlay layer within image bounds
+      const currentWidth = selectedOverlayLayer.width || layerStart.width
+      const currentHeight = selectedOverlayLayer.height || layerStart.height
+      newX = Math.max(0, Math.min(newX, originalWidth - currentWidth))
+      newY = Math.max(0, Math.min(newY, originalHeight - currentHeight))
       
       const updatedLayers = overlayLayers.map(overlay =>
         overlay.id === selectedOverlayLayer.id ? { ...overlay, x: newX, y: newY } : overlay
@@ -3511,8 +3608,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setOverlayLayers(updatedLayers)
       setSelectedOverlayLayer({ ...selectedOverlayLayer, x: newX, y: newY })
     } else if (isResizingOverlayLayer && selectedOverlayLayer && selectedOverlayLayerResizeMode) {
-      // Resize overlay layer
+      // Resize overlay layer with boundary constraints
       const { scaleX, scaleY } = getImageScale()
+      const imgEl = imageRef.current
+      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1
+      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1
+      
       const deltaXNat = deltaX / (scaleX || 1)
       const deltaYNat = deltaY / (scaleY || 1)
       
@@ -3530,6 +3631,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           newHeight = layerStart.height - deltaYNat
           if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
           if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
+          // Clamp to image bounds
+          if (newX < 0) { newWidth += newX; newX = 0 }
+          if (newY < 0) { newHeight += newY; newY = 0 }
+          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
+          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
         case 'ne': // Top-right corner
           newY = layerStart.y + deltaYNat
@@ -3537,6 +3643,10 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           newHeight = layerStart.height - deltaYNat
           if (newWidth < minSize) newWidth = minSize
           if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
+          // Clamp to image bounds
+          if (newY < 0) { newHeight += newY; newY = 0 }
+          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
+          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
         case 'sw': // Bottom-left corner
           newX = layerStart.x + deltaXNat
@@ -3544,12 +3654,19 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           newHeight = layerStart.height + deltaYNat
           if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
           if (newHeight < minSize) newHeight = minSize
+          // Clamp to image bounds
+          if (newX < 0) { newWidth += newX; newX = 0 }
+          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
+          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
         case 'se': // Bottom-right corner
           newWidth = layerStart.width + deltaXNat
           newHeight = layerStart.height + deltaYNat
           if (newWidth < minSize) newWidth = minSize
           if (newHeight < minSize) newHeight = minSize
+          // Clamp to image bounds
+          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
+          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
       }
       
@@ -3637,7 +3754,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     }
-  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, overlayResizeMode, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale, dragThresholdMet])
+  }, [isDragging, isResizing, isDraggingOverlay, isResizingOverlay, overlayResizeMode, dragStart, layerStart, selectedLayer, textLayers, overlayPosition, overlayScale, overlaySize, overlayDragStart, overlayImage, isDraggingShape, isResizingShape, selectedShape, shapeLayers, pxDeltaToPercent, getImageScale, dragThresholdMet, frameData, isDraggingOverlayLayer, isResizingOverlayLayer, selectedOverlayLayer, overlayLayers, selectedOverlayLayerResizeMode, overlayChangeStart])
 
   const handleOverlayMouseDown = (e, action, resizeMode = null) => {
     e.preventDefault()
@@ -3811,7 +3928,10 @@ const handleTemplateJsonLoad = () => {
           enabled: true,
           imageUrl: element.overlay_image.image_url || '',
           fitMode: element.overlay_image.scaling?.fit_mode || 'contain'
-        } : null
+        } : null,
+        // Restore preset information if available
+        presetId: element.preset_id || null,
+        groupId: element.group_id || null
       }
     })
     
@@ -4085,6 +4205,9 @@ const handleTemplateJsonLoad = () => {
           setOverlayScale(initialScale)
           setOverlaySize({ width: initialWidth, height: initialHeight })
           resetOverlayBackgroundState()
+          
+          // File is stored in overlayImageFile, will be uploaded on save
+          // No immediate upload - just store the file
           
           // Save to history
           saveToHistory('overlay_add', {
@@ -4502,7 +4625,10 @@ const handleTemplateJsonLoad = () => {
                       offsetY: shadow.offsetY || 2,
                       blur: shadow.blur || 4,
                       color: shadow.color || 'rgba(0, 0, 0, 0.5)'
-                    } : null
+                    } : null,
+                    // Restore preset information if available
+                    presetId: element.preset_id || null,
+                    groupId: element.group_id || null
                   };
                   
                   textLayersWithZIndex.push({ layer, zIndex, type: 'text' });
@@ -4775,7 +4901,10 @@ const handleTemplateJsonLoad = () => {
             width: 0,
             height: 0
           }
-        }
+        },
+        // Store preset information for identification
+        preset_id: layer.presetId || null,
+        group_id: layer.groupId || null
       };
       
       return textElement;
@@ -4822,37 +4951,182 @@ const handleTemplateJsonLoad = () => {
         return;
       }
       
+      // Step 1: Upload all pending shape files
+      const shapeUploadResults = new Map(); // Map<shapeId, fileUrl>
+      for (const [shapeId, { blob, shape }] of pendingShapeUploads.entries()) {
+        try {
+          const fileUrl = await uploadShapePNG(blob, shapeId);
+          shapeUploadResults.set(shapeId, fileUrl);
+          
+          // Update shape with file URL
+          setShapeLayers(prev => prev.map(s => 
+            s.id === shapeId ? { ...s, fileUrl, pendingUpload: false } : s
+          ));
+          
+          console.log(`✅ Shape ${shapeId} uploaded successfully:`, fileUrl);
+        } catch (error) {
+          console.error(`❌ Failed to upload shape ${shapeId}:`, error);
+          alert(`Failed to upload shape. Please try again.`);
+          setIsSaving(false);
+          return;
+        }
+      }
+      
+      // Step 2: Upload all pending overlay images (including cropped overlay layers)
+      const overlayUploadResults = new Map(); // Map<overlayId, fileUrl>
+      
+      // First, check for overlay layers that have base64 data URLs (from cropping) but aren't in pending uploads yet
+      for (const overlayLayer of overlayLayers) {
+        // If overlay layer has a data URL (base64) and no fileUrl, it needs to be uploaded
+        if (overlayLayer.imageUrl && overlayLayer.imageUrl.startsWith('data:') && !overlayLayer.fileUrl && !pendingOverlayUploads.has(overlayLayer.id)) {
+          try {
+            const blob = base64ToBlob(overlayLayer.imageUrl);
+            setPendingOverlayUploads(prev => {
+              const newMap = new Map(prev);
+              newMap.set(overlayLayer.id, { blob, overlayLayer });
+              return newMap;
+            });
+          } catch (error) {
+            console.error(`Failed to convert overlay layer ${overlayLayer.id} to blob:`, error);
+          }
+        }
+      }
+      
+      // Now upload all pending overlay uploads (including newly added ones)
+      for (const [overlayId, { blob, overlayLayer }] of pendingOverlayUploads.entries()) {
+        try {
+          const formData = new FormData();
+          formData.append('session_id', sessionId);
+          formData.append('file', blob, `overlay-${overlayId}.png`);
+          
+          const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
+            method: 'POST',
+            body: formData
+          });
+          
+          const uploadResponseText = await uploadResponse.text();
+          let uploadResponseData;
+          try {
+            uploadResponseData = JSON.parse(uploadResponseText);
+          } catch (_) {
+            uploadResponseData = uploadResponseText;
+          }
+          
+          if (!uploadResponse.ok) {
+            throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
+          }
+          
+          const fileUrl = uploadResponseData?.file_url || 
+                         uploadResponseData?.url || 
+                         uploadResponseData?.image_url ||
+                         uploadResponseData?.data?.file_url ||
+                         uploadResponseData?.data?.url ||
+                         uploadResponseData?.data?.image_url;
+          
+          if (!fileUrl) {
+            throw new Error('Upload API did not return file_url');
+          }
+          
+          overlayUploadResults.set(overlayId, fileUrl);
+          
+          // Update overlay layer with file URL
+          setOverlayLayers(prev => prev.map(ol => 
+            ol.id === overlayId ? { ...ol, fileUrl, imageUrl: fileUrl, pendingUpload: false } : ol
+          ));
+          
+          console.log(`✅ Overlay ${overlayId} uploaded successfully:`, fileUrl);
+        } catch (error) {
+          console.error(`❌ Failed to upload overlay ${overlayId}:`, error);
+          alert(`Failed to upload overlay image. Please try again.`);
+          setIsSaving(false);
+          return;
+        }
+      }
+      
+      // Step 3: Upload main overlay image if it exists and needs upload
+      let finalOverlayUrl = overlayImageUrl;
+      if (overlayVisible && overlayImage && overlayImageFile && !overlayLayers.some(ol => ol.imageUrl === overlayImageUrl)) {
+        try {
+          // Convert overlay image to blob if it's a data URL
+          const overlayBlob = await imageUrlToBlob(overlayImageUrl);
+          
+          const formData = new FormData();
+          formData.append('session_id', sessionId);
+          formData.append('file', overlayBlob, 'overlay-image.png');
+          
+          const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
+            method: 'POST',
+            body: formData
+          });
+          
+          const uploadResponseText = await uploadResponse.text();
+          let uploadResponseData;
+          try {
+            uploadResponseData = JSON.parse(uploadResponseText);
+          } catch (_) {
+            uploadResponseData = uploadResponseText;
+          }
+          
+          if (!uploadResponse.ok) {
+            throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
+          }
+          
+          finalOverlayUrl = uploadResponseData?.url || 
+                           uploadResponseData?.image_url || 
+                           uploadResponseData?.file_url ||
+                           uploadResponseData?.data?.url ||
+                           uploadResponseData?.data?.image_url ||
+                           uploadResponseData?.data?.file_url ||
+                           overlayImageUrl;
+          
+          if (!finalOverlayUrl || finalOverlayUrl === overlayImageUrl) {
+            console.warn('Upload API did not return a new URL, using original URL');
+          }
+        } catch (uploadError) {
+          console.error('Failed to upload overlay image:', uploadError);
+          alert('Warning: Failed to upload overlay image. Using original URL.');
+        }
+      }
+      
+      // Clear pending uploads after successful uploads
+      setPendingShapeUploads(new Map());
+      setPendingOverlayUploads(new Map());
+      
       // Convert textLayers to text_elements format (already sorted by layerOrder)
       const textElements = convertTextLayersToElements();
       
       // Convert overlay to overlay_elements format (if present)
       let overlayElements = [];
-      let finalOverlayUrl = overlayImageUrl;
       
         const imgEl = imageRef.current;
       const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1;
       const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1;
       
       // Build a map of overlay layers by ID for quick lookup
+      // Include overlay layers that were just uploaded (from overlayUploadResults)
       const overlayLayersMap = new Map();
       overlayLayers.forEach(ol => {
-        if (ol.fileUrl) {
-          overlayLayersMap.set(ol.id, ol);
+        const fileUrl = ol.fileUrl || overlayUploadResults.get(ol.id);
+        if (fileUrl) {
+          overlayLayersMap.set(ol.id, { ...ol, fileUrl });
         }
       });
       
       // Build a map of shapes by ID for quick lookup
+      // Include shapes that were just uploaded (from shapeUploadResults)
       const shapeLayersMap = new Map();
       shapeLayers.forEach(shape => {
-        if (shape.fileUrl) {
-          shapeLayersMap.set(shape.id, shape);
+        const fileUrl = shape.fileUrl || shapeUploadResults.get(shape.id);
+        if (fileUrl) {
+          shapeLayersMap.set(shape.id, { ...shape, fileUrl });
         }
       });
       
       // Process overlay layers and main overlay first (before shapes, to maintain backward compatibility)
       // Add ALL overlay layers to overlay_elements (from overlayLayers array)
       for (const overlayLayer of overlayLayers) {
-        if (!overlayLayer.fileUrl) {
+        const fileUrl = overlayLayer.fileUrl || overlayUploadResults.get(overlayLayer.id);
+        if (!fileUrl) {
           console.warn(`Skipping overlay layer ${overlayLayer.id} - no file URL available`);
           continue;
         }
@@ -4877,7 +5151,7 @@ const handleTemplateJsonLoad = () => {
             height: originalHeight > 0 ? naturalHeight / originalHeight : 0
           },
           overlay_image: {
-            image_url: overlayLayer.fileUrl, // Use the stored file URL
+            image_url: fileUrl, // Use the uploaded file URL
             image_dimensions: {
               width: imageWidth,
               height: imageHeight
@@ -4899,51 +5173,7 @@ const handleTemplateJsonLoad = () => {
         const isAlreadyInLayers = overlayLayers.some(ol => ol.imageUrl === overlayImageUrl);
         
         if (!isAlreadyInLayers) {
-          // Upload overlay image first if available
-          try {
-            // Convert overlay image to blob
-            const overlayBlob = await imageUrlToBlob(overlayImageUrl);
-            
-            // Create FormData for upload
-            const formData = new FormData();
-            formData.append('session_id', sessionId);
-            formData.append('file', overlayBlob, 'overlay-image.png'); // Use appropriate filename
-            
-            // Upload overlay image
-            const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
-              method: 'POST',
-              body: formData
-            });
-            
-            const uploadResponseText = await uploadResponse.text();
-            let uploadResponseData;
-            try {
-              uploadResponseData = JSON.parse(uploadResponseText);
-            } catch (_) {
-              uploadResponseData = uploadResponseText;
-            }
-            
-            if (!uploadResponse.ok) {
-              throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
-            }
-            
-            // Extract URL from response
-            finalOverlayUrl = uploadResponseData?.url || 
-                             uploadResponseData?.image_url || 
-                             uploadResponseData?.file_url ||
-                             uploadResponseData?.data?.url ||
-                             uploadResponseData?.data?.image_url ||
-                             uploadResponseData?.data?.file_url ||
-                             overlayImageUrl; // Fallback to original URL
-            
-            if (!finalOverlayUrl || finalOverlayUrl === overlayImageUrl) {
-              console.warn('Upload API did not return a new URL, using original URL');
-            }
-          } catch (uploadError) {
-            console.error('Failed to upload overlay image:', uploadError);
-            // Continue with original URL if upload fails
-            alert('Warning: Failed to upload overlay image. Using original URL.');
-          }
+          // Use the uploaded URL from Step 3 (already uploaded above)
         
         // Overlay position and size are already in natural pixel coordinates (like shapes)
         const naturalX = overlayPosition.x;
@@ -4980,7 +5210,8 @@ const handleTemplateJsonLoad = () => {
       for (const layerItem of layerOrder) {
         if (layerItem.type === 'shape') {
           const shape = shapeLayersMap.get(layerItem.id);
-          if (!shape || !shape.fileUrl) {
+          const fileUrl = shape?.fileUrl || shapeUploadResults.get(layerItem.id);
+          if (!shape || !fileUrl) {
             console.warn(`Skipping shape ${layerItem.id} - not found or no file URL available`);
             continue;
           }
@@ -5003,7 +5234,7 @@ const handleTemplateJsonLoad = () => {
               height: originalHeight > 0 ? naturalHeight / originalHeight : 0
             },
             overlay_image: {
-              image_url: shape.fileUrl, // Use the uploaded file URL
+              image_url: fileUrl, // Use the uploaded file URL
               image_dimensions: {
                 width: naturalWidth,
                 height: naturalHeight
@@ -5030,7 +5261,8 @@ const handleTemplateJsonLoad = () => {
         }
         
         // Skip shapes that don't have a file URL (upload failed or still uploading)
-        if (!shape.fileUrl) {
+        const fileUrl = shape.fileUrl || shapeUploadResults.get(shape.id);
+        if (!fileUrl) {
           console.warn(`Skipping shape ${shape.id} - no file URL available`);
           continue;
         }
@@ -5049,7 +5281,7 @@ const handleTemplateJsonLoad = () => {
             height: originalHeight > 0 ? naturalHeight / originalHeight : 0
           },
           overlay_image: {
-            image_url: shape.fileUrl, // Use the uploaded file URL
+            image_url: fileUrl, // Use the uploaded file URL
             image_dimensions: {
               width: naturalWidth,
               height: naturalHeight
@@ -6241,16 +6473,20 @@ const handleTemplateJsonLoad = () => {
                   
                   {getAllLayers.length === 0 ? (
                     <p className="text-sm text-gray-500 text-center py-8">
-                      No layers yet. Add text or shapes to see them here.
+                      No layers yet. Add text, shapes, or overlays to see them here.
                     </p>
                   ) : (
                     <div className="space-y-2">
                       {getAllLayers.slice().reverse().map((layer, index) => {
                         const actualIndex = getAllLayers.length - 1 - index
+                        const orderNumber = index + 1 // Order from top (1 = topmost layer)
                         const isSelected = (layer.type === 'text' && selectedLayer?.id === layer.id) || 
-                                         (layer.type === 'shape' && selectedShape?.id === layer.id)
+                                         (layer.type === 'shape' && selectedShape?.id === layer.id) ||
+                                         (layer.type === 'overlay' && selectedOverlayLayer?.id === layer.id)
                         const layerName = layer.type === 'text' 
                           ? layer.text.substring(0, 20) + (layer.text.length > 20 ? '...' : '')
+                          : layer.type === 'overlay'
+                          ? `Overlay Image ${orderNumber}`
                           : `${layer.type.charAt(0).toUpperCase() + layer.type.slice(1)}`
                         
                         return (
@@ -6267,7 +6503,7 @@ const handleTemplateJsonLoad = () => {
                               {/* Layer Type Icon */}
                               <div className="flex-shrink-0">
                                 <Icon 
-                                  name={layer.type === 'text' ? 'type' : 'shape'} 
+                                  name={layer.type === 'text' ? 'type' : layer.type === 'overlay' ? 'image' : 'shape'} 
                                   size={16} 
                                 />
                               </div>
@@ -6278,7 +6514,9 @@ const handleTemplateJsonLoad = () => {
                                   {layerName}
                                 </div>
                                 <div className="text-xs text-gray-500">
-                                  {layer.type === 'text' ? 'Text Layer' : `Shape: ${layer.type}`}
+                                  {layer.type === 'text' ? `Text Layer` : 
+                                   layer.type === 'overlay' ? `Overlay` : 
+                                   `Shape: ${layer.type}`}
                                 </div>
                               </div>
                               

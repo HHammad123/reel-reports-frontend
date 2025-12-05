@@ -10,6 +10,7 @@ import {
 import RecordRTC from 'recordrtc';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import LogoImage from '../asset/RR_Logo_Text_only_Dark_Watermark.png';
 
 /**
  * NEXUS EDIT - MULTI-TRACK VIDEO EDITOR
@@ -120,6 +121,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   const [isFFmpegLoaded, setIsFFmpegLoaded] = useState(false);
   const [sessionData, setSessionData] = useState({ session_id: '', user_id: '' });
   const [isFetchingSession, setIsFetchingSession] = useState(false);
+  
+  // Video aspect ratio state - detect from video element
+  const [videoAspectRatio, setVideoAspectRatio] = useState('16/9'); // Default to 16:9
   
   // Regenerate video state
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -505,13 +509,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           (globalTime - EPSILON) < overlayEndTime;
         
         if (isActive) {
-          // Calculate local time for the overlay with looping support when primary is longer
+          // Calculate local time for the overlay
           const timeOffset = globalTime - overlayStartTime;
           const overlayTimelineDuration = Math.max(0.001, effectiveDuration);
-          const loopedOffset = matchedPrimaryClip
+          const shouldLoop = matchedPrimaryClip && !overlayClip.isChartOverlay; // Chart overlays should never loop to avoid flicker
+          const playbackOffset = shouldLoop
             ? (timeOffset % overlayTimelineDuration + overlayTimelineDuration) % overlayTimelineDuration
             : timeOffset;
-          const localTime = overlayClip.trimStart + (loopedOffset * speed);
+          const localTime = overlayClip.trimStart + (playbackOffset * speed);
           const clampedLocalTime = Math.min(
             overlayClip.trimEnd,
             Math.max(overlayClip.trimStart, localTime)
@@ -567,6 +572,77 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     () => overlayTracksInfo.filter(({ track }) => !track?.[0]?.isChartOverlay),
     [overlayTracksInfo]
   );
+  // Keep overlay elements mounted to avoid flicker; mark active overlays separately
+  const overlayRenderList = useMemo(() => {
+    return overlayTracksInfo
+      .map(({ track, trackIndex }) => {
+        const clip = track?.[0];
+        if (!clip) return null;
+        const overlayInfo = activeOverlayClips.find(c => c.trackIndex === trackIndex) || null;
+        return { clip, overlayInfo, trackIndex };
+      })
+      .filter(Boolean);
+  }, [overlayTracksInfo, activeOverlayClips]);
+  
+  // Detect video aspect ratio from video element (after v1ClipInfo is defined)
+  // Use v1ClipInfo from the useMemo above
+  const activeClipUrl = v1ClipInfo?.clip?.url;
+  
+  useEffect(() => {
+    if (!videoRef.current) return;
+    
+    const videoElement = videoRef.current;
+    
+    const detectAspectRatio = () => {
+      if (videoElement.videoWidth && videoElement.videoHeight) {
+        const width = videoElement.videoWidth;
+        const height = videoElement.videoHeight;
+        const aspect = width / height;
+        
+        // Determine if it's 9:16 (portrait) or 16:9 (landscape)
+        // 9:16 = 0.5625, 16:9 = 1.777...
+        // Use a threshold to determine (e.g., < 1.0 = portrait, >= 1.0 = landscape)
+        let detectedRatio;
+        if (aspect < 1.0) {
+          // Portrait (taller than wide) - likely 9:16
+          detectedRatio = '9/16';
+        } else {
+          // Landscape (wider than tall) - likely 16:9
+          detectedRatio = '16/9';
+        }
+        
+        console.log('📐 Video aspect ratio detected:', {
+          width,
+          height,
+          aspect: aspect.toFixed(3),
+          detectedRatio
+        });
+        
+        setVideoAspectRatio(prev => {
+          if (prev !== detectedRatio) {
+            return detectedRatio;
+          }
+          return prev;
+        });
+      }
+    };
+    
+    // Detect when video metadata is loaded
+    const handleLoadedMetadata = () => {
+      detectAspectRatio();
+    };
+    
+    // Detect when video dimensions are available
+    if (videoElement.readyState >= 1) { // HAVE_METADATA
+      detectAspectRatio();
+    }
+    
+    videoElement.addEventListener('loadedmetadata', handleLoadedMetadata);
+    
+    return () => {
+      videoElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    };
+  }, [activeClipUrl]); // Only re-run when the active clip URL changes
 
   // Compute selectedClip from selectedClipId
   const selectedClip = useMemo(() => {
@@ -660,7 +736,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         const duration = isVideo ? tempElement.duration : Infinity;
         const initialDuration = isVideo ? tempElement.duration : 10; 
         
-        const newClip = {
+        let newClip = {
           id: Date.now() + Math.random(),
           file,
           url,
@@ -684,21 +760,37 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
 
         if (isVideo || isImage) {
           // Add to video/image tracks
-        setTracks(prevTracks => {
-          const newTracks = [...prevTracks];
+          setTracks(prevTracks => {
+            const newTracks = [...prevTracks];
             // Ensure track exists
             while (newTracks.length <= uploadTargetTrack) {
               newTracks.push([]);
             }
-            
-            // For overlay tracks (index > 0), add transform if not present
-            if (uploadTargetTrack > 0 && !newClip.transform) {
-              newClip.transform = {
+
+            const existingOverlayClip = uploadTargetTrack > 0 ? newTracks[uploadTargetTrack][0] : null;
+
+            // For overlay tracks (index > 0), add transform if not present or reuse previous placement
+            if (uploadTargetTrack > 0) {
+              newClip.transform = newClip.transform || existingOverlayClip?.transform || {
                 x: 20 + (uploadTargetTrack - 1) * 10, 
                 y: 20 + (uploadTargetTrack - 1) * 10, 
                 width: 30, 
                 opacity: 1,
               };
+
+              // Preserve chart/timeline metadata so replacing media keeps alignment with the base clip
+              if (existingOverlayClip) {
+                newClip = {
+                  ...newClip,
+                  startTime: existingOverlayClip.startTime ?? newClip.startTime,
+                  timelineStartTime: existingOverlayClip.timelineStartTime ?? newClip.timelineStartTime,
+                  primaryClipId: existingOverlayClip.primaryClipId ?? newClip.primaryClipId,
+                  primaryClipIndex: existingOverlayClip.primaryClipIndex ?? newClip.primaryClipIndex,
+                  sourceItemId: existingOverlayClip.sourceItemId ?? newClip.sourceItemId,
+                  isChartOverlay: existingOverlayClip.isChartOverlay ?? newClip.isChartOverlay,
+                  transform: newClip.transform || existingOverlayClip.transform,
+                };
+              }
             }
             
             // For overlay tracks, replace the single clip; for primary track, append
@@ -706,9 +798,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
               ? [...newTracks[uploadTargetTrack], newClip]
               : [newClip]; // Overlay tracks still hold one clip for now
 
-          if (!selectedClipId) setSelectedClipId(newClip.id); 
-          return newTracks;
-        });
+            if (!selectedClipId) setSelectedClipId(newClip.id); 
+            return newTracks;
+          });
         }
         
         e.target.value = null; 
@@ -952,8 +1044,40 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         const targetTime = localTime;
         const targetClip = activeClip;
         
+        // Detect aspect ratio when video loads
+        const handleAspectRatioDetection = () => {
+          if (videoElement.videoWidth && videoElement.videoHeight) {
+            const width = videoElement.videoWidth;
+            const height = videoElement.videoHeight;
+            const aspect = width / height;
+            
+            // Determine if it's 9:16 (portrait) or 16:9 (landscape)
+            let detectedRatio;
+            if (aspect < 1.0) {
+              // Portrait (taller than wide) - likely 9:16
+              detectedRatio = '9/16';
+            } else {
+              // Landscape (wider than tall) - likely 16:9
+              detectedRatio = '16/9';
+            }
+            
+            console.log('📐 Video aspect ratio detected from active clip:', {
+              width,
+              height,
+              aspect: aspect.toFixed(3),
+              detectedRatio,
+              url: activeClip.url
+            });
+            
+            setVideoAspectRatio(detectedRatio);
+          }
+        };
+        
         // Wait for video to be ready before switching if playing
         const handleCanPlay = () => {
+          // Detect aspect ratio
+          handleAspectRatioDetection();
+          
           // Set the correct time once video is ready
           if (Math.abs(videoElement.currentTime - targetTime) > 0.1) {
             videoElement.currentTime = targetTime;
@@ -972,6 +1096,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         
         // Also handle loadeddata for faster switching
         const handleLoadedData = () => {
+          // Detect aspect ratio
+          handleAspectRatioDetection();
+          
           if (Math.abs(videoElement.currentTime - targetTime) > 0.1) {
             videoElement.currentTime = targetTime;
           }
@@ -980,6 +1107,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         
         videoElement.addEventListener('canplay', handleCanPlay, { once: true });
         videoElement.addEventListener('loadeddata', handleLoadedData, { once: true });
+        videoElement.addEventListener('loadedmetadata', handleAspectRatioDetection, { once: true });
         
         // Set src and load
         videoElement.src = activeClip.url;
@@ -1122,41 +1250,65 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       }
 
       // Create canvas for capturing the player container
-      // Use minimum 720p resolution (1280x720) for better quality
+      // Use the detected video aspect ratio for export
       const canvas = document.createElement('canvas');
       const rect = playerContainer.getBoundingClientRect();
       
-      // Calculate aspect ratio from container
+      // Calculate aspect ratio from container (should match videoAspectRatio)
       const containerAspect = rect.width / rect.height;
       
-      // Set minimum dimensions for 720p (1280x720)
-      const MIN_WIDTH = 1280;
-      const MIN_HEIGHT = 720;
+      // Determine minimum dimensions based on aspect ratio
+      // For 16:9 (landscape): 1280x720 (720p)
+      // For 9:16 (portrait): 720x1280 (720p portrait)
+      let MIN_WIDTH, MIN_HEIGHT;
+      if (videoAspectRatio === '9/16') {
+        // Portrait: 720x1280
+        MIN_WIDTH = 720;
+        MIN_HEIGHT = 1280;
+      } else {
+        // Landscape: 1280x720 (default)
+        MIN_WIDTH = 1280;
+        MIN_HEIGHT = 720;
+      }
       
-      // Calculate dimensions maintaining aspect ratio, but ensuring minimum 720p
-      let canvasWidth = Math.max(rect.width || MIN_WIDTH, MIN_WIDTH);
-      let canvasHeight = Math.max(rect.height || MIN_HEIGHT, MIN_HEIGHT);
+      // Calculate dimensions maintaining the video's aspect ratio
+      let canvasWidth, canvasHeight;
       
-      // If container is smaller than 720p, scale up while maintaining aspect ratio
-      if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT) {
-        if (containerAspect > 16/9) {
-          // Wider than 16:9, use width as base
-          canvasWidth = MIN_WIDTH;
-          canvasHeight = Math.round(MIN_WIDTH / containerAspect);
-          // Ensure height is at least MIN_HEIGHT
-          if (canvasHeight < MIN_HEIGHT) {
-            canvasHeight = MIN_HEIGHT;
-            canvasWidth = Math.round(MIN_HEIGHT * containerAspect);
+      if (videoAspectRatio === '9/16') {
+        // Portrait: maintain 9:16 aspect ratio
+        const targetAspect = 9 / 16;
+        canvasHeight = MIN_HEIGHT; // Use height as base (1280)
+        canvasWidth = Math.round(MIN_HEIGHT * targetAspect); // 720
+      } else {
+        // Landscape: maintain 16:9 aspect ratio
+        const targetAspect = 16 / 9;
+        canvasWidth = MIN_WIDTH; // Use width as base (1280)
+        canvasHeight = Math.round(MIN_WIDTH / targetAspect); // 720
+      }
+      
+      // If container is smaller than minimum, scale up while maintaining aspect ratio
+      if (rect.width < canvasWidth || rect.height < canvasHeight) {
+        const scale = Math.max(canvasWidth / rect.width, canvasHeight / rect.height);
+        canvasWidth = Math.round(rect.width * scale);
+        canvasHeight = Math.round(rect.height * scale);
+        } else {
+        // Use container size if larger, but maintain aspect ratio
+        const containerAspect = rect.width / rect.height;
+        const targetAspect = videoAspectRatio === '9/16' ? 9 / 16 : 16 / 9;
+        
+        if (Math.abs(containerAspect - targetAspect) > 0.01) {
+          // Container aspect doesn't match video aspect, use video aspect
+          if (videoAspectRatio === '9/16') {
+            canvasHeight = Math.max(rect.height, MIN_HEIGHT);
+            canvasWidth = Math.round(canvasHeight * targetAspect);
+          } else {
+            canvasWidth = Math.max(rect.width, MIN_WIDTH);
+            canvasHeight = Math.round(canvasWidth / targetAspect);
           }
         } else {
-          // Taller or equal to 16:9, use height as base
-          canvasHeight = MIN_HEIGHT;
-          canvasWidth = Math.round(MIN_HEIGHT * containerAspect);
-          // Ensure width is at least MIN_WIDTH
-          if (canvasWidth < MIN_WIDTH) {
-            canvasWidth = MIN_WIDTH;
-            canvasHeight = Math.round(MIN_WIDTH / containerAspect);
-          }
+          // Container matches video aspect, use container size (but ensure minimums)
+          canvasWidth = Math.max(rect.width, MIN_WIDTH);
+          canvasHeight = Math.max(rect.height, MIN_HEIGHT);
         }
       }
       
@@ -1168,7 +1320,9 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         width: canvas.width,
         height: canvas.height,
         aspectRatio: (canvas.width / canvas.height).toFixed(2),
-        containerSize: { width: rect.width, height: rect.height }
+        videoAspectRatio: videoAspectRatio,
+        containerSize: { width: rect.width, height: rect.height },
+        containerAspect: (rect.width / rect.height).toFixed(2)
       });
       
       exportCanvasRef.current = canvas;
@@ -1732,12 +1886,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       }
 
       // 2. Draw all overlay layers (V2, V3, V4, etc.) - positioned absolutely on top
-      // Render all active overlay clips
-      for (let trackIndex = 1; trackIndex < tracks.length; trackIndex++) {
-        const track = tracks[trackIndex];
-        if (!track || track.length === 0) continue;
+      // Render only active overlay clips (from overlayClipsInfo parameter)
+      // This ensures chart overlays only appear when their corresponding primary clip is active
+      const activeOverlaysToDraw = overlayClipsInfo.length > 0 ? overlayClipsInfo : activeOverlayClips;
+      
+      for (const overlayInfo of activeOverlaysToDraw) {
+        const overlayClip = overlayInfo.clip;
+        const trackIndex = overlayInfo.trackIndex;
         
-        const overlayClip = track[0]; // Overlay tracks hold one clip
         if (!overlayClip || !overlayClip.transform) continue;
         const { x, y, width, opacity } = overlayClip.transform;
         
@@ -1813,11 +1969,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 overlayElementToDraw.playbackRate = speed;
               }
               
-              // Find matching overlay info for timing
-              const overlayInfo =
-                (overlayClipsInfo.length ? overlayClipsInfo : activeOverlayClips).find(
-                  (o) => o.clip.id === overlayClip.id
-                );
+              // Use overlayInfo from the loop (already available)
               if (overlayInfo?.localTime !== undefined) {
                 try {
                   const start = overlayClip.trimStart || 0;
@@ -2286,13 +2438,13 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       const targetIndex = prev.findIndex(ac => ac.id === targetAudioClip.id);
       
       if (targetIndex >= 0) {
-        // Swap the audio tracks in the array
+      // Swap the audio tracks in the array
         const tempAudio = newAudioTracks[fromIndex];
         newAudioTracks[fromIndex] = { ...newAudioTracks[targetIndex] };
         newAudioTracks[targetIndex] = { ...tempAudio };
-        
+      
         // Also swap their start times
-        const tempStartTime = newAudioTracks[fromIndex].startTime;
+      const tempStartTime = newAudioTracks[fromIndex].startTime;
         newAudioTracks[fromIndex] = { 
           ...newAudioTracks[fromIndex], 
           startTime: newAudioTracks[targetIndex].startTime 
@@ -3030,12 +3182,80 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             const clipStartPercent = totalDuration > 0 ? (audioClip.startTime / totalDuration) * 100 : 0;
             const clipWidthPercent = totalDuration > 0 ? (effectiveDuration / totalDuration) * 100 : 0;
             
+            // Find linked video clip bounds if audio is linked
+            let videoBounds = null;
+            if (audioClip.linkedVideoClipId) {
+              const linkedVideoClip = tracks[0]?.find(vc => vc.id === audioClip.linkedVideoClipId);
+              if (linkedVideoClip) {
+                // Calculate video clip position on timeline
+                let videoAccumulatedTime = 0;
+                tracks[0].forEach((vc, vcIndex) => {
+                  if (vc.id === linkedVideoClip.id) {
+                    videoBounds = {
+                      startTime: videoAccumulatedTime,
+                      endTime: videoAccumulatedTime + ((vc.trimEnd - vc.trimStart) / (vc.speed || 1.0))
+                    };
+                  }
+                  const vcTrimmedDuration = vc.trimEnd - vc.trimStart;
+                  const vcSpeed = vc.speed || 1.0;
+                  videoAccumulatedTime += vcTrimmedDuration / vcSpeed;
+                });
+              }
+            }
+            
             return (
               <div
                 key={audioClip.id}
                 onClick={() => setSelectedClipId(audioClip.id)}
+                onMouseDown={(e) => {
+                  // Only allow dragging if clicking on the clip itself (not buttons or handles)
+                  if (e.target.closest('button') || 
+                      e.target.closest('[class*="resize"]') || 
+                      e.target.closest('[class*="handle"]') ||
+                      e.target.closest('[class*="bg-[#13008B]"]')) {
+                    return;
+                  }
+                  
+                  // Only allow dragging if audio is linked to a video
+                  if (!audioClip.linkedVideoClipId || !videoBounds) {
+                    return;
+                  }
+                  
+                  e.preventDefault();
+                  e.stopPropagation();
+                  
+                  const startX = e.clientX;
+                  const timelineContainer = e.currentTarget.closest('.relative');
+                  const timelineRect = timelineContainer.getBoundingClientRect();
+                  const initialStartTime = audioClip.startTime;
+                  
+                  const handleMouseMove = (moveEvent) => {
+                    const deltaX = moveEvent.clientX - startX;
+                    const deltaPercent = (deltaX / timelineRect.width) * 100;
+                    const deltaTime = (deltaPercent / 100) * totalDuration;
+                    const newStartTime = initialStartTime + deltaTime;
+                    
+                    // Constrain to video bounds
+                    const minStartTime = videoBounds.startTime;
+                    const maxStartTime = videoBounds.endTime - effectiveDuration;
+                    const constrainedStartTime = Math.max(minStartTime, Math.min(maxStartTime, newStartTime));
+                    
+                    setAudioTracks(prev => prev.map(a => 
+                      a.id === audioClip.id ? { ...a, startTime: constrainedStartTime } : a
+                    ));
+                  };
+                  
+                  const handleMouseUp = () => {
+                    document.removeEventListener('mousemove', handleMouseMove);
+                    document.removeEventListener('mouseup', handleMouseUp);
+                  };
+                  
+                  document.addEventListener('mousemove', handleMouseMove);
+                  document.addEventListener('mouseup', handleMouseUp);
+                }}
                 className={`
-                  clip-block absolute h-full rounded-md cursor-grab transition-all border-2 group
+                  clip-block absolute h-full rounded-md transition-all border-2 group
+                  ${audioClip.linkedVideoClipId ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}
                   ${isSelected ? 'border-[#13008B] ring-2 ring-[#13008B]/20 z-10' : 'border-gray-400 hover:border-gray-500'}
                   bg-gray-200 hover:bg-gray-300
                 `}
@@ -3101,7 +3321,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 )}
 
                 {/* Drag Handle to Reposition */}
-                {isSelected && (
+                {isSelected && audioClip.linkedVideoClipId && videoBounds && (
                   <div 
                     className="absolute -left-1 top-0 bottom-0 w-2 bg-[#13008B] cursor-ew-resize z-30 opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity rounded-l-md flex items-center justify-center"
                     onMouseDown={(e) => {
@@ -3115,14 +3335,15 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                         const deltaX = moveEvent.clientX - startX;
                         const deltaPercent = (deltaX / timelineRect.width) * 100;
                         const deltaTime = (deltaPercent / 100) * totalDuration;
-                        // Calculate effective duration for this audio clip
-                        const trimmedDuration = audioClip.trimEnd - audioClip.trimStart;
-                        const speed = audioClip.speed || 1.0;
-                        const effectiveDuration = trimmedDuration / speed;
-                        const newStartTime = Math.max(0, Math.min(totalDuration - effectiveDuration, initialStartTime + deltaTime));
+                        const newStartTime = initialStartTime + deltaTime;
+                        
+                        // Constrain to video bounds
+                        const minStartTime = videoBounds.startTime;
+                        const maxStartTime = videoBounds.endTime - effectiveDuration;
+                        const constrainedStartTime = Math.max(minStartTime, Math.min(maxStartTime, newStartTime));
                         
                         setAudioTracks(prev => prev.map(a => 
-                          a.id === audioClip.id ? { ...a, startTime: newStartTime } : a
+                          a.id === audioClip.id ? { ...a, startTime: constrainedStartTime } : a
                         ));
                       };
                       
@@ -3134,7 +3355,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                       document.addEventListener('mousemove', handleMouseMove);
                       document.addEventListener('mouseup', handleMouseUp);
                     }}
-                    title="Drag to reposition on timeline"
+                    title="Drag to reposition within linked video bounds"
                   >
                     <GripVertical size={10} className="text-white" />
                   </div>
@@ -3176,13 +3397,35 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     const syncIntervalRef = useRef(null);
     const isInitializedRef = useRef(false);
     const wasActiveRef = useRef(false);
+    const currentSrcRef = useRef(null);
+    const seekDebounceRef = useRef(null);
+    const isVideoReadyRef = useRef(false); // Use ref instead of state to prevent re-renders
+    const hasInitialFrameRef = useRef(false);
+    const [isVideoReady, setIsVideoReady] = useState(false); // Keep for opacity control, but update less frequently
+    const [hasShownOnce, setHasShownOnce] = useState(false); // Track if video has been shown at least once - once shown, keep it shown
+    const lastReadyStateRef = useRef(-1); // Track last readyState to prevent unnecessary updates
+    const lastLocalTimeRef = useRef(null); // Track last localTime to prevent unnecessary seeks
+    const lastIsActiveRef = useRef(false); // Track last isActive state
+    const rafRef = useRef(null); // For requestAnimationFrame-based updates
+    const overlayInfoRef = useRef(null); // Store latest overlayInfo for RAF callback
+    const isPlayingRef = useRef(false); // Store latest isPlaying state for RAF callback
 
     // Sync V2 Video playback time
     // Use overlayInfo if provided (for chart overlays), otherwise fall back to v2ClipInfo
-    const activeOverlayInfo = overlayInfo || v2ClipInfo;
-    const isActive = activeOverlayInfo && activeOverlayInfo.clip.id === clip.id;
+    const activeOverlayInfo = overlayInfo || null;
+    const isActive = Boolean(overlayInfo && overlayInfo.clip.id === clip.id);
+    const isChartOverlay = clip.isChartOverlay;
     
-    // Initialize video element once and keep it stable
+    // Update refs whenever they change
+    useEffect(() => {
+      overlayInfoRef.current = activeOverlayInfo;
+    }, [activeOverlayInfo]);
+    
+    useEffect(() => {
+      isPlayingRef.current = isPlaying;
+    }, [isPlaying]);
+    
+    // Initialize video element once and keep it stable - set src only when it changes
     useEffect(() => {
       if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
       const videoElement = elementRef.current;
@@ -3193,36 +3436,185 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         videoElement.playsInline = true;
         videoElement.preload = 'auto';
         videoElement.disablePictureInPicture = true;
-        videoElement.loop = !clip.isChartOverlay;
+        videoElement.loop = false; // FIXED: Never loop, control playback manually
         videoElement.crossOrigin = 'anonymous';
         isInitializedRef.current = true;
       }
+      
+      // FIXED: Only set src once and keep it stable
+      if (clip.url && currentSrcRef.current !== clip.url) {
+        isVideoReadyRef.current = false;
+        hasInitialFrameRef.current = false;
+        setHasShownOnce(false);
+        setIsVideoReady(false);
+        lastReadyStateRef.current = -1;
+        currentSrcRef.current = clip.url;
+        videoElement.src = clip.url;
+        videoElement.preload = 'auto';
+        videoElement.load();
+      }
     }, [clip?.url, clip?.type, clip?.isChartOverlay]);
 
-    // Stable sync mechanism using interval instead of constant re-renders
+    // FIXED: Simplified and more stable sync mechanism for chart overlays
     useEffect(() => {
       if (!clip || !clip.transform || clip.type !== 'video' || !elementRef.current) return;
       const videoElement = elementRef.current;
-      const localTime = activeOverlayInfo?.localTime ?? clip.trimStart;
-      const isChartOverlay = clip.isChartOverlay;
 
-      // Clear any existing interval
+      // Clear existing interval and RAF
       if (syncIntervalRef.current) {
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = null;
       }
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
 
-      if (isActive && videoElement.readyState >= 2) {
-        // Set playback speed
+      // Clear any pending seeks
+      if (seekDebounceRef.current) {
+        clearTimeout(seekDebounceRef.current);
+        seekDebounceRef.current = null;
+      }
+
+      // For chart overlays, use a more stable approach with RAF
+      if (isChartOverlay) {
+        // Mark as ready once video is loaded
+        if (videoElement.readyState >= 2 && !isVideoReadyRef.current) {
+          isVideoReadyRef.current = true;
+          if (!isVideoReady) {
+            setHasShownOnce(true);
+            setIsVideoReady(true);
+          }
+        }
+
+        // Set playback speed once
         const speed = clip.speed || 1.0;
         if (Math.abs(videoElement.playbackRate - speed) > 0.01) {
           videoElement.playbackRate = speed;
         }
 
-        // Use interval-based sync instead of constant re-renders
-        // Sync every 100ms for smooth playback without flickering
+        // Use RAF for smooth updates instead of intervals
+        const updateChartOverlay = () => {
+          // Check if still active using the latest overlayInfo
+          const currentOverlayInfo = overlayInfoRef.current;
+          const currentlyActive = Boolean(currentOverlayInfo && currentOverlayInfo.clip.id === clip.id);
+          
+          if (!videoElement || !currentlyActive) {
+            if (videoElement && !videoElement.paused) {
+              videoElement.pause();
+            }
+            rafRef.current = null;
+            return;
+          }
+
+          if (videoElement.readyState < 2) {
+            rafRef.current = requestAnimationFrame(updateChartOverlay);
+            return;
+          }
+
+          // Get latest localTime from ref
+          const localTime = currentOverlayInfo?.localTime ?? clip.trimStart;
+          const start = clip.trimStart || 0;
+          const end = clip.trimEnd ?? clip.duration ?? start;
+          const targetTime = Math.min(end, Math.max(start, localTime));
+
+          // Only seek if localTime changed significantly (more than 0.5s) to prevent flicker
+          const lastTime = lastLocalTimeRef.current;
+          const timeChanged = lastTime === null || Math.abs(lastTime - localTime) > 0.5;
+          
+          if (timeChanged) {
+            const currentTime = videoElement.currentTime || 0;
+            const timeDiff = Math.abs(currentTime - targetTime);
+            
+            // Only seek if difference is significant (more than 0.5s) to prevent flicker
+            if (timeDiff > 0.5) {
+              try {
+                videoElement.currentTime = targetTime;
+                lastTimeRef.current = targetTime;
+                lastLocalTimeRef.current = localTime;
+              } catch (e) {
+                // Ignore seek errors
+              }
+            } else {
+              // Update localTime ref even if we don't seek
+              lastLocalTimeRef.current = localTime;
+            }
+          }
+
+          // Control playback - use ref to get latest value
+          const currentIsPlaying = isPlayingRef.current;
+          if (currentIsPlaying && videoElement.paused && videoElement.readyState >= 2) {
+            videoElement.play().catch(() => {});
+          } else if (!currentIsPlaying && !videoElement.paused) {
+            videoElement.pause();
+          }
+
+          rafRef.current = requestAnimationFrame(updateChartOverlay);
+        };
+
+        if (isActive) {
+          updateChartOverlay();
+        } else {
+          if (videoElement && !videoElement.paused) {
+            videoElement.pause();
+          }
+        }
+
+        lastIsActiveRef.current = isActive;
+        return () => {
+          if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current);
+            rafRef.current = null;
+          }
+        };
+      }
+
+      // Non-chart overlay handling (existing logic)
+      const localTime = activeOverlayInfo?.localTime ?? clip.trimStart;
+
+      if (isActive && videoElement.readyState >= 2) {
+        // Update ready state only if it actually changed to prevent flicker
+        const currentReadyState = videoElement.readyState;
+        if (currentReadyState !== lastReadyStateRef.current) {
+          lastReadyStateRef.current = currentReadyState;
+          if (currentReadyState >= 2 && !isVideoReadyRef.current) {
+            isVideoReadyRef.current = true;
+            // Only update React state once when becoming ready to minimize re-renders
+            if (!isVideoReady) {
+              setHasShownOnce(true); // Mark as shown once
+              setIsVideoReady(true);
+            }
+          }
+        }
+
+        // Set playback speed once
+        const speed = clip.speed || 1.0;
+        if (Math.abs(videoElement.playbackRate - speed) > 0.01) {
+          videoElement.playbackRate = speed;
+        }
+
+        // FIXED: Much less frequent syncing for chart overlays to reduce flicker
+        const syncInterval = isChartOverlay ? 500 : 200;
+        
         syncIntervalRef.current = setInterval(() => {
-          if (!videoElement || videoElement.readyState < 2) return;
+          if (!videoElement || videoElement.readyState < 2) {
+            if (videoElement && videoElement.readyState < 1 && isVideoReadyRef.current) {
+              isVideoReadyRef.current = false;
+              setIsVideoReady(false);
+            }
+            return;
+          }
+          
+          // Ensure ready state is set - once shown, keep it shown
+          if (videoElement.readyState >= 2) {
+            if (!isVideoReadyRef.current) {
+              isVideoReadyRef.current = true;
+              setHasShownOnce(true); // Mark as shown once
+              if (!isVideoReady) {
+                setIsVideoReady(true);
+              }
+            }
+          }
           
           const currentLocalTime = activeOverlayInfo?.localTime ?? clip.trimStart;
           if (isNaN(currentLocalTime)) return;
@@ -3233,61 +3625,97 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           const currentTime = videoElement.currentTime;
           const timeDiff = Math.abs(currentTime - targetTime);
           
-          // Only seek if significantly off (0.3s threshold to prevent flickering)
-          const seekThreshold = 0.3;
+          // FIXED: Much larger threshold to prevent constant seeking
+          const seekThreshold = isChartOverlay ? 2.0 : 0.5;
           const lastSeekTime = lastTimeRef.current;
-          const timeChanged = lastSeekTime === null || Math.abs(lastSeekTime - targetTime) > 0.2;
+          const timeChangeThreshold = isChartOverlay ? 1.0 : 0.3;
+          const timeChanged = lastSeekTime === null || Math.abs(lastSeekTime - targetTime) > timeChangeThreshold;
           
-          if (timeDiff > seekThreshold && timeChanged && videoElement.readyState >= 3) {
+          if (timeDiff > seekThreshold && timeChanged && videoElement.readyState >= 2) {
+            // FIXED: Debounce seeks to prevent rapid seeking
+            if (seekDebounceRef.current) {
+              clearTimeout(seekDebounceRef.current);
+            }
+            
+            seekDebounceRef.current = setTimeout(() => {
             try {
               videoElement.currentTime = targetTime;
               lastTimeRef.current = targetTime;
             } catch (e) {
-              // Ignore seek errors
+                console.warn('Seek error:', e);
             }
+            }, 50);
           }
-        }, 100); // Check every 100ms
+        }, syncInterval);
 
-        // Play/pause control
-        if (isPlaying && videoElement.paused) {
+        // FIXED: Only control playback if state changes
+        if (isPlaying && videoElement.paused && videoElement.readyState >= 2) {
           videoElement.play().catch(() => {});
         } else if (!isPlaying && !videoElement.paused) {
           videoElement.pause();
         }
       } else {
-        // Inactive - pause video
+        // Inactive - just pause, don't mark as not ready unless very low readyState
         if (videoElement && !videoElement.paused) {
           videoElement.pause();
+        }
+        // FIXED: Only mark not ready if readyState is critically low
+        if (videoElement && videoElement.readyState < 1) {
+          isVideoReadyRef.current = false;
+          hasInitialFrameRef.current = false;
+          if (isVideoReady) {
+            setIsVideoReady(false);
+          }
         }
         lastTimeRef.current = null;
       }
       
       wasActiveRef.current = isActive;
+      lastIsActiveRef.current = isActive;
       
       return () => {
         if (syncIntervalRef.current) {
           clearInterval(syncIntervalRef.current);
           syncIntervalRef.current = null;
         }
+        if (seekDebounceRef.current) {
+          clearTimeout(seekDebounceRef.current);
+          seekDebounceRef.current = null;
+        }
+        if (rafRef.current) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
       };
-    }, [isActive, isPlaying, clip?.id, clip?.trimStart, clip?.trimEnd, clip?.duration, clip?.speed, clip?.isChartOverlay, activeOverlayInfo?.localTime]);
+    }, [isActive, isPlaying, clip?.id, clip?.trimStart, clip?.trimEnd, clip?.duration, clip?.speed, clip?.isChartOverlay, isChartOverlay]);
 
-    // On source/metadata ready, snap to current local time to avoid initial blank frame
+    // FIXED: Better initial frame handling - only run on URL change, not on every localTime change
     useEffect(() => {
       if (!clip || clip.type !== 'video' || !elementRef.current) return;
       const videoElement = elementRef.current;
-      const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
       
       const syncTime = () => {
-        if (videoElement && !isNaN(localTime) && videoElement.readyState >= 2) {
-          try {
-            videoElement.currentTime = localTime;
-            lastTimeRef.current = localTime;
-          } catch (e) {
-            // Ignore seek errors
+        if (videoElement && videoElement.readyState >= 2) {
+          const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
+          if (!isNaN(localTime)) {
+            try {
+              videoElement.currentTime = localTime;
+              lastTimeRef.current = localTime;
+              lastLocalTimeRef.current = localTime;
+              // Only update state once when first frame is loaded
+              if (!hasInitialFrameRef.current) {
+                hasInitialFrameRef.current = true;
+                isVideoReadyRef.current = true;
+                setHasShownOnce(true); // Mark as shown once
+                setIsVideoReady(true);
+              }
+            } catch (e) {
+              console.warn('Initial sync error:', e);
+            }
           }
         }
-        if (isActive && isPlaying && videoElement) {
+        
+        if (isActive && isPlaying && videoElement && videoElement.readyState >= 2) {
           videoElement.play().catch(() => {});
         }
       };
@@ -3295,15 +3723,18 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       if (videoElement.readyState >= 2) {
         syncTime();
       } else {
-        videoElement.addEventListener('loadedmetadata', syncTime, { once: true });
-        videoElement.addEventListener('canplay', syncTime, { once: true });
-      }
+        // FIXED: Use only loadeddata event for reliability
+        const handleLoadedData = () => {
+          syncTime();
+        };
+        
+        videoElement.addEventListener('loadeddata', handleLoadedData, { once: true });
       
-      return () => {
-        videoElement.removeEventListener('loadedmetadata', syncTime);
-        videoElement.removeEventListener('canplay', syncTime);
-      };
-    }, [clip?.url, clip?.type, isActive, isPlaying, activeOverlayInfo?.localTime]);
+        return () => {
+          videoElement.removeEventListener('loadeddata', handleLoadedData);
+        };
+      }
+    }, [clip?.url, clip?.type, clip?.isChartOverlay]);
 
     // Early return after all hooks
     if (!clip || !clip.transform) return null;
@@ -3350,7 +3781,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
             }}
         >
             <Component
-                key={clip.id || clip.url}
+                key={`overlay-${clip.id}-${clip.url}`}
                 ref={elementRef}
                 src={clip.url}
                 crossOrigin="anonymous"
@@ -3363,51 +3794,56 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 playsInline
                 preload="auto"
                 autoPlay={false} 
-                loop={clip.isChartOverlay ? false : undefined}
+                // FIXED: Simplified event handlers - only update state once
                 onLoadedData={() => {
-                  // Ensure video is ready before showing to prevent flicker
-                  if (elementRef.current && isActive) {
-                    const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
-                    if (!isNaN(localTime)) {
-                      elementRef.current.currentTime = localTime;
+                  const videoEl = elementRef.current;
+                  if (videoEl && videoEl.readyState >= 2) {
+                    if (!hasInitialFrameRef.current) {
+                      hasInitialFrameRef.current = true;
+                      isVideoReadyRef.current = true;
+                      setHasShownOnce(true); // Mark as shown once
+                      setIsVideoReady(true);
                     }
                   }
                 }}
-                onLoadedMetadata={() => {
-                  // Pre-sync video time when metadata loads to prevent blank frames
-                  if (elementRef.current) {
-                    const localTime = activeOverlayInfo?.localTime ?? clip.trimStart ?? 0;
-                    // Wait for HAVE_FUTURE_DATA (readyState >= 3) for smoother playback
-                    if (!isNaN(localTime)) {
-                      const checkReady = () => {
-                        if (elementRef.current && elementRef.current.readyState >= 3) {
-                          elementRef.current.currentTime = localTime;
-                        } else if (elementRef.current) {
-                          // Retry when more data is loaded
-                          elementRef.current.addEventListener('canplay', checkReady, { once: true });
-                        }
-                      };
-                      checkReady();
+                onCanPlay={() => {
+                  const videoEl = elementRef.current;
+                  if (videoEl && videoEl.readyState >= 2) {
+                    if (!isVideoReadyRef.current) {
+                      isVideoReadyRef.current = true;
+                      setHasShownOnce(true); // Mark as shown once
+                      setIsVideoReady(true);
                     }
                   }
                 }}
                 style={{ 
-                  pointerEvents: isActive ? 'auto' : 'none', 
-                  // Always keep element in DOM to prevent re-creation flicker
-                  // Use opacity and pointer-events instead of visibility/display
-                  opacity: isActive ? 1 : 0,
-                  willChange: 'opacity', // Optimize for animations
-                  transition: 'opacity 0.2s ease-in-out', // Smooth fade to prevent flicker
-                  objectFit: 'contain', // Preserve aspect ratio without distortion
+                  pointerEvents: isActive ? 'auto' : 'none',
+                  // For chart overlays: once shown, keep shown (unless truly inactive) to prevent flicker
+                  // For other overlays: show when ready
+                  opacity: clip.isChartOverlay
+                    ? (hasShownOnce || isActive ? 1 : 0)
+                    : (isActive && (clip.type === 'image' || hasShownOnce || (isVideoReady && hasInitialFrameRef.current))) ? 1 : 0,
+                  willChange: 'opacity',
+                  // FIXED: No transition for chart overlays to prevent flicker
+                  transition: clip.isChartOverlay ? 'none' : 'opacity 0.1s ease-out',
+                  objectFit: 'contain',
                   width: '100%',
                   height: '100%',
-                  display: 'block', // Prevent inline spacing issues
-                  // For chart overlays, ensure video fills container properly
+                  display: 'block',
                   ...(clip.isChartOverlay ? {
                     minWidth: 0,
                     minHeight: 0,
                     maxWidth: '100%',
-                    maxHeight: '100%'
+                    maxHeight: '100%',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    contain: 'layout style paint',
+                    transform: 'translateZ(0)',
+                    backfaceVisibility: 'hidden',
+                    imageRendering: 'auto',
+                    // Prevent any visual glitches during playback
+                    willChange: 'auto'
                   } : {})
                 }}
             />
@@ -3423,16 +3859,21 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
         </div>
     );
   }, (prevProps, nextProps) => {
-    // Custom comparison to prevent unnecessary re-renders
-    // Only re-render if clip URL, transform, or active state changes
+    // FIXED: Better memoization - only re-render on significant changes
+    const prev = prevProps.clip;
+    const next = nextProps.clip;
+    const prevInfo = prevProps.overlayInfo;
+    const nextInfo = nextProps.overlayInfo;
+    
     return (
-      prevProps.clip?.url === nextProps.clip?.url &&
-      prevProps.clip?.transform?.x === nextProps.clip?.transform?.x &&
-      prevProps.clip?.transform?.y === nextProps.clip?.transform?.y &&
-      prevProps.clip?.transform?.width === nextProps.clip?.transform?.width &&
-      prevProps.clip?.transform?.opacity === nextProps.clip?.transform?.opacity &&
-      (prevProps.overlayInfo?.clip?.id === nextProps.overlayInfo?.clip?.id) &&
-      (Math.abs((prevProps.overlayInfo?.localTime || 0) - (nextProps.overlayInfo?.localTime || 0)) < 0.1)
+      prev?.url === next?.url &&
+      prev?.transform?.x === next?.transform?.x &&
+      prev?.transform?.y === next?.transform?.y &&
+      prev?.transform?.width === next?.transform?.width &&
+      prev?.transform?.opacity === next?.transform?.opacity &&
+      prevInfo?.clip?.id === nextInfo?.clip?.id &&
+      // FIXED: Larger threshold to prevent constant re-renders
+      (Math.abs((prevInfo?.localTime || 0) - (nextInfo?.localTime || 0)) < 0.5)
     );
   });
 
@@ -3905,13 +4346,24 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
            <div className="flex-1 flex flex-col bg-gray-50 relative min-w-0">
             
             {/* VIDEO PREVIEW CANVAS */}
-            <div className="flex-1 flex items-center justify-center p-8 overflow-hidden relative bg-dots">
+            <div 
+              className="flex items-center justify-center p-4 overflow-hidden relative bg-dots"
+              style={{ 
+                flex: videoAspectRatio === '9/16' ? '0 0 60%' : '1 1 auto',
+                maxHeight: videoAspectRatio === '9/16' ? '60vh' : 'none'
+              }}
+            >
               {/* NOTE: Removed pulsing REC indicator */}
               {(tracks[0].length > 0 || activeOverlayClips.length > 0) ? (
                 <div 
                   ref={playerRef} 
                   className="player-container relative shadow-2xl shadow-black/50 group"
-                  style={{ maxHeight: '100%', maxWidth: '100%', aspectRatio: '16/9', overflow: 'visible' }}
+                  style={{ 
+                    maxHeight: videoAspectRatio === '9/16' ? '84%' : '100%', 
+                    maxWidth: '100%', 
+                    aspectRatio: videoAspectRatio, 
+                    overflow: 'visible' 
+                  }}
                 >
                     {/* V1 - BASE LAYER - Always render if there are clips in primary track */}
                     {tracks[0].length > 0 && (
@@ -3932,13 +4384,36 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                     )}
                     
                     {/* ALL OVERLAY LAYERS - RENDERED ON TOP */}
-                    {activeOverlayClips.map((overlayInfo, index) => (
+                    {overlayRenderList.map(({ clip, overlayInfo, trackIndex }) => (
                       <OverlayElement 
-                        key={`overlay-${overlayInfo.clip?.id || overlayInfo.trackIndex}-${index}`} 
-                        clip={overlayInfo.clip} 
+                        key={`overlay-${clip.id || trackIndex}`} 
+                        clip={clip} 
                         overlayInfo={overlayInfo} 
                       />
                     ))}
+                    
+                    {/* Logo Watermark - Bottom Right (positioned slightly up and left) */}
+                    {tracks[0].length > 0 && (
+                      <div 
+                        className="absolute z-10 pointer-events-none"
+                        style={{
+                          right: '3%',
+                          bottom: videoAspectRatio === '9/16' ? 'calc(2% + 8px)' : 'calc(5% + 12px)',
+                          padding: videoAspectRatio === '9/16' ? '4px' : '6px',
+                          maxWidth: videoAspectRatio === '9/16' ? '18%' : '10%',
+                          maxHeight: videoAspectRatio === '9/16' ? '12%' : '10%'
+                        }}
+                      >
+                        <img 
+                          src={LogoImage} 
+                          alt="Logo" 
+                          className="w-full h-full object-contain opacity-80"
+                          style={{
+                            filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3))'
+                          }}
+                        />
+                      </div>
+                    )}
                     
                     {/* Audio playback (hidden audio elements for timing) */}
                     {audioTracks.map((audioClip) => (

@@ -7,6 +7,34 @@ import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
 import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
 
+// Preset Voice Options
+const PRESET_VOICE_OPTIONS = {
+  "male": [
+    { "key": "american_male", "name": "Max - eLearning & Documentary", "url": "https://elevenlabs.io/app/voice-library?voiceId=Gfpl8Yo74Is0W6cPUWWT" },
+    { "key": "british_male", "name": "William - Premium British Narrator", "url": "https://elevenlabs.io/app/voice-library?voiceId=NmpxQl3ZUbfh8HgoNCGM" },
+    { "key": "arabic_male", "name": "Radwan - Soft narrative & conversational", "url": "https://elevenlabs.io/app/voice-library?voiceId=8KVwlbLHGvmAEpy5b8PM" },
+    { "key": "african_american_male", "name": "Tyre G - Perfect for narrations & social media", "url": "https://elevenlabs.io/app/voice-library?voiceId=YjlcD3XHztjJEo2wNszv" },
+    { "key": "german_male", "name": "Thomas Fischer - Authentic German", "url": "https://elevenlabs.io/app/voice-library?voiceId=oIrReGAWJuGKVf4DxEt8" },
+    { "key": "chinese_male", "name": "Victor Lau", "url": "https://elevenlabs.io/app/voice-library?voiceId=8xsdoepm9GrzPPzYsiLP" },
+    { "key": "french_male", "name": "English with French Accent Narration", "url": "https://elevenlabs.io/app/voice-library?voiceId=sa2z6gEuOalzawBHvrCV" },
+    { "key": "indian_male", "name": "Thoughtsalot - Authentic Executive Authority", "url": "https://elevenlabs.io/app/voice-library?voiceId=gad8DmXGyu7hwftX9JqI" },
+    { "key": "italian_male", "name": "Antonio - English with Subtle Italian Acc", "url": "https://elevenlabs.io/app/voice-library?voiceId=iLVmqjzCGGvqtMCk6vVQ" },
+    { "key": "russian_male", "name": "Nik Ivanov", "url": "https://elevenlabs.io/app/voice-library?voiceId=3faLw6tqzw5w1UZMFTgL" }
+  ],
+  "female": [
+    { "key": "american_female", "name": "Michalia Schwartz", "url": "https://elevenlabs.io/app/voice-library?voiceId=acCWxmzPBgXdHwA63uzP" },
+    { "key": "british_female", "name": "Victoria - Senior British Female Actress", "url": "https://elevenlabs.io/app/voice-library?voiceId=IZnNrZQBS9lhLjXgYVT8" },
+    { "key": "arabic_female", "name": "Salma - Conversational Expressive Voice", "url": "https://elevenlabs.io/app/voice-library?voiceId=aCChyB4P5WEomwRsOKRh" },
+    { "key": "african_american_female", "name": "Misha - Podcast Host & Storytelling", "url": "https://elevenlabs.io/app/voice-library?voiceId=DXX4Q5Bh1vqK8CciYVPf" },
+    { "key": "german_female", "name": "Ellen", "url": "https://elevenlabs.io/app/voice-library?voiceId=BIvP0GN1cAtSRTxNHnWS" },
+    { "key": "chinese_female", "name": "Stacy - Sweet", "url": "https://elevenlabs.io/app/voice-library?voiceId=jGf6Nvwr7qkFPrcLThmD" },
+    { "key": "french_female", "name": "Marina viva muse", "url": "https://elevenlabs.io/app/voice-library?voiceId=1hIScOW98xkqE5ttC10C" },
+    { "key": "indian_female", "name": "Monika Sogam", "url": "https://elevenlabs.io/app/voice-library?voiceId=7xOqQceOZC5dhvkaqKtD" },
+    { "key": "italian_female", "name": "Ginevra - Soothing Italian Hue", "url": "https://elevenlabs.io/app/voice-library?voiceId=75MqelvgFq5upx0r44WK" },
+    { "key": "russian_female", "name": "Nadya", "url": "https://elevenlabs.io/app/voice-library?voiceId=GCPLhb1XrVwcoKUJYcvz" }
+  ]
+};
+
 // Helper functions for asset modal (from Chat.js)
 const resolveTemplateAssetUrl = (entry) => {  
   if (!entry) return '';
@@ -117,6 +145,112 @@ const extractAssetsByType = (templatesInput = {}, assetType = 'preset_templates'
   return normalized;
 };
 
+// Helper function to parse description into sections (title/description format)
+const parseDescription = (description) => {
+  if (!description || typeof description !== 'string') return [];
+  
+  // Check if description contains **Title**: pattern
+  if (!description.includes('**')) {
+    return [{ type: 'text', content: description }];
+  }
+  
+  // Match all **Title**: content patterns
+  const pattern = /\*\*([^*]+?)\*\*:\s*([^*]+?)(?=\s*\*\*|$)/g;
+  const sections = [];
+  let lastIndex = 0;
+  let match;
+  
+  while ((match = pattern.exec(description)) !== null) {
+    // Add any text before this match
+    if (match.index > lastIndex) {
+      const prefix = description.substring(lastIndex, match.index).trim();
+      if (prefix) {
+        sections.push({ type: 'text', content: prefix });
+      }
+    }
+    
+    // Add the title and content
+    const title = match[1].trim();
+    const content = match[2].trim();
+    if (title && content) {
+      sections.push({ type: 'section', title, content });
+    }
+    
+    lastIndex = pattern.lastIndex;
+  }
+  
+  // Add any remaining text after last match
+  if (lastIndex < description.length) {
+    const suffix = description.substring(lastIndex).trim();
+    if (suffix) {
+      sections.push({ type: 'text', content: suffix });
+    }
+  }
+  
+  // If no sections found, return as text
+  if (sections.length === 0) {
+    return [{ type: 'text', content: description }];
+  }
+  
+  return sections;
+};
+
+// Helper function to merge sections back into description format (keeps ** marks)
+const mergeDescriptionSections = (sections) => {
+  if (!sections || sections.length === 0) return '';
+  
+  // Filter out empty sections and merge them
+  const validSections = sections.filter(section => {
+    if (section.type === 'section') {
+      return section.title && section.title.trim() && section.content && section.content.trim();
+    } else {
+      return section.content && section.content.trim();
+    }
+  });
+  
+  return validSections.map(section => {
+    if (section.type === 'section') {
+      return `**${section.title.trim()}**: ${section.content.trim()}`;
+    } else {
+      return section.content.trim();
+    }
+  }).join(' ').trim();
+};
+
+// Helper function to format description for display (hides ** marks, shows bold titles)
+const formatDescription = (description) => {
+  const sections = parseDescription(description);
+  
+  // If no sections found, return original
+  if (sections.length === 0) {
+    return <div className="text-sm text-gray-600 whitespace-pre-wrap">{description}</div>;
+  }
+  
+  // Render formatted sections - each title and description in separate divs, one below another
+  return (
+    <div className="space-y-4">
+      {sections.map((section, index) => {
+        if (section.type === 'section') {
+          return (
+            <div key={index} className="border-b border-gray-200 pb-3 last:border-b-0 last:pb-0">
+              <div className="text-sm font-bold text-gray-800 mb-2">
+                {section.title}
+              </div>
+              <div className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed pl-0">
+                {section.content}
+              </div>
+            </div>
+          );
+        } else {
+          return (
+            <div key={index} className="text-sm text-gray-600 whitespace-pre-wrap">{section.content}</div>
+          );
+        }
+      })}
+    </div>
+  );
+};
+
 const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
   if (!ratio || typeof ratio !== 'string') return fallback;
   // Normalize common separators: space, underscore, "x", "/", ":"
@@ -189,6 +323,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [isUploadingBackground, setIsUploadingBackground] = useState(false);
   const [uploadingBackgroundSceneNumber, setUploadingBackgroundSceneNumber] = useState(null);
   const [uploadFrames, setUploadFrames] = useState(['background']); // For upload: ['opening'], ['closing'], ['background'], or combinations
+  // User query popup state for generate from reference
+  const [showUserQueryPopup, setShowUserQueryPopup] = useState(false);
+  const [userQuery, setUserQuery] = useState('');
+  const [isGeneratingFromReference, setIsGeneratingFromReference] = useState(false);
   
   // Asset modal state (for background selection)
   const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
@@ -212,8 +350,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [editedDescription, setEditedDescription] = useState('');
   const [editedNarration, setEditedNarration] = useState('');
   const [isSavingField, setIsSavingField] = useState(false);
+  const [isSavingAnimationDesc, setIsSavingAnimationDesc] = useState(false);
+  const [isEditingAnimationDesc, setIsEditingAnimationDesc] = useState({}); // { sceneNumber: true/false }
+  const [editableAnimationDesc, setEditableAnimationDesc] = useState({}); // { sceneNumber: { lighting: '', ... } }
   // Track if regenerate popup is for editing description
   const [isRegenerateForDescription, setIsRegenerateForDescription] = useState(false);
+  // Description editing state (for new UI)
+  const [isDescriptionEditing, setIsDescriptionEditing] = useState(false);
+  const [descriptionSceneIndex, setDescriptionSceneIndex] = useState(null);
+  const [editableSections, setEditableSections] = useState([]);
+  const [isSavingDescription, setIsSavingDescription] = useState(false);
+  // VEO3 prompt template editing state
+  const [isEditingVeo3Template, setIsEditingVeo3Template] = useState(false);
+  const [editableVeo3Template, setEditableVeo3Template] = useState({});
+  const [isSavingVeo3Template, setIsSavingVeo3Template] = useState(false);
   const [showChartEditor, setShowChartEditor] = useState(false);
   const [chartEditorData, setChartEditorData] = useState(null);
   const [chartEditorLoading, setChartEditorLoading] = useState(false);
@@ -310,13 +460,24 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const sceneNumber = row?.scene_number || row?.sceneNumber || idx + 1;
         const existing = next[sceneNumber] || {};
         let updated = existing;
-        if (!updated.transitionPreset && transitionPresets[0]) {
-          updated = { ...updated, transitionPreset: transitionPresets[0], transitionCustom: null };
-          changed = true;
-        }
+        // Removed default preset selection - no preset should be selected by default
         if (!updated.voiceOption) {
-          updated = { ...updated, voiceOption: 'male' };
+          updated = { ...updated, voiceOption: PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male' };
           changed = true;
+        } else if (updated.voiceOption === 'male' || updated.voiceOption === 'female') {
+          // Convert old format to new key format
+          const gender = updated.voiceOption;
+          updated = { ...updated, voiceOption: PRESET_VOICE_OPTIONS[gender]?.[0]?.key || (gender === 'male' ? 'american_male' : 'american_female') };
+          changed = true;
+        } else {
+          // Validate that the voiceOption key exists in preset voices
+          const isValidKey = PRESET_VOICE_OPTIONS.male.some(v => v.key === updated.voiceOption) || 
+                           PRESET_VOICE_OPTIONS.female.some(v => v.key === updated.voiceOption);
+          if (!isValidKey) {
+            // Invalid key, reset to default male voice
+            updated = { ...updated, voiceOption: PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male' };
+          changed = true;
+          }
         }
         if (updated !== existing) {
           next[sceneNumber] = updated;
@@ -461,7 +622,32 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
   return ''
 }
 
-// Helper function to extract avatar URLs from current version of image object
+// Helper function to get the latest version key from imageVersionData (e.g., v1, v2, v3 -> returns highest)
+const getLatestVersionKey = (imageVersionData) => {
+  if (!imageVersionData || typeof imageVersionData !== 'object' || Array.isArray(imageVersionData)) {
+    return 'v1';
+  }
+  
+  // Get all version keys (v1, v2, v3, etc.)
+  const versionKeys = Object.keys(imageVersionData).filter(key => 
+    /^v\d+$/.test(key) && imageVersionData[key] && typeof imageVersionData[key] === 'object'
+  );
+  
+  if (versionKeys.length === 0) {
+    return 'v1';
+  }
+  
+  // Sort by version number (extract number from v1, v2, etc.) and return the highest
+  const sorted = versionKeys.sort((a, b) => {
+    const numA = parseInt(a.replace('v', '')) || 0;
+    const numB = parseInt(b.replace('v', '')) || 0;
+    return numB - numA; // Descending order
+  });
+  
+  return sorted[0] || 'v1';
+};
+
+// Helper function to extract avatar URLs from latest version of image object
 const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) => {
   const modelUpper = String(model || '').toUpperCase();
   const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
@@ -473,11 +659,11 @@ const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) 
   // Extract avatar URLs from session data images structure (same as list area)
   // Structure: it.images[current_version].avatar_urls
   if (typeof imageVersionData === 'object' && !Array.isArray(imageVersionData)) {
-    // Get the current version key
-    const versionKey = currentVersion || imageVersionData?.current_version || imageVersionData?.currentVersion || 'v1';
+    // Get the latest version key (always use latest version)
+    const versionKey = getLatestVersionKey(imageVersionData);
     
     // Get the version object (same as: imagesContainer[versionKey] in list area)
-    const versionObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
+    const versionObj = imageVersionData[versionKey] || {};
     
     // Extract avatar_urls from current version (same as: verObj?.avatar_urls in list area)
     let avatarUrls = versionObj?.avatar_urls;
@@ -605,11 +791,11 @@ const getOrderedRefs = useCallback((row) => {
         // ALWAYS extract avatar_urls from current version
         let avatarUrls = []
         
-        // Priority 1: Extract from imageVersionData current_version
+        // Priority 1: Extract from imageVersionData latest version
         if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
           const imgContainer = row.imageVersionData
-          const vKey = imgContainer.current_version || imgContainer.currentVersion || 'v1'
-          const vObj = imgContainer[vKey] || imgContainer.v1 || {}
+          const vKey = getLatestVersionKey(imgContainer)
+          const vObj = imgContainer[vKey] || {}
           const versionAvatars = vObj?.avatar_urls
           
           if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
@@ -677,11 +863,11 @@ const getOrderedRefs = useCallback((row) => {
           imagesContainer = row.imageVersionData.images;
         }
         
-        // Get current version key
-        const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || row?.current_version || 'v1';
+        // Get latest version key (always use latest version)
+        const versionKey = getLatestVersionKey(imagesContainer);
         
         // Get version object
-        const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+        const verObj = imagesContainer[versionKey] || {};
         
         // Extract avatar_urls from version object
         const versionAvatars = verObj?.avatar_urls;
@@ -740,8 +926,9 @@ const getOrderedRefs = useCallback((row) => {
   const getAnchorAvatarImages = useCallback(
     (row) => {
       // Get avatar URLs from row's imageVersionData
-      const currentVersion = row?.current_version || 'v1';
-      const avatarUrls = getAvatarUrlsFromImageVersion(row?.imageVersionData, currentVersion, 'ANCHOR');
+      // Always use latest version for ANCHOR
+      const latestVersion = row?.imageVersionData ? getLatestVersionKey(row.imageVersionData) : 'v1';
+      const avatarUrls = getAvatarUrlsFromImageVersion(row?.imageVersionData, latestVersion, 'ANCHOR');
       
       // Also check row.avatar_urls as fallback
       if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(row?.avatar_urls)) {
@@ -1005,6 +1192,127 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, [sessionAssets, brandAssets, rows, videosData]);
 
+  // Helper: Get profile_id from brand assets
+  const getProfileId = React.useCallback(async (userId) => {
+    try {
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(userId)}`);
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = {}; }
+      if (!resp.ok) throw new Error(`Failed to get brand assets: ${resp.status}`);
+      const profileId = data?.active_profile_id || data?.profile_id || data?.profileId || data?.profile?.id || data?.id;
+      return profileId;
+    } catch (err) {
+      console.error('Error fetching profile_id:', err);
+      return null;
+    }
+  }, []);
+
+  // Handle image upload to brand assets
+  const handleUploadImages = React.useCallback(async (files) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) { 
+        alert('Missing user. Please log in again.'); 
+        return; 
+      }
+      
+      setIsUploadingBackground(true);
+      setError('');
+      const profileId = await getProfileId(token);
+      if (!profileId) { 
+        alert('Failed to get profile ID. Please try again.'); 
+        setIsUploadingBackground(false);
+        return; 
+      }
+
+      const form = new FormData();
+      files.forEach(file => form.append('images', file));
+      form.append('convert_colors', String(convertColors));
+
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/profiles/${encodeURIComponent(token)}/${encodeURIComponent(profileId)}/upload-images`, {
+        method: 'POST',
+        body: form
+      });
+
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      
+      if (!resp.ok) throw new Error(`Upload failed: ${resp.status} ${text}`);
+      
+      alert('Images uploaded successfully!');
+      // Refresh assets data
+      const cacheKey = `brand_assets_images:${token}`;
+      localStorage.removeItem(cacheKey);
+      // Reload assets
+      const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+      const resp2 = await fetch(url);
+      const text2 = await resp2.text();
+      let data2; try { data2 = JSON.parse(text2); } catch(_) { data2 = {}; }
+      const normalized = normalizeBrandAssetsResponse(data2);
+      setAssetsData(normalized);
+      if (assetImageUploadRef.current) assetImageUploadRef.current.value = '';
+    } catch (err) {
+      console.error('Image upload failed:', err);
+      setError(`Failed to upload images: ${err.message || 'Please try again.'}`);
+      alert(`Failed to upload images: ${err.message || 'Please try again.'}`);
+    } finally {
+      setIsUploadingBackground(false);
+    }
+  }, [convertColors, getProfileId]);
+
+  // Handle PPTX upload to brand assets
+  const handleUploadPptx = React.useCallback(async (file) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) { 
+        alert('Missing user. Please log in again.'); 
+        return; 
+      }
+      
+      setIsUploadingBackground(true);
+      setError('');
+      const profileId = await getProfileId(token);
+      if (!profileId) { 
+        alert('Failed to get profile ID. Please try again.'); 
+        setIsUploadingBackground(false);
+        return; 
+      }
+
+      const form = new FormData();
+      form.append('pptx_file', file);
+      form.append('convert_colors', String(convertColors));
+
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/profiles/${encodeURIComponent(token)}/${encodeURIComponent(profileId)}/upload-pptx`, {
+        method: 'POST',
+        body: form
+      });
+
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      
+      if (!resp.ok) throw new Error(`Upload failed: ${resp.status} ${text}`);
+      
+      alert('PPTX uploaded successfully!');
+      // Refresh assets data
+      const cacheKey = `brand_assets_images:${token}`;
+      localStorage.removeItem(cacheKey);
+      // Reload assets
+      const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+      const resp2 = await fetch(url);
+      const text2 = await resp2.text();
+      let data2; try { data2 = JSON.parse(text2); } catch(_) { data2 = {}; }
+      const normalized = normalizeBrandAssetsResponse(data2);
+      setAssetsData(normalized);
+      if (assetPptxUploadRef.current) assetPptxUploadRef.current.value = '';
+    } catch (err) {
+      console.error('PPTX upload failed:', err);
+      setError(`Failed to upload PPTX: ${err.message || 'Please try again.'}`);
+      alert(`Failed to upload PPTX: ${err.message || 'Please try again.'}`);
+    } finally {
+      setIsUploadingBackground(false);
+    }
+  }, [convertColors, getProfileId]);
+
   // Load assets when upload background popup opens
   useEffect(() => {
     if (!showUploadBackgroundPopup) return;
@@ -1162,8 +1470,8 @@ const getOrderedRefs = useCallback((row) => {
       // Handle object shape: { current_version: 'v1', v1: { images: [ { base_image: { image_url } } ] } }
       if (typeof imagesRoot === 'object' && !Array.isArray(imagesRoot)) {
         try {
-          const version = imagesRoot.current_version || 'v1';
-          const vObj = imagesRoot[version] || imagesRoot.v1 || {};
+          const version = getLatestVersionKey(imagesRoot);
+          const vObj = imagesRoot[version] || {};
           const arr = Array.isArray(vObj?.images) ? vObj.images : [];
           if (arr.length > 0) {
             const refs = arr
@@ -1255,8 +1563,8 @@ const getOrderedRefs = useCallback((row) => {
             // Shape: { images: { current_version: 'v1', v1: { images: [ { base_image, text_elements } ] }, ... } }
             if (it && typeof it === 'object' && it.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
               const imagesContainer = it.images;
-              const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || 'v1';
-              const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+              const versionKey = getLatestVersionKey(imagesContainer);
+              const verObj = imagesContainer[versionKey] || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
               if (arr.length > 0) {
                 const refs = arr
@@ -1511,8 +1819,8 @@ const getOrderedRefs = useCallback((row) => {
               
               let refs = [];
               if (isSoraFallback && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
-                const versionKey = it.images.current_version || it.images.currentVersion || 'v1';
-                const verObj = it.images[versionKey] || it.images.v1 || {};
+                const versionKey = getLatestVersionKey(it.images);
+                const verObj = it.images[versionKey] || {};
                 const arr = Array.isArray(verObj?.images) ? verObj.images : [];
                 refs = arr
                   .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
@@ -1853,16 +2161,16 @@ const getOrderedRefs = useCallback((row) => {
           const model0 = String(sessionImages[0]?.model || sessionImages[0]?.mode || '').toUpperCase();
           const firstScene = sessionImages[0];
           
-          // Get current version from images object
+          // Get latest version from images object (always use latest)
           const imageVersionData = firstScene?.imageVersionData || null;
-          const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
+          const imagesCurrentVersion = imageVersionData ? getLatestVersionKey(imageVersionData) : 'v1';
           
           // Console log current version in images object and scripts array
           
-          // Get avatar URLs from current version of image object for VEO3 scenes
+          // Get avatar URLs from latest version of image object for VEO3 scenes
           const avatarUrlsFromVersion = getAvatarUrlsFromImageVersion(
             imageVersionData,
-            firstScene?.current_version || 'v1',
+            imagesCurrentVersion,
             model0
           );
           const finalAvatarUrls = avatarUrlsFromVersion.length > 0 
@@ -1886,7 +2194,7 @@ const getOrderedRefs = useCallback((row) => {
             imageVersionData: imageVersionData,
             imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
             avatar_urls: finalAvatarUrls,
-            current_version: firstScene?.current_version || 'v1',
+            current_version: imagesCurrentVersion,
             isEditable: !!firstScene?.isEditable,
             veo3_prompt_template: firstScene?.veo3_prompt_template || 
                                   firstScene?.veo3PromptTemplate || 
@@ -2092,16 +2400,16 @@ const getOrderedRefs = useCallback((row) => {
                         const model0 = String(sessionImages[0]?.model || '').toUpperCase();
                         const firstScene = sessionImages[0];
                         
-                        // Get current version from images object
+                        // Get latest version from images object (always use latest)
                         const imageVersionData = firstScene?.imageVersionData || null;
-                        const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || firstScene?.current_version || 'v1';
+                        const imagesCurrentVersion = imageVersionData ? getLatestVersionKey(imageVersionData) : 'v1';
                         
                         // Console log current version in images object and scripts array
                         
-                      // Get avatar URLs from current version of image object for VEO3 scenes
+                      // Get avatar URLs from latest version of image object for VEO3 scenes
                       const avatarUrlsFromVersion2 = getAvatarUrlsFromImageVersion(
                         imageVersionData,
-                        firstScene?.current_version || 'v1',
+                        imagesCurrentVersion,
                         model0
                       );
                       const finalAvatarUrls2 = avatarUrlsFromVersion2.length > 0 
@@ -2125,7 +2433,7 @@ const getOrderedRefs = useCallback((row) => {
                           imageVersionData: imageVersionData,
                           imageFrames: Array.isArray(firstScene?.imageFrames) ? firstScene.imageFrames : [],
                           avatar_urls: finalAvatarUrls2,
-                          current_version: firstScene?.current_version || 'v1',
+                          current_version: imagesCurrentVersion,
                           isEditable: !!firstScene?.isEditable,
                           veo3_prompt_template: firstScene?.veo3_prompt_template || 
                                                 firstScene?.veo3PromptTemplate || 
@@ -2420,8 +2728,8 @@ const getOrderedRefs = useCallback((row) => {
         // Handle object shape: { current_version: 'v1', v1: { images: [ { base_image: { image_url } } ] } }
         if (typeof imagesRoot === 'object' && !Array.isArray(imagesRoot)) {
           try {
-            const version = imagesRoot.current_version || 'v1';
-            const vObj = imagesRoot[version] || imagesRoot.v1 || {};
+            const version = getLatestVersionKey(imagesRoot);
+            const vObj = imagesRoot[version] || {};
             const arr = Array.isArray(vObj?.images) ? vObj.images : [];
             if (arr.length > 0) {
                 const modelUpper = String(imagesRoot?.model || imagesRoot?.mode || '').toUpperCase();
@@ -2517,8 +2825,8 @@ const getOrderedRefs = useCallback((row) => {
             // For SORA: strictly use images array -> base_image.image_url with associated text/overlay
             if (modelUpper === 'SORA' && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
               const imagesContainer = it.images;
-              const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || 'v1';
-              const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+              const versionKey = getLatestVersionKey(imagesContainer);
+              const verObj = imagesContainer[versionKey] || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
               
               if (arr.length > 0) {
@@ -2607,8 +2915,8 @@ const getOrderedRefs = useCallback((row) => {
             if (isVEO3 && it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
               // VEO3 with versioned structure
               const imagesContainer = it.images;
-              const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || 'v1';
-              const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+              const versionKey = getLatestVersionKey(imagesContainer);
+              const verObj = imagesContainer[versionKey] || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
               
               // Explicitly check and log avatar_urls
@@ -2722,8 +3030,8 @@ const getOrderedRefs = useCallback((row) => {
               let overlayElements = [];
               
               if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
-                currentVersionKey = it.images.current_version || it.images.currentVersion || 'v1';
-                versionData = it.images[currentVersionKey] || it.images.v1 || it;
+                currentVersionKey = getLatestVersionKey(it.images);
+                versionData = it.images[currentVersionKey] || it;
               }
               
               const baseImage = versionData?.base_image || versionData?.baseImage || it?.base_image || it?.baseImage || {};
@@ -2766,8 +3074,8 @@ const getOrderedRefs = useCallback((row) => {
                 // If versioned structure exists, extract from it
                 if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
                   const imgContainer = it.images;
-                  const vKey = imgContainer.current_version || imgContainer.currentVersion || 'v1';
-                  const vObj = imgContainer[vKey] || imgContainer.v1 || {};
+                  const vKey = getLatestVersionKey(imgContainer);
+                  const vObj = imgContainer[vKey] || {};
                   versionAvatars = vObj?.avatar_urls || versionAvatars;
                   
                 }
@@ -2835,10 +3143,10 @@ const getOrderedRefs = useCallback((row) => {
               let imageVersionDataForRow = it?.images || it;
               
               if (it?.images && typeof it.images === 'object' && !Array.isArray(it.images)) {
-                // Versioned structure: extract frames from current version
+                // Versioned structure: extract frames from latest version
                 const imgContainer = it.images;
-                const vKey = imgContainer.current_version || imgContainer.currentVersion || 'v1';
-                const vObj = imgContainer[vKey] || imgContainer.v1 || {};
+                const vKey = getLatestVersionKey(imgContainer);
+                const vObj = imgContainer[vKey] || {};
                 imageFramesArray = Array.isArray(vObj?.images) ? vObj.images : [];
                 imageVersionDataForRow = imgContainer;
               } else if (Array.isArray(it?.images)) {
@@ -2995,15 +3303,15 @@ const getOrderedRefs = useCallback((row) => {
         const model0 = String(sceneToSelect?.model || '').toUpperCase();
         const imgs = initialImages;
         
-        // Get current version from images object
+        // Get latest version from images object
         const imageVersionData = sceneToSelect?.imageVersionData || null;
-        const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || sceneToSelect?.current_version || 'v1';
+        const imagesCurrentVersion = imageVersionData ? getLatestVersionKey(imageVersionData) : 'v1';
         
         
-        // Get avatar URLs from current version of image object for VEO3 scenes
+        // Get avatar URLs from latest version of image object for VEO3 scenes
         const avatarUrlsFromVersion3 = getAvatarUrlsFromImageVersion(
           imageVersionData,
-          sceneToSelect?.current_version || 'v1',
+          imagesCurrentVersion,
           model0
         );
         const finalAvatarUrls3 = avatarUrlsFromVersion3.length > 0 
@@ -3027,7 +3335,7 @@ const getOrderedRefs = useCallback((row) => {
           imageVersionData: imageVersionData,
           imageFrames: Array.isArray(sceneToSelect?.imageFrames) ? sceneToSelect.imageFrames : [],
           avatar_urls: finalAvatarUrls3,
-          current_version: sceneToSelect?.current_version || 'v1',
+          current_version: imagesCurrentVersion,
           isEditable: !!sceneToSelect?.isEditable,
           veo3_prompt_template: sceneToSelect?.veo3_prompt_template || 
                                  sceneToSelect?.veo3PromptTemplate || 
@@ -3621,6 +3929,94 @@ const getOrderedRefs = useCallback((row) => {
     }
   }, [uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad]);
 
+  // Handle generate from reference API call
+  const handleGenerateFromReference = React.useCallback(async (imageUrl, query) => {
+    if (!imageUrl || !query || !uploadingBackgroundSceneNumber) return;
+    
+    try {
+      setIsGeneratingFromReference(true);
+      setError('');
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('token');
+      
+      if (!session_id || !user_id) {
+        setError('Missing session or user');
+        setIsGeneratingFromReference(false);
+        return;
+      }
+
+      const model = getSceneModel(uploadingBackgroundSceneNumber);
+      if (!model) {
+        setError('Unable to determine scene model');
+        setIsGeneratingFromReference(false);
+        return;
+      }
+
+      const aspectRatio = await getAspectRatio();
+      const isVEO3 = isVEO3Model(model);
+
+      // Determine frames to regenerate - use selected frames, or default based on model
+      let framesToRegenerate = [];
+      if (isVEO3) {
+        // For VEO3, always use background
+        framesToRegenerate = ['background'];
+      } else {
+        // For other models, use selected frames (opening, closing, or both)
+        framesToRegenerate = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
+      }
+
+      // Call generate-from-reference API
+      const payload = {
+        user_id: user_id,
+        session_id: session_id,
+        scene_number: uploadingBackgroundSceneNumber,
+        model: model,
+        reference_image_url: imageUrl,
+        user_query: query.trim(),
+        frames_to_regenerate: framesToRegenerate,
+        aspect_ratio: aspectRatio
+      };
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/generate-from-reference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Generate from reference failed: ${response.status} ${text}`);
+      }
+
+      // Handle successful generation
+      const sceneNumberToRefresh = uploadingBackgroundSceneNumber;
+      
+      // Close popups
+      setShowUserQueryPopup(false);
+      setShowUploadBackgroundPopup(false);
+      setSelectedAssetUrl('');
+      setSelectedTemplateUrls([]);
+      setUploadingBackgroundSceneNumber(null);
+      setUploadFrames(['background']);
+      setUserQuery('');
+      
+      // Refresh images
+      await refreshLoad(sceneNumberToRefresh);
+    } catch (e) {
+      setError(e?.message || 'Failed to generate from reference');
+    } finally {
+      setIsGeneratingFromReference(false);
+      setIsLoading(false);
+    }
+  }, [uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad]);
+
   // Reset active image tab when scene changes
   useEffect(() => {
     setActiveImageTab(0);
@@ -3864,10 +4260,17 @@ const getOrderedRefs = useCallback((row) => {
             includeOverlays: true
           });
         } else {
-          // Fallback: just render the raw image at its natural size
+          // Fallback: just render the raw image using image_dimensions when available
           const imgEl = await loadImageElement(imageUrl);
-          const width = imgEl.naturalWidth || imgEl.width || 1280;
-          const height = imgEl.naturalHeight || imgEl.height || 720;
+          const baseDims = fallbackDims || {};
+          const width =
+            (Number(baseDims?.width) || 0) > 0
+              ? Number(baseDims.width)
+              : imgEl.naturalWidth || imgEl.width || 1280;
+          const height =
+            (Number(baseDims?.height) || 0) > 0
+              ? Number(baseDims.height)
+              : imgEl.naturalHeight || imgEl.height || 720;
           const canvas = document.createElement('canvas');
           canvas.width = width;
           canvas.height = height;
@@ -4093,9 +4496,10 @@ const getOrderedRefs = useCallback((row) => {
                   const imageEntries = buildImageEntries(imgs, targetRow?.imageFrames);
                   const firstImg = imgs[0] || '';
                   // Get avatar URLs from current version of image object for VEO3 scenes
+                  const latestVersionForTarget = targetRow?.imageVersionData ? getLatestVersionKey(targetRow.imageVersionData) : 'v1';
                   const avatarUrlsFromVersion4 = getAvatarUrlsFromImageVersion(
                     targetRow?.imageVersionData || null,
-                    targetRow?.current_version || 'v1',
+                    latestVersionForTarget,
                     modelUpper
                   );
                   const finalAvatarUrls4 = avatarUrlsFromVersion4.length > 0 
@@ -4119,7 +4523,7 @@ const getOrderedRefs = useCallback((row) => {
                     imageVersionData: targetRow?.imageVersionData || null,
                     imageFrames: Array.isArray(targetRow?.imageFrames) ? targetRow.imageFrames : [],
                     avatar_urls: finalAvatarUrls4,
-                    current_version: targetRow?.current_version || 'v1',
+                    current_version: latestVersionForTarget,
                     isEditable: !!targetRow?.isEditable
                   });
                   // Wait for React to render this scene
@@ -4482,7 +4886,7 @@ const getOrderedRefs = useCallback((row) => {
                     console.log(`   ✓ Corrected: Now using ${fileName}`);
                   } else {
                     console.error(`   ✗ Failed to correct storage for ${fileName}`);
-                    continue;
+              continue;
                   }
                 } else {
                   console.error(`   ✗ Alternative key ${matchingKey} also has no blob`);
@@ -4517,10 +4921,10 @@ const getOrderedRefs = useCallback((row) => {
                 console.log(`   ✓ Added ${fileName} to FormData using Blob fallback (${blob.size} bytes)`);
                 continue;
               }
-              
-              // Add to FormData with file key
-              formData.append('frames', file);
-              imageFiles.push(fileName);
+             
+            // Add to FormData with file key
+            formData.append('frames', file);
+            imageFiles.push(fileName);
               console.log(`   ✓ Added ${fileName} to FormData (${file.size} bytes)`);
               
             } catch (fileError) {
@@ -4639,7 +5043,7 @@ const getOrderedRefs = useCallback((row) => {
         const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
           logoNeeded: false,
           voiceUrl: '',
-          voiceOption: 'male',
+          voiceOption: PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male',
           transitionPreset: null,
           transitionCustom: null,
           transitionCustomPreset: null,
@@ -4690,11 +5094,20 @@ const getOrderedRefs = useCallback((row) => {
           if (!isVEO3) {
             voiceOption = sceneOptions.voiceOption || '';
             if (!voiceOption || voiceOption.trim() === '') {
-              voiceOption = 'male';
+              voiceOption = PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male';
+            } else if (voiceOption === 'male' || voiceOption === 'female') {
+              // Convert old format to new key format
+              const gender = voiceOption;
+              voiceOption = PRESET_VOICE_OPTIONS[gender]?.[0]?.key || (gender === 'male' ? 'american_male' : 'american_female');
             }
           } else {
             // For VEO3, if no voice URL, still set a default voiceOption
-            voiceOption = sceneOptions.voiceOption || 'male';
+            voiceOption = sceneOptions.voiceOption || PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male';
+            if (voiceOption === 'male' || voiceOption === 'female') {
+              // Convert old format to new key format
+              const gender = voiceOption;
+              voiceOption = PRESET_VOICE_OPTIONS[gender]?.[0]?.key || (gender === 'male' ? 'american_male' : 'american_female');
+            }
           }
         }
 
@@ -4715,88 +5128,107 @@ const getOrderedRefs = useCallback((row) => {
             const hasPreset = !!sceneOptions.transitionPreset;
             const isPreset = hasPreset && sceneOptions.transitionCustom !== 'custom';
 
-            const useCustom =
-              !isPreset &&
-              (sceneOptions.transitionCustom === 'custom' ||
-                (sceneOptions.customDescription || '').trim().length > 0 ||
-                Object.values(sceneOptions.customPreservationNotes || {}).some(
-                  (v) => (v || '').trim().length > 0
-                ));
+            // Always check for animation_desc in the row for ALL scenes (except VEO3)
+            // Get animation_desc from the row (preferred) or fallback to customPreservationNotes
+            let animationDescData = {};
+            
+            // Try to get animation_desc from imageVersionData structure
+            if (row?.imageVersionData) {
+              const imageVersionData = row.imageVersionData;
+              const versionKey = getLatestVersionKey(imageVersionData);
+              const verObj = imageVersionData[versionKey] || {};
+              animationDescData = verObj?.animation_desc || {};
+            }
+            
+            // Fallback to direct animation_desc field
+            if (Object.keys(animationDescData).length === 0) {
+              animationDescData = row?.animation_desc || {};
+            }
+            
+            // Final fallback to customPreservationNotes
+            if (Object.keys(animationDescData).length === 0) {
+              animationDescData = sceneOptions.customPreservationNotes || {};
+            }
 
             if (isPreset) {
+              // If preset is selected, use preset
               const preset = sceneOptions.transitionPreset;
               transitions.push({
                 is_preset: true,
+                savepreset: !!sceneOptions.rememberCustomPreset,
+                savecustom: false,
                 parameters: {
                   name: preset?.name || '',
                   preservation_notes: preset?.preservation_notes || {},
                   prompt_description: preset?.prompt_description || preset?.promptDescription || ''
-                }
+                },
+                custom_name: sceneOptions.rememberCustomPreset ? (sceneOptions.customPresetName || '') : ''
               });
-            } else if (useCustom) {
-              // Check which tab is selected: 'describe' or 'fill'
-              const currentTab = designYourOwnTab[sceneNumber] || 'describe';
-              const isDescribeTab = currentTab === 'describe';
-              const isFillTab = currentTab === 'fill';
-              
-              let userQuery = '';
-              let notes = {};
-              
-              if (isDescribeTab) {
-                // "Describe it" tab: use customDescription as userQuery
-                userQuery = sceneOptions.customDescription || '';
-                // All preservation_notes fields empty, except geometric_preservation defaults to "l"
-                notes = {
-                  camera_specifications: '',
-                  subject_description: '',
-                  action_specification: '',
-                  scene_description: '',
-                  lighting: '',
-                  style_mood: '',
-                  geometric_preservation: '',
-                  transition_type: '',
-                  content_modification: ''
-                };
-              } else if (isFillTab) {
-                // "Fill the points" tab: userQuery is empty, fill all preservation_notes
-                userQuery = '';
-                const customNotes = sceneOptions.customPreservationNotes || {};
-                notes = {
-                  camera_specifications: customNotes.camera_specifications || '',
-                subject_description: customNotes.subject_description || '',
-                action_specification: customNotes.action_specification || '',
-                scene_description: customNotes.scene_description || '',
-                lighting: customNotes.lighting || '',
-                style_mood: customNotes.style_mood || '',
-                geometric_preservation: customNotes.geometric_preservation || '',
-                transition_type: customNotes.transition_type || '',
-                  content_modification: customNotes.content_modification || ''
+            } else {
+              // For ALL non-VEO3 scenes, always send transition with animation_desc (even if empty)
+              // Build preservation_notes from animation_desc
+              const notes = {
+                camera_specifications: animationDescData.camera_specifications || '',
+                subject_description: animationDescData.subject_description || '',
+                action_specification: animationDescData.action_specification || '',
+                scene_description: animationDescData.scene_description || '',
+                lighting: animationDescData.lighting || '',
+                style_mood: animationDescData.style_mood || '',
+                geometric_preservation: animationDescData.geometric_preservation || '',
+                transition_type: animationDescData.transition_type || '',
+                content_modification: animationDescData.content_modification || ''
               };
+              
+              // Build prompt_description by concatenating all non-empty preservation_notes values
+              // Format: camera_specifications, subject_description, action_specification, scene_description, lighting, style_mood, geometric_preservation, transition_type, content_modification
+              const promptParts = [];
+              if (notes.camera_specifications && notes.camera_specifications.trim()) {
+                promptParts.push(notes.camera_specifications.trim());
               }
-
+              if (notes.subject_description && notes.subject_description.trim()) {
+                promptParts.push(notes.subject_description.trim());
+              }
+              if (notes.action_specification && notes.action_specification.trim()) {
+                promptParts.push(notes.action_specification.trim());
+              }
+              if (notes.scene_description && notes.scene_description.trim()) {
+                promptParts.push(notes.scene_description.trim());
+              }
+              if (notes.lighting && notes.lighting.trim()) {
+                promptParts.push(notes.lighting.trim());
+              }
+              if (notes.style_mood && notes.style_mood.trim()) {
+                promptParts.push(notes.style_mood.trim());
+              }
+              if (notes.geometric_preservation && notes.geometric_preservation.trim()) {
+                promptParts.push(notes.geometric_preservation.trim());
+              }
+              if (notes.transition_type && notes.transition_type.trim()) {
+                promptParts.push(notes.transition_type.trim());
+              }
+              if (notes.content_modification && notes.content_modification.trim()) {
+                promptParts.push(notes.content_modification.trim());
+              }
+              
+              // Join with ". " (period and space) as shown in the example
+              const promptDescription = promptParts.join('. ').trim();
+              
+              // savecustom is true if "Save this preset" checkbox is selected
               const savecustom = !!sceneOptions.rememberCustomPreset;
               const customName = savecustom ? (sceneOptions.customPresetName || '') : '';
 
-              transitions.push({
-                is_preset: false,
-                parameters: {
-                  name: '',
-                  preservation_notes: notes,
-                  prompt_description: ''
-                },
-                userQuery: userQuery,
-                savecustom: savecustom,
-                custom_name: customName
-              });
-            } else if (transitionPresets.length > 0) {
-              const firstPreset = transitionPresets[0];
+              // Always push transition for all non-VEO3 scenes, using animation_desc as preservation_notes
+              // is_preset is always true for all non-VEO3 scenes
               transitions.push({
                 is_preset: true,
                 parameters: {
-                  name: firstPreset?.name || firstPreset?.preset_name || '',
-                  preservation_notes: firstPreset?.preservation_notes || {},
-                  prompt_description: firstPreset?.prompt_description || firstPreset?.promptDescription || ''
-                }
+                  name: '',
+                  preservation_notes: notes,
+                  prompt_description: promptDescription
+                },
+                userQuery: '',
+                savecustom: savecustom,
+                custom_name: customName
               });
             }
           }
@@ -4823,7 +5255,7 @@ const getOrderedRefs = useCallback((row) => {
 
       // Log the payload to console
       console.log('📦 Step 3: Generate Videos Queue API Payload:');
-      console.log(JSON.stringify(body, null, 2));
+      console.log('Request Body:', JSON.stringify(body, null, 2));
 
       // Call generate-videos-queue API
       console.log('🌐 Calling generate-videos-queue API...');
@@ -4857,7 +5289,7 @@ const getOrderedRefs = useCallback((row) => {
         return jobId;
       } else {
         console.warn('⚠️ No job ID in response:', responseData);
-      return null;
+        return null;
       }
     } catch (error) {
       setVideoGenProgress((prev) => ({
@@ -5094,14 +5526,14 @@ const getOrderedRefs = useCallback((row) => {
 
           // Step 3: Call generate-videos-queue API
         console.log('📦 Step 3: Calling generate-videos-queue API...');
-          setVideoGenProgress((prev) => ({
-            ...prev,
-            visible: true,
+        setVideoGenProgress((prev) => ({
+          ...prev,
+          visible: true,
           percent: Math.max(prev.percent, 60),
-            status: 'queueing',
-            step: 'queueing',
+          status: 'queueing',
+          step: 'queueing',
           message: 'Queueing video generation...'
-          }));
+        }));
 
         try {
           const jobId = await callVideosRegenerateAPI();
@@ -5495,44 +5927,102 @@ const getOrderedRefs = useCallback((row) => {
                 const isAvatarModel = selectedModel === 'VEO3';
 
                 if (selectedModel === 'ANCHOR') {
-                  // For ANCHOR, getImg1 should return the background (non-avatar) image
-                  // Get ordered refs from current version
+                  // For ANCHOR, getImg1 should return the background image (NOT the avatar)
+                  // The background comes from image_url in the image section, avatar comes from avatar_urls or overlay_elements
+                  
                   if (currentRow) {
-                    const orderedRefs = getOrderedRefs(currentRow);
-                    
-                    // Extract URLs from selected.images (they are objects with image_url property)
-                    const selectedImageUrls = Array.isArray(selected?.images) 
-                      ? selected.images.map(img => {
-                          if (typeof img === 'string') return img.trim();
-                          return (img?.image_url || img?.imageUrl || img?.url || '').trim();
-                        }).filter(Boolean)
-                      : [];
-                    
-                    // Combine with row.refs and orderedRefs (all should be URLs)
-                    const candidateSources = [
-                      ...(Array.isArray(currentRow?.refs) ? currentRow.refs.map(r => typeof r === 'string' ? r : (r?.image_url || r?.url || '')).filter(Boolean) : []),
-                      ...orderedRefs,
-                      ...selectedImageUrls
-                    ];
-                    
-                    // Remove duplicates using normalizeSimpleUrl for consistency
-                    const uniqueCandidates = [];
-                    const seen = new Set();
-                    candidateSources.forEach((candidate) => {
-                      const normalized = normalizeSimpleUrl(candidate);
-                      if (normalized && !seen.has(normalized)) {
-                        uniqueCandidates.push(candidate);
-                        seen.add(normalized);
-                      }
-                    });
-                    
-                    // Get avatar URL set to filter them out (uses normalizeSimpleUrl internally)
                     const avatarSet = getAvatarUrlSet(currentRow);
                     
-                    // Filter out avatars - get only non-avatar images (background)
-                    const nonAvatar = uniqueCandidates.filter((url) => {
+                    // Also build a set of overlay URLs to exclude (avatars are often in overlay_elements)
+                    const overlayUrlSet = new Set();
+                    const frames = Array.isArray(currentRow?.imageFrames) ? currentRow.imageFrames : [];
+                    const selectedFrames = Array.isArray(selected?.imageFrames) ? selected.imageFrames : [];
+                    const allFrames = [...frames, ...selectedFrames];
+                    
+                    allFrames.forEach((frame) => {
+                      const overlayEls = Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : 
+                                        Array.isArray(frame?.overlayElements) ? frame.overlayElements : [];
+                      overlayEls.forEach((overlay) => {
+                        const overlayUrl = overlay?.image_url || overlay?.imageUrl || overlay?.url || 
+                                         overlay?.file_url || overlay?.fileUrl || overlay?.src || '';
+                        if (overlayUrl && typeof overlayUrl === 'string') {
+                          const normalized = normalizeSimpleUrl(overlayUrl.trim());
+                          if (normalized) {
+                            overlayUrlSet.add(normalized);
+                          }
+                        }
+                      });
+                    });
+                    
+                    // Combined exclusion set (avatars + overlays)
+                    const exclusionSet = new Set([...avatarSet, ...overlayUrlSet]);
+                    
+                    // Priority 1: Check selected.images array and filter out avatars/overlays
+                    if (Array.isArray(selected?.images) && selected.images.length > 0) {
+                      for (const img of selected.images) {
+                        const imgUrl = typeof img === 'string' 
+                          ? img.trim() 
+                          : (img?.image_url || img?.imageUrl || img?.url || '').trim();
+                        
+                        if (imgUrl && isValidImageUrl(imgUrl)) {
+                          const normalized = normalizeSimpleUrl(imgUrl);
+                          // Only return if it's NOT an avatar or overlay
+                          if (normalized && !exclusionSet.has(normalized)) {
+                            return imgUrl;
+                          }
+                        }
+                      }
+                    }
+                    
+                    // Priority 2: Check selected.imageUrl (if not an avatar/overlay)
+                    if (selected?.imageUrl && typeof selected.imageUrl === 'string') {
+                      const imgUrl = selected.imageUrl.trim();
+                      if (isValidImageUrl(imgUrl)) {
+                        const normalized = normalizeSimpleUrl(imgUrl);
+                        if (normalized && !exclusionSet.has(normalized)) {
+                          return imgUrl;
+                        }
+                      }
+                    }
+                    
+                    // Priority 3: Get background from frames' base_image (exclude avatars and overlays)
+                    if (frames.length > 0) {
+                      // Check all frames to find a non-avatar, non-overlay background
+                      for (const frame of frames) {
+                        const baseImage = frame?.base_image || frame?.baseImage || {};
+                        const backgroundUrl = baseImage?.image_url || baseImage?.imageUrl || baseImage?.imageurl || baseImage?.url || baseImage?.src || '';
+                        
+                        if (backgroundUrl && typeof backgroundUrl === 'string' && backgroundUrl.trim() && isValidImageUrl(backgroundUrl.trim())) {
+                          const normalized = normalizeSimpleUrl(backgroundUrl.trim());
+                          // Only return if it's NOT an avatar or overlay
+                          if (normalized && !exclusionSet.has(normalized)) {
+                            return backgroundUrl.trim();
+                          }
+                        }
+                      }
+                    }
+                    
+                    // Priority 4: Get from selected.imageFrames
+                    if (selectedFrames.length > 0) {
+                      for (const frame of selectedFrames) {
+                        const baseImage = frame?.base_image || frame?.baseImage || {};
+                        const backgroundUrl = baseImage?.image_url || baseImage?.imageUrl || baseImage?.imageurl || baseImage?.url || baseImage?.src || '';
+                        
+                        if (backgroundUrl && typeof backgroundUrl === 'string' && backgroundUrl.trim() && isValidImageUrl(backgroundUrl.trim())) {
+                          const normalized = normalizeSimpleUrl(backgroundUrl.trim());
+                          if (normalized && !exclusionSet.has(normalized)) {
+                            return backgroundUrl.trim();
+                          }
+                        }
+                      }
+                    }
+                    
+                    // Priority 5: Get ordered refs and filter out avatars/overlays
+                    const orderedRefs = getOrderedRefs(currentRow);
+                    if (orderedRefs.length > 0) {
+                      const nonAvatar = orderedRefs.filter((url) => {
                       const normalized = normalizeSimpleUrl(url);
-                      return normalized && !avatarSet.has(normalized) && isValidImageUrl(normalized);
+                        return normalized && !exclusionSet.has(normalized) && isValidImageUrl(normalized);
                     });
                     
                     if (nonAvatar.length > 0) {
@@ -5540,7 +6030,21 @@ const getOrderedRefs = useCallback((row) => {
                     }
                   }
                   
-                  // Fallback: try firstSelectedUrl if it's not an avatar
+                    // Priority 6: Check currentRow.refs and filter out avatars/overlays
+                    if (Array.isArray(currentRow?.refs) && currentRow.refs.length > 0) {
+                      for (const ref of currentRow.refs) {
+                        const refUrl = typeof ref === 'string' ? ref.trim() : (ref?.image_url || ref?.url || '').trim();
+                        if (refUrl && isValidImageUrl(refUrl)) {
+                          const normalized = normalizeSimpleUrl(refUrl);
+                          if (normalized && !exclusionSet.has(normalized)) {
+                            return refUrl;
+                          }
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Fallback: try firstSelectedUrl if it's not an avatar/overlay
                   if (firstSelectedUrl && isValidImageUrl(firstSelectedUrl)) {
                     const avatarSet = currentRow ? getAvatarUrlSet(currentRow) : new Set();
                     const normalized = normalizeSimpleUrl(firstSelectedUrl);
@@ -5549,7 +6053,7 @@ const getOrderedRefs = useCallback((row) => {
                     }
                   }
                   
-                  // Return empty if no non-avatar image found
+                  // Return empty if no background image found
                   return '';
                 } else if (isAvatarModel) {
                   // For VEO3 Avatar tab, extract avatar URL from version object in session data images
@@ -5571,11 +6075,11 @@ const getOrderedRefs = useCallback((row) => {
                     }
                     
                     if (imagesContainer) {
-                      // Get version key (same as list area line 2104)
-                      const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || selected?.current_version || 'v1';
+                      // Get latest version key (always use latest version)
+                      const versionKey = getLatestVersionKey(imagesContainer);
                       
                       // Get version object (same as list area line 2105: imagesContainer[versionKey])
-                      const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                      const verObj = imagesContainer[versionKey] || {};
                       
                       // Extract avatar_urls from version object (EXACT same as list area line 2112: verObj?.avatar_urls)
                       const versionAvatars = verObj?.avatar_urls;
@@ -5619,11 +6123,11 @@ const getOrderedRefs = useCallback((row) => {
                       imagesContainer = currentRow.imageVersionData.images;
                     }
                     
-                    // Get current version key (same as list area)
-                    const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || currentRow?.current_version || 'v1';
+                    // Get latest version key (always use latest version)
+                    const versionKey = getLatestVersionKey(imagesContainer);
                     
                     // Get version object (same as: imagesContainer[versionKey] in list area)
-                    const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                    const verObj = imagesContainer[versionKey] || {};
                     
                     // Extract avatar_urls from version object (EXACT same as list area line 2112)
                     const versionAvatars = verObj?.avatar_urls;
@@ -5657,9 +6161,10 @@ const getOrderedRefs = useCallback((row) => {
                   }
                   
                   // Priority 3: Use helper function as fallback
+                  const latestVersionForSelected = selected?.imageVersionData ? getLatestVersionKey(selected.imageVersionData) : 'v1';
                   const avatarUrlsFromSelected = getAvatarUrlsFromImageVersion(
                     selected?.imageVersionData || null,
-                    selected?.current_version || 'v1',
+                    latestVersionForSelected,
                     selectedModel
                   );
                   if (avatarUrlsFromSelected.length > 0) {
@@ -5672,7 +6177,7 @@ const getOrderedRefs = useCallback((row) => {
                     }
                   }
                   
-                  // Priority 4: Use selected.avatar_urls (should already be from current version)
+                  // Priority 4: Use selected.avatar_urls (should already be from latest version)
                   if (selected && Array.isArray(selected.avatar_urls) && selected.avatar_urls.length > 0) {
                     const avatarUrl = selected.avatar_urls[0];
                     const url =
@@ -5746,8 +6251,8 @@ const getOrderedRefs = useCallback((row) => {
                     }
                     
                     if (imagesContainer) {
-                      const versionKey = imagesContainer.current_version || imagesContainer.currentVersion || selected?.current_version || 'v1';
-                      const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                      const versionKey = getLatestVersionKey(imagesContainer);
+                      const verObj = imagesContainer[versionKey] || {};
                       const versionAvatars = verObj?.avatar_urls;
                       
                       if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
@@ -5785,8 +6290,8 @@ const getOrderedRefs = useCallback((row) => {
                       imagesContainer = currentRow.imageVersionData.images;
                     }
                     
-                    const versionKey = imagesContainer?.current_version || imagesContainer?.currentVersion || currentRow?.current_version || 'v1';
-                    const verObj = imagesContainer[versionKey] || imagesContainer.v1 || {};
+                    const versionKey = getLatestVersionKey(imagesContainer);
+                    const verObj = imagesContainer[versionKey] || {};
                     const versionAvatars = verObj?.avatar_urls;
                     
                     if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
@@ -5816,9 +6321,10 @@ const getOrderedRefs = useCallback((row) => {
                   }
                   
                   // Priority 3: Use helper function as fallback
+                  const latestVersionForSelected = selected?.imageVersionData ? getLatestVersionKey(selected.imageVersionData) : 'v1';
                   const avatarUrlsFromSelected = getAvatarUrlsFromImageVersion(
                     selected?.imageVersionData || null,
-                    selected?.current_version || 'v1',
+                    latestVersionForSelected,
                     selectedModel
                   );
                   if (avatarUrlsFromSelected.length > 0) {
@@ -5943,8 +6449,8 @@ const getOrderedRefs = useCallback((row) => {
               const primaryFrameIndex = isVeoScene ? 1 : 0;
               const secondaryFrameIndex = isVeoScene ? 0 : 1;
               
-              // Get current version for cache-busting avatar images
-              const currentVersion = selected?.current_version || selected?.imageVersionData?.current_version || selected?.imageVersionData?.currentVersion || 'v1';
+              // Get latest version for cache-busting avatar images
+              const currentVersion = selected?.imageVersionData ? getLatestVersionKey(selected.imageVersionData) : (selected?.current_version || 'v1');
               const avatarCacheKey = isVeoScene && secondaryImg ? `${activeSceneNumber}_${currentVersion}_${secondaryImg}` : null;
               
               // Dual-image models (VEO3/ANCHOR) show tabs only if both images are available
@@ -5995,14 +6501,36 @@ const getOrderedRefs = useCallback((row) => {
                       style={{
                         aspectRatio: cssAspectRatio,
                         ...(isPortrait9x16
-                          ? { width: '500px', height: '100%' }
-                          : { width: '100%', height: '100%' })
+                          ? { width: '500px', maxWidth: '500px', height: '100%' }
+                          : { width: 'min(100%, 860px)', maxWidth: '860px', height: '100%' })
                       }}
                     >
                       {(() => {
                     const frames = Array.isArray(selected.imageFrames) ? selected.imageFrames : [];
                     const frameForImg1 = findFrameForImage(frames, primaryImg, primaryFrameIndex);
                     const fallbackFrame1 = frameForImg1 || (frames.length > 0 ? frames[primaryFrameIndex] || frames[0] : null);
+                    
+                    // For ANCHOR models, use the frame's base_image URL directly (not primaryImg which might be avatar)
+                    let displayImgUrl = primaryImg;
+                    if (selectedModel === 'ANCHOR' && fallbackFrame1) {
+                      const baseImage = fallbackFrame1?.base_image || fallbackFrame1?.baseImage || {};
+                      const frameBackgroundUrl = baseImage?.image_url || baseImage?.imageUrl || baseImage?.imageurl || baseImage?.url || baseImage?.src || '';
+                      if (frameBackgroundUrl && typeof frameBackgroundUrl === 'string' && frameBackgroundUrl.trim()) {
+                        // Verify it's not an avatar
+                        const currentRow = rows.find(r => 
+                          (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
+                        ) || rows[selected.index];
+                        if (currentRow) {
+                          const avatarSet = getAvatarUrlSet(currentRow);
+                          const normalized = normalizeSimpleUrl(frameBackgroundUrl.trim());
+                          if (normalized && !avatarSet.has(normalized)) {
+                            displayImgUrl = frameBackgroundUrl.trim();
+                          }
+                        } else {
+                          displayImgUrl = frameBackgroundUrl.trim();
+                        }
+                      }
+                    }
                     // Get text elements from the matched frame, fallback to selected.textElements
                     const textElsFromFrame1 = fallbackFrame1 ? (
                       Array.isArray(fallbackFrame1?.text_elements)
@@ -6028,6 +6556,7 @@ const getOrderedRefs = useCallback((row) => {
                     const frameDims1 =
                       fallbackFrame1?.base_image?.image_dimensions ||
                       fallbackFrame1?.base_image?.imageDimensions ||
+                      imageNaturalDims[displayImgUrl] ||
                       imageNaturalDims[primaryImg] ||
                       selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
@@ -6038,14 +6567,15 @@ const getOrderedRefs = useCallback((row) => {
                         {selected?.isEditable && (
                          <></>
                         )}
-                        {primaryImg && typeof primaryImg === 'string' && primaryImg.trim() ? (
+                        {displayImgUrl && typeof displayImgUrl === 'string' && displayImgUrl.trim() ? (
                           <img
-                            src={primaryImg}
+                            src={displayImgUrl}
                             alt={`scene-${selected.sceneNumber}-primary`}
                             className="w-full h-full object-contain"
-                            crossOrigin={primaryImg.startsWith('http') && !primaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
+                            height={frameDims1?.height || undefined}
+                            crossOrigin={displayImgUrl.startsWith('http') && !displayImgUrl.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
-                              handleNaturalSize(primaryImg, e.target);
+                              handleNaturalSize(displayImgUrl, e.target);
                             }}
                             onError={(e) => {
                               const errorImg = e.target;
@@ -6109,8 +6639,8 @@ const getOrderedRefs = useCallback((row) => {
                           const modelUpper = String(selected?.model || '').toUpperCase();
                           const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
                           const imageVersionData = selected?.imageVersionData || {};
-                          const versionKey = imageVersionData.current_version || imageVersionData.currentVersion || 'v1';
-                          const verObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
+                          const versionKey = getLatestVersionKey(imageVersionData);
+                          const verObj = imageVersionData[versionKey] || {};
                           const genImage = verObj?.gen_image !== false; // Default to true if not specified
                           
                                 // Hide edit/export buttons for VEO3 with gen_image=false
@@ -6126,24 +6656,27 @@ const getOrderedRefs = useCallback((row) => {
                               type="button"
                               onClick={() => {
                                 // Get the frame data for this specific image (Image 1)
-                                const frame = frameForImg1;
-                                if (frame) {
-                                  // Build the JSON structure with base_image, text_elements, and overlay_elements
+                                const frame = frameForImg1 || fallbackFrame1;
+                                // Always set frameData, even if frame is null (for PLOTLY and other scenes)
                                   const frameData = {
                                     base_image: frame?.base_image || frame?.baseImage || {
-                                      image_url: primaryImg,
-                                      image_dimensions: selected?.imageDimensions || {}
+                                    image_url: primaryImg || displayImgUrl || '',
+                                    image_dimensions: selected?.imageDimensions || frameDims1 || {}
                                     },
-                                    text_elements: Array.isArray(frame?.text_elements) ? frame.text_elements : 
-                                                   Array.isArray(frame?.textElements) ? frame.textElements : [],
-                                    overlay_elements: Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : [],
+                                  text_elements: frame ? (
+                                    Array.isArray(frame?.text_elements) ? frame.text_elements : 
+                                    Array.isArray(frame?.textElements) ? frame.textElements : []
+                                  ) : effectiveTextEls1 || [],
+                                  overlay_elements: frame ? (
+                                    Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : 
+                                    Array.isArray(frame?.overlayElements) ? frame.overlayElements : []
+                                  ) : overlayEls1 || [],
                                     model: selectedModel
                                   };
                                   setEditingImageFrame(frameData);
                                           setEditingSceneNumber(sceneNo);
                                   setEditingImageIndex(primaryFrameIndex); // Track actual image index
                                   setShowImageEdit(true);
-                                }
                               }}
                                       className="bg-[#13008B] text-white p-2 rounded-l-lg hover:bg-[#0f0068] flex items-center justify-center"
                               title="Edit Image"
@@ -6347,8 +6880,8 @@ const getOrderedRefs = useCallback((row) => {
                       style={{
                         aspectRatio: cssAspectRatio,
                         ...(isPortrait9x16
-                          ? { width: '500px', height: '100%' }
-                          : { width: '100%', height: '100%' })
+                          ? { width: '500px', maxWidth: '500px', height: '100%' }
+                          : { width: 'min(100%, 860px)', maxWidth: '860px', height: '100%' })
                       }}
                     >
                       {(() => {
@@ -6356,6 +6889,29 @@ const getOrderedRefs = useCallback((row) => {
                     const frameForImg2 = findFrameForImage(frames, secondaryImg, secondaryFrameIndex);
                     const fallbackFrame2 =
                       frameForImg2 || (frames.length > 1 ? frames[secondaryFrameIndex] || frames[0] : frames.length > 0 ? frames[0] : null);
+                    
+                    // For ANCHOR models, Image 2 should show base_image as background (same as Image 1)
+                    let displayImgUrl2 = secondaryImg;
+                    if (selectedModel === 'ANCHOR' && fallbackFrame2) {
+                      const baseImage = fallbackFrame2?.base_image || fallbackFrame2?.baseImage || {};
+                      const frameBackgroundUrl = baseImage?.image_url || baseImage?.imageUrl || baseImage?.imageurl || baseImage?.url || baseImage?.src || '';
+                      if (frameBackgroundUrl && typeof frameBackgroundUrl === 'string' && frameBackgroundUrl.trim()) {
+                        // Verify it's not an avatar
+                        const currentRow = rows.find(r => 
+                          (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
+                        ) || rows[selected.index];
+                        if (currentRow) {
+                          const avatarSet = getAvatarUrlSet(currentRow);
+                          const normalized = normalizeSimpleUrl(frameBackgroundUrl.trim());
+                          if (normalized && !avatarSet.has(normalized)) {
+                            displayImgUrl2 = frameBackgroundUrl.trim();
+                          }
+                        } else {
+                          displayImgUrl2 = frameBackgroundUrl.trim();
+                        }
+                      }
+                    }
+                    
                     // Get text elements from the matched frame, fallback to selected.textElements
                     const textElsFromFrame2 = fallbackFrame2 ? (
                       Array.isArray(fallbackFrame2?.text_elements)
@@ -6371,16 +6927,41 @@ const getOrderedRefs = useCallback((row) => {
                       ? selected.text_elements
                       : [];
                     const effectiveTextEls2 = textElsFromFrame2.length > 0 ? textElsFromFrame2 : fallbackText2;
-                    const overlayEls2 = fallbackFrame2 ? (
+                    
+                    // For ANCHOR models, add avatar as overlay element if it exists
+                    let overlayEls2 = fallbackFrame2 ? (
                       Array.isArray(fallbackFrame2?.overlay_elements)
                         ? fallbackFrame2.overlay_elements
                         : Array.isArray(fallbackFrame2?.overlayElements)
                         ? fallbackFrame2.overlayElements
                         : []
                     ) : [];
+                    
+                    // For ANCHOR models, if secondaryImg (avatar) exists and is different from background, add it as overlay
+                    if (selectedModel === 'ANCHOR' && secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() && displayImgUrl2 !== secondaryImg.trim()) {
+                      const currentRow = rows.find(r => 
+                        (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
+                      ) || rows[selected.index];
+                      if (currentRow) {
+                        const avatarSet = getAvatarUrlSet(currentRow);
+                        const normalized = normalizeSimpleUrl(secondaryImg.trim());
+                        if (normalized && avatarSet.has(normalized)) {
+                          // Add avatar as overlay element
+                          overlayEls2 = [...overlayEls2, {
+                            overlay_image: {
+                              image_url: secondaryImg.trim()
+                            },
+                            bounding_box: fallbackFrame2?.overlay_elements?.[0]?.bounding_box || fallbackFrame2?.overlayElements?.[0]?.bounding_box || {},
+                            layout: fallbackFrame2?.overlay_elements?.[0]?.layout || fallbackFrame2?.overlayElements?.[0]?.layout || {}
+                          }];
+                        }
+                      }
+                    }
+                    
                     const frameDims2 =
                       fallbackFrame2?.base_image?.image_dimensions ||
                       fallbackFrame2?.base_image?.imageDimensions ||
+                      imageNaturalDims[displayImgUrl2] ||
                       imageNaturalDims[secondaryImg] ||
                       selected?.imageDimensions ||
                       (frames[0]?.base_image?.image_dimensions || frames[0]?.base_image?.imageDimensions) ||
@@ -6391,25 +6972,25 @@ const getOrderedRefs = useCallback((row) => {
                         {selected?.isEditable && (
                          <></>
                         )}
-                        {secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() ? (
+                        {displayImgUrl2 && typeof displayImgUrl2 === 'string' && displayImgUrl2.trim() ? (
                           <img
                             src={(() => {
-                              // Add cache-busting for avatar images (VEO3) to prevent stale cache
-                              if (isVeoScene && secondaryImg) {
-                                const separator = secondaryImg.includes('?') ? '&' : '?';
-                                // Use scene number and current version to ensure fresh avatar
+                              // For VEO3, add cache-busting for avatar images
+                              if (isVeoScene && secondaryImg && displayImgUrl2 === secondaryImg) {
+                                const separator = displayImgUrl2.includes('?') ? '&' : '?';
                                 const cacheBuster = `${separator}_cb=${activeSceneNumber}_${currentVersion}`;
-                                return `${secondaryImg}${cacheBuster}`;
+                                return `${displayImgUrl2}${cacheBuster}`;
                               }
-                              return secondaryImg;
+                              return displayImgUrl2;
                             })()}
                             alt={`scene-${selected.sceneNumber}-secondary`}
                             className="w-full h-full object-contain"
-                            crossOrigin={secondaryImg.startsWith('http') && !secondaryImg.includes(window.location.hostname) ? "anonymous" : undefined}
+                            height={frameDims2?.height || undefined}
+                            crossOrigin={displayImgUrl2.startsWith('http') && !displayImgUrl2.includes(window.location.hostname) ? "anonymous" : undefined}
                             onLoad={(e) => {
-                              handleNaturalSize(secondaryImg, e.target);
+                              handleNaturalSize(displayImgUrl2, e.target);
                             }}
-                            key={avatarCacheKey || `avatar-${activeSceneNumber}-${secondaryImg}`}
+                            key={selectedModel === 'ANCHOR' ? `anchor-bg-${activeSceneNumber}-${displayImgUrl2}` : (avatarCacheKey || `avatar-${activeSceneNumber}-${secondaryImg}`)}
                             onError={(e) => {
                               const errorImg = e.target;
                               const failedUrl = errorImg.src;
@@ -6467,8 +7048,8 @@ const getOrderedRefs = useCallback((row) => {
                           const modelUpper = String(selected?.model || '').toUpperCase();
                           const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
                           const imageVersionData = selected?.imageVersionData || {};
-                          const versionKey = imageVersionData.current_version || imageVersionData.currentVersion || 'v1';
-                          const verObj = imageVersionData[versionKey] || imageVersionData.v1 || {};
+                          const versionKey = getLatestVersionKey(imageVersionData);
+                          const verObj = imageVersionData[versionKey] || {};
                           const genImage = verObj?.gen_image !== false; // Default to true if not specified
                           
                                 // Hide edit/export buttons for VEO3 with gen_image=false
@@ -6700,58 +7281,7 @@ const getOrderedRefs = useCallback((row) => {
             <div className="space-y-3">
               
               <div>
-                <div className="flex items-center justify-between mb-1">
-                <label className="text-sm text-gray-600">
-                  {(() => {
-                    const modelUpper = String(selected?.model || '').toUpperCase();
-                    const isVEO3 = modelUpper === 'VEO3';
-                    return isVEO3 ? 'Scene Description' : 'Description';
-                  })()}
-                </label>
-                  {(() => {
-                    const modelUpper = String(selected?.model || '').toUpperCase();
-                    const isVEO3 = modelUpper === 'VEO3';
-                    
-                    // For non-VEO3 models, show popup button; for VEO3, don't show edit button (read-only)
-                    if (!isVEO3) {
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
-                            setRegeneratingSceneNumber(sceneNumber);
-                            setRegenerateUserQuery('');
-                            setError('');
-                            setIsRegenerateForDescription(true); // Mark that this is for editing description
-                            
-                            // Get the model for this scene
-                            const model = getSceneModel(sceneNumber);
-                            
-                            // Set default frames based on model
-                            if (isVEO3Model(model) || isANCHORModel(model)) {
-                              setRegenerateFrames(['background']); // VEO3/ANCHOR always use background
-                            } else {
-                              // For all other models: default to both frames
-                              setRegenerateFrames(['opening', 'closing']);
-                            }
-                            
-                            setShowRegeneratePopup(true);
-                          }}
-                          className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                          </svg>
-                          Edit
-                        </button>
-                      );
-                    }
-                    
-                    // For VEO3, no edit button (read-only display)
-                    return null;
-                  })()}
-                </div>
+                  {/* Labels removed - both VEO3 and non-VEO3 now have their own headers in the UI */}
                   {(() => {
                     const modelUpper = String(selected?.model || '').toUpperCase();
                     const isVEO3 = modelUpper === 'VEO3';
@@ -6823,8 +7353,286 @@ const getOrderedRefs = useCallback((row) => {
                     };
                     
                     const templateFields = getTemplateFields(veo3PromptTemplate);
+                    const currentSceneIndex = selected?.index ?? 0;
+                    const isEditing = isEditingVeo3Template && descriptionSceneIndex === currentSceneIndex;
+                    
+                    const startEditingVeo3Template = () => {
+                      // Initialize editable template with current values
+                      const templateObj = veo3PromptTemplate || {};
+                      setEditableVeo3Template(typeof templateObj === 'string' ? JSON.parse(templateObj) : { ...templateObj });
+                      setIsEditingVeo3Template(true);
+                      setDescriptionSceneIndex(currentSceneIndex);
+                    };
+                    
+                    const cancelEditingVeo3Template = () => {
+                      setIsEditingVeo3Template(false);
+                      setDescriptionSceneIndex(null);
+                      setEditableVeo3Template({});
+                    };
+                    
+                    const updateVeo3TemplateField = (key, value) => {
+                      setEditableVeo3Template(prev => ({
+                        ...prev,
+                        [key]: value
+                      }));
+                    };
+                    
+                    const saveVeo3Template = async () => {
+                      setIsSavingVeo3Template(true);
+                      try {
+                        const user_id = localStorage.getItem('token');
+                        const session_id = localStorage.getItem('session_id');
+                        const scene_number = selected?.sceneNumber || selected?.scene_number || 1;
+                        
+                        if (!user_id || !session_id) {
+                          throw new Error('Missing user_id or session_id');
+                        }
+                        
+                        // First, fetch the complete user session data
+                        const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ user_id, session_id })
+                        });
+                        
+                        const sessionDataText = await sessionDataResp.text();
+                        let sessionData;
+                        try {
+                          sessionData = JSON.parse(sessionDataText);
+                        } catch {
+                          sessionData = sessionDataText;
+                        }
+                        
+                        if (!sessionDataResp.ok) {
+                          throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
+                        }
+                        
+                        // Extract the complete session and user objects from the response
+                        const fullSessionData = sessionData?.session_data || sessionData?.session || {};
+                        const fullUserData = sessionData?.user_data || sessionData?.user || {};
+                        
+                        // Normalize session object: ensure session_id exists (convert id to session_id if needed)
+                        let normalizedSession = {};
+                        if (fullSessionData && Object.keys(fullSessionData).length > 0) {
+                          normalizedSession = { ...fullSessionData };
+                          // If session has 'id' but no 'session_id', use 'id' as 'session_id'
+                          if (normalizedSession.id && !normalizedSession.session_id) {
+                            normalizedSession.session_id = normalizedSession.id;
+                            delete normalizedSession.id;
+                          }
+                          // Ensure session_id is set
+                          if (!normalizedSession.session_id) {
+                            normalizedSession.session_id = session_id;
+                          }
+                        } else {
+                          // Fallback to minimal session object
+                          normalizedSession = {
+                            session_id: session_id,
+                            user_id: user_id,
+                            title: '',
+                            video_duration: '60',
+                            created_at: '',
+                            updated_at: '',
+                            document_summary: [],
+                            messages: [],
+                            total_summary: [],
+                            scripts: [],
+                            videos: [],
+                            images: [],
+                            final_link: {},
+                            videoType: '',
+                            brand_style_interpretation: {},
+                            ...sessionAssets
+                          };
+                        }
+                        
+                        const session = normalizedSession;
+                        
+                        // Use the complete user object, or fallback to minimal if not available
+                        const user = fullUserData && Object.keys(fullUserData).length > 0
+                          ? fullUserData
+                          : {
+                              id: user_id,
+                              email: '',
+                              display_name: '',
+                              created_at: '',
+                              avatar_url: '',
+                              folder_url: '',
+                              brand_identity: {},
+                              tone_and_voice: {},
+                              look_and_feel: {},
+                              templates: [],
+                              voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+                            };
+                        
+                        // For VEO3 model, new_value should be an object, for other models it should be a string
+                        const modelUpper = String(selected?.model || '').toUpperCase();
+                        const isVEO3 = modelUpper === 'VEO3';
+                        
+                        const payload = {
+                          user,
+                          session,
+                          scene_number: Number(scene_number),
+                          field_name: 'veo3_prompt_template',
+                          new_value: isVEO3 ? editableVeo3Template : JSON.stringify(editableVeo3Template)
+                        };
+                        
+                        const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(payload)
+                        });
+                        
+                        const text = await response.text();
+                        let data;
+                        try {
+                          data = JSON.parse(text);
+                        } catch {
+                          data = text;
+                        }
+                        
+                        if (!response.ok) {
+                          throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
+                        }
+                        
+                        // Update local state
+                        setSelected(prev => ({ ...prev, veo3_prompt_template: editableVeo3Template }));
+                        setRows(prevRows => prevRows.map(row => {
+                          const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                          if (String(rowSceneNumber) === String(scene_number)) {
+                            return { ...row, veo3_prompt_template: editableVeo3Template };
+                          }
+                          return row;
+                        }));
+                        
+                        // Refresh the data (loader remains visible during this)
+                        await refreshLoad(scene_number);
+                        
+                        // Only reset state after everything is complete
+                        setIsEditingVeo3Template(false);
+                        setDescriptionSceneIndex(null);
+                        setEditableVeo3Template({});
+                        setError('');
+                      } catch (error) {
+                        setError('Failed to update VEO3 template: ' + (error?.message || 'Unknown error'));
+                        console.error('Error saving VEO3 template:', error);
+                      } finally {
+                        // Hide loader only after everything is complete (including refreshLoad)
+                        setIsSavingVeo3Template(false);
+                      }
+                    };
                     
                     return (
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative w-full">
+                        {/* Loading Overlay - Shows until update-scene-field API completes */}
+                        {isSavingVeo3Template && (
+                          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
+                            <div className="bg-white shadow-xl rounded-lg px-6 py-4 text-center space-y-3">
+                              <div className="w-16 h-16 mx-auto">
+                                <video
+                                  src={LoadingAnimationVideo}
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                  className="w-full h-full object-contain"
+                                />
+                              </div>
+                              <div className="text-sm font-semibold text-[#13008B]">Updating Scene Field</div>
+                              <p className="text-xs text-gray-500">Please wait while we save your changes...</p>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-sm font-semibold text-gray-800">Scene Description</h4>
+                          {isEditing ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                onClick={cancelEditingVeo3Template}
+                                disabled={isSavingVeo3Template}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={saveVeo3Template}
+                                disabled={isSavingVeo3Template}
+                                className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                              >
+                                {isSavingVeo3Template ? (
+                                  <>
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    <span>Saving...</span>
+                                  </>
+                                ) : (
+                                  'Save'
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={startEditingVeo3Template}
+                              className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                              </svg>
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                        {isEditing ? (
+                          <div className="space-y-4">
+                            {Object.entries(editableVeo3Template).map(([key, value]) => {
+                              const displayValue = typeof value === 'string' 
+                                ? value 
+                                : (typeof value === 'object' && value !== null 
+                                    ? JSON.stringify(value, null, 2) 
+                                    : String(value || ''));
+                              
+                              // Format key: replace underscores with spaces and capitalize
+                              const formattedKey = key
+                                .replace(/_/g, ' ')
+                                .split(' ')
+                                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                                .join(' ');
+                              
+                              return (
+                                <div key={key} className="border border-gray-300 rounded-lg p-4 bg-white space-y-2">
+                                  <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                                    {formattedKey}
+                                  </label>
+                                  <textarea
+                                    value={displayValue}
+                                    onChange={(e) => {
+                                      const newValue = e.target.value;
+                                      // Try to parse as JSON if it looks like JSON, otherwise keep as string
+                                      try {
+                                        const parsed = JSON.parse(newValue);
+                                        updateVeo3TemplateField(key, parsed);
+                                      } catch {
+                                        updateVeo3TemplateField(key, newValue);
+                                      }
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                    rows={typeof value === 'object' && value !== null ? 6 : 3}
+                                    placeholder={`Enter ${formattedKey.toLowerCase()}`}
+                                    disabled={isSavingVeo3Template}
+                                  />
+                                </div>
+                              );
+                            })}
+                            {Object.keys(editableVeo3Template).length === 0 && (
+                              <div className="w-full border border-gray-200 rounded-lg bg-white px-4 py-3 text-sm text-gray-400 italic text-center">
+                                No fields available to edit
+                              </div>
+                            )}
+                          </div>
+                        ) : (
                       <div className="w-full">
                         {templateFields.length > 0 ? (
                           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -6861,24 +7669,1102 @@ const getOrderedRefs = useCallback((row) => {
                         ) : (
                           <div className="w-full border border-gray-200 rounded-lg bg-white px-4 py-3 text-sm text-gray-400 italic">
                             No scene description available
+                              </div>
+                            )}
                           </div>
                         )}
                     </div>
                     );
                   }
                   
-                  // For non-VEO3 models, show textarea as before
-                  return (
-                <textarea
-                      className="w-full h-32 border rounded-lg px-3 py-2 text-sm bg-gray-50"
-                      readOnly={editingField !== 'description'}
-                      value={editingField === 'description' ? editedDescription : (selected?.description || '')}
-                  onChange={(e) => {
-                        if (editingField === 'description') {
-                      setEditedDescription(e.target.value);
+                  // For non-VEO3 models, check if it's SORA, PLOTLY, or ANCHOR
+                  const isSoraPlotlyAnchor = modelUpper === 'SORA' || modelUpper === 'PLOTLY' || modelUpper === 'ANCHOR';
+                  
+                  // For SORA, PLOTLY, and ANCHOR, show transition section instead of description
+                  if (isSoraPlotlyAnchor) {
+                    // Return transition section directly (without accordion)
+                    const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+                    const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
+                      logoNeeded: false,
+                      voiceUrl: '',
+                      voiceOption: PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male',
+                      transitionPreset: null,
+                      transitionCustom: null,
+                      customDescription: '',
+                      customPreservationNotes: {
+                        lighting: '',
+                        style_mood: '',
+                        transition_type: '',
+                        scene_description: '',
+                        subject_description: '',
+                        action_specification: '',
+                        content_modification: '',
+                        camera_specifications: '',
+                        geometric_preservation: ''
+                      },
+                      subtitleSceneOnly: false,
+                      rememberCustomPreset: false,
+                      customPresetName: ''
+                    };
+                    
+                    const customNotes = sceneOptions.customPreservationNotes || {};
+                    const hasCustomDesignInput =
+                      (sceneOptions.customDescription || '').trim().length > 0 ||
+                      Object.values(customNotes).some(v => (v || '').trim().length > 0);
+                    
+                    const isCustomPresetMode = !!sceneOptions.rememberCustomPreset;
+                    const designYourOwnTabValue = designYourOwnTab[sceneNumber] || 'describe';
+                    
+                    const updateSceneOption = (key, value) => {
+                      setSceneAdvancedOptions(prev => ({
+                        ...prev,
+                        [sceneNumber]: {
+                          ...prev[sceneNumber],
+                          [key]: value
+                        }
+                      }));
+                    };
+                    
+                    const toggleAdvancedOptions = (section) => {
+                      setShowAdvancedOptions(prev => ({
+                        ...prev,
+                        [sceneNumber]: {
+                          ...prev[sceneNumber],
+                          [section]: !prev[sceneNumber]?.[section]
+                        }
+                      }));
+                    };
+                    
+                    const isEditing = isEditingAnimationDesc[sceneNumber] || false;
+                    const editableData = editableAnimationDesc[sceneNumber] || {};
+                    
+                    const startEditingAnimationDesc = () => {
+                      // Get current animation_desc data
+                      const currentRow = rows.find((r) => (r?.scene_number || r?.sceneNumber) === sceneNumber);
+                      let animationDesc = {};
+                      if (currentRow?.imageVersionData) {
+                        const imageVersionData = currentRow.imageVersionData;
+                        const versionKey = getLatestVersionKey(imageVersionData);
+                        const verObj = imageVersionData[versionKey] || {};
+                        animationDesc = verObj?.animation_desc || {};
+                      }
+                      if (Object.keys(animationDesc).length === 0 && selected?.imageVersionData) {
+                        const imageVersionData = selected.imageVersionData;
+                        const versionKey = getLatestVersionKey(imageVersionData);
+                        const verObj = imageVersionData[versionKey] || {};
+                        animationDesc = verObj?.animation_desc || {};
+                      }
+                      if (Object.keys(animationDesc).length === 0) {
+                        animationDesc = currentRow?.animation_desc || selected?.animation_desc || sceneOptions.customPreservationNotes || {};
+                      }
+                      
+                      // Initialize editable data with current values
+                      setEditableAnimationDesc(prev => ({
+                        ...prev,
+                        [sceneNumber]: { ...animationDesc }
+                      }));
+                      setIsEditingAnimationDesc(prev => ({
+                        ...prev,
+                        [sceneNumber]: true
+                      }));
+                    };
+                    
+                    const cancelEditingAnimationDesc = () => {
+                      setIsEditingAnimationDesc(prev => {
+                        const updated = { ...prev };
+                        delete updated[sceneNumber];
+                        return updated;
+                      });
+                      setEditableAnimationDesc(prev => {
+                        const updated = { ...prev };
+                        delete updated[sceneNumber];
+                        return updated;
+                      });
+                    };
+                    
+                    const updateEditableAnimationDesc = (key, value) => {
+                      setEditableAnimationDesc(prev => ({
+                        ...prev,
+                        [sceneNumber]: {
+                          ...(prev[sceneNumber] || {}),
+                          [key]: value
+                        }
+                      }));
+                    };
+                    
+                    const saveAnimationDesc = async () => {
+                      setIsSavingAnimationDesc(true);
+                      try {
+                        const user_id = localStorage.getItem('token');
+                        const session_id = localStorage.getItem('session_id');
+                        const scene_number = sceneNumber;
+                        
+                        if (!user_id || !session_id) {
+                          throw new Error('Missing user_id or session_id');
+                        }
+                        
+                        // Get current editable data
+                        const animationDescData = editableData || {};
+                        
+                        // First, fetch the complete user session data
+                        const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ user_id, session_id })
+                        });
+                        
+                        const sessionDataText = await sessionDataResp.text();
+                        let sessionData;
+                        try {
+                          sessionData = JSON.parse(sessionDataText);
+                        } catch {
+                          sessionData = sessionDataText;
+                        }
+                        
+                        if (!sessionDataResp.ok) {
+                          throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
+                        }
+                        
+                        // Extract the complete session and user objects from the response
+                        const fullSessionData = sessionData?.session_data || sessionData?.session || {};
+                        const fullUserData = sessionData?.user_data || sessionData?.user || {};
+                        
+                        // Normalize session object: ensure session_id exists (convert id to session_id if needed)
+                        let normalizedSession = {};
+                        if (fullSessionData && Object.keys(fullSessionData).length > 0) {
+                          normalizedSession = { ...fullSessionData };
+                          // If session has 'id' but no 'session_id', use 'id' as 'session_id'
+                          if (normalizedSession.id && !normalizedSession.session_id) {
+                            normalizedSession.session_id = normalizedSession.id;
+                            delete normalizedSession.id;
+                          }
+                          // Ensure session_id is set
+                          if (!normalizedSession.session_id) {
+                            normalizedSession.session_id = session_id;
+                          }
+                        } else {
+                          // Fallback to minimal session object
+                          normalizedSession = {
+                            session_id: session_id,
+                            user_id: user_id,
+                            title: '',
+                            video_duration: '60',
+                            created_at: '',
+                            updated_at: '',
+                            document_summary: [],
+                            messages: [],
+                            total_summary: [],
+                            scripts: [],
+                            videos: [],
+                            images: [],
+                            final_link: {},
+                            videoType: '',
+                            brand_style_interpretation: {},
+                            ...sessionAssets
+                          };
+                        }
+                        
+                        const session = normalizedSession;
+                        
+                        // Use the complete user object, or fallback to minimal if not available
+                        const user = fullUserData && Object.keys(fullUserData).length > 0
+                          ? fullUserData
+                          : {
+                              id: user_id,
+                              email: '',
+                              display_name: '',
+                              created_at: '',
+                              avatar_url: '',
+                              folder_url: '',
+                              brand_identity: {},
+                              tone_and_voice: {},
+                              look_and_feel: {},
+                              templates: [],
+                              voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+                            };
+                        
+                        const payload = {
+                          user,
+                          session,
+                          scene_number: Number(scene_number),
+                          field_name: 'animation_desc',
+                          new_value: animationDescData
+                        };
+                        
+                        const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(payload)
+                        });
+                        
+                        const text = await response.text();
+                        let data;
+                        try {
+                          data = JSON.parse(text);
+                        } catch {
+                          data = text;
+                        }
+                        
+                        if (!response.ok) {
+                          throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
+                        }
+                        
+                        console.log('✅ update-scene-field API succeeded, fetching updated user session data...');
+                        
+                        // Declare updatedAnimationDesc at function scope so it's accessible throughout
+                        let updatedAnimationDesc = animationDescData; // Fallback to what we saved
+                        
+                        // Fetch updated user session data to get the updated animation_desc
+                        const updatedSessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ user_id, session_id })
+                        });
+                        
+                        const updatedSessionText = await updatedSessionResp.text();
+                        let updatedSessionData;
+                        try {
+                          updatedSessionData = JSON.parse(updatedSessionText);
+                        } catch {
+                          updatedSessionData = updatedSessionText;
+                        }
+                        
+                        if (!updatedSessionResp.ok) {
+                          console.warn('⚠️ Failed to fetch updated session data, using saved data:', updatedSessionResp.status);
+                        } else {
+                          // Extract updated animation_desc from the response
+                          const updatedSession = updatedSessionData?.session_data || updatedSessionData?.session || {};
+                          const updatedScripts = Array.isArray(updatedSession?.scripts) ? updatedSession.scripts : [];
+                          const latestScript = updatedScripts[0] || {};
+                          const updatedAiresponse = Array.isArray(latestScript?.airesponse) ? latestScript.airesponse : [];
+                          
+                          // Find the scene with matching scene_number
+                          for (const scene of updatedAiresponse) {
+                            if (!scene || typeof scene !== 'object') continue;
+                            const sceneNum = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene;
+                            if (String(sceneNum) === String(scene_number)) {
+                              updatedAnimationDesc = scene?.animation_desc || animationDescData;
+                              console.log('✅ Found updated animation_desc from user session data:', updatedAnimationDesc);
+                              break;
+                            }
+                          }
+                          
+                          // Update local state with the updated animation_desc from API
+                          setRows(prevRows => prevRows.map(row => {
+                            const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                            if (String(rowSceneNumber) === String(scene_number)) {
+                              // Update animation_desc in the row
+                              const updatedRow = { ...row, animation_desc: updatedAnimationDesc };
+                              
+                              // Also update in imageVersionData - create it if it doesn't exist
+                              if (updatedRow.imageVersionData) {
+                                const versionKey = getLatestVersionKey(updatedRow.imageVersionData);
+                                if (versionKey) {
+                                  updatedRow.imageVersionData = {
+                                    ...updatedRow.imageVersionData,
+                                    [versionKey]: {
+                                      ...(updatedRow.imageVersionData[versionKey] || {}),
+                                      animation_desc: updatedAnimationDesc
+                                    }
+                                  };
+                                } else {
+                                  // If no version key found, create v1 with animation_desc
+                                  updatedRow.imageVersionData = {
+                                    ...updatedRow.imageVersionData,
+                                    v1: {
+                                      ...(updatedRow.imageVersionData.v1 || {}),
+                                      animation_desc: updatedAnimationDesc
+                                    }
+                                  };
+                                }
+                              } else {
+                                // Create imageVersionData if it doesn't exist
+                                updatedRow.imageVersionData = {
+                                  v1: {
+                                    animation_desc: updatedAnimationDesc
+                                  }
+                                };
+                              }
+                              
+                              return updatedRow;
+                            }
+                            return row;
+                          }));
+                          
+                          // Also update selected if it matches
+                          if (selected && (selected?.sceneNumber || selected?.scene_number) === scene_number) {
+                            const updatedSelected = { ...selected, animation_desc: updatedAnimationDesc };
+                            
+                            // Also update in imageVersionData - create it if it doesn't exist
+                            if (updatedSelected.imageVersionData) {
+                              const versionKey = getLatestVersionKey(updatedSelected.imageVersionData);
+                              if (versionKey) {
+                                updatedSelected.imageVersionData = {
+                                  ...updatedSelected.imageVersionData,
+                                  [versionKey]: {
+                                    ...(updatedSelected.imageVersionData[versionKey] || {}),
+                                    animation_desc: updatedAnimationDesc
+                                  }
+                                };
+                              } else {
+                                // If no version key found, create v1 with animation_desc
+                                updatedSelected.imageVersionData = {
+                                  ...updatedSelected.imageVersionData,
+                                  v1: {
+                                    ...(updatedSelected.imageVersionData.v1 || {}),
+                                    animation_desc: updatedAnimationDesc
+                                  }
+                                };
+                              }
+                            } else {
+                              // Create imageVersionData if it doesn't exist
+                              updatedSelected.imageVersionData = {
+                                v1: {
+                                  animation_desc: updatedAnimationDesc
+                                }
+                              };
+                            }
+                            
+                            setSelected(updatedSelected);
+                          }
+                          
+                          // Update scene options with the updated data
+                          updateSceneOption('customPreservationNotes', updatedAnimationDesc);
+                        }
+                        
+                        // Refresh the data to ensure everything is in sync
+                        await refreshLoad(scene_number);
+                        
+                        // After refreshLoad, ensure the updated animation_desc is preserved in the rows
+                        // because refreshLoad might reload from API and animation_desc might not be in images structure
+                        // Always use the updatedAnimationDesc we got from the API, don't check if it's empty
+                        setRows(prevRows => prevRows.map(row => {
+                          const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                          if (String(rowSceneNumber) === String(scene_number)) {
+                            // Always set animation_desc to the updated value from API
+                            const updatedRow = { ...row, animation_desc: updatedAnimationDesc };
+                            
+                            // Also ensure it's in imageVersionData structure - create if needed
+                            if (updatedRow.imageVersionData) {
+                              const versionKey = getLatestVersionKey(updatedRow.imageVersionData);
+                              const targetVersion = versionKey || 'v1';
+                              updatedRow.imageVersionData = {
+                                ...updatedRow.imageVersionData,
+                                [targetVersion]: {
+                                  ...(updatedRow.imageVersionData[targetVersion] || {}),
+                                  animation_desc: updatedAnimationDesc
+                                }
+                              };
+                            } else {
+                              // Create imageVersionData if it doesn't exist
+                              updatedRow.imageVersionData = {
+                                v1: {
+                                  animation_desc: updatedAnimationDesc
+                                }
+                              };
+                            }
+                            
+                            return updatedRow;
+                          }
+                          return row;
+                        }));
+                        
+                        // Also update selected if it matches
+                        if (selected && (selected?.sceneNumber || selected?.scene_number) === scene_number) {
+                          // Always set animation_desc to the updated value from API
+                          const updatedSelected = { ...selected, animation_desc: updatedAnimationDesc };
+                          
+                          // Also ensure it's in imageVersionData structure - create if needed
+                          if (updatedSelected.imageVersionData) {
+                            const versionKey = getLatestVersionKey(updatedSelected.imageVersionData);
+                            const targetVersion = versionKey || 'v1';
+                            updatedSelected.imageVersionData = {
+                              ...updatedSelected.imageVersionData,
+                              [targetVersion]: {
+                                ...(updatedSelected.imageVersionData[targetVersion] || {}),
+                                animation_desc: updatedAnimationDesc
+                              }
+                            };
+                          } else {
+                            // Create imageVersionData if it doesn't exist
+                            updatedSelected.imageVersionData = {
+                              v1: {
+                                animation_desc: updatedAnimationDesc
+                              }
+                            };
+                          }
+                          
+                          setSelected(updatedSelected);
+                        }
+                        
+                        // Exit edit mode
+                        setIsEditingAnimationDesc(prev => {
+                          const updated = { ...prev };
+                          delete updated[scene_number];
+                          return updated;
+                        });
+                        setEditableAnimationDesc(prev => {
+                          const updated = { ...prev };
+                          delete updated[scene_number];
+                          return updated;
+                        });
+                        
+                        setError('');
+                        console.log('✅ Animation description saved successfully and displayed');
+                      } catch (error) {
+                        setError('Failed to save animation description: ' + (error?.message || 'Unknown error'));
+                        console.error('Error saving animation description:', error);
+                      } finally {
+                        setIsSavingAnimationDesc(false);
+                      }
+                    };
+                    
+                    return (
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative w-full">
+                        <h4 className="text-sm font-semibold text-gray-800 mb-3">Transitions</h4>
+                        <div className="space-y-3">
+                          {/* Design Your Own Section - First */}
+                          <div className="border rounded-lg p-3 bg-gray-50 relative">
+                            {/* Loading Overlay - Shows until update-scene-field API completes */}
+                            {isSavingAnimationDesc && (
+                              <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
+                                <div className="bg-white shadow-xl rounded-lg px-6 py-4 text-center space-y-3">
+                                  <div className="w-16 h-16 mx-auto">
+                                    <video
+                                      src={LoadingAnimationVideo}
+                                      autoPlay
+                                      loop
+                                      muted
+                                      playsInline
+                                      className="w-full h-full object-contain"
+                                    />
+                                  </div>
+                                  <div className="text-sm font-semibold text-[#13008B]">Saving Animation Description</div>
+                                  <p className="text-xs text-gray-500">Please wait while we save your changes...</p>
+                                </div>
+                              </div>
+                            )}
+                            <div className="mb-3 flex items-center justify-between">
+                              <span className="text-sm font-medium text-gray-700">Design Your Own</span>
+                              {isEditing ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={cancelEditingAnimationDesc}
+                                    disabled={isSavingAnimationDesc}
+                                    className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={saveAnimationDesc}
+                                    disabled={isSavingAnimationDesc}
+                                    className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-[#0f0069] disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {isSavingAnimationDesc ? 'Saving...' : 'Save'}
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={startEditingAnimationDesc}
+                                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 flex items-center gap-1"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                            {(() => {
+                              // Get animation_desc from the scene data (from images object)
+                              const currentRow = rows.find((r) => (r?.scene_number || r?.sceneNumber) === sceneNumber);
+                              
+                              // Try to get animation_desc from imageVersionData structure
+                              let animationDesc = {};
+                              if (currentRow?.imageVersionData) {
+                                const imageVersionData = currentRow.imageVersionData;
+                                const versionKey = getLatestVersionKey(imageVersionData);
+                                const verObj = imageVersionData[versionKey] || {};
+                                animationDesc = verObj?.animation_desc || {};
+                              }
+                              
+                              // Also check selected object
+                              if (Object.keys(animationDesc).length === 0 && selected?.imageVersionData) {
+                                const imageVersionData = selected.imageVersionData;
+                                const versionKey = getLatestVersionKey(imageVersionData);
+                                const verObj = imageVersionData[versionKey] || {};
+                                animationDesc = verObj?.animation_desc || {};
+                              }
+                              
+                              // Fallback to row or selected directly
+                              if (Object.keys(animationDesc).length === 0) {
+                                animationDesc = currentRow?.animation_desc || selected?.animation_desc || {};
+                              }
+                              
+                              // Check if animation_desc has actual content (not just empty strings)
+                              const hasAnimationDescContent = animationDesc && typeof animationDesc === 'object' && 
+                                Object.keys(animationDesc).length > 0 &&
+                                Object.values(animationDesc).some(v => v && String(v).trim().length > 0);
+                              
+                              // Use animation_desc if it has content, otherwise use customPreservationNotes
+                              // But if we're editing, always use editableData
+                              const displayNotes = isEditing 
+                                ? editableData 
+                                : (hasAnimationDescContent ? animationDesc : (sceneOptions.customPreservationNotes || {}));
+                              
+                              return (
+                                <div className="space-y-3">
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Lighting</label>
+                                    <input
+                                      type="text"
+                                      value={displayNotes?.lighting || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('lighting', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            lighting: e.target.value
+                                          });
+                                          if (e.target.value.trim().length > 0) {
+                                            updateSceneOption('transitionPreset', null);
+                                            updateSceneOption('transitionCustom', 'custom');
+                                          }
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Clean minimal lighting, flat graphic style"
+                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Style/Mood</label>
+                                    <input
+                                      type="text"
+                                      value={displayNotes?.style_mood || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('style_mood', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            style_mood: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Professional presentation mood"
+                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
+                                    <input
+                                      type="text"
+                                      value={displayNotes?.transition_type || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('transition_type', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            transition_type: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Whole-frame instant cut"
+                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
+                                    <textarea
+                                      value={displayNotes?.scene_description || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('scene_description', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            scene_description: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Flat graphic layouts displayed in sequence"
+                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
+                                    <textarea
+                                      value={displayNotes?.subject_description || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('subject_description', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            subject_description: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
+                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
+                                    <textarea
+                                      value={displayNotes?.action_specification || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('action_specification', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            action_specification: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Instant cut transition between static compositions"
+                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
+                                    <textarea
+                                      value={displayNotes?.content_modification || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('content_modification', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            content_modification: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
+                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Camera Specifications</label>
+                                    <input
+                                      type="text"
+                                      value={displayNotes?.camera_specifications || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('camera_specifications', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            camera_specifications: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., Static camera with subtle slow push-in"
+                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Geometric Preservation</label>
+                                    <textarea
+                                      value={displayNotes?.geometric_preservation || ''}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          updateEditableAnimationDesc('geometric_preservation', e.target.value);
+                                        } else {
+                                          updateSceneOption('customPreservationNotes', {
+                                            ...sceneOptions.customPreservationNotes,
+                                            geometric_preservation: e.target.value
+                                          });
+                                        }
+                                      }}
+                                      disabled={!isEditing}
+                                      placeholder="e.g., All elements locked, frozen, preserved in exact positions"
+                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Save this preset */}
+                            <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
+                              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={sceneOptions.rememberCustomPreset || false}
+                                  onChange={(e) => updateSceneOption('rememberCustomPreset', e.target.checked)}
+                                  className="w-4 h-4 text-[#13008B]"
+                                />
+                                <span>Save this preset</span>
+                              </label>
+                              {sceneOptions.rememberCustomPreset && (
+                                <div className="mt-1">
+                                  <label className="text-xs font-medium text-gray-700 mb-1 block">Preset Name</label>
+                                  <input
+                                    type="text"
+                                    value={sceneOptions.customPresetName || ''}
+                                    onChange={(e) => updateSceneOption('customPresetName', e.target.value)}
+                                    placeholder="Enter a name for this preset"
+                                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Select a Preset Section - Second */}
+                          <div className={`border rounded-lg p-3 bg-gray-50 ${isCustomPresetMode ? 'opacity-50 pointer-events-none' : ''}`}>
+                            <label className="text-sm font-medium text-gray-700 mb-3 block">Select a Preset</label>
+                            {transitionPresets.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {transitionPresets.map((preset, idx) => {
+                                  const presetName = preset?.name || '';
+                                  if (!presetName) {
+                                    return null;
+                                  }
+                                  const isSelected = sceneOptions.transitionPreset?.name === presetName;
+                                  const isHovered = hoveredPresetInfo[sceneNumber] === presetName;
+                                  const hasPreservationNotes = preset?.preservation_notes && typeof preset.preservation_notes === 'object';
+                                  
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="relative"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          updateSceneOption('transitionPreset', preset);
+                                          updateSceneOption('transitionCustom', null);
+                                        }}
+                                        className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${isSelected
+                                            ? 'bg-[#13008B] text-white shadow-md'
+                                            : 'bg-white text-gray-700 border border-gray-300 hover:border-[#13008B] hover:bg-[#F6F4FF]'
+                                        }`}
+                                      >
+                                        <span>{presetName}</span>
+                                        {hasPreservationNotes && (
+                                          <div
+                                            className="relative"
+                                            onMouseEnter={() => {
+                                              setHoveredPresetInfo(prev => ({
+                                                ...prev,
+                                                [sceneNumber]: presetName
+                                              }));
+                                            }}
+                                            onMouseLeave={() => {
+                                              setHoveredPresetInfo(prev => {
+                                                const updated = { ...prev };
+                                                delete updated[sceneNumber];
+                                                return updated;
+                                              });
+                                            }}
+                                          >
+                                            <button
+                                              type="button"
+                                              className="w-5 h-5 rounded-full bg-gray-400 hover:bg-gray-500 text-white text-xs font-semibold flex items-center justify-center transition-colors"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                              }}
+                                            >
+                                              i
+                                            </button>
+                                            {isHovered && (
+                                              <div className="absolute left-0 top-full mt-2 z-50 w-80 bg-white border border-gray-200 rounded-lg shadow-2xl p-4 text-xs text-left space-y-2">
+                                                <div className="font-semibold text-gray-800 mb-2">Preservation Notes:</div>
+                                                <div><strong>Lighting:</strong> <span className="text-gray-700">{preset.preservation_notes.lighting || 'N/A'}</span></div>
+                                                <div><strong>Style/Mood:</strong> <span className="text-gray-700">{preset.preservation_notes.style_mood || 'N/A'}</span></div>
+                                                <div><strong>Transition Type:</strong> <span className="text-gray-700">{preset.preservation_notes.transition_type || 'N/A'}</span></div>
+                                                <div><strong>Scene Description:</strong> <span className="text-gray-700">{preset.preservation_notes.scene_description || 'N/A'}</span></div>
+                                                <div><strong>Subject Description:</strong> <span className="text-gray-700">{preset.preservation_notes.subject_description || 'N/A'}</span></div>
+                                                <div><strong>Action Specification:</strong> <span className="text-gray-700">{preset.preservation_notes.action_specification || 'N/A'}</span></div>
+                                                <div><strong>Content Modification:</strong> <span className="text-gray-700">{preset.preservation_notes.content_modification || 'N/A'}</span></div>
+                                                <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{preset.preservation_notes.camera_specifications || 'N/A'}</span></div>
+                                                <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{preset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </button>
+                                    </div>
+                                  );
+                                }).filter(Boolean)}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-500 p-2 border rounded-lg bg-gray-50">
+                                No presets available. Loading...
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  // For non-VEO3, non-SORA/PLOTLY/ANCHOR models, show new formatted description UI
+                  const sceneDescription = selected?.description || '';
+                  const currentSceneIndex = selected?.index ?? 0;
+                  const isInlineEditing = isDescriptionEditing && descriptionSceneIndex === currentSceneIndex;
+                  
+                  const startInlineEditing = () => {
+                    const sections = parseDescription(sceneDescription);
+                    setEditableSections(sections.length > 0 ? sections : [{ type: 'text', content: sceneDescription }]);
+                    setIsDescriptionEditing(true);
+                    setDescriptionSceneIndex(currentSceneIndex);
+                  };
+                  
+                  const cancelInlineEditing = () => {
+                    setIsDescriptionEditing(false);
+                    setDescriptionSceneIndex(null);
+                    setEditableSections([]);
+                  };
+                  
+                  const updateSection = (index, field, value) => {
+                    setEditableSections(prev => {
+                      const updated = [...prev];
+                      if (updated[index]) {
+                        if (field === 'title') {
+                          updated[index] = { ...updated[index], title: value };
+                        } else if (field === 'content') {
+                          updated[index] = { ...updated[index], content: value };
+                        }
+                      }
+                      return updated;
+                    });
+                  };
+                  
+                  const saveInlineDescription = async () => {
+                    setIsSavingDescription(true);
+                    try {
+                      const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+                      const modelUpper = String(selected?.model || selected?.mode || '').toUpperCase();
+                      // Merge sections back into description format (keeps ** marks)
+                      const nextDescription = mergeDescriptionSections(editableSections);
+                      
+                      // Update local state first
+                      setSelected(prev => ({ ...prev, description: nextDescription }));
+                      setRows(prevRows => prevRows.map(row => {
+                        const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                        if (String(rowSceneNumber) === String(sceneNumber)) {
+                          return { ...row, description: nextDescription };
+                        }
+                        return row;
+                      }));
+                      
+                      // Call update-text API
+                      try {
+                        const sessionId = localStorage.getItem('session_id');
+                        const token = localStorage.getItem('token');
+                        if (!sessionId || !token) throw new Error('Missing session_id or token');
+                        
+                        // Load session snapshot
+                        const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                        });
+                        const sessText = await sessionResp.text();
+                        let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
+                        if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
+                        const rawSession = sessJson?.session_data || sessJson?.session || {};
+                        const sessionForBody = { ...rawSession, session_id: sessionId, user_id: token };
+                        const rawUser = sessJson?.user_data || rawSession?.user_data || rawSession?.user || {};
+                        const user = { ...rawUser, id: token, user_id: token };
+                        
+                        const scriptsSource = Array.isArray(sessionForBody?.scripts) ? sessionForBody.scripts : [];
+                        const primaryScript = scriptsSource[0] || {};
+                        const originalUserquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+                        const scriptVersion = primaryScript?.version || sessionForBody?.version || 'v1';
+                        const airesponseSource = Array.isArray(primaryScript?.airesponse)
+                          ? primaryScript.airesponse.map((item) => (item && typeof item === 'object' ? { ...item } : item))
+                          : [];
+                        
+                        // Update the specific scene's description
+                        const airesponse = airesponseSource.map((scene, idx) => {
+                          if (!scene || typeof scene !== 'object') return scene;
+                          const sceneNumberInArray =
+                            scene?.scene_number ??
+                            scene?.scene_no ??
+                            scene?.sceneNo ??
+                            scene?.scene ??
+                            (idx + 1);
+                          if (Number(sceneNumberInArray) === Number(sceneNumber)) {
+                            return { ...scene, desc: nextDescription, description: nextDescription };
+                          }
+                          return { ...scene };
+                        });
+                        
+                        const requestBody = {
+                          user,
+                          session: sessionForBody,
+                          changed_script: {
+                            userquery: originalUserquery,
+                            airesponse: airesponse,
+                            version: String(scriptVersion || 'v1')
+                          }
+                        };
+                        
+                        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+                        });
+                        const txt = await resp.text(); let data; try { data = JSON.parse(txt); } catch(_) { data = txt; }
+                        if (!resp.ok || resp.status !== 200) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+                        
+                        // Refresh the data
+                        await refreshLoad(sceneNumber);
+                      } catch (err) {
+                        console.warn('update-text description failed:', err);
+                        alert('Failed to save description. Please try again.');
+                      }
+                      
+                      setIsDescriptionEditing(false);
+                      setDescriptionSceneIndex(null);
+                      setEditableSections([]);
+                    } catch (err) {
+                      console.error('Error saving description:', err);
+                      alert('Failed to save description. Please try again.');
+                    } finally {
+                      setIsSavingDescription(false);
                     }
-                  }}
-                />
+                  };
+                  
+                  return (
+                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative w-full">
+                      {/* Loading Overlay */}
+                      {isSavingDescription && (
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
+                          <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
+                            <div className="w-16 h-16 mx-auto">
+                              <video
+                                src={LoadingAnimationVideo}
+                                autoPlay
+                                loop
+                                muted
+                                playsInline
+                                className="w-full h-full object-contain"
+                              />
+                            </div>
+                            <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
+                            <p className="text-xs text-gray-500">Please wait...</p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-gray-800">Description</h4>
+                        {isInlineEditing ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                              onClick={cancelInlineEditing}
+                              disabled={isSavingDescription}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={saveInlineDescription}
+                              disabled={isSavingDescription}
+                              className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                              {isSavingDescription ? (
+                                <>
+                                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  <span>Saving...</span>
+                                </>
+                              ) : (
+                                'Save'
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={startInlineEditing}
+                            className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      {isInlineEditing ? (
+                        <div className="space-y-4">
+                          {editableSections.map((section, index) => {
+                            if (section.type === 'section') {
+                              return (
+                                <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                  <div>
+                                    <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Title</label>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    value={section.title || ''}
+                                    onChange={(e) => updateSection(index, 'title', e.target.value)}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm font-semibold text-gray-800"
+                                    placeholder="Enter title"
+                                    disabled={isSavingDescription}
+                                  />
+                                  <div>
+                                    <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Description</label>
+                <textarea
+                                      value={section.content || ''}
+                                      onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                      rows={3}
+                                      placeholder="Enter description"
+                                      disabled={isSavingDescription}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            } else {
+                              return (
+                                <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                  <div>
+                                    <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">Text Content</label>
+                                  </div>
+                                  <textarea
+                                    value={section.content || ''}
+                                    onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                    rows={2}
+                                    placeholder="Enter text content"
+                                    disabled={isSavingDescription}
+                                  />
+                                </div>
+                              );
+                            }
+                          })}
+                        </div>
+                      ) : (
+                        <div
+                          onDoubleClick={startInlineEditing}
+                          className={`w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 min-h-[100px] cursor-pointer ${isSavingDescription ? 'opacity-60' : ''}`}
+                        >
+                          {sceneDescription ? (
+                            formatDescription(sceneDescription) || (
+                              <p className="text-sm text-gray-600 whitespace-pre-wrap">{sceneDescription}</p>
+                            )
+                          ) : (
+                            <p className="text-sm text-gray-400 italic">Double-click to add description</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   );
                 })()}
               </div>
@@ -7147,12 +9033,13 @@ const getOrderedRefs = useCallback((row) => {
             {(() => {
               const modelUpper = String(selected?.model || '').toUpperCase();
               const isVEO3 = modelUpper === 'VEO3';
+              const isSoraPlotlyAnchor = modelUpper === 'SORA' || modelUpper === 'PLOTLY' || modelUpper === 'ANCHOR';
               const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
               
               const sceneOptions = sceneAdvancedOptions[sceneNumber] || {
                 logoNeeded: false,
                 voiceUrl: '',
-                voiceOption: 'male', // Default to "male"
+                voiceOption: PRESET_VOICE_OPTIONS.male[0]?.key || 'american_male', // Default to first male voice key
                 transitionPreset: null,
                 transitionCustom: null,
                 customDescription: '',
@@ -7220,6 +9107,242 @@ const getOrderedRefs = useCallback((row) => {
                     
                     {showAdvancedOptions[sceneNumber]?.main && (
                       <div className="mt-3 space-y-3">
+                        {/* Description Section - Only for SORA, PLOTLY, and ANCHOR */}
+                        {(() => {
+                          const modelUpper = String(selected?.model || '').toUpperCase();
+                          const isSoraPlotlyAnchor = modelUpper === 'SORA' || modelUpper === 'PLOTLY' || modelUpper === 'ANCHOR';
+                          
+                          if (!isSoraPlotlyAnchor) return null;
+                          
+                          const sceneDescription = selected?.description || '';
+                          const currentSceneIndex = selected?.index ?? 0;
+                          const isInlineEditing = isDescriptionEditing && descriptionSceneIndex === currentSceneIndex;
+                          
+                          const startInlineEditing = () => {
+                            const sections = parseDescription(sceneDescription);
+                            setEditableSections(sections.length > 0 ? sections : [{ type: 'text', content: sceneDescription }]);
+                            setIsDescriptionEditing(true);
+                            setDescriptionSceneIndex(currentSceneIndex);
+                          };
+                          
+                          const cancelInlineEditing = () => {
+                            setIsDescriptionEditing(false);
+                            setDescriptionSceneIndex(null);
+                            setEditableSections([]);
+                          };
+                          
+                          const updateSection = (index, field, value) => {
+                            setEditableSections(prev => {
+                              const updated = [...prev];
+                              if (updated[index]) {
+                                if (field === 'title') {
+                                  updated[index] = { ...updated[index], title: value };
+                                } else if (field === 'content') {
+                                  updated[index] = { ...updated[index], content: value };
+                                }
+                              }
+                              return updated;
+                            });
+                          };
+                          
+                          const saveInlineDescription = async () => {
+                            setIsSavingDescription(true);
+                            try {
+                              const sceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+                              const modelUpper = String(selected?.model || selected?.mode || '').toUpperCase();
+                              const nextDescription = mergeDescriptionSections(editableSections);
+                              
+                              setSelected(prev => ({ ...prev, description: nextDescription }));
+                              setRows(prevRows => prevRows.map(row => {
+                                const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+                                if (String(rowSceneNumber) === String(sceneNumber)) {
+                                  return { ...row, description: nextDescription };
+                                }
+                                return row;
+                              }));
+                              
+                              try {
+                                const sessionId = localStorage.getItem('session_id');
+                                const token = localStorage.getItem('token');
+                                if (!sessionId || !token) throw new Error('Missing session_id or token');
+                                
+                                const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                                });
+                                const sessText = await sessionResp.text();
+                                let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
+                                if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
+                                const rawSession = sessJson?.session_data || sessJson?.session || {};
+                                const sessionForBody = { ...rawSession, session_id: sessionId, user_id: token };
+                                const rawUser = sessJson?.user_data || rawSession?.user_data || rawSession?.user || {};
+                                const user = { ...rawUser, id: token, user_id: token };
+                                
+                                const scriptsSource = Array.isArray(sessionForBody?.scripts) ? sessionForBody.scripts : [];
+                                const primaryScript = scriptsSource[0] || {};
+                                const originalUserquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+                                const scriptVersion = primaryScript?.version || sessionForBody?.version || 'v1';
+                                const airesponseSource = Array.isArray(primaryScript?.airesponse)
+                                  ? primaryScript.airesponse.map((item) => (item && typeof item === 'object' ? { ...item } : item))
+                                  : [];
+                                
+                                const airesponse = airesponseSource.map((scene, idx) => {
+                                  if (!scene || typeof scene !== 'object') return scene;
+                                  const sceneNumberInArray =
+                                    scene?.scene_number ??
+                                    scene?.scene_no ??
+                                    scene?.sceneNo ??
+                                    scene?.scene ??
+                                    (idx + 1);
+                                  if (Number(sceneNumberInArray) === Number(sceneNumber)) {
+                                    return { ...scene, desc: nextDescription, description: nextDescription };
+                                  }
+                                  return { ...scene };
+                                });
+                                
+                                const requestBody = {
+                                  user,
+                                  session: sessionForBody,
+                                  changed_script: {
+                                    userquery: originalUserquery,
+                                    airesponse: airesponse,
+                                    version: String(scriptVersion || 'v1')
+                                  }
+                                };
+                                
+                                const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+                                });
+                                const txt = await resp.text(); let data; try { data = JSON.parse(txt); } catch(_) { data = txt; }
+                                if (!resp.ok || resp.status !== 200) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
+                                
+                                await refreshLoad(sceneNumber);
+                              } catch (err) {
+                                console.warn('update-text description failed:', err);
+                                alert('Failed to save description. Please try again.');
+                              }
+                              
+                              setIsDescriptionEditing(false);
+                              setDescriptionSceneIndex(null);
+                              setEditableSections([]);
+                            } catch (err) {
+                              console.error('Error saving description:', err);
+                              alert('Failed to save description. Please try again.');
+                            } finally {
+                              setIsSavingDescription(false);
+                            }
+                          };
+                          
+                          return (
+                            <div className="border rounded-lg p-4 bg-white">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-sm font-semibold text-gray-800">Description</h4>
+                                {isInlineEditing ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      onClick={cancelInlineEditing}
+                                      disabled={isSavingDescription}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={saveInlineDescription}
+                                      disabled={isSavingDescription}
+                                      className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                    >
+                                      {isSavingDescription ? (
+                                        <>
+                                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                          <span>Saving...</span>
+                                        </>
+                                      ) : (
+                                        'Save'
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={startInlineEditing}
+                                    className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                              {isInlineEditing ? (
+                                <div className="space-y-4">
+                                  {editableSections.map((section, index) => {
+                                    if (section.type === 'section') {
+                                      return (
+                                        <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                          <div>
+                                            <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Title</label>
+                                          </div>
+                                          <input
+                                            type="text"
+                                            value={section.title || ''}
+                                            onChange={(e) => updateSection(index, 'title', e.target.value)}
+                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm font-semibold text-gray-800"
+                                            placeholder="Enter title"
+                                            disabled={isSavingDescription}
+                                          />
+                                          <div>
+                                            <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Description</label>
+                                            <textarea
+                                              value={section.content || ''}
+                                              onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                              className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                              rows={3}
+                                              placeholder="Enter description"
+                                              disabled={isSavingDescription}
+                                            />
+                                          </div>
+                                        </div>
+                                      );
+                                    } else {
+                                      return (
+                                        <div key={index} className="border border-gray-300 rounded-lg p-4 bg-white space-y-3">
+                                          <div>
+                                            <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">Text Content</label>
+                                          </div>
+                                          <textarea
+                                            value={section.content || ''}
+                                            onChange={(e) => updateSection(index, 'content', e.target.value)}
+                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                            rows={2}
+                                            placeholder="Enter text content"
+                                            disabled={isSavingDescription}
+                                          />
+                                        </div>
+                                      );
+                                    }
+                                  })}
+                                </div>
+                              ) : (
+                                <div
+                                  onDoubleClick={startInlineEditing}
+                                  className={`w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 min-h-[100px] cursor-pointer ${isSavingDescription ? 'opacity-60' : ''}`}
+                                >
+                                  {sceneDescription ? (
+                                    formatDescription(sceneDescription) || (
+                                      <p className="text-sm text-gray-600 whitespace-pre-wrap">{sceneDescription}</p>
+                                    )
+                                  ) : (
+                                    <p className="text-sm text-gray-400 italic">Double-click to add description</p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        
                         {/* Logo and Voiceover Section */}
                         <div className="border rounded-lg p-4 bg-white">
                           <button
@@ -7409,16 +9532,38 @@ const getOrderedRefs = useCallback((row) => {
                                 </div>
                               </div>
                               
-                              {/* Voice Option (Female / Male) - always visible */}
+                              {/* Voice Option - Preset Voices */}
                                 <div>
                                   <label className="text-sm font-medium text-gray-700 mb-2 block">Voice Option</label>
-                                  <div className="flex gap-4">
+                                  {(() => {
+                                    const currentKey = sceneOptions.voiceOption || '';
+                                    let selectedGender = 'male';
+                                    
+                                    // Determine current gender based on selected voice key
+                                    if (PRESET_VOICE_OPTIONS.female.some(v => v.key === currentKey)) {
+                                      selectedGender = 'female';
+                                    } else if (PRESET_VOICE_OPTIONS.male.some(v => v.key === currentKey)) {
+                                      selectedGender = 'male';
+                                    } else {
+                                      // Default to male if no valid key or old format
+                                      selectedGender = 'male';
+                                    }
+                                    
+                                    return (
+                                      <>
+                                        {/* Gender Selection */}
+                                        <div className="flex gap-4 mb-3">
                                     <label className="flex items-center gap-2 cursor-pointer">
                                       <input
                                         type="radio"
-                                        name={`voiceOption-${sceneNumber}`}
-                                        checked={sceneOptions.voiceOption === 'female'}
-                                        onChange={() => updateSceneOption('voiceOption', 'female')}
+                                              name={`voiceGender-${sceneNumber}`}
+                                              checked={selectedGender === 'female'}
+                                              onChange={() => {
+                                                // When switching to female, select first female voice if current is male
+                                                if (selectedGender === 'male' && PRESET_VOICE_OPTIONS.female.length > 0) {
+                                                  updateSceneOption('voiceOption', PRESET_VOICE_OPTIONS.female[0].key);
+                                                }
+                                              }}
                                         className="w-4 h-4 text-[#13008B]"
                                       />
                                       <span className="text-sm text-gray-700">Female</span>
@@ -7426,14 +9571,43 @@ const getOrderedRefs = useCallback((row) => {
                                     <label className="flex items-center gap-2 cursor-pointer">
                                       <input
                                         type="radio"
-                                        name={`voiceOption-${sceneNumber}`}
-                                        checked={sceneOptions.voiceOption === 'male' || !sceneOptions.voiceOption || sceneOptions.voiceOption === ''}
-                                        onChange={() => updateSceneOption('voiceOption', 'male')}
+                                              name={`voiceGender-${sceneNumber}`}
+                                              checked={selectedGender === 'male'}
+                                              onChange={() => {
+                                                // When switching to male, select first male voice if current is female
+                                                if (selectedGender === 'female' && PRESET_VOICE_OPTIONS.male.length > 0) {
+                                                  updateSceneOption('voiceOption', PRESET_VOICE_OPTIONS.male[0].key);
+                                                }
+                                              }}
                                         className="w-4 h-4 text-[#13008B]"
                                       />
                                       <span className="text-sm text-gray-700">Male</span>
                                     </label>
                                   </div>
+                                        
+                                        {/* Preset Voice List - 3 columns */}
+                                        <div className="grid grid-cols-3 gap-2">
+                                          {PRESET_VOICE_OPTIONS[selectedGender].map((voice) => {
+                                            const isSelected = sceneOptions.voiceOption === voice.key;
+                                            return (
+                                              <button
+                                                key={voice.key}
+                                                type="button"
+                                                onClick={() => updateSceneOption('voiceOption', voice.key)}
+                                                className={`text-left px-3 py-2 rounded-lg border transition-all ${
+                                                  isSelected
+                                                    ? 'bg-[#13008B] text-white border-[#13008B]'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:border-[#13008B] hover:bg-[#F6F4FF]'
+                                                }`}
+                                              >
+                                                <span className="text-sm font-medium">{voice.name}</span>
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
                                 </div>
 
                             </div>
@@ -7458,8 +9632,8 @@ const getOrderedRefs = useCallback((row) => {
                           </p>
                         </div>
                         
-                        {/* Transitions Section */}
-                        {modelUpper !== 'VEO3' && (
+                        {/* Transitions Section - Hidden for SORA, PLOTLY, and ANCHOR (shown directly in place of description) */}
+                        {modelUpper !== 'VEO3' && !isSoraPlotlyAnchor && (
                           <div className="border rounded-lg p-4 bg-white">
                             <button
                               type="button"
@@ -7472,9 +9646,193 @@ const getOrderedRefs = useCallback((row) => {
                             
                             {isTransitionsOpen && (
                               <div className="mt-3 space-y-3">
-                                {/* Preset Tabs */}
+                                {/* Design Your Own Section - First */}
+                                <div className="border rounded-lg p-3 bg-gray-50">
+                                  <label className="text-sm font-medium text-gray-700 mb-3 block">Design Your Own</label>
+                                  {(() => {
+                                    // Get animation_desc from the scene data (from images object)
+                                    const currentRow = rows.find((r) => (r?.scene_number || r?.sceneNumber) === sceneNumber);
+                                    
+                                    // Try to get animation_desc from imageVersionData structure
+                                    let animationDesc = {};
+                                    if (currentRow?.imageVersionData) {
+                                      const imageVersionData = currentRow.imageVersionData;
+                                      const versionKey = getLatestVersionKey(imageVersionData);
+                                      const verObj = imageVersionData[versionKey] || {};
+                                      animationDesc = verObj?.animation_desc || {};
+                                    }
+                                    
+                                    // Also check selected object
+                                    if (Object.keys(animationDesc).length === 0 && selected?.imageVersionData) {
+                                      const imageVersionData = selected.imageVersionData;
+                                      const versionKey = getLatestVersionKey(imageVersionData);
+                                      const verObj = imageVersionData[versionKey] || {};
+                                      animationDesc = verObj?.animation_desc || {};
+                                    }
+                                    
+                                    // Fallback to row or selected directly
+                                    if (Object.keys(animationDesc).length === 0) {
+                                      animationDesc = currentRow?.animation_desc || selected?.animation_desc || {};
+                                    }
+                                    
+                                    // Use animation_desc if available and has content, otherwise use customPreservationNotes
+                                    const hasAnimationDesc = animationDesc && typeof animationDesc === 'object' && Object.keys(animationDesc).length > 0;
+                                    const currentNotes = hasAnimationDesc ? animationDesc : (sceneOptions.customPreservationNotes || {});
+                                    
+                                    return (
+                                          <div className="space-y-3">
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Lighting</label>
+                                              <input
+                                                type="text"
+                                            value={currentNotes?.lighting || ''}
+                                                onChange={(e) => {
+                                                  updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  lighting: e.target.value
+                                                  });
+                                              // Clear preset selection when user starts typing
+                                                  if (e.target.value.trim().length > 0) {
+                                                    updateSceneOption('transitionPreset', null);
+                                                    updateSceneOption('transitionCustom', 'custom');
+                                                  }
+                                                }}
+                                                placeholder="e.g., Clean minimal lighting, flat graphic style"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Style/Mood</label>
+                                              <input
+                                                type="text"
+                                            value={currentNotes?.style_mood || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  style_mood: e.target.value
+                                                })}
+                                                placeholder="e.g., Professional presentation mood"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
+                                              <input
+                                                type="text"
+                                            value={currentNotes?.transition_type || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  transition_type: e.target.value
+                                                })}
+                                                placeholder="e.g., Whole-frame instant cut"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
+                                              <textarea
+                                            value={currentNotes?.scene_description || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  scene_description: e.target.value
+                                                })}
+                                                placeholder="e.g., Flat graphic layouts displayed in sequence"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
+                                              <textarea
+                                            value={currentNotes?.subject_description || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  subject_description: e.target.value
+                                                })}
+                                                placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
+                                              <textarea
+                                            value={currentNotes?.action_specification || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  action_specification: e.target.value
+                                                })}
+                                                placeholder="e.g., Instant cut transition between static compositions"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
+                                              <textarea
+                                            value={currentNotes?.content_modification || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  content_modification: e.target.value
+                                                })}
+                                                placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Camera Specifications</label>
+                                              <input
+                                                type="text"
+                                            value={currentNotes?.camera_specifications || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  camera_specifications: e.target.value
+                                                })}
+                                                placeholder="e.g., Static camera with subtle slow push-in"
+                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                              />
+                                            </div>
+                                            <div>
+                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Geometric Preservation</label>
+                                              <textarea
+                                            value={currentNotes?.geometric_preservation || ''}
+                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                  ...sceneOptions.customPreservationNotes,
+                                                  geometric_preservation: e.target.value
+                                                })}
+                                                placeholder="e.g., All elements locked, frozen, preserved in exact positions"
+                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
+                                              />
+                                            </div>
+                                          </div>
+                                    );
+                                  })()}
+
+                                        {/* Save this preset */}
+                                          <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
+                                            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                                              <input
+                                                type="checkbox"
+                                                checked={sceneOptions.rememberCustomPreset || false}
+                                                onChange={(e) => updateSceneOption('rememberCustomPreset', e.target.checked)}
+                                                className="w-4 h-4 text-[#13008B]"
+                                              />
+                                            <span>Save this preset</span>
+                                            </label>
+                                            {sceneOptions.rememberCustomPreset && (
+                                              <div className="mt-1">
+                                                <label className="text-xs font-medium text-gray-700 mb-1 block">Preset Name</label>
+                                                <input
+                                                  type="text"
+                                                  value={sceneOptions.customPresetName || ''}
+                                                  onChange={(e) => updateSceneOption('customPresetName', e.target.value)}
+                                                  placeholder="Enter a name for this preset"
+                                                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                                />
+                                              </div>
+                                            )}
+                                          </div>
+                                      </div>
+                                
+                                {/* Select a Preset Section - Second */}
                                 <div className={`border rounded-lg p-3 bg-gray-50 ${isCustomPresetMode ? 'opacity-50 pointer-events-none' : ''}`}>
-                                  <label className="text-sm font-medium text-gray-700 mb-3 block">Select Preset</label>
+                                  <label className="text-sm font-medium text-gray-700 mb-3 block">Select a Preset</label>
                                   {transitionPresets.length > 0 ? (
                                     <div className="flex flex-wrap gap-2">
                                       {transitionPresets.map((preset, idx) => {
@@ -7541,9 +9899,9 @@ const getOrderedRefs = useCallback((row) => {
                                                       <div><strong>Content Modification:</strong> <span className="text-gray-700">{preset.preservation_notes.content_modification || 'N/A'}</span></div>
                                                       <div><strong>Camera Specifications:</strong> <span className="text-gray-700">{preset.preservation_notes.camera_specifications || 'N/A'}</span></div>
                                                       <div><strong>Geometric Preservation:</strong> <span className="text-gray-700">{preset.preservation_notes.geometric_preservation || 'N/A'}</span></div>
-                                                    </div>
-                                                  )}
-                                                </div>
+                                    </div>
+                                  )}
+                                </div>
                                               )}
                                             </button>
                                           </div>
@@ -7553,231 +9911,8 @@ const getOrderedRefs = useCallback((row) => {
                                   ) : (
                                     <div className="text-sm text-gray-500 p-2 border rounded-lg bg-gray-50">
                                       No presets available. Loading...
-                                    </div>
-                                  )}
-                                </div>
-                                
-                                {/* Design Your Own Accordion */}
-                                <div className="border rounded-lg p-3 bg-gray-50">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const isCurrentlyOpen = showAdvancedOptions[sceneNumber]?.designYourOwn;
-                                      toggleAdvancedOptions('designYourOwn');
-                                      // Set transitionCustom to 'custom' and clear preset when opening Design Your Own
-                                      if (!isCurrentlyOpen) {
-                                        updateSceneOption('transitionCustom', 'custom');
-                                        updateSceneOption('transitionPreset', null);
-                                      }
-                                    }}
-                                    className="flex w-full items-center justify-between text-sm font-medium text-gray-700 mb-2"
-                                  >
-                                    <span>Design Your Own</span>
-                                    <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedOptions[sceneNumber]?.designYourOwn ? 'rotate-180' : ''}`} />
-                                  </button>
-                                  {showAdvancedOptions[sceneNumber]?.designYourOwn && (
-                                    <div className="mt-3 space-y-3">
-                                      {/* Tabs */}
-                                      <div className="flex border-b border-gray-200">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'describe' }));
-                                            // Clear preset selection when switching to Design Your Own
-                                            updateSceneOption('transitionPreset', null);
-                                            updateSceneOption('transitionCustom', 'custom');
-                                          }}
-                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${(designYourOwnTab[sceneNumber] || 'describe') === 'describe'
-                                              ? 'border-[#13008B] text-[#13008B]'
-                                              : 'border-transparent text-gray-500 hover:text-gray-700'
-                                          }`}
-                                        >
-                                          Describe it
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setDesignYourOwnTab(prev => ({ ...prev, [sceneNumber]: 'fill' }));
-                                            // Clear preset selection when switching to Design Your Own
-                                            updateSceneOption('transitionPreset', null);
-                                            updateSceneOption('transitionCustom', 'custom');
-                                          }}
-                                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${designYourOwnTab[sceneNumber] === 'fill'
-                                              ? 'border-[#13008B] text-[#13008B]'
-                                              : 'border-transparent text-gray-500 hover:text-gray-700'
-                                          }`}
-                                        >
-                                          Fill the points
-                                        </button>
-                                      </div>
-                                      
-                                      {/* Tab Content */}
-                                      <div className="mt-3">
-                                        {/* Describe it Tab */}
-                                        {(designYourOwnTab[sceneNumber] || 'describe') === 'describe' && (
-                                          <div>
-                                            <label className="text-sm font-medium text-gray-700 mb-2 block">Describe Your Transition</label>
-                                            <textarea
-                                              value={sceneOptions.customDescription || ''}
-                                              onChange={(e) => updateSceneOption('customDescription', e.target.value)}
-                                              placeholder="Describe how you want the transition to work..."
-                                              className="w-full h-32 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                            />
-                                          </div>
-                                        )}
-                                        
-                                        {/* Fill the points Tab */}
-                                        {designYourOwnTab[sceneNumber] === 'fill' && (
-                                          <div className="space-y-3">
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Lighting</label>
-                                              <input
-                                                type="text"
-                                                value={sceneOptions.customPreservationNotes?.lighting || ''}
-                                                onChange={(e) => {
-                                                  updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  lighting: e.target.value
-                                                  });
-                                                  // Clear preset selection when user starts typing in Design Your Own
-                                                  if (e.target.value.trim().length > 0) {
-                                                    updateSceneOption('transitionPreset', null);
-                                                    updateSceneOption('transitionCustom', 'custom');
-                                                  }
-                                                }}
-                                                placeholder="e.g., Clean minimal lighting, flat graphic style"
-                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Style/Mood</label>
-                                              <input
-                                                type="text"
-                                                value={sceneOptions.customPreservationNotes?.style_mood || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  style_mood: e.target.value
-                                                })}
-                                                placeholder="e.g., Professional presentation mood"
-                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
-                                              <input
-                                                type="text"
-                                                value={sceneOptions.customPreservationNotes?.transition_type || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  transition_type: e.target.value
-                                                })}
-                                                placeholder="e.g., Whole-frame instant cut"
-                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
-                                              <textarea
-                                                value={sceneOptions.customPreservationNotes?.scene_description || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  scene_description: e.target.value
-                                                })}
-                                                placeholder="e.g., Flat graphic layouts displayed in sequence"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
-                                              <textarea
-                                                value={sceneOptions.customPreservationNotes?.subject_description || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  subject_description: e.target.value
-                                                })}
-                                                placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
-                                              <textarea
-                                                value={sceneOptions.customPreservationNotes?.action_specification || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  action_specification: e.target.value
-                                                })}
-                                                placeholder="e.g., Instant cut transition between static compositions"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
-                                              <textarea
-                                                value={sceneOptions.customPreservationNotes?.content_modification || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  content_modification: e.target.value
-                                                })}
-                                                placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Camera Specifications</label>
-                                              <input
-                                                type="text"
-                                                value={sceneOptions.customPreservationNotes?.camera_specifications || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  camera_specifications: e.target.value
-                                                })}
-                                                placeholder="e.g., Static camera with subtle slow push-in"
-                                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Geometric Preservation</label>
-                                              <textarea
-                                                value={sceneOptions.customPreservationNotes?.geometric_preservation || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  geometric_preservation: e.target.value
-                                                })}
-                                                placeholder="e.g., All elements locked, frozen, preserved in exact positions"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* Save this preset */}
-                                          <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
-                                            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                                              <input
-                                                type="checkbox"
-                                                checked={sceneOptions.rememberCustomPreset || false}
-                                                onChange={(e) => updateSceneOption('rememberCustomPreset', e.target.checked)}
-                                                className="w-4 h-4 text-[#13008B]"
-                                              />
-                                            <span>Save this preset</span>
-                                            </label>
-                                            {sceneOptions.rememberCustomPreset && (
-                                              <div className="mt-1">
-                                                <label className="text-xs font-medium text-gray-700 mb-1 block">Preset Name</label>
-                                                <input
-                                                  type="text"
-                                                  value={sceneOptions.customPresetName || ''}
-                                                  onChange={(e) => updateSceneOption('customPresetName', e.target.value)}
-                                                  placeholder="Enter a name for this preset"
-                                                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                                />
-                                              </div>
-                                            )}
-                                          </div>
-                                      </div>
-                                    </div>
-                                  )}
+                              </div>
+                            )}
                                 </div>
                               </div>
                             )}
@@ -7814,15 +9949,15 @@ const getOrderedRefs = useCallback((row) => {
                     const imgs = orderedSceneImages;
                     const imageEntries = buildImageEntries(imgs, r?.imageFrames);
                     
-                    // Get current version from images object
+                    // Get latest version from images object
                     const imageVersionData = r?.imageVersionData || null;
-                    const imagesCurrentVersion = imageVersionData?.current_version || imageVersionData?.currentVersion || r?.current_version || 'v1';
+                    const imagesCurrentVersion = imageVersionData ? getLatestVersionKey(imageVersionData) : 'v1';
                     
                     
-                    // Get avatar URLs from current version of image object for VEO3 scenes
+                    // Get avatar URLs from latest version of image object for VEO3 scenes
                     const avatarUrlsFromVersion5 = getAvatarUrlsFromImageVersion(
                       imageVersionData,
-                      r?.current_version || 'v1',
+                      imagesCurrentVersion,
                       modelUpper
                     );
                     const finalAvatarUrls5 = avatarUrlsFromVersion5.length > 0 
@@ -7846,7 +9981,7 @@ const getOrderedRefs = useCallback((row) => {
                       imageVersionData: imageVersionData,
                       imageFrames: Array.isArray(r?.imageFrames) ? r.imageFrames : [],
                       avatar_urls: finalAvatarUrls5,
-                      current_version: r?.current_version || 'v1',
+                      current_version: imagesCurrentVersion,
                       isEditable: !!r?.isEditable
                     });
                   }}
@@ -7867,12 +10002,12 @@ const getOrderedRefs = useCallback((row) => {
                         >
                           {first && (
                             <div className="w-full h-full bg-black flex items-center justify-center">
-                              <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" />
+                              <img src={first} alt={`scene-${r.scene_number}-1`} className="max-w-full max-h-full object-contain" height={r?.imageDimensions?.height || r?.image_dimensions?.height || undefined} />
                             </div>
                           )}
                           {hasSecond && (
                             <div className="w-full h-full bg-black flex items-center justify-center">
-                              <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" />
+                              <img src={second} alt={`scene-${r.scene_number}-2`} className="max-w-full max-h-full object-contain" height={r?.imageDimensions?.height || r?.image_dimensions?.height || undefined} />
                             </div>
                           )}
                         </div>
@@ -7928,6 +10063,10 @@ const getOrderedRefs = useCallback((row) => {
           onClose={() => {
             setShowChartEditor(false);
             setChartEditorData(null);
+          }}
+          onSave={async () => {
+            // Refresh the image list to show updated chart
+            await refreshLoad();
           }}
         />
       )}
@@ -8189,6 +10328,7 @@ const getOrderedRefs = useCallback((row) => {
                             src={avatar.url} 
                             alt={avatar.name}
                             className="w-full h-32 object-contain"
+                            height={avatar?.image_dimensions?.height || avatar?.imageDimensions?.height || undefined}
                           />
                         </div>
                         <div className="bg-gray-50 px-2 py-1 text-center border-t border-gray-200">
@@ -8283,6 +10423,19 @@ const getOrderedRefs = useCallback((row) => {
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-[#13008B]">Choose Background Image</h3>
+              <div className="flex items-center gap-4">
+                {/* Convert Colors Toggle */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className="text-sm text-gray-700">Convert Colors:</span>
+                  <input
+                    type="checkbox"
+                    checked={convertColors}
+                    onChange={(e) => setConvertColors(e.target.checked)}
+                    disabled={isUploadingBackground}
+                    className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                  />
+                  <span className="text-sm text-gray-600">{convertColors ? 'On' : 'Off'}</span>
+                </label>
             <button
               onClick={() => {
                 if (!isUploadingBackground) {
@@ -8299,6 +10452,7 @@ const getOrderedRefs = useCallback((row) => {
             >
                 Close
             </button>
+              </div>
               </div>
 
             {/* Frame Selection at Top - Always show opening and closing frame checkboxes */}
@@ -8377,6 +10531,7 @@ const getOrderedRefs = useCallback((row) => {
                 </div>
               ) : (() => {
                 // Extract assets based on selected tab
+                // Always start with empty array to prevent accumulation
                 let list = [];
                 
                 const inferAspectFromUrl = (url = '') => {
@@ -8399,27 +10554,49 @@ const getOrderedRefs = useCallback((row) => {
                   return normalizedValue === normalizedTarget;
                 };
                 
-                if (assetsTab === 'preset_templates' || assetsTab === 'uploaded_templates') {
-                  const extractedAssets = extractAssetsByType(assetsData.templates, assetsTab);
-                  list = extractedAssets;
+                // Extract assets based on selected tab - each tab gets its own isolated list
+                if (assetsTab === 'preset_templates') {
+                  // Only show preset templates
+                  const extracted = extractAssetsByType(assetsData.templates, 'preset_templates');
+                  list = extracted.filter(item => (item?.assetType || '') === 'preset_templates');
+                } else if (assetsTab === 'uploaded_templates') {
+                  // Only show uploaded templates
+                  const extracted = extractAssetsByType(assetsData.templates, 'uploaded_templates');
+                  list = extracted.filter(item => (item?.assetType || '') === 'uploaded_templates');
                 } else if (assetsTab === 'uploaded_images') {
-                  const extractedAssets = extractAssetsByType(assetsData.templates, 'uploaded_images');
+                  // Show uploaded images from both flat array and templates structure
                   const flatImages = Array.isArray(assetsData.uploaded_images) ? assetsData.uploaded_images : [];
+                  const templateImages = extractAssetsByType(assetsData.templates, 'uploaded_images');
+                  
+                  // Filter template images to ensure they're actually uploaded_images type
+                  const filteredTemplateImages = templateImages.filter(item => (item?.assetType || '') === 'uploaded_images');
+                  
+                  // Combine both sources
                   const allImages = [
-                    ...extractedAssets,
+                    ...filteredTemplateImages,
                     ...flatImages.map((img, idx) => {
                       const url = typeof img === 'string' ? img : (img?.image_url || img?.url || '');
                       if (!url) return null;
                       return {
-                        id: `uploaded-img-${idx}`,
+                        id: `uploaded-img-flat-${idx}`,
                         imageUrl: url,
                         aspect: inferAspectFromUrl(url) || 'Unspecified',
                         label: 'Uploaded Image',
-                        assetType: 'uploaded_images'
+                        assetType: 'uploaded_images',
+                        raw: img
                       };
                     }).filter(Boolean)
                   ];
-                  list = allImages;
+                  
+                  // Remove duplicates based on imageUrl and ensure assetType matches
+                  const seenUrls = new Set();
+                  list = allImages.filter(item => {
+                    const url = item?.imageUrl || item?.image_url || '';
+                    if (!url || seenUrls.has(url)) return false;
+                    if ((item?.assetType || '') !== 'uploaded_images') return false;
+                    seenUrls.add(url);
+                    return true;
+                  });
                 } else if (assetsTab === 'documents_images') {
                   const flatArray = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
                   list = flatArray.map((item, idx) => {
@@ -8433,6 +10610,8 @@ const getOrderedRefs = useCallback((row) => {
                       assetType: assetsTab
                     };
                   }).filter(Boolean);
+                  // Ensure all items match the tab
+                  list = list.filter(item => (item?.assetType || '') === 'documents_images');
                 } else if (assetsTab === 'generated_images') {
                   const generatedImages = generatedImagesData.generated_images || {};
                   const allGeneratedImages = [];
@@ -8453,22 +10632,60 @@ const getOrderedRefs = useCallback((row) => {
                     }
                   });
                   
-                  list = allGeneratedImages;
+                  list = allGeneratedImages.filter(item => (item?.assetType || '') === 'generated_images');
                 }
                 
-                const emptyMessage = list.length === 0 
-                  ? `No ${assetsTab.replace('_', ' ')} found.`
-                  : '';
+                // Filter images by aspect ratio when uploading background
+                if (uploadingBackgroundSceneNumber && questionnaireAspectRatio) {
+                  const targetAspectRatio = normalizeTemplateAspectLabel(questionnaireAspectRatio);
+                  // Only filter if we have a valid aspect ratio (not 'Unspecified')
+                  if (targetAspectRatio && targetAspectRatio !== 'Unspecified') {
+                    list = list.filter(entry => {
+                      const entryAspect = entry?.aspect || inferAspectFromUrl(entry?.imageUrl || entry?.image_url || '');
+                      return matchesAspectValue(entryAspect, targetAspectRatio);
+                    });
+                  }
+                }
+                
+                // Final filter to ensure all items match the current tab
+                const finalList = list.filter(item => {
+                  const itemAssetType = item?.assetType || '';
+                  return itemAssetType === assetsTab;
+                });
                 
                 return (
                   <>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                      {list.length === 0 && (
-                        <div className="col-span-full text-sm text-gray-600">
-                          {emptyMessage}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4" key={assetsTab}>
+                      {/* Upload Box - Show for uploaded_templates and uploaded_images tabs */}
+                      {(assetsTab === 'uploaded_templates' || assetsTab === 'uploaded_images') && (
+                        <div
+                          className="rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 hover:border-[#13008B] hover:bg-gray-100 cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px]"
+                          onClick={() => {
+                            if (isUploadingBackground) return;
+                            if (assetsTab === 'uploaded_templates' && assetPptxUploadRef.current) {
+                              assetPptxUploadRef.current.click();
+                            } else if (assetsTab === 'uploaded_images' && assetImageUploadRef.current) {
+                              assetImageUploadRef.current.click();
+                            }
+                          }}
+                        >
+                          <div className="flex flex-col items-center gap-2 p-4 text-center">
+                            <Upload className="w-8 h-8 text-gray-400" />
+                            <span className="text-sm font-medium text-gray-700">
+                              {assetsTab === 'uploaded_templates' ? 'Upload PDF' : 'Upload Image'}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Click to {assetsTab === 'uploaded_templates' ? 'upload PDF' : 'upload image'}
+                            </span>
+                          </div>
                         </div>
                       )}
-                      {list.map((entry, idx) => {
+                      {finalList.length === 0 && (
+                        <div className="col-span-full text-center py-8 text-sm text-gray-600">
+                          No asset found
+                        </div>
+                      )}
+                      {finalList.map((entry, idx) => {
                         const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
                         if (!imageUrl) return null;
                         
@@ -8492,7 +10709,12 @@ const getOrderedRefs = useCallback((row) => {
                             onClick={handleClick}
                             title={entry.label || `${entry.aspect || 'Unspecified'} • ${assetsTab.replace('_', ' ')}`}
                           >
-                            <img src={imageUrl} alt={entry.label || `${assetsTab}-${idx}`} className="w-full h-28 object-cover" />
+                            <img 
+                              src={imageUrl} 
+                              alt={entry.label || `${assetsTab}-${idx}`} 
+                              className="w-full h-28 object-cover"
+                              height={entry?.raw?.base_image?.image_dimensions?.height || entry?.raw?.base_image?.imageDimensions?.height || entry?.raw?.image_dimensions?.height || entry?.raw?.imageDimensions?.height || undefined}
+                            />
                             <div className="p-2">
                               <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
                                 {entry.label || `${assetsTab.replace('_', ' ')} ${idx + 1}`}
@@ -8507,12 +10729,39 @@ const getOrderedRefs = useCallback((row) => {
               })()}
             </div>
 
-            {/* Save Button */}
+            {/* Hidden File Inputs */}
+            <input
+              type="file"
+              ref={assetImageUploadRef}
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length > 0) {
+                  handleUploadImages(files);
+                }
+              }}
+            />
+            <input
+              type="file"
+              ref={assetPptxUploadRef}
+              accept=".pdf,.pptx"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleUploadPptx(file);
+                }
+              }}
+            />
+
+            {/* Keep Default and Generate Buttons */}
             <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
               <button
                 disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
                 onClick={async () => {
-                  // Save - call upload API with selected image
+                  // Keep Default - call upload API with selected image (same as old Save)
                   if (selectedTemplateUrls.length === 0) return;
                   const imageUrl = selectedTemplateUrls[0];
                   await handleSaveBackgroundFromAsset(imageUrl);
@@ -8523,7 +10772,23 @@ const getOrderedRefs = useCallback((row) => {
                     : 'bg-[#13008B] hover:bg-blue-800'
                 }`}
               >
-                {isUploadingBackground ? 'Saving...' : 'Save'}
+                {isUploadingBackground ? 'Saving...' : 'Keep Default'}
+              </button>
+              <button
+                disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || isGeneratingFromReference || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
+                onClick={() => {
+                  // Generate - open user query popup
+                  if (selectedTemplateUrls.length === 0) return;
+                  setShowUserQueryPopup(true);
+                  setUserQuery('');
+                }}
+                className={`px-3 py-2 rounded-lg text-sm text-white ${
+                  selectedTemplateUrls.length === 0 || isUploadingBackground || isGeneratingFromReference || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700'
+                }`}
+              >
+                Generate
               </button>
             </div>
 
@@ -8571,6 +10836,126 @@ const getOrderedRefs = useCallback((row) => {
                     </div>
                     <p className="text-lg font-semibold text-[#13008B]">Uploading Background...</p>
                     <p className="text-sm text-gray-600">Please wait while we upload your background image...</p>
+                  </div>
+                </div>
+              )}
+          </div>
+        </div>
+      )}
+
+      {/* User Query Popup for Generate from Reference */}
+      {showUserQueryPopup && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[96%] max-w-2xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-[#13008B]">Enter Your Query</h3>
+              <button
+                onClick={() => {
+                  if (!isGeneratingFromReference) {
+                    setShowUserQueryPopup(false);
+                    setUserQuery('');
+                  }
+                }}
+                className="px-3 py-1.5 rounded-lg border text-sm"
+                disabled={isGeneratingFromReference}
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 flex-1 overflow-y-auto">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Describe what you want to generate from the reference image:
+                  </label>
+                  <textarea
+                    value={userQuery}
+                    onChange={(e) => setUserQuery(e.target.value)}
+                    placeholder="Enter your query here... (e.g., 'Make it more vibrant', 'Add sunset colors', 'Change to night scene')"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-[#13008B] resize-none"
+                    rows={6}
+                    disabled={isGeneratingFromReference}
+                  />
+                </div>
+                {error && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                    {error}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
+              <button
+                onClick={() => {
+                  if (!isGeneratingFromReference) {
+                    setShowUserQueryPopup(false);
+                    setUserQuery('');
+                  }
+                }}
+                disabled={isGeneratingFromReference}
+                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!userQuery.trim() || isGeneratingFromReference || selectedTemplateUrls.length === 0}
+                onClick={async () => {
+                  if (selectedTemplateUrls.length === 0 || !userQuery.trim()) return;
+                  const imageUrl = selectedTemplateUrls[0];
+                  await handleGenerateFromReference(imageUrl, userQuery);
+                }}
+                className={`px-4 py-2 rounded-lg text-sm text-white ${
+                  !userQuery.trim() || isGeneratingFromReference || selectedTemplateUrls.length === 0
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700'
+                }`}
+              >
+                {isGeneratingFromReference ? 'Generating...' : 'Save'}
+              </button>
+            </div>
+
+            {/* Loading Overlay */}
+            {isGeneratingFromReference && (
+              <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                  <div className="relative w-16 h-16">
+                    <svg className="w-16 h-16" viewBox="0 0 100 100">
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="45"
+                        stroke="#E5E7EB"
+                        strokeWidth="8"
+                        fill="none"
+                      />
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="45"
+                        stroke="#13008B"
+                        strokeWidth="8"
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeDasharray="283"
+                        strokeDashoffset="70"
+                        className="animate-spin"
+                        style={{
+                          transformOrigin: '50% 50%',
+                          animation: 'spin 1.5s linear infinite'
+                        }}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+                    </div>
+                  </div>
+                  <p className="text-lg font-semibold text-[#13008B]">Generating from Reference...</p>
+                  <p className="text-sm text-gray-600">Please wait while we generate your image...</p>
                   </div>
                 </div>
               )}

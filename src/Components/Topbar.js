@@ -1,11 +1,12 @@
 
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { FaBars, FaPlus, FaSignOutAlt } from "react-icons/fa";
 import { selectUser, selectIsAuthenticated, logoutUser } from '../redux/slices/userSlice';
 import { selectVideoJob } from '../redux/slices/videoJobSlice';
 import { useSidebar } from '../Contexts/SidebarContext';
+import useBrandAssets from '../hooks/useBrandAssets';
 
 const Topbar = () => {
      const dispatch = useDispatch();
@@ -15,6 +16,71 @@ const Topbar = () => {
      // Redux selectors
      const user = useSelector(selectUser);
      const isAuthenticated = useSelector(selectIsAuthenticated);
+     
+     // Brand profile state
+     const { getBrandProfiles, activateBrandProfile } = useBrandAssets();
+     const [profiles, setProfiles] = useState([]);
+     const [selectedProfileId, setSelectedProfileId] = useState('');
+     const [selectedIsActive, setSelectedIsActive] = useState(false);
+     const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+     
+     // Fetch profiles on mount
+     useEffect(() => {
+       const fetchProfiles = async () => {
+         const userId = localStorage.getItem('token') || '';
+         if (!userId || !isAuthenticated) return;
+         
+         setIsLoadingProfiles(true);
+         try {
+           const plist = await getBrandProfiles(userId);
+           plist.sort((a, b) => (b?.is_active ? 1 : 0) - (a?.is_active ? 1 : 0));
+           setProfiles(plist);
+           const active = plist.find(p => p.is_active);
+           const initial = active ? (active.profile_id || active.id) : (plist[0]?.profile_id || plist[0]?.id || '');
+           if (initial) {
+             setSelectedProfileId(initial);
+             setSelectedIsActive(!!active || !!plist.find(p => (p.profile_id || p.id) === initial)?.is_active);
+           }
+         } catch (error) {
+           console.error('Failed to fetch brand profiles:', error);
+         } finally {
+           setIsLoadingProfiles(false);
+         }
+       };
+       
+       if (isAuthenticated) {
+         fetchProfiles();
+       }
+     }, [isAuthenticated, getBrandProfiles]);
+     
+     const handleSelectProfile = async (profileId) => {
+       if (!profileId) return;
+       setSelectedProfileId(profileId);
+       const meta = (profiles || []).find(p => (p.profile_id || p.id) === profileId);
+       setSelectedIsActive(!!meta?.is_active);
+     };
+     
+     const handleToggleActive = async () => {
+       try {
+         const userId = localStorage.getItem('token') || '';
+         if (!userId || !selectedProfileId) return;
+         if (selectedIsActive) return; // already active
+         
+         await activateBrandProfile({ userId, profileId: selectedProfileId });
+         
+         // Refresh profiles list
+         const plist = await getBrandProfiles(userId);
+         plist.sort((a, b) => (b?.is_active ? 1 : 0) - (a?.is_active ? 1 : 0));
+         setProfiles(plist);
+         
+         const active = plist.find(p => p.is_active);
+         const newSelected = active ? (active.profile_id || active.id) : selectedProfileId;
+         setSelectedProfileId(newSelected);
+         setSelectedIsActive(!!active || selectedIsActive);
+       } catch (error) {
+         console.error('Failed to activate profile:', error);
+       }
+     };
      
      const handleLogout = async () => {
        try {
@@ -46,6 +112,49 @@ const Topbar = () => {
                <span className={videoJob.status === 'succeeded' ? 'text-green-700' : videoJob.status === 'failed' ? 'text-red-700' : 'text-[#4B3CC4]'}>
                  {videoJob.status || 'queued'} {typeof videoJob?.progress?.percent === 'number' ? `• ${videoJob.progress.percent}%` : ''}
                </span>
+             </div>
+           )}
+
+           {/* Brand Profile List and Set Active */}
+           {isAuthenticated && user && profiles.length > 0 && (
+             <div className="hidden md:flex items-center gap-3 rounded-full border border-[#E4E1FF] bg-white px-3 py-1.5 shadow-sm">
+               <div className="flex items-center gap-2">
+                 <span className="text-xs text-gray-600">Set as Active:</span>
+                 <button
+                   type="button"
+                   onClick={handleToggleActive}
+                   disabled={selectedIsActive || !selectedProfileId}
+                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                     selectedIsActive 
+                       ? 'bg-green-500' 
+                       : 'bg-gray-300'
+                   } ${!selectedProfileId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                   title={selectedIsActive ? 'Active' : 'Not Active'}
+                 >
+                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                     selectedIsActive ? 'translate-x-4' : 'translate-x-0.5'
+                   }`}></span>
+                 </button>
+               </div>
+               <div className="h-4 w-px bg-gray-300"></div>
+               <div className="flex items-center gap-2">
+                 <label className="text-xs text-gray-600 whitespace-nowrap">Profile:</label>
+                 {isLoadingProfiles ? (
+                   <span className="text-xs text-gray-500">Loading...</span>
+                 ) : (
+                   <select
+                     value={selectedProfileId}
+                     onChange={(e) => handleSelectProfile(e.target.value)}
+                     className="border border-gray-300 rounded-md px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-[#13008B] min-w-[120px]"
+                   >
+                     {(profiles || []).map((p) => (
+                       <option key={p.profile_id || p.id} value={p.profile_id || p.id}>
+                         {p.profile_name || p.website_url || (p.profile_id || p.id)}{p.is_active ? ' (Active)' : ''}
+                       </option>
+                     ))}
+                   </select>
+                 )}
+               </div>
              </div>
            )}
 
