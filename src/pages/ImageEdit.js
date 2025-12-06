@@ -431,6 +431,7 @@ const convertBoundingBoxToPercent = (bb = {}, dims = {}) => {
 
 function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = null, imageIndex = null, onFrameEditComplete = null, aspectRatioCss = '16 / 9' }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [isApplyingCrop, setIsApplyingCrop] = useState(false);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   // State management
   const [imageUrl, setImageUrl] = useState('')
@@ -462,9 +463,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [isOverlayUploading, setIsOverlayUploading] = useState(false)
   const [overlaySelected, setOverlaySelected] = useState(false)
   const [overlayOriginalBeforeBgRemoval, setOverlayOriginalBeforeBgRemoval] = useState(null)
-  // Store pending uploads (shapes and overlay images) to upload on save
-  const [pendingShapeUploads, setPendingShapeUploads] = useState(new Map()) // Map<shapeId, {blob, shape}>
-  const [pendingOverlayUploads, setPendingOverlayUploads] = useState(new Map()) // Map<overlayId, {blob, overlayLayer}>
   // Overlay layer background removal tracking
   const [overlayLayerBackgroundRemoved, setOverlayLayerBackgroundRemoved] = useState(new Map()) // Map<layerId, boolean>
   const [overlayLayerOriginalBeforeBgRemoval, setOverlayLayerOriginalBeforeBgRemoval] = useState(new Map()) // Map<layerId, {imageUrl, image}>
@@ -517,23 +515,26 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     const isPortrait9x16 = normalizedAspectRatio === '9 / 16' || normalizedAspectRatio === '9:16' || normalizedAspectRatio === '9/16';
     
     if (isPortrait9x16) {
-      // For 9:16 images, match the image container size from ImageList exactly
-      // Same dimensions as ImageList: width: '500px', maxWidth: '500px', height: '100%'
+      // For 9:16 images, match the image container size from ImageList (500px width)
+      // Let the aspect ratio determine the height naturally without maxHeight constraint
+      // This ensures the full image is visible and not cut off
       return {
         aspectRatio: normalizedAspectRatio,
         width: '500px',
         maxWidth: '500px',
-        height: '100%'
+        height: 'auto',
+        minHeight: '200px'
+        // Removed maxHeight to allow full image height
       };
     }
     
-    // For other aspect ratios (16:9), match ImageList exactly
-    // Same dimensions as ImageList: width: 'min(100%, 860px)', maxWidth: '860px', height: '100%'
+    // For other aspect ratios, use the original sizing
     return {
-      aspectRatio: normalizedAspectRatio,
-      width: 'min(100%, 860px)',
-      maxWidth: '860px',
-      height: '100%'
+    aspectRatio: normalizedAspectRatio,
+    width: 'min(100%, 860px)',
+    maxWidth: '860px',
+    maxHeight: '72vh',
+    minHeight: '200px'
     };
   }, [normalizedAspectRatio])
 
@@ -1310,51 +1311,52 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     return parts.length > 1 ? parts[1] : parts[0]
   }
 
-  // Helper to convert base64 to blob
-  const base64ToBlob = (base64DataUrl) => {
-    const arr = base64DataUrl.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new Blob([u8arr], { type: mime });
-  };
-
   const uploadCroppedOverlayLayer = useCallback(async (base64Src, layerId) => {
     if (!base64Src) return null
     try {
       setIsOverlayUploading(true)
-      
-      // Convert base64 to blob and store for later upload (on save)
-      const blob = base64ToBlob(base64Src);
-      
-      // Get the overlay layer
-      const overlayLayer = overlayLayers.find(ol => ol.id === layerId);
-      if (!overlayLayer) {
-        console.error('Overlay layer not found:', layerId);
-        return null;
+      const payload = {
+        base64_image: extractBase64Payload(base64Src)
       }
-      
-      // Store blob in pending uploads instead of uploading now
-      setPendingOverlayUploads(prev => {
-        const newMap = new Map(prev);
-        newMap.set(layerId, { blob, overlayLayer: { ...overlayLayer, imageUrl: base64Src } });
-        return newMap;
-      });
-      
-      // Return the base64 data URL as temporary URL (will be replaced with uploaded URL on save)
-      console.log('✅ Cropped overlay layer stored for upload on save');
-      return base64Src; // Return data URL as temporary URL
+      const response = await fetch(BF_REMOVE_UPLOAD_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      })
+
+      const responseText = await response.text()
+      let responseData
+      try {
+        responseData = JSON.parse(responseText)
+      } catch (_) {
+        responseData = null
+      }
+
+      if (!response.ok) {
+        throw new Error(`bf_remove upload failed: ${response.status} ${responseText}`)
+      }
+
+      const replacementUrl =
+        responseData?.image_url ||
+        responseData?.url ||
+        responseData?.link ||
+        responseData?.data?.image_url ||
+        responseData?.data?.url ||
+        responseData?.data?.link ||
+        responseData?.result?.image_url ||
+        responseData?.result?.url ||
+        responseData?.result?.link
+
+      return replacementUrl || null
     } catch (error) {
-      console.error('Failed to process cropped overlay layer:', error)
+      console.error('Failed to upload cropped overlay layer:', error)
       return null
     } finally {
       setIsOverlayUploading(false)
     }
-  }, [overlayLayers])
+  }, [])
 
   const uploadCroppedOverlay = useCallback(async (base64Src) => {
     if (!base64Src) return
@@ -1420,6 +1422,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   }, [])
 
   const applyCrop = async () => {
+    setIsApplyingCrop(true)
     try {
       // Handle overlay layer crop
       if (croppingTarget === 'overlay-layer' && selectedOverlayLayer && imageRef.current) {
@@ -1676,6 +1679,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       })
     } catch (e) {
       console.error('Crop failed', e)
+    } finally {
+      setIsApplyingCrop(false)
       setIsCropping(false)
     }
   }
@@ -2033,8 +2038,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         backgroundColor: '',
         textDecoration: 'none',
         letterSpacing: line.letterSpacing || 'normal',
-        groupId: groupId, // Add group ID for synchronized movement
-        presetId: preset.id // Store preset ID for identification
+        groupId: groupId // Add group ID for synchronized movement
       }
       
       newLayers.push(newLayer)
@@ -2111,8 +2115,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const applyTextEffect = (property, value) => {
     handleStyleChange(property, value)
   }
-
-  const saveButtonLabel = isCropping ? 'Save Cropped Image' : 'Save Changes'
 
   // Render all overlay layers
   const renderAllOverlayLayers = () => {
@@ -2191,7 +2193,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               height: '100%',
               display: 'block',
               objectFit: 'fill',
-              pointerEvents: 'auto'
+              pointerEvents: 'none'
             }}
           />
           {/* Action buttons - top-right */}
@@ -2220,24 +2222,31 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                   <Icon name="crop" size={12} />
                 </button>
               )}
-              {/* Remove background button - only show if background is not already removed */}
-              {!isCropping && overlayLayerBackgroundRemoved.get(overlayLayer.id) !== true && (
+              {/* Remove background button */}
+              {!isCropping && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     setSelectedOverlayLayer(overlayLayer)
                     setSelectedLayer(null)
                     setSelectedShape(null)
-                    removeOverlayLayerBackground()
+                    const isBgRemoved = overlayLayerBackgroundRemoved.get(overlayLayer.id)
+                    if (isBgRemoved) {
+                      undoOverlayLayerBackground()
+                    } else {
+                      removeOverlayLayerBackground()
+                    }
                     setHoveredOverlayLayerId(null)
                   }}
                   disabled={isRemovingOverlayLayerBackground}
                   className={`w-6 h-6 rounded-full flex items-center justify-center shadow-md transition ${
                     isRemovingOverlayLayerBackground
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      : 'bg-white/90 border border-rose-500 text-rose-600 hover:bg-rose-50'
+                      : overlayLayerBackgroundRemoved.get(overlayLayer.id)
+                        ? 'bg-white/90 border border-gray-500 text-gray-700 hover:bg-gray-50'
+                        : 'bg-white/90 border border-rose-500 text-rose-600 hover:bg-rose-50'
                   }`}
-                  title="Remove Background"
+                  title={overlayLayerBackgroundRemoved.get(overlayLayer.id) ? 'Restore Background' : 'Remove Background'}
                   onMouseEnter={() => {
                     if (overlayHoverTimeoutRef.current) {
                       clearTimeout(overlayHoverTimeoutRef.current)
@@ -2247,34 +2256,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 >
                   {isRemovingOverlayLayerBackground ? (
                     <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ) : overlayLayerBackgroundRemoved.get(overlayLayer.id) ? (
+                    <Icon name="undo" size={12} />
                   ) : (
                     <Icon name="imageCut" size={12} />
                   )}
-                </button>
-              )}
-              
-              {/* Restore background button - only show if background was removed */}
-              {!isCropping && overlayLayerBackgroundRemoved.get(overlayLayer.id) === true && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setSelectedOverlayLayer(overlayLayer)
-                    setSelectedLayer(null)
-                    setSelectedShape(null)
-                    undoOverlayLayerBackground()
-                    setHoveredOverlayLayerId(null)
-                  }}
-                  disabled={isRemovingOverlayLayerBackground}
-                  className="w-6 h-6 rounded-full flex items-center justify-center shadow-md transition bg-white/90 border border-gray-500 text-gray-700 hover:bg-gray-50"
-                  title="Restore Background"
-                  onMouseEnter={() => {
-                    if (overlayHoverTimeoutRef.current) {
-                      clearTimeout(overlayHoverTimeoutRef.current)
-                      overlayHoverTimeoutRef.current = null
-                    }
-                  }}
-                >
-                  <Icon name="undo" size={12} />
                 </button>
               )}
               {/* Delete button */}
@@ -2303,32 +2289,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             </div>
           )}
           {/* Crop controls when cropping this overlay layer */}
-          {isCropping && croppingTarget === 'overlay-layer' && isSelected && (
-            <>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  cancelCrop()
-                }}
-                className="absolute -top-2 left-2 w-6 h-6 bg-gray-100 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition z-30"
-                title="Cancel Crop"
-              >
-                <Icon name="close" size={12} />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  applyCrop()
-                }}
-                className="absolute -top-2 left-10 w-6 h-6 bg-white/90 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-50 transition z-30"
-                title="Apply Crop"
-              >
-                <span role="img" aria-label="Apply crop">💾</span>
-              </button>
-            </>
-          )}
           {/* Resize handle - bottom-right (like shapes) */}
           {isSelected && (
             <div
@@ -2366,11 +2326,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       )
       const rightWidth = Math.max(0, overlayWidth - (selectionLeft + selectionWidth))
       const bottomHeight = Math.max(0, overlayHeight - (selectionTop + selectionHeight))
+      const controlsTop = Math.max(selectionTop - 32, 0)
+      const controlsLeft = selectionLeft
       
       overlays.push(
         <div
           key="overlay-layer-crop-area"
-          className="absolute pointer-events-none z-30"
+          className="absolute pointer-events-none z-[1100]"
           style={{
             left: overlayDisplayX,
             top: overlayDisplayY,
@@ -2421,7 +2383,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             />
           </div>
           <div
-            className="absolute border-2 border-solid border-white shadow-[0_0_0_2px_rgba(147,51,234,0.8)]"
+            className="absolute border-2 border-solid border-white shadow-[0_0_0_2px_rgba(147,51,234,0.8)] z-[1101]"
             style={{
               left: selectionLeft,
               top: selectionTop,
@@ -2457,9 +2419,39 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               })
             }}
           />
+          <div
+            className="absolute flex gap-2 pointer-events-auto z-[1102]"
+            style={{
+              left: controlsLeft,
+              top: controlsTop
+            }}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                cancelCrop()
+              }}
+              className="w-7 h-7 bg-gray-100 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition"
+              title="Cancel Crop"
+            >
+              <Icon name="close" size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                applyCrop()
+              }}
+              className="w-7 h-7 bg-white/90 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-50 transition"
+              title="Apply Crop"
+            >
+              <span role="img" aria-label="Apply crop">💾</span>
+            </button>
+          </div>
           {/* Corner handles */}
           <div
-            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft - 8,
               top: selectionTop - 8
@@ -2477,7 +2469,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             }}
           />
           <div
-            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft + selectionWidth - 8,
               top: selectionTop - 8
@@ -2495,7 +2487,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             }}
           />
           <div
-            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft - 8,
               top: selectionTop + selectionHeight - 8
@@ -2513,7 +2505,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             }}
           />
           <div
-            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft + selectionWidth - 8,
               top: selectionTop + selectionHeight - 8
@@ -2532,7 +2524,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           />
           {/* Side handles */}
           <div
-            className="absolute w-8 h-2 bg-white border-2 border-purple-600 rounded-sm cursor-ns-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-8 h-2 bg-white border-2 border-purple-600 rounded-sm cursor-ns-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft + selectionWidth / 2 - 16,
               top: selectionTop - 4
@@ -2550,7 +2542,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             }}
           />
           <div
-            className="absolute w-8 h-2 bg-white border-2 border-purple-600 rounded-sm cursor-ns-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-8 h-2 bg-white border-2 border-purple-600 rounded-sm cursor-ns-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft + selectionWidth / 2 - 16,
               top: selectionTop + selectionHeight - 4
@@ -2568,7 +2560,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             }}
           />
           <div
-            className="absolute w-2 h-8 bg-white border-2 border-purple-600 rounded-sm cursor-ew-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-2 h-8 bg-white border-2 border-purple-600 rounded-sm cursor-ew-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft - 4,
               top: selectionTop + selectionHeight / 2 - 16
@@ -2586,7 +2578,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             }}
           />
           <div
-            className="absolute w-2 h-8 bg-white border-2 border-purple-600 rounded-sm cursor-ew-resize z-[1002] shadow-lg pointer-events-auto"
+            className="absolute w-2 h-8 bg-white border-2 border-purple-600 rounded-sm cursor-ew-resize z-[1102] shadow-lg pointer-events-auto"
             style={{
               left: selectionLeft + selectionWidth - 4,
               top: selectionTop + selectionHeight / 2 - 16
@@ -2652,7 +2644,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             display: 'block'
           }}
         />
-        {(isOverlayUploading || isRemovingBackground) && (
+        {(isOverlayUploading || isRemovingBackground || (isApplyingCrop && croppingTarget === 'overlay')) && (
           <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-20 pointer-events-none">
             <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
           </div>
@@ -2677,48 +2669,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               >
                 <Icon name="crop" size={12} />
               </button>
-            )}
-            {isCropping && croppingTarget === 'overlay' && (
-              <>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    cancelCrop()
-                    setHoveredOverlay(false)
-                  }}
-                  className="w-7 h-7 bg-gray-100 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition"
-                  title="Cancel Overlay Crop"
-                  onMouseEnter={() => {
-                    if (overlayHoverTimeoutRef.current) {
-                      clearTimeout(overlayHoverTimeoutRef.current)
-                      overlayHoverTimeoutRef.current = null
-                    }
-                  }}
-                >
-                  <Icon name="close" size={12} />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    applyCrop()
-                    setHoveredOverlay(false)
-                  }}
-                  className="w-7 h-7 bg-white/90 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-50 transition"
-                  title="Save Overlay Crop"
-                  onMouseEnter={() => {
-                    if (overlayHoverTimeoutRef.current) {
-                      clearTimeout(overlayHoverTimeoutRef.current)
-                      overlayHoverTimeoutRef.current = null
-                    }
-                  }}
-                >
-                  <span role="img" aria-label="Save overlay crop">
-                    💾
-                  </span>
-                </button>
-              </>
             )}
             <button
               onClick={(e) => {
@@ -2810,9 +2760,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           )
           const rightWidth = Math.max(0, overlayWidth - (selectionLeft + selectionWidth))
           const bottomHeight = Math.max(0, overlayHeight - (selectionTop + selectionHeight))
+          const controlsTop = Math.max(selectionTop - 32, 0)
+          const controlsLeft = selectionLeft
           return (
             <>
-              <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute inset-0 pointer-events-none z-[1100]">
                 <div
                   className="absolute"
                   style={{
@@ -2855,7 +2807,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 />
               </div>
               <div
-                className="absolute border-2 border-solid border-white shadow-[0_0_0_2px_rgba(147,51,234,0.8)]"
+                className="absolute border-2 border-solid border-white shadow-[0_0_0_2px_rgba(147,51,234,0.8)] z-[1101]"
                 style={{
                   left: selectionLeft,
                   top: selectionTop,
@@ -2893,7 +2845,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
               />
               {/* Corner handles for overlay crop */}
               <div
-                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg"
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1102] shadow-lg"
                 style={{
                   left: selectionLeft - 8,
                   top: selectionTop - 8
@@ -2911,7 +2863,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 }}
               />
               <div
-                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg"
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1102] shadow-lg"
                 style={{
                   left: selectionLeft + selectionWidth - 8,
                   top: selectionTop - 8
@@ -2929,7 +2881,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 }}
               />
               <div
-                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1002] shadow-lg"
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nesw-resize z-[1102] shadow-lg"
                 style={{
                   left: selectionLeft - 8,
                   top: selectionTop + selectionHeight - 8
@@ -2947,7 +2899,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                 }}
               />
               <div
-                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1002] shadow-lg"
+                className="absolute w-4 h-4 bg-white border-2 border-purple-600 rounded-sm cursor-nwse-resize z-[1102] shadow-lg"
                 style={{
                   left: selectionLeft + selectionWidth - 8,
                   top: selectionTop + selectionHeight - 8
@@ -2964,6 +2916,40 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                   })
                 }}
               />
+              <div
+                className="absolute flex gap-2 pointer-events-auto z-[1102]"
+                style={{
+                  left: controlsLeft,
+                  top: controlsTop
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    cancelCrop()
+                    setHoveredOverlay(false)
+                  }}
+                  className="w-7 h-7 bg-gray-100 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-200 transition"
+                  title="Cancel Overlay Crop"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    applyCrop()
+                    setHoveredOverlay(false)
+                  }}
+                  className="w-7 h-7 bg-white/90 border border-gray-300 text-gray-600 rounded-full flex items-center justify-center shadow-md hover:bg-gray-50 transition"
+                  title="Save Overlay Crop"
+                >
+                  <span role="img" aria-label="Save overlay crop">
+                    💾
+                  </span>
+                </button>
+              </div>
             </>
           )
         })()}
@@ -3222,31 +3208,25 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     setSelectedShape(baseShape)
     setSelectedLayer(null)
 
-    // Convert shape to PNG and store for later upload (on save)
+    // Convert shape to PNG and upload
     try {
       const blob = await convertShapeToPNG(baseShape)
+      const fileUrl = await uploadShapePNG(blob, baseShape.id)
       
-      // Store blob for later upload instead of uploading now
-      setPendingShapeUploads(prev => {
-        const newMap = new Map(prev)
-        newMap.set(baseShape.id, { blob, shape: baseShape })
-        return newMap
-      })
-      
-      // Update shape to mark it as pending upload (not uploaded yet)
-      const updatedShape = { ...baseShape, fileUrl: null, isUploading: false, pendingUpload: true }
+      // Update shape with file URL
+      const updatedShape = { ...baseShape, fileUrl, isUploading: false }
       const updatedLayers = newLayers.map(s => s.id === baseShape.id ? updatedShape : s)
       setShapeLayers(updatedLayers)
       setSelectedShape(updatedShape)
       
-      console.log('✅ Shape converted to PNG, will upload on save')
+      console.log('✅ Shape uploaded successfully:', fileUrl)
     } catch (error) {
-      console.error('❌ Failed to convert shape to PNG:', error)
+      console.error('❌ Failed to upload shape:', error)
       // Remove isUploading flag even on error
       const updatedShape = { ...baseShape, isUploading: false }
       const updatedLayers = newLayers.map(s => s.id === baseShape.id ? updatedShape : s)
       setShapeLayers(updatedLayers)
-      alert('Failed to convert shape. Please try again.')
+      alert('Failed to upload shape. Please try again.')
     }
 
     saveToHistory('shape_add', {
@@ -3257,28 +3237,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     })
   }
 
-  // Helper function to regenerate PNG blob for a shape and update pending uploads
-  const regenerateShapePNG = async (shape) => {
-    if (!shape) return
-    
-    try {
-      const blob = await convertShapeToPNG(shape)
-      
-      // Update pending uploads with the latest shape blob
-      setPendingShapeUploads(prev => {
-        const newMap = new Map(prev)
-        newMap.set(shape.id, { blob, shape })
-        return newMap
-      })
-      
-      console.log('✅ Shape PNG regenerated for upload:', shape.id)
-    } catch (error) {
-      console.error('❌ Failed to regenerate shape PNG:', error)
-      // Don't block the UI update if PNG generation fails
-    }
-  }
-
-  const handleShapeStyleChange = async (property, value) => {
+  const handleShapeStyleChange = (property, value) => {
     if (!selectedShape) return
 
     const previousLayers = [...shapeLayers]
@@ -3291,12 +3250,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
 
     setShapeLayers(updatedLayers)
     setSelectedShape(newSelected)
-
-    // Regenerate PNG blob with updated shape properties for upload
-    const updatedShape = updatedLayers.find(s => s.id === selectedShape.id)
-    if (updatedShape) {
-      await regenerateShapePNG(updatedShape)
-    }
 
     saveToHistory('shape_edit', {
       previousLayers,
@@ -3604,19 +3557,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         })
       }
     } else if (isDraggingOverlayLayer && selectedOverlayLayer) {
-      // Drag overlay layer with boundary constraints
-      const imgEl = imageRef.current
-      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1
-      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1
-      
-      let newX = layerStart.x + (deltaX / (scaleX || 1))
-      let newY = layerStart.y + (deltaY / (scaleY || 1))
-      
-      // Clamp position to keep overlay layer within image bounds
-      const currentWidth = selectedOverlayLayer.width || layerStart.width
-      const currentHeight = selectedOverlayLayer.height || layerStart.height
-      newX = Math.max(0, Math.min(newX, originalWidth - currentWidth))
-      newY = Math.max(0, Math.min(newY, originalHeight - currentHeight))
+      // Drag overlay layer
+      const newX = layerStart.x + (deltaX / (scaleX || 1))
+      const newY = layerStart.y + (deltaY / (scaleY || 1))
       
       const updatedLayers = overlayLayers.map(overlay =>
         overlay.id === selectedOverlayLayer.id ? { ...overlay, x: newX, y: newY } : overlay
@@ -3624,12 +3567,8 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setOverlayLayers(updatedLayers)
       setSelectedOverlayLayer({ ...selectedOverlayLayer, x: newX, y: newY })
     } else if (isResizingOverlayLayer && selectedOverlayLayer && selectedOverlayLayerResizeMode) {
-      // Resize overlay layer with boundary constraints
+      // Resize overlay layer
       const { scaleX, scaleY } = getImageScale()
-      const imgEl = imageRef.current
-      const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1
-      const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1
-      
       const deltaXNat = deltaX / (scaleX || 1)
       const deltaYNat = deltaY / (scaleY || 1)
       
@@ -3647,11 +3586,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           newHeight = layerStart.height - deltaYNat
           if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
           if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
-          // Clamp to image bounds
-          if (newX < 0) { newWidth += newX; newX = 0 }
-          if (newY < 0) { newHeight += newY; newY = 0 }
-          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
-          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
         case 'ne': // Top-right corner
           newY = layerStart.y + deltaYNat
@@ -3659,10 +3593,6 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           newHeight = layerStart.height - deltaYNat
           if (newWidth < minSize) newWidth = minSize
           if (newHeight < minSize) { newY = layerStart.y; newHeight = minSize }
-          // Clamp to image bounds
-          if (newY < 0) { newHeight += newY; newY = 0 }
-          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
-          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
         case 'sw': // Bottom-left corner
           newX = layerStart.x + deltaXNat
@@ -3670,19 +3600,12 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           newHeight = layerStart.height + deltaYNat
           if (newWidth < minSize) { newX = layerStart.x; newWidth = minSize }
           if (newHeight < minSize) newHeight = minSize
-          // Clamp to image bounds
-          if (newX < 0) { newWidth += newX; newX = 0 }
-          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
-          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
         case 'se': // Bottom-right corner
           newWidth = layerStart.width + deltaXNat
           newHeight = layerStart.height + deltaYNat
           if (newWidth < minSize) newWidth = minSize
           if (newHeight < minSize) newHeight = minSize
-          // Clamp to image bounds
-          if (newX + newWidth > originalWidth) newWidth = originalWidth - newX
-          if (newY + newHeight > originalHeight) newHeight = originalHeight - newY
           break
       }
       
@@ -3925,23 +3848,6 @@ const handleTemplateJsonLoad = () => {
       })
       const { x, y, width, height } = bbPercent
       
-      // Parse textShadow
-      const shadow = element.effects?.textShadow;
-      let textShadowValue = 'none';
-      if (shadow && shadow.enabled) {
-        textShadowValue = 'drop';
-      }
-      
-      // Parse letter spacing
-      let letterSpacingValue = 'normal';
-      if (element.letterSpacing !== undefined && element.letterSpacing !== null) {
-        if (typeof element.letterSpacing === 'number') {
-          letterSpacingValue = `${element.letterSpacing}px`;
-        } else if (typeof element.letterSpacing === 'string' && element.letterSpacing !== 'normal') {
-          letterSpacingValue = element.letterSpacing;
-        }
-      }
-      
       return {
         id: Date.now() + index,
         text: element.text,
@@ -3953,30 +3859,15 @@ const handleTemplateJsonLoad = () => {
         fontFamily: element.fontFamily || 'Arial',
         color: element.fill || '#000000',
         fontWeight: element.fontWeight || 'normal',
-        fontStyle: element.fontStyle || 'normal', // Restore fontStyle
-        textDecoration: element.textDecoration || 'none', // Restore textDecoration
-        textAlign: element.textAlign || element.align || element.layout?.alignment || element.layout?.text_align || 'center', // Restore textAlign
-        lineHeight: element.lineHeight || 1.2, // Restore lineHeight
-        textOpacity: element.textOpacity !== undefined ? element.textOpacity : 1, // Restore textOpacity
-        letterSpacing: letterSpacingValue, // Restore letterSpacing
-        backgroundColor: element.backgroundColor || 'transparent', // Restore backgroundColor
-        textShadow: textShadowValue,
-        textGlow: element.textGlow || 'none', // Restore textGlow
-        wordArt: element.wordArt || 'none', // Restore wordArt
-        shadowProperties: shadow && shadow.enabled ? {
-          offsetX: shadow.offsetX || 2,
-          offsetY: shadow.offsetY || 2,
-          blur: shadow.blur || 4,
-          color: shadow.color || 'rgba(0, 0, 0, 0.5)'
-        } : null,
+        textAlign: element.layout?.alignment || 'center',
+        textShadow: element.effects?.textShadow?.enabled ? 'drop' : 'none',
+        textGlow: 'none',
+        wordArt: 'none',
         overlayImage: element.overlay_image?.enabled ? {
           enabled: true,
           imageUrl: element.overlay_image.image_url || '',
           fitMode: element.overlay_image.scaling?.fit_mode || 'contain'
-        } : null,
-        // Restore preset information if available
-        presetId: element.preset_id || null,
-        groupId: element.group_id || null
+        } : null
       }
     })
     
@@ -4013,14 +3904,6 @@ const handleTemplateJsonLoad = () => {
             fileUrl: ovUrl // Store the file URL
           }
           loadedOverlays.push(overlayLayer)
-          
-          // Restore background removal state - explicitly set true or false
-          const bgRemoved = ov.background_removed === true;
-          setOverlayLayerBackgroundRemoved(prev => {
-            const newMap = new Map(prev);
-            newMap.set(overlayLayer.id, bgRemoved);
-            return newMap;
-          });
           
           // Load image asynchronously
         const oImg = new Image()
@@ -4258,9 +4141,6 @@ const handleTemplateJsonLoad = () => {
           setOverlayScale(initialScale)
           setOverlaySize({ width: initialWidth, height: initialHeight })
           resetOverlayBackgroundState()
-          
-          // File is stored in overlayImageFile, will be uploaded on save
-          // No immediate upload - just store the file
           
           // Save to history
           saveToHistory('overlay_add', {
@@ -4545,7 +4425,7 @@ const handleTemplateJsonLoad = () => {
     
     setOverlayLayerBackgroundRemoved(prev => {
       const newMap = new Map(prev)
-      newMap.set(selectedOverlayLayer.id, false) // Set to false when background is restored
+      newMap.delete(selectedOverlayLayer.id)
       return newMap
     })
     
@@ -4658,16 +4538,6 @@ const handleTemplateJsonLoad = () => {
                     ? element.layout.zIndex 
                     : (typeof element.z_index === 'number' ? element.z_index : (typeof element.zIndex === 'number' ? element.zIndex : (index + 1)));
                   
-                  // Parse letter spacing - could be a number (px value) or undefined
-                  let letterSpacingValue = 'normal';
-                  if (element.letterSpacing !== undefined && element.letterSpacing !== null) {
-                    if (typeof element.letterSpacing === 'number') {
-                      letterSpacingValue = `${element.letterSpacing}px`;
-                    } else if (typeof element.letterSpacing === 'string' && element.letterSpacing !== 'normal') {
-                      letterSpacingValue = element.letterSpacing;
-                    }
-                  }
-                  
                   const layer = {
                     id: Date.now() + index,
                     text: element.text || '',
@@ -4679,25 +4549,16 @@ const handleTemplateJsonLoad = () => {
                     fontFamily: element.fontFamily || 'Arial',
                     color: element.fill || '#000000',
                     fontWeight: element.fontWeight || 'normal',
-                    fontStyle: element.fontStyle || 'normal', // Restore fontStyle
-                    textDecoration: element.textDecoration || 'none', // Restore textDecoration
-                    textAlign: element.textAlign || element.align || element.layout?.alignment || element.layout?.text_align || 'center', // Restore textAlign
-                    lineHeight: element.lineHeight || 1.2, // Restore lineHeight
-                    textOpacity: element.textOpacity !== undefined ? element.textOpacity : 1, // Restore textOpacity
-                    letterSpacing: letterSpacingValue, // Restore letterSpacing
-                    backgroundColor: element.backgroundColor || 'transparent', // Restore backgroundColor
+                    textAlign: element.layout?.alignment || 'center',
                     textShadow: textShadowValue,
-                    textGlow: element.textGlow || 'none', // Restore textGlow
-                    wordArt: element.wordArt || 'none', // Restore wordArt
+                    textGlow: 'none',
+                    wordArt: 'none',
                     shadowProperties: shadow && shadow.enabled ? {
                       offsetX: shadow.offsetX || 2,
                       offsetY: shadow.offsetY || 2,
                       blur: shadow.blur || 4,
                       color: shadow.color || 'rgba(0, 0, 0, 0.5)'
-                    } : null,
-                    // Restore preset information if available
-                    presetId: element.preset_id || null,
-                    groupId: element.group_id || null
+                    } : null
                   };
                   
                   textLayersWithZIndex.push({ layer, zIndex, type: 'text' });
@@ -4775,14 +4636,6 @@ const handleTemplateJsonLoad = () => {
                       }
                       loadedOverlays.push(overlayLayer)
                       allLayersWithZIndex.push({ layer: overlayLayer, zIndex, type: 'overlay' })
-                      
-                      // Restore background removal state - explicitly set true or false
-                      const bgRemoved = ov.background_removed === true;
-                      setOverlayLayerBackgroundRemoved(prev => {
-                        const newMap = new Map(prev);
-                        newMap.set(overlayLayer.id, bgRemoved);
-                        return newMap;
-                      });
                       
                       // Load image asynchronously
                     const oImg = new Image();
@@ -4911,60 +4764,7 @@ const handleTemplateJsonLoad = () => {
       const layerOrderIndex = layerOrder.findIndex(l => l.type === 'text' && l.id === layer.id);
       const zIndex = layerOrderIndex >= 0 ? layerOrderIndex + 1 : textLayers.length + 1;
       
-      // Parse letter spacing from layer (could be 'normal', '8px', or number)
-      let letterSpacingValue = 1;
-      if (layer.letterSpacing && layer.letterSpacing !== 'normal') {
-        if (typeof layer.letterSpacing === 'string' && layer.letterSpacing.includes('px')) {
-          letterSpacingValue = parseFloat(layer.letterSpacing) || 1;
-        } else {
-          letterSpacingValue = parseFloat(layer.letterSpacing) || 1;
-        }
-      }
-      
-      // Parse textShadow - could be shadowProperties object, CSS string, or preset name
-      let shadowProperties = null;
-      if (layer.shadowProperties) {
-        // Already in shadowProperties format
-        shadowProperties = {
-          blur: layer.shadowProperties.blur || 4,
-          color: layer.shadowProperties.color || 'rgba(0, 0, 0, 0.5)',
-          enabled: true,
-          offsetX: layer.shadowProperties.offsetX || 2,
-          offsetY: layer.shadowProperties.offsetY || 2
-        };
-      } else if (layer.textShadow && typeof layer.textShadow === 'string') {
-        // Check if it's a CSS string like '3px 3px 0px #dc2626'
-        const cssShadowMatch = layer.textShadow.match(/(\d+(?:\.\d+)?)px\s+(\d+(?:\.\d+)?)px\s+(\d+(?:\.\d+)?)px\s+(.+)/);
-        if (cssShadowMatch) {
-          shadowProperties = {
-            offsetX: parseFloat(cssShadowMatch[1]) || 2,
-            offsetY: parseFloat(cssShadowMatch[2]) || 2,
-            blur: parseFloat(cssShadowMatch[3]) || 0,
-            color: cssShadowMatch[4].trim() || 'rgba(0, 0, 0, 0.5)',
-            enabled: true
-          };
-        } else {
-          // It's a preset name like 'hard', 'drop', etc. - convert to shadowProperties
-          switch(layer.textShadow) {
-            case 'hard':
-              shadowProperties = { offsetX: 2, offsetY: 2, blur: 0, color: 'rgba(0, 0, 0, 0.8)', enabled: true };
-              break;
-            case 'drop':
-              shadowProperties = { offsetX: 2, offsetY: 2, blur: 4, color: 'rgba(0, 0, 0, 0.5)', enabled: true };
-              break;
-            case 'soft':
-              shadowProperties = { offsetX: 0, offsetY: 2, blur: 8, color: 'rgba(0, 0, 0, 0.3)', enabled: true };
-              break;
-            case 'multiple':
-              shadowProperties = { offsetX: 1, offsetY: 1, blur: 0, color: 'rgba(255, 255, 255, 0.8)', enabled: true };
-              break;
-            default:
-              shadowProperties = { enabled: false };
-          }
-        }
-      }
-      
-      // Reconstruct text element structure with ALL CSS properties
+      // Reconstruct text element structure
       const textElement = {
         fill: layer.color,
         text: layer.text,
@@ -4973,31 +4773,30 @@ const handleTemplateJsonLoad = () => {
           zIndex: zIndex,
           rotation: 0,
           alignment: layer.textAlign,
-          anchor_point: 'center',
-          text_align: layer.textAlign // Also save as text_align for compatibility
+          anchor_point: 'center'
         },
         offset: {
           x: x,
           y: y
         },
         effects: {
-          textShadow: shadowProperties || { enabled: false }
+          textShadow: layer.shadowProperties ? {
+            blur: layer.shadowProperties.blur || 4,
+            color: layer.shadowProperties.color || 'rgba(0, 0, 0, 0.5)',
+            enabled: true,
+            offsetX: layer.shadowProperties.offsetX || 2,
+            offsetY: layer.shadowProperties.offsetY || 2
+          } : {
+            enabled: false
+          }
         },
         fontSize: layer.fontSize,
         textStyle: layer.fontWeight === 'bold' ? 'bold' : 'normal',
         element_id: null,
         fontFamily: layer.fontFamily,
         fontWeight: layer.fontWeight,
-        fontStyle: layer.fontStyle || 'normal', // Save fontStyle (italic)
-        textDecoration: layer.textDecoration || 'none', // Save textDecoration
-        textAlign: layer.textAlign, // Save textAlign at root level
-        align: layer.textAlign, // Also save as align for compatibility
-        lineHeight: layer.lineHeight || 1.2, // Use layer's lineHeight if available
-        textOpacity: layer.textOpacity !== undefined ? layer.textOpacity : 1, // Save textOpacity
-        letterSpacing: letterSpacingValue, // Save parsed letterSpacing
-        backgroundColor: layer.backgroundColor || 'transparent', // Save backgroundColor
-        textGlow: layer.textGlow || 'none', // Save textGlow (subtle, medium, strong, neon)
-        wordArt: layer.wordArt || 'none', // Save wordArt (gradient, outline, 3d, metallic, gradient-rainbow)
+        lineHeight: 1.2,
+        textOpacity: 1,
         textTexture: {
           enabled: false,
           image_path: ''
@@ -5014,6 +4813,7 @@ const handleTemplateJsonLoad = () => {
           colors: [],
           enabled: false
         },
+        letterSpacing: 1,
         overlay_image: {
           enabled: false,
           scaling: {
@@ -5031,10 +4831,7 @@ const handleTemplateJsonLoad = () => {
             width: 0,
             height: 0
           }
-        },
-        // Store preset information for identification
-        preset_id: layer.presetId || null,
-        group_id: layer.groupId || null
+        }
       };
       
       return textElement;
@@ -5081,190 +4878,40 @@ const handleTemplateJsonLoad = () => {
         return;
       }
       
-      // Step 1: Upload all pending shape files
-      const shapeUploadResults = new Map(); // Map<shapeId, fileUrl>
-      for (const [shapeId, { blob, shape }] of pendingShapeUploads.entries()) {
-        try {
-          const fileUrl = await uploadShapePNG(blob, shapeId);
-          shapeUploadResults.set(shapeId, fileUrl);
-          
-          // Update shape with file URL
-          setShapeLayers(prev => prev.map(s => 
-            s.id === shapeId ? { ...s, fileUrl, pendingUpload: false } : s
-          ));
-          
-          console.log(`✅ Shape ${shapeId} uploaded successfully:`, fileUrl);
-        } catch (error) {
-          console.error(`❌ Failed to upload shape ${shapeId}:`, error);
-          alert(`Failed to upload shape. Please try again.`);
-          setIsSaving(false);
-          return;
-        }
-      }
-      
-      // Step 2: Upload all pending overlay images (including cropped overlay layers)
-      const overlayUploadResults = new Map(); // Map<overlayId, fileUrl>
-      
-      // First, check for overlay layers that have base64 data URLs (from cropping) but aren't in pending uploads yet
-      for (const overlayLayer of overlayLayers) {
-        // If overlay layer has a data URL (base64) and no fileUrl, it needs to be uploaded
-        if (overlayLayer.imageUrl && overlayLayer.imageUrl.startsWith('data:') && !overlayLayer.fileUrl && !pendingOverlayUploads.has(overlayLayer.id)) {
-          try {
-            const blob = base64ToBlob(overlayLayer.imageUrl);
-            setPendingOverlayUploads(prev => {
-              const newMap = new Map(prev);
-              newMap.set(overlayLayer.id, { blob, overlayLayer });
-              return newMap;
-            });
-          } catch (error) {
-            console.error(`Failed to convert overlay layer ${overlayLayer.id} to blob:`, error);
-          }
-        }
-      }
-      
-      // Now upload all pending overlay uploads (including newly added ones)
-      for (const [overlayId, { blob, overlayLayer }] of pendingOverlayUploads.entries()) {
-        try {
-          const formData = new FormData();
-          formData.append('session_id', sessionId);
-          formData.append('file', blob, `overlay-${overlayId}.png`);
-          
-          const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
-            method: 'POST',
-            body: formData
-          });
-          
-          const uploadResponseText = await uploadResponse.text();
-          let uploadResponseData;
-          try {
-            uploadResponseData = JSON.parse(uploadResponseText);
-          } catch (_) {
-            uploadResponseData = uploadResponseText;
-          }
-          
-          if (!uploadResponse.ok) {
-            throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
-          }
-          
-          const fileUrl = uploadResponseData?.file_url || 
-                         uploadResponseData?.url || 
-                         uploadResponseData?.image_url ||
-                         uploadResponseData?.data?.file_url ||
-                         uploadResponseData?.data?.url ||
-                         uploadResponseData?.data?.image_url;
-          
-          if (!fileUrl) {
-            throw new Error('Upload API did not return file_url');
-          }
-          
-          overlayUploadResults.set(overlayId, fileUrl);
-          
-          // Update overlay layer with file URL
-          setOverlayLayers(prev => prev.map(ol => 
-            ol.id === overlayId ? { ...ol, fileUrl, imageUrl: fileUrl, pendingUpload: false } : ol
-          ));
-          
-          console.log(`✅ Overlay ${overlayId} uploaded successfully:`, fileUrl);
-        } catch (error) {
-          console.error(`❌ Failed to upload overlay ${overlayId}:`, error);
-          alert(`Failed to upload overlay image. Please try again.`);
-          setIsSaving(false);
-          return;
-        }
-      }
-      
-      // Step 3: Upload main overlay image if it exists and needs upload
-      let finalOverlayUrl = overlayImageUrl;
-      if (overlayVisible && overlayImage && overlayImageFile && !overlayLayers.some(ol => ol.imageUrl === overlayImageUrl)) {
-        try {
-          // Convert overlay image to blob if it's a data URL
-          const overlayBlob = await imageUrlToBlob(overlayImageUrl);
-          
-          const formData = new FormData();
-          formData.append('session_id', sessionId);
-          formData.append('file', overlayBlob, 'overlay-image.png');
-          
-          const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
-            method: 'POST',
-            body: formData
-          });
-          
-          const uploadResponseText = await uploadResponse.text();
-          let uploadResponseData;
-          try {
-            uploadResponseData = JSON.parse(uploadResponseText);
-          } catch (_) {
-            uploadResponseData = uploadResponseText;
-          }
-          
-          if (!uploadResponse.ok) {
-            throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
-          }
-          
-          finalOverlayUrl = uploadResponseData?.url || 
-                           uploadResponseData?.image_url || 
-                           uploadResponseData?.file_url ||
-                           uploadResponseData?.data?.url ||
-                           uploadResponseData?.data?.image_url ||
-                           uploadResponseData?.data?.file_url ||
-                           overlayImageUrl;
-          
-          if (!finalOverlayUrl || finalOverlayUrl === overlayImageUrl) {
-            console.warn('Upload API did not return a new URL, using original URL');
-          }
-        } catch (uploadError) {
-          console.error('Failed to upload overlay image:', uploadError);
-          alert('Warning: Failed to upload overlay image. Using original URL.');
-        }
-      }
-      
-      // Clear pending uploads after successful uploads
-      setPendingShapeUploads(new Map());
-      setPendingOverlayUploads(new Map());
-      
       // Convert textLayers to text_elements format (already sorted by layerOrder)
       const textElements = convertTextLayersToElements();
       
       // Convert overlay to overlay_elements format (if present)
       let overlayElements = [];
+      let finalOverlayUrl = overlayImageUrl;
       
         const imgEl = imageRef.current;
       const originalWidth = frameData?.base_image?.image_dimensions?.width || imgEl?.naturalWidth || 1;
       const originalHeight = frameData?.base_image?.image_dimensions?.height || imgEl?.naturalHeight || 1;
       
       // Build a map of overlay layers by ID for quick lookup
-      // Include overlay layers that were just uploaded (from overlayUploadResults)
       const overlayLayersMap = new Map();
       overlayLayers.forEach(ol => {
-        const fileUrl = ol.fileUrl || overlayUploadResults.get(ol.id);
-        if (fileUrl) {
-          overlayLayersMap.set(ol.id, { ...ol, fileUrl });
+        if (ol.fileUrl) {
+          overlayLayersMap.set(ol.id, ol);
         }
       });
       
       // Build a map of shapes by ID for quick lookup
-      // Include shapes that were just uploaded (from shapeUploadResults)
       const shapeLayersMap = new Map();
       shapeLayers.forEach(shape => {
-        const fileUrl = shape.fileUrl || shapeUploadResults.get(shape.id);
-        if (fileUrl) {
-          shapeLayersMap.set(shape.id, { ...shape, fileUrl });
+        if (shape.fileUrl) {
+          shapeLayersMap.set(shape.id, shape);
         }
       });
       
       // Process overlay layers and main overlay first (before shapes, to maintain backward compatibility)
       // Add ALL overlay layers to overlay_elements (from overlayLayers array)
       for (const overlayLayer of overlayLayers) {
-        const fileUrl = overlayLayer.fileUrl || overlayUploadResults.get(overlayLayer.id);
-        if (!fileUrl) {
+        if (!overlayLayer.fileUrl) {
           console.warn(`Skipping overlay layer ${overlayLayer.id} - no file URL available`);
           continue;
         }
-        
-        // Check if background was removed for this overlay layer
-        // Explicitly check if the value is true (not just truthy)
-        const bgRemovedState = overlayLayerBackgroundRemoved.get(overlayLayer.id);
-        const isBackgroundRemoved = bgRemovedState === true;
         
         // Overlay position and size are in natural pixel coordinates
         const naturalX = overlayLayer.x;
@@ -5286,13 +4933,12 @@ const handleTemplateJsonLoad = () => {
             height: originalHeight > 0 ? naturalHeight / originalHeight : 0
           },
           overlay_image: {
-            image_url: fileUrl, // Use the uploaded file URL (already background-removed if isBackgroundRemoved is true)
+            image_url: overlayLayer.fileUrl, // Use the stored file URL
             image_dimensions: {
               width: imageWidth,
               height: imageHeight
             }
           },
-          background_removed: isBackgroundRemoved === true, // Save flag - explicitly true or false
           layout: {
             zIndex: zIndex,
             rotation: 0,
@@ -5309,7 +4955,51 @@ const handleTemplateJsonLoad = () => {
         const isAlreadyInLayers = overlayLayers.some(ol => ol.imageUrl === overlayImageUrl);
         
         if (!isAlreadyInLayers) {
-          // Use the uploaded URL from Step 3 (already uploaded above)
+          // Upload overlay image first if available
+          try {
+            // Convert overlay image to blob
+            const overlayBlob = await imageUrlToBlob(overlayImageUrl);
+            
+            // Create FormData for upload
+            const formData = new FormData();
+            formData.append('session_id', sessionId);
+            formData.append('file', overlayBlob, 'overlay-image.png'); // Use appropriate filename
+            
+            // Upload overlay image
+            const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/upload-file', {
+              method: 'POST',
+              body: formData
+            });
+            
+            const uploadResponseText = await uploadResponse.text();
+            let uploadResponseData;
+            try {
+              uploadResponseData = JSON.parse(uploadResponseText);
+            } catch (_) {
+              uploadResponseData = uploadResponseText;
+            }
+            
+            if (!uploadResponse.ok) {
+              throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponseText}`);
+            }
+            
+            // Extract URL from response
+            finalOverlayUrl = uploadResponseData?.url || 
+                             uploadResponseData?.image_url || 
+                             uploadResponseData?.file_url ||
+                             uploadResponseData?.data?.url ||
+                             uploadResponseData?.data?.image_url ||
+                             uploadResponseData?.data?.file_url ||
+                             overlayImageUrl; // Fallback to original URL
+            
+            if (!finalOverlayUrl || finalOverlayUrl === overlayImageUrl) {
+              console.warn('Upload API did not return a new URL, using original URL');
+            }
+          } catch (uploadError) {
+            console.error('Failed to upload overlay image:', uploadError);
+            // Continue with original URL if upload fails
+            alert('Warning: Failed to upload overlay image. Using original URL.');
+          }
         
         // Overlay position and size are already in natural pixel coordinates (like shapes)
         const naturalX = overlayPosition.x;
@@ -5325,13 +5015,12 @@ const handleTemplateJsonLoad = () => {
               height: originalHeight > 0 ? naturalHeight / originalHeight : 0
             },
             overlay_image: {
-              image_url: finalOverlayUrl, // Use the uploaded URL (already background-removed if overlayBackgroundRemoved is true)
+              image_url: finalOverlayUrl, // Use the uploaded URL
               image_dimensions: {
                 width: overlayImage.width,
                 height: overlayImage.height
               }
             },
-            background_removed: overlayBackgroundRemoved === true, // Save flag indicating background was removed (explicitly true or false)
             layout: {
               zIndex: 1000, // Default z-index for main overlay (not in layerOrder)
               rotation: 0,
@@ -5347,8 +5036,7 @@ const handleTemplateJsonLoad = () => {
       for (const layerItem of layerOrder) {
         if (layerItem.type === 'shape') {
           const shape = shapeLayersMap.get(layerItem.id);
-          const fileUrl = shape?.fileUrl || shapeUploadResults.get(layerItem.id);
-          if (!shape || !fileUrl) {
+          if (!shape || !shape.fileUrl) {
             console.warn(`Skipping shape ${layerItem.id} - not found or no file URL available`);
             continue;
           }
@@ -5371,7 +5059,7 @@ const handleTemplateJsonLoad = () => {
               height: originalHeight > 0 ? naturalHeight / originalHeight : 0
             },
             overlay_image: {
-              image_url: fileUrl, // Use the uploaded file URL
+              image_url: shape.fileUrl, // Use the uploaded file URL
               image_dimensions: {
                 width: naturalWidth,
                 height: naturalHeight
@@ -5398,8 +5086,7 @@ const handleTemplateJsonLoad = () => {
         }
         
         // Skip shapes that don't have a file URL (upload failed or still uploading)
-        const fileUrl = shape.fileUrl || shapeUploadResults.get(shape.id);
-        if (!fileUrl) {
+        if (!shape.fileUrl) {
           console.warn(`Skipping shape ${shape.id} - no file URL available`);
           continue;
         }
@@ -5418,7 +5105,7 @@ const handleTemplateJsonLoad = () => {
             height: originalHeight > 0 ? naturalHeight / originalHeight : 0
           },
           overlay_image: {
-            image_url: fileUrl, // Use the uploaded file URL
+            image_url: shape.fileUrl, // Use the uploaded file URL
             image_dimensions: {
               width: naturalWidth,
               height: naturalHeight
@@ -5568,84 +5255,62 @@ const handleTemplateJsonLoad = () => {
               />
               {cropShape === 'circle' ? 'Circle Crop' : 'Square Crop'}
             </button>
-            {/* Remove Background button - only show if background is not already removed */}
-            {overlayBackgroundRemoved !== true && (
-              <button
-                type="button"
-                onClick={removeOverlayBackground}
-                disabled={
-                  !overlaySelected ||
-                  !overlayVisible ||
-                  !overlayImageUrl ||
-                  isRemovingBackground
-                }
-                className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
-                  overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground
-                    ? 'border-rose-500 text-rose-600 hover:bg-rose-50'
-                    : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
-                }`}
-                title={
-                  overlaySelected && overlayVisible && overlayImageUrl
-                    ? isRemovingBackground
-                      ? 'Processing background removal...'
-                      : 'Remove overlay background'
-                    : 'Select an overlay image to modify background'
-                }
-              >
-                {isRemovingBackground ? (
-                  <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Icon name="imageCut" size={16} />
-                )}
-                Remove BG
-              </button>
-            )}
-            
-            {/* Restore Background button - only show if background was removed */}
-            {overlayBackgroundRemoved === true && (
-              <button
-                type="button"
-                onClick={undoOverlayBackground}
-                disabled={
-                  !overlaySelected ||
-                  !overlayVisible ||
-                  !overlayImageUrl ||
-                  isRemovingBackground ||
-                  !overlayOriginalBeforeBgRemoval
-                }
-                className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
-                  overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground && overlayOriginalBeforeBgRemoval
-                    ? 'border-gray-500 text-gray-700 hover:bg-gray-100'
-                    : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
-                }`}
-                title={
-                  overlaySelected && overlayVisible && overlayImageUrl
-                    ? 'Restore original overlay background'
-                    : 'Select an overlay image to modify background'
-                }
-              >
-                <Icon name="undo" size={16} />
-                Undo BG
-              </button>
-            )}
             <button
-              onClick={isCropping && croppingTarget === 'overlay' ? applyCrop : handleSaveChanges}
-              disabled={isSaving}
-              className="px-6 py-2 bg-[#13008B] hover:bg-[#0f0068] text-white text-sm font-semibold rounded-lg transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              title={saveButtonLabel}
+              type="button"
+              onClick={overlayBackgroundRemoved ? undoOverlayBackground : removeOverlayBackground}
+              disabled={
+                !overlaySelected ||
+                !overlayVisible ||
+                !overlayImageUrl ||
+                isRemovingBackground ||
+                (overlayBackgroundRemoved && !overlayOriginalBeforeBgRemoval)
+              }
+              className={`px-3 py-2 text-sm font-semibold rounded-lg border transition-all flex items-center gap-2 ${
+                overlaySelected && overlayVisible && overlayImageUrl && !isRemovingBackground
+                  ? overlayBackgroundRemoved
+                    ? 'border-gray-500 text-gray-700 hover:bg-gray-100'
+                    : 'border-rose-500 text-rose-600 hover:bg-rose-50'
+                  : 'border-gray-300 text-gray-400 cursor-not-allowed bg-gray-100'
+              }`}
+              title={
+                overlaySelected && overlayVisible && overlayImageUrl
+                  ? isRemovingBackground
+                    ? 'Processing background change...'
+                    : overlayBackgroundRemoved
+                      ? 'Restore original overlay background'
+                      : 'Remove overlay background'
+                  : 'Select an overlay image to modify background and select it'
+              }
             >
-              {isSaving ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Saving...
-                </>
+              {isRemovingBackground ? (
+                <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              ) : overlayBackgroundRemoved ? (
+                <Icon name="undo" size={16} />
               ) : (
-                <>
-                  <Icon name="save" size={16} />
-                  {saveButtonLabel}
-                </>
+                <Icon name="imageCut" size={16} />
               )}
+              {overlayBackgroundRemoved ? 'Undo BG' : 'Remove BG'}
             </button>
+            {!isCropping && (
+              <button
+                onClick={handleSaveChanges}
+                disabled={isSaving}
+                className="px-4 py-2 bg-[#13008B] hover:bg-[#0f0068] text-white text-sm font-semibold rounded-lg transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                title="Save image"
+              >
+                {isSaving ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Icon name="save" size={16} />
+                    Save Image
+                  </>
+                )}
+              </button>
+            )}
             {onClose && (
               <button
                 onClick={onClose}
