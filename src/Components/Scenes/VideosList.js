@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import VideoEditor from '../../pages/VideoEditor';
 import { Zap, ChevronRight, X } from 'lucide-react';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import LogoImage from '../../asset/mainLogo.png';
 import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
 
@@ -67,6 +69,14 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [mergeJobId, setMergeJobId] = useState('');
+  const ffmpegRef = useRef(null);
+  const [isFFmpegLoading, setIsFFmpegLoading] = useState(false);
+  const [ffmpegError, setFfmpegError] = useState('');
+  const [finalMergeStatus, setFinalMergeStatus] = useState('');
+  const [finalMergeProgress, setFinalMergeProgress] = useState({ percent: 0, phase: '' });
+  const [finalMergeUrl, setFinalMergeUrl] = useState('');
+  const [isTranscodingFinal, setIsTranscodingFinal] = useState(false);
+  const [finalReel720Url, setFinalReel720Url] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -551,6 +561,158 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       setSelectedIndex(0);
     }
   }, [items.length, selectedIndex]);
+
+  // Load FFmpeg.wasm (lightweight loader that reuses cached instance)
+  const loadFFmpeg = useCallback(async () => {
+    if (ffmpegRef.current) {
+      return ffmpegRef.current;
+    }
+
+    setIsFFmpegLoading(true);
+    setFfmpegError('');
+
+    try {
+      const ffmpeg = new FFmpeg();
+      ffmpeg.on('log', ({ message }) => console.log('[FFmpeg]', message));
+
+      // Prefer CDN blobs to avoid CORS with local hosting
+      const coreURL = await toBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js', 'text/javascript');
+      const wasmURL = await toBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm', 'application/wasm');
+
+      await ffmpeg.load({ coreURL, wasmURL });
+      ffmpegRef.current = ffmpeg;
+      return ffmpeg;
+    } catch (error) {
+      console.error('❌ Failed to load FFmpeg:', error);
+      setFfmpegError(error?.message || 'Failed to load FFmpeg');
+      throw error;
+    } finally {
+      setIsFFmpegLoading(false);
+    }
+  }, []);
+
+  // Poll merge job status to capture final reel URL for 720p export
+  useEffect(() => {
+    if (!mergeJobId) return;
+
+    let cancelled = false;
+    let timeoutId = null;
+
+    const pollMerge = async () => {
+      try {
+        const resp = await fetch(
+          `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/merge-job-status/${encodeURIComponent(mergeJobId)}`
+        );
+        const text = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+
+        if (!resp.ok) {
+          throw new Error(`merge-job-status failed: ${resp.status} ${text}`);
+        }
+
+        const status = String(data?.status || '').toLowerCase();
+        const progress = data?.progress || {};
+        const percent = Number(progress?.percent) || 0;
+        const phase = String(progress?.phase || progress?.stage || '').toLowerCase();
+
+        if (!cancelled) {
+          setFinalMergeStatus(status);
+          setFinalMergeProgress({ percent, phase });
+
+          if (status === 'succeeded' || status === 'completed') {
+            const url =
+              data?.final_video_url ||
+              data?.finalVideoUrl ||
+              data?.video_url ||
+              data?.videoUrl ||
+              data?.result_url ||
+              data?.resultUrl ||
+              '';
+            setFinalMergeUrl(url);
+            return;
+          }
+
+          if (status === 'failed' || status === 'error') {
+            setFfmpegError(data?.error || data?.message || 'Final reel generation failed');
+            return;
+          }
+        }
+
+        if (!cancelled) {
+          timeoutId = setTimeout(pollMerge, 3000);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('❌ Error polling merge job:', error);
+          setFfmpegError(error?.message || 'Unable to poll final reel status');
+          timeoutId = setTimeout(pollMerge, 4000);
+        }
+      }
+    };
+
+    pollMerge();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [mergeJobId]);
+
+  const transcodeFinalReelTo720p = useCallback(async () => {
+    if (!finalMergeUrl) {
+      setFfmpegError('Final reel URL not ready yet.');
+      return;
+    }
+
+    setIsTranscodingFinal(true);
+    setFfmpegError('');
+
+    try {
+      const ffmpeg = await loadFFmpeg();
+
+      await ffmpeg.writeFile('final_input.mp4', await fetchFile(finalMergeUrl));
+
+      // scale=-2:720 keeps aspect ratio while forcing height to 720
+      await ffmpeg.exec([
+        '-i',
+        'final_input.mp4',
+        '-vf',
+        'scale=-2:720',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '23',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        'final_720p.mp4'
+      ]);
+
+      const data = await ffmpeg.readFile('final_720p.mp4');
+      const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+      setFinalReel720Url(url);
+    } catch (error) {
+      console.error('❌ FFmpeg 720p export failed:', error);
+      setFfmpegError(error?.message || '720p export failed');
+    } finally {
+      setIsTranscodingFinal(false);
+    }
+  }, [finalMergeUrl, loadFFmpeg]);
+
+  // Auto-kickoff 720p export once final reel URL is available
+  useEffect(() => {
+    if (finalMergeUrl && !finalReel720Url && !isTranscodingFinal) {
+      transcodeFinalReelTo720p();
+    }
+  }, [finalMergeUrl, finalReel720Url, isTranscodingFinal, transcodeFinalReelTo720p]);
 
   // Helper function to convert video URL to clip by loading metadata
   const convertVideoUrlToClip = useCallback(async (videoItem) => {
@@ -1192,6 +1354,73 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 m-4">
             <div className="text-sm text-red-600">{error}</div>
+          </div>
+        )}
+
+        {(mergeJobId || finalMergeUrl || finalReel720Url) && (
+          <div className="mx-4 mb-3 p-3 rounded-lg border border-indigo-100 bg-indigo-50">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-[#13008B]">Final reel export (FFmpeg 720p)</div>
+              {finalMergeStatus && (
+                <div className="text-xs text-gray-600">
+                  {finalMergeStatus.toUpperCase()}
+                  {finalMergeProgress?.phase && ` • ${finalMergeProgress.phase.toUpperCase()}`}
+                  {finalMergeProgress?.percent > 0 && ` • ${Math.min(100, Math.round(finalMergeProgress.percent))}%`}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {!finalMergeUrl && (
+                <span className="text-xs text-gray-700">
+                  Waiting for final reel to finish before exporting to 720p...
+                </span>
+              )}
+
+              {finalMergeUrl && (
+                <>
+                  <a
+                    href={finalMergeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-white border text-xs hover:bg-gray-50"
+                  >
+                    View source reel
+                  </a>
+                  <button
+                    onClick={transcodeFinalReelTo720p}
+                    disabled={isTranscodingFinal || isFFmpegLoading}
+                    className={`px-3 py-1.5 rounded-lg text-xs text-white ${
+                      isTranscodingFinal || isFFmpegLoading ? 'bg-gray-400' : 'bg-[#13008B] hover:bg-[#0f0069]'
+                    }`}
+                  >
+                    {isTranscodingFinal
+                      ? 'Transcoding...'
+                      : isFFmpegLoading
+                      ? 'Loading FFmpeg...'
+                      : 'Export 720p (FFmpeg)'}
+                  </button>
+                  {finalReel720Url && (
+                    <a
+                      href={finalReel720Url}
+                      download="final_reel_720p.mp4"
+                      className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700"
+                    >
+                      Download 720p
+                    </a>
+                  )}
+                </>
+              )}
+            </div>
+
+            {isTranscodingFinal && (
+              <div className="text-xs text-gray-600 mt-1">Encoding to 1280x720 via FFmpeg in the browser...</div>
+            )}
+            {ffmpegError && (
+              <div className="text-xs text-red-600 mt-1">
+                {ffmpegError}
+              </div>
+            )}
           </div>
         )}
 

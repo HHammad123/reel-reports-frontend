@@ -281,6 +281,14 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     
     loadFFmpeg();
   }, []);
+
+  // Preload watermark image once
+  useEffect(() => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = LogoImage;
+    watermarkImageRef.current = img;
+  }, []);
   
   // Load session data from localStorage at start
   useEffect(() => {
@@ -354,6 +362,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
   const recordedChunksRef = useRef([]);
   const exportCanvasRef = useRef(null);
   const overlayElementCacheRef = useRef(new Map()); // Cache for overlay elements
+  const watermarkImageRef = useRef(null);
   const totalDurationRef = useRef(0); // Use ref to avoid dependency issues in playback loop
   const isPlayingRef = useRef(false); // Use ref to track playing state in loop
   const globalTimeRef = useRef(0); // Use ref to track time without triggering re-renders
@@ -1294,17 +1303,17 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       const containerAspect = rect.width / rect.height;
       
       // Determine minimum dimensions based on aspect ratio
-      // For 16:9 (landscape): 1280x720 (720p)
-      // For 9:16 (portrait): 720x1280 (720p portrait)
+      // For 16:9 (landscape): 1920x1080 (1080p)
+      // For 9:16 (portrait): 1080x1920 (1080p portrait)
       let MIN_WIDTH, MIN_HEIGHT;
       if (videoAspectRatio === '9/16') {
-        // Portrait: 720x1280
-        MIN_WIDTH = 720;
-        MIN_HEIGHT = 1280;
+        // Portrait: 1080x1920
+        MIN_WIDTH = 1080;
+        MIN_HEIGHT = 1920;
       } else {
-        // Landscape: 1280x720 (default)
-        MIN_WIDTH = 1280;
-        MIN_HEIGHT = 720;
+        // Landscape: 1920x1080 (default)
+        MIN_WIDTH = 1920;
+        MIN_HEIGHT = 1080;
       }
       
       // Calculate dimensions maintaining the video's aspect ratio
@@ -1313,13 +1322,13 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       if (videoAspectRatio === '9/16') {
         // Portrait: maintain 9:16 aspect ratio
         const targetAspect = 9 / 16;
-        canvasHeight = MIN_HEIGHT; // Use height as base (1280)
-        canvasWidth = Math.round(MIN_HEIGHT * targetAspect); // 720
+        canvasHeight = MIN_HEIGHT; // Use height as base (1920)
+        canvasWidth = Math.round(MIN_HEIGHT * targetAspect); // 1080
       } else {
         // Landscape: maintain 16:9 aspect ratio
         const targetAspect = 16 / 9;
-        canvasWidth = MIN_WIDTH; // Use width as base (1280)
-        canvasHeight = Math.round(MIN_WIDTH / targetAspect); // 720
+        canvasWidth = MIN_WIDTH; // Use width as base (1920)
+        canvasHeight = Math.round(MIN_WIDTH / targetAspect); // 1080
       }
       
       // If container is smaller than minimum, scale up while maintaining aspect ratio
@@ -1506,10 +1515,11 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
       
       // Use RecordRTC with combined stream for reliable WebM recording with audio
       // Calculate bitrate based on resolution for better quality
-      // For 720p: ~8-10 Mbps, for 1080p: ~15-20 Mbps
+      // For 720p: ~10-12 Mbps, for 1080p: ~18-20 Mbps
       const pixelCount = canvas.width * canvas.height;
       const isHD = pixelCount >= 1280 * 720; // 720p or higher
-      const videoBitrate = isHD ? 10000000 : 8000000; // 10 Mbps for HD, 8 Mbps for lower
+      const isFullHD = pixelCount >= 1920 * 1080; // 1080p or higher
+      const videoBitrate = isFullHD ? 18000000 : isHD ? 12000000 : 8000000; // bump quality tiers
       
       const recorder = new RecordRTC(combinedStream, {
         type: 'video',
@@ -2466,6 +2476,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
           updatedAudioTracks[index].startTime = videoPosition;
         }
       }
+
     });
     
     return updatedAudioTracks;
@@ -2725,6 +2736,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     
     setShowPublishModal(false);
     setIsPublishing(true);
+    setShowPublishUploading(true);
     try {
       await handleExport({
         suppressAlerts: true,
@@ -2823,6 +2835,7 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
     } catch (error) {
       console.error('Publish error:', error);
       alert(`Publish failed: ${error.message}`);
+      setShowPublishUploading(false);
       setIsPublishing(false);
     }
   };
@@ -4084,12 +4097,10 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                 }}
                 style={{ 
                   pointerEvents: isActive ? 'auto' : 'none',
-                  // For chart overlays: always show once loaded (opacity 1) to prevent flicker
-                  // Don't change opacity based on isActive - keep it stable
-                  // For other overlays: show when ready
-                  opacity: clip.isChartOverlay
-                    ? (hasShownOnce ? 1 : 0) // Once shown, always show - don't toggle based on isActive
-                    : (isActive && (clip.type === 'image' || hasShownOnce || (isVideoReady && hasInitialFrameRef.current))) ? 1 : 0,
+                  // Show only when active; chart overlays also require isActive
+                  opacity: (isActive && (clip.type === 'image' || hasShownOnce || (isVideoReady && hasInitialFrameRef.current)))
+                    ? 1
+                    : 0,
                   // FIXED: No willChange or transition for chart overlays to prevent flicker
                   willChange: clip.isChartOverlay ? 'auto' : 'opacity',
                   transition: clip.isChartOverlay ? 'none' : 'opacity 0.1s ease-out',
@@ -4109,7 +4120,6 @@ export default function VideoEditor({ initialTracks = null, initialAudioTracks =
                     transform: 'translateZ(0)',
                     backfaceVisibility: 'hidden',
                     imageRendering: 'auto',
-                    // Prevent any visual glitches during playback
                     willChange: 'auto'
                   } : {})
                 }}
