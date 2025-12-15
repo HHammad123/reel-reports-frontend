@@ -143,6 +143,30 @@ const extractChartData = (chartData, chartType) => {
     return { categories: labels.slice(0, minLen), values: values.slice(0, minLen) }
   }
 
+  // WATERFALL
+  if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    const xValues = Array.isArray(seriesBlock.x) ? seriesBlock.x : []
+    const dataEntries = Array.isArray(seriesBlock.data) ? seriesBlock.data : []
+    
+    if (!xValues.length || !dataEntries.length) return null
+    
+    const firstEntry = dataEntries[0]
+    if (!firstEntry || typeof firstEntry !== 'object') return null
+    
+    const yValues = Array.isArray(firstEntry.y) ? firstEntry.y : []
+    const measure = Array.isArray(firstEntry.measure) ? firstEntry.measure : []
+    
+    if (!yValues.length || !measure.length) return null
+    if (xValues.length !== yValues.length || xValues.length !== measure.length) return null
+    
+    return {
+      categories: xValues,
+      values: yValues,
+      measure: measure
+    }
+  }
+
+  // BAR/COLUMN/LINE/AREA/SCATTER/STACKED/CLUSTERED
   if (
     [
       'bar',
@@ -167,17 +191,6 @@ const extractChartData = (chartData, chartType) => {
       // Always add series to dataset, even if empty (will be handled in rendering)
       dataset[name] = yValues
     })
-    
-    // Debug logging
-    try {
-      console.log('[extractChartData] Extracted data:', {
-        chartType,
-        xValuesCount: xValues.length,
-        dataEntriesCount: dataEntries.length,
-        datasetKeys: Object.keys(dataset),
-        dataset: dataset
-      });
-    } catch(_) {}
     
     // If we have both x and dataset, return it (even if some series are empty)
     if (Object.keys(dataset).length && xValues.length) {
@@ -517,6 +530,71 @@ const createScatterChart = (data, presetData, chartData, sections) => {
     }
   })
 }
+const createWaterfallChart = (data, presetData, chartData, chartType, sections) => {
+  const categories = data.categories ?? []
+  const values = data.values ?? []
+  const measure = data.measure ?? []
+  const effectiveSections = sections ?? presetData?.preset_definitions?.[0]?.sections ?? {}
+  
+  const isHorizontal = chartType === 'waterfall_bar'
+  
+  // ✅ Get waterfall colors from colors section (matching backend preset structure)
+  // Look for entries with name="increasing", name="decreasing", name="totals"
+  const colorsSection = effectiveSections.colors || []
+  const findColor = (name, fallback) => {
+    const entry = colorsSection.find(item => item.name === name || item.name === name.toLowerCase())
+    return entry?.value || fallback
+  }
+  
+  const increasingColor = findColor('increasing', '#1976D2')
+  const decreasingColor = findColor('decreasing', '#FF375E')
+  const totalsColor = findColor('totals', '#4F008C')
+  
+  // Get connector settings
+  const showConnector = getConfig(effectiveSections, 'connector', 'show') !== false
+  const connectorColor = getConfig(effectiveSections, 'connector', 'line_color') || '#999999'
+  const connectorWidth = getConfig(effectiveSections, 'connector', 'line_width') || 2
+  const connectorDash = getConfig(effectiveSections, 'connector', 'line_dash') || 'solid'
+  
+  // Get text/label settings for waterfall bars
+  const showLabels = getConfig(effectiveSections, 'segment_values', 'show', 'global') !== false
+  const labelFormat = getConfig(effectiveSections, 'segment_values', 'format', 'global') || '.0f'
+  const labelPrefix = getConfig(effectiveSections, 'segment_values', 'prefix', 'global') || ''
+  const labelSuffix = getConfig(effectiveSections, 'segment_values', 'suffix', 'global') || ''
+  const labelPosition = getConfig(effectiveSections, 'segment_values', 'position', 'global') || 'outside'
+  const labelFontSize = getConfig(effectiveSections, 'segment_values', 'font_size', 'global') || 14
+  const labelFontColor = getConfig(effectiveSections, 'segment_values', 'font_color', 'global') || '#000000'
+  const labelFontFamily = resolveBrandFont(getConfig(effectiveSections, 'segment_values', 'font_family', 'global'))
+  
+  const textValues = showLabels ? values.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
+  
+  return [{
+    type: 'waterfall',
+    name: 'Waterfall',
+    orientation: isHorizontal ? 'h' : 'v',
+    x: isHorizontal ? values : categories,
+    y: isHorizontal ? categories : values,
+    measure: measure,
+    text: textValues,
+    textposition: labelPosition,
+    textfont: {
+      size: labelFontSize,
+      color: labelFontColor,
+      family: labelFontFamily
+    },
+    increasing: { marker: { color: increasingColor } },
+    decreasing: { marker: { color: decreasingColor } },
+    totals: { marker: { color: totalsColor } },
+    connector: { 
+      visible: showConnector,
+      line: { 
+        color: connectorColor,
+        width: connectorWidth,
+        dash: connectorDash
+      } 
+    }
+  }]
+}
 
 const applyDimensions = (fig, sections) => {
   const dims = getConfigDict(sections.dimensions ?? [])
@@ -744,21 +822,25 @@ const safeParseJSON = (value, fallback = {}) => {
 }
 
 const chartTypeOptions = [
-  { value: 'bar', label: 'Bar' },
-  { value: 'column', label: 'Column' },
   { value: 'stacked_bar', label: 'Stacked Bar' },
   { value: 'stacked_column', label: 'Stacked Column' },
+  { value: 'line', label: 'Line' },
   { value: 'clustered_bar', label: 'Clustered Bar' },
   { value: 'clustered_column', label: 'Clustered Column' },
-  { value: 'line', label: 'Line' },
-  { value: 'area', label: 'Area' },
-  { value: 'scatter', label: 'Scatter' },
+  { value: 'waterfall_bar', label: 'Waterfall Bar' },
+  { value: 'waterfall_column', label: 'Waterfall Column' },
   { value: 'pie', label: 'Pie' },
   { value: 'donut', label: 'Donut' }
 ]
 
 const computeColorTargets = (chartType, chartData) => {
   if (!chartData || typeof chartData !== 'object') return []
+  
+  // ✅ Waterfall charts have fixed series: increasing, decreasing, totals
+  if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    return ['increasing', 'decreasing', 'totals']
+  }
+  
   const isPie = chartType === 'pie' || chartType === 'donut'
   if (isPie) {
     return Array.isArray(chartData?.series?.labels) ? chartData.series.labels.filter(Boolean) : []
@@ -769,9 +851,26 @@ const computeColorTargets = (chartType, chartData) => {
     .filter(Boolean)
 }
 
-const extractInitialColorOverrides = (sceneData, targets = []) => {
+const extractInitialColorOverrides = (sceneData, targets = [], chartType = '') => {
   if (!sceneData || !targets.length) return {}
   const sections = sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+  
+  // ✅ For waterfall charts, colors are stored differently
+  const isWaterfall = chartType === 'waterfall_bar' || chartType === 'waterfall_column'
+  
+  if (isWaterfall) {
+    // Waterfall: look for {name: "increasing", value: "#color"}
+    const colorsSection = sections.colors || []
+    return targets.reduce((acc, target) => {
+      const entry = colorsSection.find(item => item.name === target || item.name === target.toLowerCase())
+      if (entry?.value) {
+        acc[target] = entry.value
+      }
+      return acc
+    }, {})
+  }
+  
+  // Other charts: use mapSeriesEntries
   const colorMap = mapSeriesEntries(sections.colors ?? [])
   return targets.reduce((acc, target) => {
     const colorValue =
@@ -788,7 +887,16 @@ const extractInitialColorOverrides = (sceneData, targets = []) => {
 
 const mergeSectionArray = (base = [], overrides = []) => {
   if (!Array.isArray(overrides) || overrides.length === 0) return base
-  const makeKey = (item) => `${item?.series || 'global'}::${item?.name || ''}`
+  
+  const makeKey = (item) => {
+    // ✅ For waterfall colors: key is just the name (e.g., "increasing")
+    // ✅ For other colors: key is series::name (e.g., "Series 1::color")
+    if (item?.name && !item?.series && ['increasing', 'decreasing', 'totals'].includes(item.name)) {
+      return item.name // Waterfall color
+    }
+    return `${item?.series || 'global'}::${item?.name || ''}` // Regular color
+  }
+  
   const merged = Array.isArray(base) ? [...base] : []
   overrides.forEach((override) => {
     if (!override) return
@@ -802,7 +910,6 @@ const mergeSectionArray = (base = [], overrides = []) => {
   })
   return merged
 }
-
 const mergeSectionsWithOverrides = (baseSections = {}, overrideSections = null) => {
   if (!overrideSections) return baseSections
   const merged = { ...(baseSections || {}) }
@@ -812,14 +919,29 @@ const mergeSectionsWithOverrides = (baseSections = {}, overrideSections = null) 
   return merged
 }
 
-const buildSectionsOverrideFromColors = (colorOverrides = {}) => {
+const buildSectionsOverrideFromColors = (colorOverrides = {}, chartType = '') => {
   const entries = Object.entries(colorOverrides || {}).filter(([_, color]) => Boolean(color))
   if (!entries.length) return null
-  const colors = entries.map(([series, color]) => ({
-    series: series || 'global',
-    name: 'color',
-    value: color
-  }))
+  
+  // ✅ For waterfall charts, use 'name' field instead of 'series'
+  const isWaterfall = chartType === 'waterfall_bar' || chartType === 'waterfall_column'
+  
+  const colors = entries.map(([series, color]) => {
+    if (isWaterfall) {
+      // Waterfall: {name: "increasing", value: "#757575"}
+      return {
+        name: series, // "increasing", "decreasing", "totals"
+        value: color
+      }
+    } else {
+      // Other charts: {series: "Series 1", name: "color", value: "#1470D2"}
+      return {
+        series: series || 'global',
+        name: 'color',
+        value: color
+      }
+    }
+  })
   return { colors }
 }
 
@@ -879,6 +1001,8 @@ const generateChart = (sceneData, sectionsOverride = null) => {
     fig.data = createLineChart(data, presetData, chartData, chartType, sections)
   } else if (chartType === 'scatter') {
     fig.data = createScatterChart(data, presetData, chartData, sections)
+  } else if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    fig.data = createWaterfallChart(data, presetData, chartData, chartType, sections)
   } else {
     throw new Error(`Unsupported chart type: ${chartType}`)
   }
@@ -1040,14 +1164,6 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
     
     // Debug logging
-    try {
-      console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
-        chart_type: nextType,
-        has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
-        chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
-        sceneData_keys: Object.keys(sceneData || {})
-      })
-    } catch(_) {}
     const targets = computeColorTargets(nextType, parsedData)
     // Use selected preset if available, otherwise fall back to sceneData preset
     const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
@@ -1063,7 +1179,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     const sceneDataWithSelectedPreset = selectedPreset 
       ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
       : sceneData
-    setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets))
+    setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets, nextType))
     setRawChartDataInput(JSON.stringify(parsedData, null, 2))
     setRawChartError('')
     setIsDirty(false)
@@ -1251,7 +1367,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       const sceneDataWithSelectedPreset = selectedPreset 
         ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
         : sceneData
-      const baseColors = extractInitialColorOverrides(sceneDataWithSelectedPreset, colorTargets)
+      const baseColors = extractInitialColorOverrides(sceneDataWithSelectedPreset, colorTargets, chartTypeState)
       const next = {}
       colorTargets.forEach((target) => {
         if (Object.prototype.hasOwnProperty.call(prev, target)) {
@@ -1276,13 +1392,15 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   }, [])
 
   const handleColorOverrideChange = useCallback((target, color) => {
-    if (historyInitializedRef.current) saveToHistory()
-    setSeriesColorOverrides((prev) => ({
+  if (historyInitializedRef.current) saveToHistory()
+  setSeriesColorOverrides((prev) => {
+    return {
       ...prev,
       [target]: color
-    }))
-    markDirty()
-  }, [markDirty, saveToHistory])
+    }
+  })
+  markDirty()
+}, [markDirty, saveToHistory])
 
   const handleChartTypeChange = (event) => {
     if (historyInitializedRef.current) saveToHistory()
@@ -1302,31 +1420,30 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   }
 
   const handleApplyRawChartData = useCallback(() => {
-    try {
-      if (historyInitializedRef.current) saveToHistory()
-      const parsed = JSON.parse(rawChartDataInput || '{}')
-      setChartDataState(parsed)
-      setRawChartError('')
-      setRawChartDataInput(JSON.stringify(parsed, null, 2))
-      const targets = computeColorTargets(chartTypeState, parsed)
-      const baseColors = extractInitialColorOverrides(sceneData, targets)
-      setSeriesColorOverrides((prev) => {
-        const next = {}
-        targets.forEach((target) => {
-          if (Object.prototype.hasOwnProperty.call(prev, target)) {
-            next[target] = prev[target]
-          } else if (baseColors[target]) {
-            next[target] = baseColors[target]
-          }
-        })
-        return next
+  try {
+    if (historyInitializedRef.current) saveToHistory()
+    const parsed = JSON.parse(rawChartDataInput || '{}')
+    setChartDataState(parsed)
+    setRawChartError('')
+    setRawChartDataInput(JSON.stringify(parsed, null, 2))
+    const targets = computeColorTargets(chartTypeState, parsed)
+    const baseColors = extractInitialColorOverrides(sceneData, targets, chartTypeState)
+    setSeriesColorOverrides((prev) => {
+      const next = {}
+      targets.forEach((target) => {
+        if (Object.prototype.hasOwnProperty.call(prev, target)) {
+          next[target] = prev[target]
+        } else if (baseColors[target]) {
+          next[target] = baseColors[target]
+        }
       })
-      markDirty()
-    } catch (err) {
-      setRawChartError(err?.message || 'Invalid chart_data JSON')
-    }
-  }, [chartTypeState, rawChartDataInput, sceneData, markDirty, saveToHistory])
-
+      return next
+    })
+    markDirty()
+  } catch (err) {
+    setRawChartError(err?.message || 'Invalid chart_data JSON')
+  }
+}, [chartTypeState, rawChartDataInput, sceneData, markDirty, saveToHistory])
   const handleResetEditor = useCallback(() => {
     rebuildEditorStateFromScene()
     setIsDirty(false)
@@ -1397,22 +1514,28 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     }
     setIsSaving(true)
     setSaveError('')
+    let updatedOverlayElements = []
     try {
       const plotElement = plotRef.current?.el
       if (!plotElement) {
         throw new Error('Chart preview is not ready yet.')
       }
       
-      console.log('📸 Exporting chart with Plotly.toImage...')
-      
       // Wait a moment to ensure plot is fully rendered
       await new Promise(resolve => setTimeout(resolve, 100))
       
-      // Get dimensions - prefer figure layout dimensions if available, otherwise use DOM dimensions
-      const plotWidth = figure?.layout?.width || plotElement.offsetWidth || 960
-      const plotHeight = figure?.layout?.height || plotElement.offsetHeight || 540
+      // ✅ Get dimensions from overlay image
+      const overlayElements = sceneData?.overlay_elements || sceneData?.overlayElements || []
+      const chartOverlay = overlayElements.find(el => 
+        el?.element_id === 'chart_overlay' || 
+        el?.label_name === 'Chart' || 
+        overlayElements.indexOf(el) === 0
+      )
       
-      console.log(`📐 Export dimensions: ${plotWidth}x${plotHeight}`)
+      // Use overlay image dimensions directly
+      const overlayImageDims = chartOverlay?.overlay_image?.image_dimensions
+      const plotWidth = overlayImageDims?.width || 810
+      const plotHeight = overlayImageDims?.height || 1440
       
       // Use Plotly's built-in toImage method (same as download as PNG feature)
       // This uses Plotly's native export functionality that handles all scaling automatically
@@ -1425,8 +1548,6 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         scale: 3 // High resolution - Plotly automatically scales fonts, labels, titles, etc.
       })
       
-      console.log('✅ Chart exported to data URL, converting to blob...')
-      
       // Convert data URL to blob (matching ImageList.js pattern)
       const response = await fetch(imageDataUrl)
       if (!response.ok) {
@@ -1438,8 +1559,6 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         throw new Error('Failed to create blob from image data')
       }
       
-      console.log(`✅ Blob created: ${blob.size} bytes`)
-      
       // Generate filename
       const fileName = `scene-${sceneNumber}-chart.png`
       
@@ -1450,7 +1569,6 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       })
       
       // Upload the chart image to the upload_chart API
-      console.log(`📤 Uploading chart to upload_chart API...`)
       const uploadFormData = new FormData()
       uploadFormData.append('session_id', sessionId)
       uploadFormData.append('user_id', userId)
@@ -1481,12 +1599,10 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           // If response is just a URL string
           chartImageUrl = uploadData
         }
-        console.log('✅ Chart uploaded successfully, URL:', chartImageUrl)
       } catch (parseError) {
         // If not JSON, try treating response as plain text URL
         chartImageUrl = uploadResponseText.trim()
         if (chartImageUrl && (chartImageUrl.startsWith('http://') || chartImageUrl.startsWith('https://'))) {
-          console.log('✅ Chart URL extracted from text response:', chartImageUrl)
         } else {
           throw new Error('Failed to extract chart URL from upload response')
         }
@@ -1497,10 +1613,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       }
       
       // Call elements API to update overlay_elements with the new chart URL
-      console.log('📤 Calling elements API to update overlay_elements...')
       try {
         // First, fetch user session data to get the complete overlay structure
-        console.log('🔄 Fetching user session data to get complete overlay structure...')
         const sessionReqBody = { user_id: userId, session_id: sessionId }
         const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
@@ -1552,7 +1666,6 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         
         // Update overlay_elements with the new chart URL while preserving all other data
         // The overlay object structure should match: { layout, offset, element_id, label_name, synced_with, bounding_box, overlay_image }
-        let updatedOverlayElements = []
         if (Array.isArray(existingOverlayElements) && existingOverlayElements.length > 0) {
           updatedOverlayElements = existingOverlayElements.map((overlay, idx) => {
             // Update the URL for chart overlays, preserving the complete structure
@@ -1686,7 +1799,6 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           ]
         }
         
-        console.log('📋 Elements API request body:', JSON.stringify(elementsRequestBody, null, 2))
         
         const elementsResponse = await fetch(
           'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/elements',
@@ -1704,19 +1816,18 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           throw new Error(`Failed to update elements: ${elementsResponse.status} ${errorText}`)
         }
         
-        console.log('✅ Elements updated successfully')
       } catch (elementsError) {
         console.error('❌ Error updating elements:', elementsError)
         throw elementsError // Re-throw to be caught by outer try-catch
       }
       
       // Build JSON data and send to chart-preset/update API
-      console.log('📤 Preparing JSON data for chart-preset/update API...')
       try {
         // Get merged sections (same logic as in useEffect)
         const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
         const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-        const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides)
+        const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
+        
         // Merge base sections with user-edited sectionsState
         const mergedBase = { ...baseSections }
         Object.keys(sectionsState).forEach(key => {
@@ -1725,6 +1836,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           }
         })
         const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
+
         
         // Build JSON output structure (matching App.jsx format)
         const output = {
@@ -1743,12 +1855,10 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         }
         
         const jsonString = JSON.stringify(output, null, 2)
-        console.log('📋 JSON data prepared:', jsonString)
         
         // Send JSON to chart-preset/update API using PUT method
         const updateUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/update?session_id=${encodeURIComponent(sessionId)}&user_id=${encodeURIComponent(userId)}`
         
-        console.log('📤 Sending JSON to chart-preset/update API (PUT)...')
         const updateResponse = await fetch(updateUrl, {
           method: 'PUT',
           headers: {
@@ -1761,14 +1871,12 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           const errorText = await updateResponse.text()
           throw new Error(`Failed to update chart preset: ${updateResponse.status} ${errorText}`)
         }
-        console.log('✅ Chart preset updated successfully')
       } catch (jsonError) {
         console.error('❌ Error updating chart preset:', jsonError)
         throw jsonError // Re-throw to be caught by outer try-catch
       }
       
       // Fetch updated user session data to refresh the UI
-      console.log('🔄 Fetching updated user session data...')
       try {
         const sessionReqBody = { user_id: userId, session_id: sessionId }
         const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -1777,18 +1885,16 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           body: JSON.stringify(sessionReqBody)
         })
         
-        if (!sessionResp.ok) {
-          const text = await sessionResp.text()
-          console.warn(`⚠️ Failed to fetch updated session data: ${sessionResp.status} ${text}`)
-        } else {
+        if (sessionResp.ok) {
           const sessionDataResponse = await sessionResp.json()
-          console.log('✅ User session data refreshed')
-          // Store updated session data in localStorage for parent components to pick up
           try {
             localStorage.setItem('last_session_data', JSON.stringify(sessionDataResponse))
           } catch (_) {
             // Ignore localStorage errors
           }
+        } else {
+          const text = await sessionResp.text()
+          console.warn(`⚠️ Failed to fetch updated session data: ${sessionResp.status} ${text}`)
         }
       } catch (sessionError) {
         console.warn('⚠️ Error fetching updated session data:', sessionError)
@@ -1797,9 +1903,17 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       
       setIsDirty(false)
       
-      // Call onSave callback to refresh the parent component
+      // Call onSave callback to let parent update UI without full reload
       if (onSave) {
-        onSave()
+        try {
+          onSave({
+            sceneNumber,
+            chartImageUrl,
+            overlayElements: updatedOverlayElements
+          })
+        } catch (_) {
+          // Ignore errors from parent callback
+        }
       }
       
       // Close the modal instead of reloading
@@ -1820,7 +1934,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       // Use selected preset if available, otherwise fall back to sceneData preset
       const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
       const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-      const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides)
+      const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
       // Merge base sections with user-edited sectionsState
       const mergedBase = { ...baseSections }
       Object.keys(sectionsState).forEach(key => {
@@ -2408,8 +2522,9 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
               )}
             </div>
 
-            {/* Bar Styling - for bar/column charts */}
-            {(chartTypeState.includes('bar') || chartTypeState.includes('column')) && (
+            {/* Bar Styling - for bar/column charts (excluding waterfall) */}
+            {(chartTypeState.includes('bar') || chartTypeState.includes('column')) && 
+            !chartTypeState.includes('waterfall') && (
               <>
             <div className="border rounded-lg bg-white">
               <button

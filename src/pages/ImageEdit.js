@@ -500,6 +500,10 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
   const [isDraggingOverlayLayer, setIsDraggingOverlayLayer] = useState(false)
   const [isResizingOverlayLayer, setIsResizingOverlayLayer] = useState(false)
   const [selectedOverlayLayerResizeMode, setSelectedOverlayLayerResizeMode] = useState(null)
+  const [isRotatingOverlayLayer, setIsRotatingOverlayLayer] = useState(false)
+  const rotatingOverlayLayerIdRef = useRef(null)
+  const rotateStartRef = useRef({ angle: 0, rotation: 0, centerX: 0, centerY: 0 })
+  const cropAreaStartRef = useRef(null)
   const hoverTimeoutRef = useRef(null)
   const isHoveringToolbarRef = useRef(false)
   const shapeHoverTimeoutRef = useRef(null)
@@ -2147,10 +2151,11 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             top: overlayLayer.y * scaleY,
             width: widthPx,
             height: heightPx,
-            transformOrigin: 'top left',
+            transformOrigin: 'center center',
+            transform: `rotate(${overlayLayer.rotation || 0}deg)`,
             border: isSelected ? '2px solid #7c3aed' : '2px solid transparent',
             boxSizing: 'border-box',
-            cursor: 'move',
+            cursor: isRotatingOverlayLayer && rotatingOverlayLayerIdRef.current === overlayLayer.id ? 'grabbing' : 'move',
             zIndex: 50 + layerOrderIndex // Use layer order for z-index
           }}
           onClick={(e) => {
@@ -2222,6 +2227,29 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
                   <Icon name="crop" size={12} />
                 </button>
               )}
+              {/* Rotate button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleOverlayLayerRotate(overlayLayer.id, 15)
+                  setHoveredOverlayLayerId(null)
+                }}
+                className="w-6 h-6 bg-white/90 border border-blue-500 text-blue-600 rounded-full flex items-center justify-center shadow-md hover:bg-blue-50 transition"
+                title="Rotate overlay"
+                onMouseEnter={() => {
+                  if (overlayHoverTimeoutRef.current) {
+                    clearTimeout(overlayHoverTimeoutRef.current)
+                    overlayHoverTimeoutRef.current = null
+                  }
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 11a8 8 0 0 1 13-5.3" />
+                  <polyline points="15 6 17 6 17 4" />
+                  <path d="M20 13a8 8 0 0 1-13 5.3" />
+                  <polyline points="9 18 7 18 7 20" />
+                </svg>
+              </button>
               {/* Remove background button */}
               {!isCropping && (
                 <button
@@ -2337,7 +2365,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
             left: overlayDisplayX,
             top: overlayDisplayY,
             width: overlayWidth,
-            height: overlayHeight
+            height: overlayHeight,
+            transformOrigin: 'center center',
+            transform: `rotate(${overlayLayer.rotation || 0}deg)`
           }}
         >
           <div className="absolute inset-0">
@@ -2746,6 +2776,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           const overlayDisplayY = overlayPosition.y * scaleY
           const overlayWidth = Math.max(1, widthPx)
           const overlayHeight = Math.max(1, heightPx)
+          const overlayRotation = 0 // main overlay rotation not tracked; keep box axis-aligned
           const rawLeft = cropArea.x - overlayDisplayX
           const rawTop = cropArea.y - overlayDisplayY
           const selectionLeft = Math.min(Math.max(0, rawLeft), overlayWidth)
@@ -2764,7 +2795,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
           const controlsLeft = selectionLeft
           return (
             <>
-              <div className="absolute inset-0 pointer-events-none z-[1100]">
+              <div
+                className="absolute inset-0 pointer-events-none z-[1100]"
+                style={{
+                  transformOrigin: 'center center',
+                  transform: `rotate(${overlayRotation}deg)`
+                }}
+              >
                 <div
                   className="absolute"
                   style={{
@@ -3422,7 +3459,7 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     // Check if mouse button is actually pressed
     if (e.buttons === 0) {
       // Mouse button is not pressed, reset all drag states
-      if (isDragging || isResizing || isDraggingOverlay || isResizingOverlay || isDraggingShape || isResizingShape || isDraggingOverlayLayer || isResizingOverlayLayer) {
+      if (isDragging || isResizing || isDraggingOverlay || isResizingOverlay || isDraggingShape || isResizingShape || isDraggingOverlayLayer || isResizingOverlayLayer || isRotatingOverlayLayer) {
         setIsDragging(false)
         setIsResizing(false)
         setIsDraggingOverlay(false)
@@ -3431,13 +3468,19 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
         setIsResizingShape(false)
         setIsDraggingOverlayLayer(false)
         setIsResizingOverlayLayer(false)
+        setIsRotatingOverlayLayer(false)
+        rotatingOverlayLayerIdRef.current = null
+    cropAreaStartRef.current = null
         setOverlayResizeMode(null)
         setSelectedOverlayLayerResizeMode(null)
+        try {
+          document.body.style.cursor = ''
+        } catch (_) {}
       }
       return
     }
     
-    if (!isDragging && !isResizing && !isDraggingOverlay && !isResizingOverlay && !isDraggingShape && !isResizingShape && !isDraggingOverlayLayer && !isResizingOverlayLayer) return
+    if (!isDragging && !isResizing && !isDraggingOverlay && !isResizingOverlay && !isDraggingShape && !isResizingShape && !isDraggingOverlayLayer && !isResizingOverlayLayer && !isRotatingOverlayLayer) return
 
     const currentDragStart = isDraggingOverlay || isResizingOverlay ? overlayDragStart : dragStart
     const deltaX = e.clientX - currentDragStart.x
@@ -3457,6 +3500,26 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
     const { scaleX, scaleY } = getImageScale()
     const deltaXPct = pxDeltaToPercent(deltaX, 'x')
     const deltaYPct = pxDeltaToPercent(deltaY, 'y')
+
+    if (isRotatingOverlayLayer && rotatingOverlayLayerIdRef.current) {
+      const start = rotateStartRef.current
+      const angle = Math.atan2(e.clientY - start.centerY, e.clientX - start.centerX) * (180 / Math.PI)
+      const deltaAngle = angle - start.angle
+      const newRotation = ((start.rotation + deltaAngle) % 360 + 360) % 360
+      setOverlayLayers(prev =>
+        prev.map(ol =>
+          ol.id === rotatingOverlayLayerIdRef.current ? { ...ol, rotation: newRotation } : ol
+        )
+      )
+      setSelectedOverlayLayer(prev =>
+        prev?.id === rotatingOverlayLayerIdRef.current ? { ...prev, rotation: newRotation } : prev
+      )
+      // While rotating, ensure cursor stays grabbing
+      try {
+        document.body.style.cursor = 'grabbing'
+      } catch (_) {}
+      return
+    }
 
     if (isDragging && selectedLayer && dragThresholdMet) {
       const tentativeX = layerStart.x + deltaXPct
@@ -3548,6 +3611,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       const newX = layerStart.x + (deltaX / (scaleX || 1))
       const newY = layerStart.y + (deltaY / (scaleY || 1))
       setOverlayPosition({ x: newX, y: newY })
+      if (isCropping && croppingTarget === 'overlay' && cropAreaStartRef.current) {
+        setCropArea({
+          ...cropAreaStartRef.current,
+          x: cropAreaStartRef.current.x + deltaX,
+          y: cropAreaStartRef.current.y + deltaY
+        })
+      }
       
       // Save overlay change start if not already set
       if (!overlayChangeStart) {
@@ -3566,6 +3636,13 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       )
       setOverlayLayers(updatedLayers)
       setSelectedOverlayLayer({ ...selectedOverlayLayer, x: newX, y: newY })
+      if (isCropping && croppingTarget === 'overlay-layer' && cropAreaStartRef.current) {
+        setCropArea({
+          ...cropAreaStartRef.current,
+          x: cropAreaStartRef.current.x + deltaX,
+          y: cropAreaStartRef.current.y + deltaY
+        })
+      }
     } else if (isResizingOverlayLayer && selectedOverlayLayer && selectedOverlayLayerResizeMode) {
       // Resize overlay layer
       const { scaleX, scaleY } = getImageScale()
@@ -3710,6 +3787,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setIsDraggingOverlay(true)
       setOverlayDragStart({ x: e.clientX, y: e.clientY })
       setLayerStart({ x: overlayPosition.x, y: overlayPosition.y, width: currentWidth, height: currentHeight })
+      if (isCropping && croppingTarget === 'overlay') {
+        cropAreaStartRef.current = { ...cropArea }
+      }
     } else if (action === 'resize') {
       setIsResizingOverlay(true)
       setOverlayResizeMode(resizeMode || 'se') // Default to bottom-right if no mode specified
@@ -3734,6 +3814,9 @@ function ImageEdit({ onClose, isOpen = true, frameData = null, sceneNumber = nul
       setIsDraggingOverlayLayer(true)
       setDragStart({ x: e.clientX, y: e.clientY })
       setLayerStart({ x: overlayLayer.x, y: overlayLayer.y, width: overlayLayer.width, height: overlayLayer.height })
+      if (isCropping && croppingTarget === 'overlay-layer') {
+        cropAreaStartRef.current = { ...cropArea }
+      }
     } else if (action === 'resize') {
       setIsResizingOverlayLayer(true)
       setSelectedOverlayLayerResizeMode(resizeMode || 'se')
@@ -3901,7 +3984,8 @@ const handleTemplateJsonLoad = () => {
             width: targetWNat,
             height: targetHNat,
             image: null, // Will be loaded asynchronously
-            fileUrl: ovUrl // Store the file URL
+            fileUrl: ovUrl, // Store the file URL
+            rotation: typeof ov?.rotation === 'number' ? ov.rotation : 0
           }
           loadedOverlays.push(overlayLayer)
           
@@ -4224,6 +4308,42 @@ const handleTemplateJsonLoad = () => {
       newLayers: updatedLayers,
       newSelected: null
     })
+  }
+
+  const startOverlayLayerRotation = (overlayLayerId, clientX, clientY) => {
+    const overlayLayer = overlayLayers.find(ol => ol.id === overlayLayerId)
+    if (!overlayLayer) return
+    const { scaleX, scaleY } = getImageScale()
+    const centerX = overlayLayer.x * scaleX + (overlayLayer.width * scaleX) / 2
+    const centerY = overlayLayer.y * scaleY + (overlayLayer.height * scaleY) / 2
+    const startAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI)
+    rotateStartRef.current = {
+      angle: startAngle,
+      rotation: overlayLayer.rotation || 0,
+      centerX,
+      centerY
+    }
+    try {
+      document.body.style.cursor = 'grabbing'
+    } catch (_) {}
+    rotatingOverlayLayerIdRef.current = overlayLayerId
+    setIsRotatingOverlayLayer(true)
+  }
+
+  const handleOverlayLayerRotate = (overlayLayerId, delta = 15) => {
+    setOverlayLayers(prev =>
+      prev.map(ol =>
+        ol.id === overlayLayerId
+          ? { ...ol, rotation: ((ol.rotation || 0) + delta) % 360 }
+          : ol
+      )
+    )
+    setSelectedOverlayLayer(prev =>
+      prev?.id === overlayLayerId
+        ? { ...prev, rotation: ((prev.rotation || 0) + delta) % 360 }
+        : prev
+    )
+    saveToHistory('overlay_rotate', { overlayLayerId, delta })
   }
 
   // Remove background from overlay via API
@@ -4632,7 +4752,8 @@ const handleTemplateJsonLoad = () => {
                         width: targetWNat,
                         height: targetHNat,
                         image: null, // Will be loaded asynchronously
-                        fileUrl: ovUrl // Store the file URL
+                        fileUrl: ovUrl, // Store the file URL
+                        rotation: typeof ov?.rotation === 'number' ? ov.rotation : 0
                       }
                       loadedOverlays.push(overlayLayer)
                       allLayersWithZIndex.push({ layer: overlayLayer, zIndex, type: 'overlay' })
@@ -4941,7 +5062,7 @@ const handleTemplateJsonLoad = () => {
           },
           layout: {
             zIndex: zIndex,
-            rotation: 0,
+            rotation: overlayLayer.rotation || 0,
             alignment: 'center',
             anchor_point: 'center'
           }

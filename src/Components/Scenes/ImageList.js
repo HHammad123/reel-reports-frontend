@@ -441,13 +441,91 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     }
     return { hasOpening: false, hasClosing: false, hasBackground: false };
   }, [isSORAModel, isVEO3Model, isANCHORModel]);
+
+  const dedupeImages = useCallback((arr = []) => {
+    const seen = new Set();
+    const out = [];
+    arr.forEach((url) => {
+      const clean = typeof url === 'string' ? url.trim() : '';
+      if (!clean) return;
+      if (seen.has(clean)) return;
+      seen.add(clean);
+      out.push(clean);
+    });
+    return out;
+  }, []);
+
+  // Temporarily hide text overlays while capturing DOM so text is not baked into frames.
+  const hideTextOverlaysForCapture = useCallback(() => {
+    const selectors = [
+      '[data-text-overlay]',
+      '.text-overlay',
+      '.overlay-text',
+      '[data-role="text"]',
+      '[data-type="text"]',
+      '.text-element',
+      '[data-overlay-type="text"]'
+    ];
+    const affected = [];
+    try {
+      selectors.forEach((sel) => {
+        document.querySelectorAll(sel).forEach((el) => {
+          if (!el || affected.some(([target]) => target === el)) return;
+          const prevVisibility = el.style.visibility;
+          affected.push([el, prevVisibility]);
+          el.style.visibility = 'hidden';
+        });
+      });
+    } catch (err) {
+      console.warn('Failed to hide text overlays for capture', err);
+    }
+    return () => {
+      affected.forEach(([el, prev]) => {
+        if (!el) return;
+        el.style.visibility = prev || '';
+      });
+    };
+  }, []);
+
+  // Temporarily hide chart elements (only chart overlays) so they are not baked into captures.
+  const hideChartOverlaysForCapture = useCallback(() => {
+    const affected = [];
+    try {
+      const candidates = Array.from(
+        document.querySelectorAll(
+          [
+            '[data-chart-overlay="true"]',
+            '[data-overlay-id="chart_overlay"]',
+            '[data-overlay-label="Chart"]',
+            '[data-overlay-model="PLOTLY"]',
+            'img[alt="overlay"][src*="chart"]'
+          ].join(',')
+        )
+      );
+      candidates.forEach((el) => {
+        if (!el || affected.some(([target]) => target === el)) return;
+        const prevVisibility = el.style.visibility;
+        affected.push([el, prevVisibility]);
+        el.style.visibility = 'hidden';
+      });
+    } catch (err) {
+      console.warn('Failed to hide chart overlays for capture', err);
+    }
+    return () => {
+      affected.forEach(([el, prev]) => {
+        if (!el) return;
+        el.style.visibility = prev || '';
+      });
+    };
+  }, []);
   
   // State for active image tab (0 for Image 1/Avatar, 1 for Image 2/Image)
   const [activeImageTab, setActiveImageTab] = useState(0);
-  // Cache-busting value for chart overlays - updates when scene changes to ensure fresh chart images
+  // Cache-busting state for chart overlays - bump when scene or chart data changes
+  const [chartVersion, setChartVersion] = useState(0);
   const chartCacheBuster = React.useMemo(() => {
-    return `${activeSceneNumber}_${Date.now()}`;
-  }, [activeSceneNumber]);
+    return `${activeSceneNumber}_${chartVersion}_${Date.now()}`;
+  }, [activeSceneNumber, chartVersion]);
   const redirectIntervalRef = React.useRef(null);
   const sceneUpdateTimeoutRef = useRef(null);
 
@@ -4174,6 +4252,12 @@ const getOrderedRefs = useCallback((row) => {
     for (const overlay of overlayElements) {
       if (!overlay || typeof overlay !== 'object') continue;
       const bb = overlay.bounding_box || {};
+      const rotationDeg =
+        typeof overlay?.rotation === 'number'
+          ? overlay.rotation
+          : typeof overlay?.layout?.rotation === 'number'
+          ? overlay.layout.rotation
+          : 0;
       const overlayUrl =
         overlay?.image_url ||
         overlay?.imageUrl ||
@@ -4200,7 +4284,17 @@ const getOrderedRefs = useCallback((row) => {
           : (overlayImg.naturalHeight || overlayImg.height);
         const ox = Number.isFinite(bb.x) ? (asAbsolute ? bb.x * scaleX : bb.x * width) : 0;
         const oy = Number.isFinite(bb.y) ? (asAbsolute ? bb.y * scaleY : bb.y * height) : 0;
-        ctx.drawImage(overlayImg, ox, oy, ow, oh);
+        if (rotationDeg) {
+          const cx = ox + ow / 2;
+          const cy = oy + oh / 2;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate((rotationDeg * Math.PI) / 180);
+          ctx.drawImage(overlayImg, -ow / 2, -oh / 2, ow, oh);
+          ctx.restore();
+        } else {
+          ctx.drawImage(overlayImg, ox, oy, ow, oh);
+        }
       } catch (_) {
         // Skip overlay on failure, continue with the rest
       }
@@ -4209,7 +4303,7 @@ const getOrderedRefs = useCallback((row) => {
 
   const mergeFrameToDataUrl = React.useCallback(
     async (frame, fallbackDimensions = null, options = {}) => {
-      const { includeOverlays = true } = options;
+      const { includeOverlays = true, includeText = true } = options;
       if (!frame) return null;
       const base = frame?.base_image || frame?.baseImage || {};
       const imgUrl =
@@ -4254,7 +4348,7 @@ const getOrderedRefs = useCallback((row) => {
         ? frame.overlayElements
         : [];
 
-      if (textEls.length > 0) {
+      if (includeText && textEls.length > 0) {
         drawTextElementsOnCanvas(ctx, textEls, width, height, baseWidth || width, baseHeight || height);
       }
       if (includeOverlays && overlayEls.length > 0) {
@@ -4424,19 +4518,15 @@ const getOrderedRefs = useCallback((row) => {
   // given scene/image index using consistent html2canvas settings.
   async function captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex) {
     const selector = `[data-image-container][data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`;
-    console.log(`🔍 Looking for DOM element with selector: ${selector}`);
-    const node = document.querySelector(selector);
+    let node = document.querySelector(selector);
     if (!node) {
-      console.warn(`⚠️ DOM element not found for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
-      // Try alternative selector patterns
       const altSelectors = [
         `[data-scene-number="${sceneNumber}"][data-image-index="${imageIndex}"]`,
-        `[data-scene="${sceneNumber}"][data-image="${imageIndex}"]`,
+        `[d ata="${sceneNumber}"][data-image="${imageIndex}"]`,
       ];
       for (const altSelector of altSelectors) {
         const altNode = document.querySelector(altSelector);
         if (altNode) {
-          console.log(`✅ Found element with alternative selector: ${altSelector}`);
           node = altNode;
           break;
         }
@@ -4447,7 +4537,6 @@ const getOrderedRefs = useCallback((row) => {
     }
     
     try {
-      console.log(`📸 Starting html2canvas capture for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
       const canvas = await html2canvas(node, {
         useCORS: true,
         logging: false,
@@ -4458,7 +4547,6 @@ const getOrderedRefs = useCallback((row) => {
         removeContainer: false
       });
       const dataUrl = canvas.toDataURL('image/png');
-      console.log(`✅ html2canvas capture complete for Scene ${sceneNumber}, Image ${imageIndex + 1}, data URL length: ${dataUrl.length}`);
       return dataUrl;
     } catch (err) {
       console.error(`❌ html2canvas error for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, err);
@@ -4475,13 +4563,12 @@ const getOrderedRefs = useCallback((row) => {
     });
   }, []);
 
-  const mergeAndDownloadAllImages = React.useCallback(async () => {
+  const mergeAndDownloadAllImages = React.useCallback(async (options = {}) => {
+    const { includeText = true, includeOverlays = true } = options;
     let failed = 0;
     let saved = 0;
 
     try {
-      console.log('🎬 Starting image save process for ALL scenes...');
-      
       // CRITICAL: Verify storage ref is valid at the START of the function
       if (!imageStorageRef.current) {
         console.warn('⚠️ Storage ref is null at start, initializing...');
@@ -4491,14 +4578,10 @@ const getOrderedRefs = useCallback((row) => {
         console.warn('⚠️ Storage ref is not a Map at start, re-initializing...');
         imageStorageRef.current = new Map();
       }
-      console.log(`📦 Storage initialized with ${imageStorageRef.current.size} existing image(s)`);
       
       if (rows.length === 0) {
-        console.warn('⚠️ No scenes found');
         return failed;
       }
-
-      console.log(`📊 Total scenes: ${rows.length}`);
 
       // Iterate through ALL rows (scenes)
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
@@ -4508,14 +4591,16 @@ const getOrderedRefs = useCallback((row) => {
         const isVeo3 = modelUpper === 'VEO3';
         const isAnchor = modelUpper === 'ANCHOR';
         const isPlotly = modelUpper === 'PLOTLY';
-        const sceneImages = isVeo3 ? getVeo3ImageTabImages(row) : (isAnchor ? getAnchorAvatarImages(row) : getSceneImages(row));
+        const anchorImagesCombined = isAnchor
+          ? dedupeImages([
+              ...(getAnchorAvatarImages(row) || []),
+              ...(getSceneImages(row) || [])
+            ])
+          : [];
+        const sceneImages = isVeo3 ? getVeo3ImageTabImages(row) : (isAnchor ? anchorImagesCombined : getSceneImages(row));
         const images = sceneImages || [];
         const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : [];
         const fallbackDims = row?.imageDimensions || row?.image_dimensions || null;
-
-        console.log(`\n🎬 Processing Scene ${sceneNumber}...`);
-        console.log(`   Model: ${modelUpper}`);
-        console.log(`   Images: ${images.length}`);
 
         // Process each image in this scene
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
@@ -4530,7 +4615,9 @@ const getOrderedRefs = useCallback((row) => {
 
             // CRITICAL: For ALL non-Plotly images, we MUST switch to that scene + image tab
             // and capture the LIVE DOM using html2canvas, exactly as Export does.
-            if (!isPlotly) {
+            // When includeText is false, we still capture DOM for overlays but hide text temporarily.
+            const shouldUseDomCapture = !isPlotly && includeOverlays;
+            if (shouldUseDomCapture) {
               
               // 1) Switch to this scene
               const currentSceneNumber = selected?.sceneNumber || selected?.scene_number;
@@ -4587,23 +4674,30 @@ const getOrderedRefs = useCallback((row) => {
               }
 
               // 3) Now capture the DOM with html2canvas (same as Export)
-              console.log(`📸 Attempting html2canvas capture for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
+              let restoreText = null;
+              let restoreCharts = null;
               try {
-              dataUrl = await captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex);
-              if (dataUrl) {
-                  console.log(`✅ html2canvas capture successful for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
-              } else {
-                  console.warn(`⚠️ html2canvas returned null for Scene ${sceneNumber}, Image ${imageIndex + 1}, will try fallback`);
+                // Always hide charts during capture; hide text when we must exclude it.
+                restoreCharts = hideChartOverlaysForCapture();
+                if (!includeText) {
+                  restoreText = hideTextOverlaysForCapture();
                 }
+                dataUrl = await captureSceneImageWithHtml2Canvas(sceneNumber, imageIndex);
               } catch (html2canvasError) {
                 console.error(`❌ html2canvas error for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, html2canvasError);
                 dataUrl = null; // Will use fallback
+              } finally {
+                if (typeof restoreText === 'function') {
+                  try { restoreText(); } catch (restErr) { console.warn('Restore text visibility failed', restErr); }
+                }
+                if (typeof restoreCharts === 'function') {
+                  try { restoreCharts(); } catch (restErr) { console.warn('Restore chart visibility failed', restErr); }
+                }
               }
             }
 
             // 2) If DOM snapshot was not used or failed, fall back to frame-based rendering.
             if (!dataUrl) {
-              console.log(`🔄 Using fallback rendering for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
             // Find the corresponding frame for this image (if any)
             let frame = null;
             if (frames.length > 0) {
@@ -4615,16 +4709,13 @@ const getOrderedRefs = useCallback((row) => {
               }
 
             if (frame) {
-                console.log(`📐 Using frame-based rendering with overlays for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
               // Use frame data + base image dimensions to build the canvas at the correct size.
               // For PLOTLY, do NOT bake overlay images into the saved frame; overlays stay visual-only.
                 try {
               dataUrl = await mergeFrameToDataUrl(frame, fallbackDims, {
-                  includeOverlays: !isPlotly
+                  includeOverlays: includeOverlays && !isPlotly,
+                  includeText
               });
-                  if (dataUrl) {
-                    console.log(`✅ Frame-based rendering successful for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
-                  }
                 } catch (frameError) {
                   console.error(`❌ Frame-based rendering failed for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, frameError);
                   dataUrl = null; // Will try raw image fallback
@@ -4632,7 +4723,6 @@ const getOrderedRefs = useCallback((row) => {
             } else {
                 // Final fallback: load the raw image and render it to a canvas sized
                 // according to image_dimensions when available.
-                console.log(`🖼️ Using raw image fallback for Scene ${sceneNumber}, Image ${imageIndex + 1}...`);
                 try {
               const imgEl = await loadImageElement(imageUrl);
                 const baseDims = fallbackDims || {};
@@ -4652,7 +4742,6 @@ const getOrderedRefs = useCallback((row) => {
               ctx.drawImage(imgEl, 0, 0, width, height);
 
               dataUrl = canvas.toDataURL('image/png');
-                  console.log(`✅ Raw image fallback successful for Scene ${sceneNumber}, Image ${imageIndex + 1}`);
                 } catch (rawError) {
                   console.error(`❌ Raw image fallback failed for Scene ${sceneNumber}, Image ${imageIndex + 1}:`, rawError);
                   dataUrl = null;
@@ -4666,7 +4755,6 @@ const getOrderedRefs = useCallback((row) => {
             }
 
             // Convert data URL to blob
-            console.log(`   Converting data URL to blob...`);
             let blob;
             try {
               blob = await dataUrlToBlob(dataUrl);
@@ -4675,7 +4763,6 @@ const getOrderedRefs = useCallback((row) => {
                 failed += 1;
                 continue;
               }
-              console.log(`   ✓ Blob created: ${blob.size} bytes, type: ${blob.type}`);
             } catch (blobError) {
               console.error(`   ✗ ERROR: Exception converting to blob:`, blobError);
               failed += 1;
@@ -4687,11 +4774,8 @@ const getOrderedRefs = useCallback((row) => {
 
             // WORKAROUND: Store image in browser memory instead of server temp folder
             // This bypasses the /api/save-temp-image endpoint that's not working
-
+            
             try {
-              console.log(`📷 Scene ${sceneNumber}, Image ${imageIndex + 1}: Processing...`);
-              console.log(`   DataURL length: ${dataUrl ? dataUrl.length : 0} characters`);
-              console.log(`   Blob: ${blob ? `${blob.size} bytes, type: ${blob.type}` : 'null'}`);
               
               // CRITICAL: Verify storage ref exists and is valid BEFORE using it
               if (!imageStorageRef.current) {
@@ -4710,12 +4794,8 @@ const getOrderedRefs = useCallback((row) => {
                 continue;
               }
               
-              console.log(`   Storing blob to memory storage...`);
-              console.log(`   Storage before: ${imageStorageRef.current.size} image(s)`);
-              
               // Store the blob in memory using a Map
               imageStorageRef.current.set(fileName, blob);
-              
               // Immediately verify it was stored (use a different variable to avoid confusion)
               const verifyBlob = imageStorageRef.current.get(fileName);
               
@@ -4728,11 +4808,6 @@ const getOrderedRefs = useCallback((row) => {
               }
               
               saved += 1;
-              console.log(`✅ Scene ${sceneNumber}, Image ${imageIndex + 1}: Saved to browser memory as "${fileName}"`);
-              console.log(`   Blob size: ${blob.size} bytes (${(blob.size / 1024 / 1024).toFixed(2)} MB), type: ${blob.type}`);
-              console.log(`   ✓ Verified: Image is in storage (size: ${verifyBlob.size} bytes)`);
-              console.log(`   Storage now contains ${imageStorageRef.current.size} image(s)`);
-              console.log(`   Storage keys:`, Array.from(imageStorageRef.current.keys()));
             } catch (error) {
               console.error(`❌ Scene ${sceneNumber}, Image ${imageIndex + 1}: Failed to save`, error);
               console.error(`   Error details:`, error?.message);
@@ -4751,14 +4826,7 @@ const getOrderedRefs = useCallback((row) => {
         }
       }
 
-      console.log('\n==================================================');
-      console.log('✅ Save process complete!');
-      console.log(`   Total scenes: ${rows.length}`);
-      console.log(`   Successfully saved: ${saved}`);
-      console.log(`   Failed: ${failed}`);
-      console.log(`   Total images in storage: ${imageStorageRef.current.size}`);
-      console.log('   Images in storage:', Array.from(imageStorageRef.current.keys()));
-      console.log('==================================================\n');
+      // Save process complete
 
       // No alerts - just console logs for background processing
     } catch (error) {
@@ -4789,16 +4857,12 @@ const getOrderedRefs = useCallback((row) => {
   // Function to call save-all-frames API with temp folder images
   const callSaveAllFramesAPI = React.useCallback(async () => {
     try {
-      console.log('📦 Step 2: Starting save-all-frames API call...');
-      
       const userId = localStorage.getItem('token');
       const sessionId = localStorage.getItem('session_id');
       
       if (!userId || !sessionId) {
         throw new Error('Missing user_id or session_id');
       }
-      
-      console.log('✅ User ID and Session ID found');
       
       // Build frame metadata based on rows
       const frameMetadata = [];
@@ -4816,7 +4880,13 @@ const getOrderedRefs = useCallback((row) => {
         const isAnchor = modelUpper === 'ANCHOR';
         const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
         const anchorAvatarImages = isAnchor ? getAnchorAvatarImages(row) : [];
-        const images = isVeo3 ? veo3ImageRefs : (isAnchor ? anchorAvatarImages : getSceneImages(row));
+        const anchorImagesCombined = isAnchor
+          ? dedupeImages([
+              ...(anchorAvatarImages || []),
+              ...(getSceneImages(row) || [])
+            ])
+          : [];
+        const images = isVeo3 ? veo3ImageRefs : (isAnchor ? anchorImagesCombined : getSceneImages(row));
         sceneImagesByIndex[sceneIndex] = images;
         
         const sceneMetadata = {
@@ -4883,9 +4953,7 @@ const getOrderedRefs = useCallback((row) => {
         imageStorageRef.current = new Map();
       }
       
-      console.log(`🔍 Checking browser memory storage...`);
       const storageSize = imageStorageRef.current.size;
-      console.log(`   Total entries in storage: ${storageSize}`);
       
       if (storageSize === 0) {
         console.error('❌ ERROR: Storage is EMPTY! No images were saved in Step 1.');
@@ -4895,7 +4963,6 @@ const getOrderedRefs = useCallback((row) => {
       }
       
       const storageKeys = Array.from(imageStorageRef.current.keys());
-      console.log(`   Storage keys:`, storageKeys);
       
       for (let sceneIndex = 0; sceneIndex < rows.length; sceneIndex++) {
         const row = rows[sceneIndex];
@@ -4905,13 +4972,19 @@ const getOrderedRefs = useCallback((row) => {
         const isAnchor = modelUpper === 'ANCHOR';
         const veo3ImageRefs = isVeo3 ? getVeo3ImageTabImages(row) : [];
         const anchorAvatarImages = isAnchor ? getAnchorAvatarImages(row) : [];
-        const images = sceneImagesByIndex[sceneIndex] || (isVeo3 ? veo3ImageRefs : (isAnchor ? anchorAvatarImages : getSceneImages(row)));
+        const anchorImagesCombined = isAnchor
+          ? dedupeImages([
+              ...(anchorAvatarImages || []),
+              ...(getSceneImages(row) || [])
+            ])
+          : [];
+        const images = sceneImagesByIndex[sceneIndex] || (isVeo3 ? veo3ImageRefs : (isAnchor ? anchorImagesCombined : getSceneImages(row)));
         
         for (let imageIndex = 0; imageIndex < images.length; imageIndex++) {
           const fileName = `scene-${sceneNumber}-image-${imageIndex + 1}.png`;
           const fileKey = fileMap[fileName];
           
-          console.log(`🔍 Looking for file: ${fileName} (fileKey: ${fileKey})`);
+          // Looking for file in storage
           
           // Get image from browser memory storage
           try {
@@ -4923,16 +4996,13 @@ const getOrderedRefs = useCallback((row) => {
               const allKeys = Array.from(imageStorageRef.current.keys());
               const matchingKey = allKeys.find(key => key.includes(`scene-${sceneNumber}`) && key.includes(`image-${imageIndex + 1}`));
               if (matchingKey) {
-                console.log(`   Found alternative key: ${matchingKey}, using it instead`);
                 const altBlob = imageStorageRef.current.get(matchingKey);
                 if (altBlob) {
                   // Use the alternative blob with the expected fileName
                   imageStorageRef.current.set(fileName, altBlob);
                   imageStorageRef.current.delete(matchingKey);
                   blob = imageStorageRef.current.get(fileName);
-                  if (blob) {
-                    console.log(`   ✓ Corrected: Now using ${fileName}`);
-                  } else {
+                  if (!blob) {
                     console.error(`   ✗ Failed to correct storage for ${fileName}`);
               continue;
                   }
@@ -4945,7 +5015,7 @@ const getOrderedRefs = useCallback((row) => {
                 continue;
               }
             } else {
-              console.log(`   ✓ Found image in storage: ${fileName} (${blob.size} bytes)`);
+              // Found image in storage
             }
             
             // If we reach here, we have a valid blob
@@ -4966,14 +5036,12 @@ const getOrderedRefs = useCallback((row) => {
                 // Fallback: use Blob directly with filename
                 formData.append('frames', blob, fileName);
                 imageFiles.push(fileName);
-                console.log(`   ✓ Added ${fileName} to FormData using Blob fallback (${blob.size} bytes)`);
                 continue;
               }
              
             // Add to FormData with file key
             formData.append('frames', file);
             imageFiles.push(fileName);
-              console.log(`   ✓ Added ${fileName} to FormData (${file.size} bytes)`);
               
             } catch (fileError) {
               console.error(`   ✗ ERROR: Failed to create File from blob for ${fileName}:`, fileError);
@@ -4982,7 +5050,6 @@ const getOrderedRefs = useCallback((row) => {
               try {
                 formData.append('frames', blob, fileName);
                 imageFiles.push(fileName);
-                console.log(`   ✓ Added ${fileName} to FormData using Blob fallback (${blob.size} bytes)`);
               } catch (blobError) {
                 console.error(`   ✗ ERROR: Failed to add blob directly:`, blobError);
                 continue;
@@ -5003,21 +5070,12 @@ const getOrderedRefs = useCallback((row) => {
         throw new Error('No images found in browser memory storage. Check console for details.');
       }
       
-      console.log(`✅ Found ${imageFiles.length} image(s) in browser memory:`, imageFiles);
-      console.log('📋 Frame metadata:', JSON.stringify(frameMetadata, null, 2));
+      // Images collected in memory; frame metadata prepared
       
       // Attach frame metadata (including any ANCHOR mappings) after it has been fully populated.
       formData.append('frame_metadata', JSON.stringify(frameMetadata));
       
-      // Log FormData contents (without the actual file blobs)
-      console.log('📤 Sending FormData with:');
-      console.log('  - user_id:', userId);
-      console.log('  - session_id:', sessionId);
-      console.log('  - frames:', imageFiles.length, 'file(s)');
-      console.log('  - frame_metadata:', frameMetadata.length, 'scene(s)');
-      
       // Call API
-      console.log('🌐 Calling save-all-frames API...');
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/save-all-frames';
       const apiResponse = await fetch(apiUrl, {
         method: 'POST',
@@ -5036,8 +5094,6 @@ const getOrderedRefs = useCallback((row) => {
         console.error('❌ save-all-frames API failed:', apiResponse.status, responseData);
         throw new Error(`API request failed: ${apiResponse.status} ${JSON.stringify(responseData)}`);
       }
-      
-      console.log('✅ save-all-frames API succeeded:', responseData);
       
       // WORKAROUND: Clear images from browser memory instead of deleting from server
       for (const fileName of imageFiles) {
@@ -5060,6 +5116,8 @@ const getOrderedRefs = useCallback((row) => {
   }, [rows, imageStorageRef, getSceneImages, getVeo3ImageTabImages, getAnchorAvatarImages, getOrderedRefs, blobToDataUrl]);
 
   // Function to call /v1/videos/regenerate after save-all-frames succeeds
+  // NOTE: Disabled per request; kept for reference.
+  // eslint-disable-next-line no-unused-vars
   const callVideosRegenerateAPI = React.useCallback(async () => {
     try {
       const session_id = localStorage.getItem('session_id');
@@ -5301,12 +5359,7 @@ const getOrderedRefs = useCallback((row) => {
         scenes: scenesPayload,
       };
 
-      // Log the payload to console
-      console.log('📦 Step 3: Generate Videos Queue API Payload:');
-      console.log('Request Body:', JSON.stringify(body, null, 2));
-
       // Call generate-videos-queue API
-      console.log('🌐 Calling generate-videos-queue API...');
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -5327,13 +5380,10 @@ const getOrderedRefs = useCallback((row) => {
         throw new Error(`generate-videos-queue failed: ${response.status} ${JSON.stringify(responseData)}`);
       }
 
-      console.log('✅ generate-videos-queue API succeeded:', responseData);
-
       // Extract job ID from response
       const jobId = responseData?.job_id || responseData?.jobId || responseData?.id || null;
 
       if (jobId) {
-        console.log('✅ Job ID received:', jobId);
         return jobId;
       } else {
         console.warn('⚠️ No job ID in response:', responseData);
@@ -5352,8 +5402,6 @@ const getOrderedRefs = useCallback((row) => {
   }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getSessionAspectRatioRaw, transitionPresets]);
 
   const handleGenerateVideosClick = React.useCallback(async (e) => {
-    console.log('🔵 handleGenerateVideosClick CALLED', { isPreparingDownloads });
-    
     // Prevent any default behavior and navigation
     if (e) {
       if (typeof e.preventDefault === 'function') {
@@ -5378,7 +5426,6 @@ const getOrderedRefs = useCallback((row) => {
     }
     
     if (isPreparingDownloads) {
-      console.log('⚠️ Already preparing downloads, exiting early');
       return false;
     }
     
@@ -5396,11 +5443,7 @@ const getOrderedRefs = useCallback((row) => {
     // Run everything in background - no alerts, no interruptions
     (async () => {
       try {
-        console.log('🎬 Generate Videos button clicked - Starting flow...');
-        
         // CLEANUP: Clear browser memory storage before starting to ensure fresh start
-        console.log('🧹 Step 0: Cleaning up browser memory storage...');
-        
         // Verify and initialize storage ref
         if (!imageStorageRef.current) {
           console.warn('   ⚠️ Storage ref was null, initializing new Map...');
@@ -5413,24 +5456,19 @@ const getOrderedRefs = useCallback((row) => {
         
         const storageSizeBefore = imageStorageRef.current.size;
         const storageKeysBefore = storageSizeBefore > 0 ? Array.from(imageStorageRef.current.keys()) : [];
-        console.log(`   Storage before cleanup: ${storageSizeBefore} image(s)`, storageKeysBefore);
         
         // Clear all existing images from storage
         imageStorageRef.current.clear();
         
         const storageSizeAfter = imageStorageRef.current.size;
-        console.log(`   ✓ Storage cleared (was ${storageSizeBefore} image(s))`);
-        console.log(`   Storage after cleanup: ${storageSizeAfter} image(s)`);
         
         // Verify storage is ready
         if (!imageStorageRef.current || !(imageStorageRef.current instanceof Map)) {
           console.error('   ❌ ERROR: Storage ref is invalid after cleanup!');
           imageStorageRef.current = new Map();
-          console.log('   ✓ Re-initialized storage Map');
         }
         
         // Step 1: Save images to browser memory
-        console.log('📦 Step 1: Saving all images to browser memory...');
         setVideoGenProgress((prev) => ({
           ...prev,
           visible: true,
@@ -5442,21 +5480,19 @@ const getOrderedRefs = useCallback((row) => {
         
         let failedDownloads = 0;
         try {
-          failedDownloads = await mergeAndDownloadAllImages();
+          // Save frames without text baked in, but keep overlay images.
+          failedDownloads = await mergeAndDownloadAllImages({ includeText: false, includeOverlays: true });
         
         if (failedDownloads > 0) {
             console.warn(`⚠️ ${failedDownloads} image(s) failed to save`);
             setError(`Some images could not be saved (${failedDownloads} failed).`);
-        } else {
-            console.log('✅ All images saved successfully to browser memory');
-          }
+        }
         } catch (step1Error) {
           console.error('❌ Step 1 failed with error:', step1Error);
           console.error('   Error message:', step1Error?.message);
           console.error('   Error stack:', step1Error?.stack);
           // Check if any images were saved despite the error
           const savedCount = imageStorageRef.current?.size || 0;
-          console.log(`   Images saved despite error: ${savedCount}`);
           if (savedCount === 0) {
             // No images saved, we should stop here
             setError('Failed to save images to memory: ' + (step1Error?.message || 'Unknown error'));
@@ -5470,7 +5506,6 @@ const getOrderedRefs = useCallback((row) => {
             throw step1Error;
           }
           // Some images were saved, continue with what we have
-          console.log(`   Continuing with ${savedCount} saved image(s)...`);
         }
         
         // Wait a bit to ensure all saves are complete
@@ -5489,12 +5524,6 @@ const getOrderedRefs = useCallback((row) => {
         // Verify images were actually saved to storage
         const imagesInStorage = imageStorageRef.current.size;
         const storageKeys = Array.from(imageStorageRef.current.keys());
-        
-        console.log(`\n📊 === STORAGE VERIFICATION BEFORE STEP 2 ===`);
-        console.log(`   Storage size: ${imagesInStorage} image(s)`);
-        console.log(`   Storage keys:`, storageKeys);
-        console.log(`   Storage ref valid: ${imageStorageRef.current instanceof Map}`);
-        console.log(`   Storage ref type: ${typeof imageStorageRef.current}`);
         
         if (imagesInStorage === 0) {
           console.error('\n❌ ========== CRITICAL ERROR ==========');
@@ -5525,11 +5554,7 @@ const getOrderedRefs = useCallback((row) => {
           throw new Error('No images found in browser memory storage after Step 1. Check console for details.');
         }
         
-        console.log(`✅ Storage verification PASSED: ${imagesInStorage} image(s) ready for upload\n`);
-        
         // Step 2: Call save-all-frames API (ALWAYS call this, even if Step 1 had errors)
-        console.log('📦 Step 2: Calling save-all-frames API...');
-        console.log('🔍 About to call callSaveAllFramesAPI function...');
         
         // Verify the function exists
         if (typeof callSaveAllFramesAPI !== 'function') {
@@ -5547,13 +5572,11 @@ const getOrderedRefs = useCallback((row) => {
         }));
         
         try {
-          console.log('🚀 EXECUTING callSaveAllFramesAPI() NOW...');
           const saveAllFramesResult = await callSaveAllFramesAPI();
-          console.log('✅ save-all-frames API completed:', saveAllFramesResult);
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
-            percent: Math.max(prev.percent, 50),
+            percent: Math.max(prev.percent, 70),
             status: 'uploading',
             step: 'uploading_frames',
             message: 'Frames uploaded successfully'
@@ -5572,12 +5595,11 @@ const getOrderedRefs = useCallback((row) => {
           throw step2Error;
         }
 
-          // Step 3: Call generate-videos-queue API
-        console.log('📦 Step 3: Calling generate-videos-queue API...');
+        // Step 3: Call generate-videos-queue API
         setVideoGenProgress((prev) => ({
           ...prev,
           visible: true,
-          percent: Math.max(prev.percent, 60),
+          percent: Math.max(prev.percent, 80),
           status: 'queueing',
           step: 'queueing',
           message: 'Queueing video generation...'
@@ -5587,7 +5609,6 @@ const getOrderedRefs = useCallback((row) => {
           const jobId = await callVideosRegenerateAPI();
           
           if (jobId) {
-            console.log('✅ Video generation queued successfully with job ID:', jobId);
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
@@ -5605,7 +5626,7 @@ const getOrderedRefs = useCallback((row) => {
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
-              percent: Math.max(prev.percent, 60),
+              percent: Math.max(prev.percent, 80),
               status: 'queued',
               step: 'queued',
               message: 'Job queued but no job ID returned'
@@ -6920,8 +6941,13 @@ const getOrderedRefs = useCallback((row) => {
                                 ...wordArtStyles,
                                 whiteSpace: 'pre-wrap'
                               };
-                              return (
-                                    <div key={`text-1-${item.index}`} style={boxStyle} className="pointer-events-none">
+                            return (
+                                  <div
+                                    key={`text-1-${item.index}`}
+                                    style={boxStyle}
+                                    className="pointer-events-none"
+                                    data-text-overlay="true"
+                                  >
                                   <div style={textStyle}>{el.text || ''}</div>
                                 </div>
                               );
@@ -6945,6 +6971,12 @@ const getOrderedRefs = useCallback((row) => {
                                 '';
                               if (!overlayUrl) return null;
                               
+                              const rotationDeg1 =
+                                typeof ov?.rotation === 'number'
+                                  ? ov.rotation
+                                  : typeof ov?.layout?.rotation === 'number'
+                                  ? ov.layout.rotation
+                                  : 0;
                               const isChartOverlay = ov?.element_id === 'chart_overlay' || 
                                                     ov?.label_name === 'Chart' ||
                                                     overlayUrl.includes('chart') ||
@@ -6971,13 +7003,19 @@ const getOrderedRefs = useCallback((row) => {
                                   alt="overlay"
                                   className="absolute"
                                   crossOrigin="anonymous"
+                                  data-chart-overlay={isChartOverlay ? 'true' : 'false'}
+                                  data-overlay-id={ov?.element_id || ''}
+                                  data-overlay-label={ov?.label_name || ''}
+                                  data-overlay-model={ov?.model || ''}
                                   style={{
                                     left: `${leftPct}%`,
                                     top: `${topPct}%`,
                                     width: widthPct != null ? `${widthPct}%` : 'auto',
                                     height: heightPct != null ? `${heightPct}%` : 'auto',
-                                        opacity,
-                                        zIndex: item.zIndex
+                                    opacity,
+                                    zIndex: item.zIndex,
+                                    transform: rotationDeg1 ? `rotate(${rotationDeg1}deg)` : undefined,
+                                    transformOrigin: rotationDeg1 ? 'center center' : undefined
                                   }}
                                 />
                               );
@@ -7422,8 +7460,13 @@ const getOrderedRefs = useCallback((row) => {
                                 ...wordArtStyles,
                                 whiteSpace: 'pre-wrap'
                               };
-                              return (
-                                    <div key={`text-2-${item.index}`} style={boxStyle} className="pointer-events-none">
+                            return (
+                                  <div
+                                    key={`text-2-${item.index}`}
+                                    style={boxStyle}
+                                    className="pointer-events-none"
+                                    data-text-overlay="true"
+                                  >
                                   <div style={textStyle}>{el.text || ''}</div>
                                 </div>
                               );
@@ -7447,6 +7490,12 @@ const getOrderedRefs = useCallback((row) => {
                                 '';
                               if (!overlayUrl) return null;
                               
+                              const rotationDeg2 =
+                                typeof ov?.rotation === 'number'
+                                  ? ov.rotation
+                                  : typeof ov?.layout?.rotation === 'number'
+                                  ? ov.layout.rotation
+                                  : 0;
                               const isChartOverlay = ov?.element_id === 'chart_overlay' || 
                                                     ov?.label_name === 'Chart' ||
                                                     overlayUrl.includes('chart') ||
@@ -7473,13 +7522,19 @@ const getOrderedRefs = useCallback((row) => {
                                   alt="overlay"
                                   className="absolute"
                                   crossOrigin="anonymous"
+                                  data-chart-overlay={isChartOverlay ? 'true' : 'false'}
+                                  data-overlay-id={ov?.element_id || ''}
+                                  data-overlay-label={ov?.label_name || ''}
+                                  data-overlay-model={ov?.model || ''}
                                   style={{
                                     left: `${leftPct}%`,
                                     top: `${topPct}%`,
                                     width: widthPct != null ? `${widthPct}%` : 'auto',
                                     height: heightPct != null ? `${heightPct}%` : 'auto',
-                                        opacity,
-                                        zIndex: item.zIndex
+                                    opacity,
+                                    zIndex: item.zIndex,
+                                    transform: rotationDeg2 ? `rotate(${rotationDeg2}deg)` : undefined,
+                                    transformOrigin: rotationDeg2 ? 'center center' : undefined
                                   }}
                                 />
                               );
@@ -8131,8 +8186,6 @@ const getOrderedRefs = useCallback((row) => {
                           throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
                         }
                         
-                        console.log('✅ update-scene-field API succeeded, fetching updated user session data...');
-                        
                         // Declare updatedAnimationDesc at function scope so it's accessible throughout
                         let updatedAnimationDesc = animationDescData; // Fallback to what we saved
                         
@@ -8166,7 +8219,6 @@ const getOrderedRefs = useCallback((row) => {
                             const sceneNum = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene;
                             if (String(sceneNum) === String(scene_number)) {
                               updatedAnimationDesc = scene?.animation_desc || animationDescData;
-                              console.log('✅ Found updated animation_desc from user session data:', updatedAnimationDesc);
                               break;
                             }
                           }
@@ -8332,7 +8384,6 @@ const getOrderedRefs = useCallback((row) => {
                         });
                         
                         setError('');
-                        console.log('✅ Animation description saved successfully and displayed');
                       } catch (error) {
                         setError('Failed to save animation description: ' + (error?.message || 'Unknown error'));
                         console.error('Error saving animation description:', error);
@@ -10286,9 +10337,63 @@ const getOrderedRefs = useCallback((row) => {
             setShowChartEditor(false);
             setChartEditorData(null);
           }}
-          onSave={async () => {
-            // Refresh the image list to show updated chart
-            await refreshLoad();
+          onSave={({ sceneNumber, overlayElements, chartImageUrl }) => {
+            // Update rows and selected scene in-place so chart changes appear immediately
+            const targetSceneNumber =
+              sceneNumber ||
+              chartEditorData?.scene_number ||
+              chartEditorData?.sceneNumber ||
+              selected?.sceneNumber ||
+              selected?.scene_number ||
+              null;
+
+            if (!targetSceneNumber) return;
+
+            setRows((prevRows) =>
+              prevRows.map((row) => {
+                const rowSceneNum = row?.scene_number || row?.sceneNumber;
+                if (String(rowSceneNum) !== String(targetSceneNumber)) return row;
+
+                const updatedRow = { ...row };
+
+                if (Array.isArray(updatedRow.imageFrames)) {
+                  updatedRow.imageFrames = updatedRow.imageFrames.map((frame) => ({
+                    ...frame,
+                    overlay_elements: Array.isArray(overlayElements)
+                      ? overlayElements
+                      : frame?.overlay_elements || frame?.overlayElements || []
+                  }));
+                }
+
+                if (Array.isArray(overlayElements)) {
+                  updatedRow.overlay_elements = overlayElements;
+                }
+
+                return updatedRow;
+              })
+            );
+
+            setSelected((prev) => {
+              if (!prev) return prev;
+              const prevSceneNum = prev.sceneNumber || prev.scene_number;
+              if (String(prevSceneNum) !== String(targetSceneNumber)) return prev;
+
+              const updated = { ...prev };
+              if (Array.isArray(updated.imageFrames)) {
+                updated.imageFrames = updated.imageFrames.map((frame) => ({
+                  ...frame,
+                  overlay_elements: Array.isArray(overlayElements)
+                    ? overlayElements
+                    : frame?.overlay_elements || frame?.overlayElements || []
+                }));
+              }
+              if (Array.isArray(overlayElements)) {
+                updated.overlayElements = overlayElements;
+              }
+              return updated;
+            });
+            // Bump chart version to force re-render of chart overlays with new image URL
+            setChartVersion((v) => v + 1);
           }}
         />
       )}
