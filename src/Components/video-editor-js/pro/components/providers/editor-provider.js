@@ -11,7 +11,7 @@ import { useRendering } from "../../hooks/use-rendering";
 import { useRenderer } from "../../contexts/renderer-context";
 import { TIMELINE_CONSTANTS } from "../advanced-timeline/constants";
 import { transformOverlaysForAspectRatio, shouldTransformOverlays, getDimensionsForAspectRatio } from "../../utils/aspect-ratio-transform";
-export const EditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, onSaving, onSaved, 
+export const EditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, onSaving, onSaved, onOverlaysChange, 
 // Loading State
 isLoadingProject = false, 
 // Player Configuration
@@ -209,6 +209,12 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
             backgroundColor,
         });
     }, [overlays, selectedOverlayId, selectedOverlayIds, aspectRatio, playbackRate, durationInFrames, currentFrame, backgroundColor]);
+    // Call onOverlaysChange when overlays change
+    useEffect(() => {
+        if (onOverlaysChange) {
+            onOverlaysChange(overlays);
+        }
+    }, [overlays, onOverlaysChange]);
     // Autosave functionality removed
     // Manual save function (if needed in future, implement without autosave)
     const saveProject = useCallback(async () => {

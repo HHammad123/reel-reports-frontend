@@ -88,6 +88,12 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const [finalReel720Url, setFinalReel720Url] = useState('');
   const [videoBlobUrl, setVideoBlobUrl] = useState(null);
   const [videoLoading, setVideoLoading] = useState(false);
+  // Track unsaved layers for save button
+  const [hasUnsavedLayers, setHasUnsavedLayers] = useState(false);
+  const [isSavingLayers, setIsSavingLayers] = useState(false);
+  const savedOverlayIdsRef = useRef(new Set()); // Track saved overlay IDs
+  const editorOverlaysRef = useRef([]); // Store current overlays from editor
+  const initialOverlaysLoadedRef = useRef(false); // Track if initial overlays have been loaded
 
   useEffect(() => {
     let cancelled = false;
@@ -881,6 +887,14 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const selectedScenes = Array.isArray(selectedVideo.scenes) ? selectedVideo.scenes : [];
   const selectedVideoUrl = selectedVideo.url || selectedScenes[0]?.url || '';
 
+  // Reset saved overlay tracking when selected video changes
+  useEffect(() => {
+    savedOverlayIdsRef.current.clear();
+    initialOverlaysLoadedRef.current = false;
+    setHasUnsavedLayers(false);
+    editorOverlaysRef.current = [];
+  }, [selectedIndex]);
+
   // Load selected video as blob to avoid unsupported source errors
   useEffect(() => {
     const targetUrl = selectedVideoUrl;
@@ -1170,6 +1184,62 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
     defaultOverlays.length,
     defaultOverlays.map(o => o?.id || '').filter(Boolean).sort().join('|')
   ]);
+
+  // Watch defaultOverlays and ensure initial overlays are marked when they're set
+  // This is a fallback in case onOverlaysChange isn't called
+  useEffect(() => {
+    if (defaultOverlays.length > 0 && !initialOverlaysLoadedRef.current) {
+      // Wait a bit for ReactVideoEditor to process the overlays and call onOverlaysChange
+      // If onOverlaysChange hasn't been called after a delay, mark them manually
+      const timeoutId = setTimeout(() => {
+        if (!initialOverlaysLoadedRef.current && defaultOverlays.length > 0) {
+          console.log('[VideosList] Manually marking initial overlays as saved (onOverlaysChange not called)');
+          initialOverlaysLoadedRef.current = true;
+          defaultOverlays.forEach(overlay => {
+            if (overlay?.id !== undefined) {
+              savedOverlayIdsRef.current.add(overlay.id);
+            }
+          });
+        }
+      }, 1000); // Wait 1 second for onOverlaysChange to be called
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [defaultOverlays]);
+
+  // Fallback: Periodically check for unsaved overlays (in case onOverlaysChange doesn't fire)
+  useEffect(() => {
+    if (!initialOverlaysLoadedRef.current) return;
+    
+    let previousOverlayCount = editorOverlaysRef.current?.length || 0;
+    
+    const checkInterval = setInterval(() => {
+      const currentOverlays = editorOverlaysRef.current || [];
+      const currentOverlayCount = currentOverlays.length;
+      const savedIds = savedOverlayIdsRef.current;
+      const currentOverlayIds = new Set(currentOverlays.map(o => o?.id).filter(Boolean));
+      
+      // Check for unsaved overlay IDs
+      const unsavedIds = Array.from(currentOverlayIds).filter(id => !savedIds.has(id));
+      
+      // Check if overlay count increased (user added a layer)
+      const countIncreased = currentOverlayCount > previousOverlayCount;
+      
+      if (unsavedIds.length > 0 || countIncreased) {
+        console.log('[VideosList] Fallback check detected unsaved overlays:', {
+          unsavedIds: unsavedIds,
+          countIncreased: countIncreased,
+          previousCount: previousOverlayCount,
+          currentCount: currentOverlayCount
+        });
+        setHasUnsavedLayers(true);
+      }
+      
+      previousOverlayCount = currentOverlayCount;
+    }, 1000); // Check every 1 second for faster detection
+    
+    return () => clearInterval(checkInterval);
+  }, [initialOverlaysLoadedRef.current]);
   
   useEffect(() => {
     if (items.length === 0) {
@@ -1559,6 +1629,263 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       }),
     []
   );
+
+  // Handle overlay changes from ReactVideoEditor
+  const handleOverlaysChange = useCallback((overlays) => {
+    const currentOverlays = overlays || [];
+    const previousOverlays = editorOverlaysRef.current || [];
+    const previousOverlayIds = new Set(previousOverlays.map(o => o?.id).filter(Boolean));
+    const currentOverlayIds = new Set(currentOverlays.map(o => o?.id).filter(Boolean));
+    
+    editorOverlaysRef.current = currentOverlays;
+    
+    console.log('[VideosList] handleOverlaysChange called', {
+      overlayCount: currentOverlays.length,
+      previousCount: previousOverlays.length,
+      initialLoaded: initialOverlaysLoadedRef.current,
+      savedIds: Array.from(savedOverlayIdsRef.current),
+      currentIds: Array.from(currentOverlayIds),
+      previousIds: Array.from(previousOverlayIds)
+    });
+    
+    // If initial overlays haven't been marked as loaded yet
+    if (!initialOverlaysLoadedRef.current) {
+      if (currentOverlays.length > 0) {
+        // Mark initial overlays as loaded and saved
+        initialOverlaysLoadedRef.current = true;
+        currentOverlays.forEach(overlay => {
+          if (overlay?.id !== undefined) {
+            savedOverlayIdsRef.current.add(overlay.id);
+          }
+        });
+        console.log('[VideosList] Marked initial overlays as saved', {
+          savedIds: Array.from(savedOverlayIdsRef.current)
+        });
+        setHasUnsavedLayers(false);
+        return;
+      } else {
+        // No overlays yet, don't show save button
+        setHasUnsavedLayers(false);
+        return;
+      }
+    }
+    
+    // After initial overlays are loaded, check for new unsaved overlays
+    const savedIds = savedOverlayIdsRef.current;
+    
+    // Check if there are any current overlays that aren't in saved set
+    const unsavedIds = Array.from(currentOverlayIds).filter(id => !savedIds.has(id));
+    const hasNewOverlays = unsavedIds.length > 0;
+    
+    // Check if any overlay IDs are new (not in previous set) - this means user added a layer
+    const newOverlayIds = Array.from(currentOverlayIds).filter(id => !previousOverlayIds.has(id));
+    const hasNewOverlayIds = newOverlayIds.length > 0;
+    
+    // Also check if overlay count increased (user added a new layer)
+    // This is a backup check in case IDs aren't being tracked properly
+    const overlayCountIncreased = previousOverlays.length > 0 && currentOverlays.length > previousOverlays.length;
+    
+    console.log('[VideosList] Checking for unsaved overlays', {
+      currentIds: Array.from(currentOverlayIds),
+      previousIds: Array.from(previousOverlayIds),
+      savedIds: Array.from(savedIds),
+      unsavedIds: unsavedIds,
+      newOverlayIds: newOverlayIds,
+      hasNewOverlays: hasNewOverlays,
+      overlayCountIncreased: overlayCountIncreased,
+      hasNewOverlayIds: hasNewOverlayIds,
+      willShowButton: hasNewOverlays || hasNewOverlayIds || overlayCountIncreased
+    });
+    
+    // Show save button if:
+    // 1. There are unsaved overlays (not in saved set), OR
+    // 2. New overlay IDs appeared (user added a layer), OR
+    // 3. Overlay count increased (backup check)
+    const shouldShowButton = hasNewOverlays || hasNewOverlayIds || overlayCountIncreased;
+    setHasUnsavedLayers(shouldShowButton);
+    
+    // If we detect new overlays, log them for debugging
+    if (shouldShowButton) {
+      console.log('[VideosList] ✅ Save button should be visible!', {
+        unsavedIds: unsavedIds,
+        newOverlayIds: newOverlayIds,
+        countIncreased: overlayCountIncreased
+      });
+    }
+  }, []);
+
+  // Convert frames to HH:MM:SS format
+  const framesToTime = useCallback((frames, fps = 30) => {
+    const seconds = frames / fps;
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }, []);
+
+  // Map overlay type to API layer_name
+  const getLayerName = useCallback((overlayType) => {
+    switch (overlayType) {
+      case OverlayType.TEXT:
+        return 'text_overlay';
+      case OverlayType.IMAGE:
+        return 'logo';
+      case OverlayType.VIDEO:
+        return 'chart';
+      case OverlayType.SOUND:
+        return 'audio';
+      case OverlayType.CAPTION:
+        return 'text_overlay';
+      default:
+        return 'custom';
+    }
+  }, []);
+
+  // Save layers to API
+  const saveLayers = useCallback(async () => {
+    if (isSavingLayers) return;
+    
+    const session_id = localStorage.getItem('session_id');
+    const user_id = localStorage.getItem('token');
+    
+    if (!session_id || !user_id) {
+      setError('Missing session_id or user_id');
+      return;
+    }
+
+    const currentOverlays = editorOverlaysRef.current || [];
+    
+    if (currentOverlays.length === 0) {
+      setError('No overlays to save');
+      return;
+    }
+    
+    const savedIds = savedOverlayIdsRef.current;
+    
+    // Find unsaved overlays (or all overlays if user wants to save everything)
+    const unsavedOverlays = currentOverlays.filter(overlay => {
+      const overlayId = overlay?.id;
+      return overlayId !== undefined && !savedIds.has(overlayId);
+    });
+
+    // If no unsaved overlays, save all overlays anyway (user explicitly clicked save)
+    const overlaysToSave = unsavedOverlays.length > 0 ? unsavedOverlays : currentOverlays;
+    
+    if (overlaysToSave.length === 0) {
+      setError('No overlays to save');
+      return;
+    }
+
+    // Get scene number from selected video
+    const sceneNumber = selectedVideo?.sceneNumber || selectedVideo?.scene_number;
+    if (!sceneNumber) {
+      setError('No scene number found for selected video');
+      return;
+    }
+
+    setIsSavingLayers(true);
+    setError('');
+
+    try {
+      const fps = APP_CONFIG.fps || 30;
+      const sceneStartFrame = 0; // Assuming scene starts at frame 0, adjust if needed
+      
+      // Save each overlay
+      for (const overlay of overlaysToSave) {
+        const layerName = getLayerName(overlay.type);
+        const startTime = framesToTime(overlay.from || 0, fps);
+        const endTime = overlay.to !== undefined ? framesToTime(overlay.to, fps) : null;
+        
+        // Build form data
+        const formData = new FormData();
+        formData.append('session_id', session_id);
+        formData.append('user_id', user_id);
+        formData.append('layer_name', layerName);
+        formData.append('start_time', startTime);
+        if (endTime) {
+          formData.append('end_time', endTime);
+        }
+
+        // Add type-specific fields
+        if (overlay.type === OverlayType.TEXT || overlay.type === OverlayType.CAPTION) {
+          const text = overlay.text || overlay.content || '';
+          formData.append('text', text);
+          
+          if (overlay.styles?.fontSize) {
+            const fontSize = parseInt(overlay.styles.fontSize.replace('px', '')) || null;
+            if (fontSize) formData.append('font_size', fontSize.toString());
+          }
+          
+          if (overlay.styles?.fontFamily) {
+            formData.append('font_family', overlay.styles.fontFamily);
+          }
+          
+          if (overlay.styles?.color) {
+            formData.append('fill', overlay.styles.color);
+          }
+          
+          // Calculate position_x from left position (0-1 scale)
+          const canvasWidth = 1280; // Default canvas width, adjust if needed
+          if (overlay.left !== undefined) {
+            const positionX = overlay.left / canvasWidth;
+            formData.append('position_x', positionX.toString());
+          }
+          
+          // Calculate position_y from top position (0-1 scale)
+          const canvasHeight = 720; // Default canvas height, adjust if needed
+          if (overlay.top !== undefined) {
+            const positionY = overlay.top / canvasHeight;
+            formData.append('position_y', positionY.toString());
+          }
+        } else if (overlay.type === OverlayType.IMAGE || overlay.type === OverlayType.VIDEO || overlay.type === OverlayType.SOUND) {
+          // For file-based layers, we need to fetch the file from the URL
+          if (overlay.src) {
+            try {
+              const response = await fetch(overlay.src);
+              const blob = await response.blob();
+              formData.append('file', blob, overlay.src.split('/').pop() || 'file');
+            } catch (err) {
+              console.warn('Failed to fetch file for overlay:', overlay.src, err);
+              // Continue without file if fetch fails
+            }
+          }
+        }
+
+        // Call API
+        const apiUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/scene/${sceneNumber}/add-layer`;
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          body: formData,
+        });
+
+        const responseText = await response.text();
+        let responseData;
+        try {
+          responseData = JSON.parse(responseText);
+        } catch {
+          responseData = responseText;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Failed to save layer: ${response.status} ${JSON.stringify(responseData)}`);
+        }
+
+        // Mark overlay as saved
+        if (overlay?.id !== undefined) {
+          savedOverlayIdsRef.current.add(overlay.id);
+        }
+      }
+
+      // Update state
+      setHasUnsavedLayers(false);
+      console.log('✅ Successfully saved all layers');
+    } catch (e) {
+      console.error('❌ Error saving layers:', e);
+      setError(e?.message || 'Failed to save layers');
+    } finally {
+      setIsSavingLayers(false);
+    }
+  }, [isSavingLayers, selectedVideo, getLayerName, framesToTime]);
 
   // Force ReactVideoEditor to remount when we have new overlays so defaultOverlays apply
   // Use ref to track overlay IDs to create stable key (prevents unnecessary remounts)
@@ -3227,6 +3554,12 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             const overlaysToSet = JSON.parse(JSON.stringify(newOverlays));
             lastOverlaysRef.current = overlaysToSet;
             setDefaultOverlays(overlaysToSet);
+            // Mark initial overlays as loaded (but don't mark as saved here - let handleOverlaysChange do it)
+            // This prevents double-marking and ensures handleOverlaysChange is the single source of truth
+            if (!initialOverlaysLoadedRef.current) {
+              // Don't mark as saved here - handleOverlaysChange will do it when it's called
+              // This ensures consistency
+            }
           } else {
             // Overlays unchanged, skip update to prevent unnecessary re-renders
             console.log('📋 Overlays unchanged, skipping update');
@@ -3303,7 +3636,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           </div>
         </div>
       )}
-      {/* Toggle buttons for Logo and Subtitle */}
+      {/* Header with Save Layers Button */}
       <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-4">
           {/* Hamburger Menu for Sidebar Toggle */}
@@ -3315,47 +3648,48 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             <Menu className={`w-6 h-6 ${sidebarVisible ? 'text-[#13008B]' : 'text-gray-600'}`} />
           </button>
           <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
-          <div className="flex items-center gap-4">
-            {/* Logo Toggle */}
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Logo</label>
-              <button
-                onClick={() => setLogoEnabled(!logoEnabled)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  logoEnabled ? 'bg-[#13008B]' : 'bg-gray-300'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    logoEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
             </div>
+        <div className="flex items-center gap-4">
+          {/* Save Layers Button - Always show when there are overlays */}
+          {(() => {
+            const currentOverlays = editorOverlaysRef.current || [];
+            const hasOverlays = currentOverlays.length > 0;
             
-            {/* Subtitle Toggle */}
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Subtitle</label>
+            return hasOverlays ? (
               <button
-                onClick={() => setSubtitleEnabled(!subtitleEnabled)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  subtitleEnabled ? 'bg-[#13008B]' : 'bg-gray-300'
+                onClick={saveLayers}
+                disabled={isSavingLayers}
+                className={`px-4 py-2 rounded-lg text-sm font-medium text-white shadow-lg transition-all ${
+                  isSavingLayers
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-[#13008B] hover:bg-[#0f0069]'
                 }`}
               >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    subtitleEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
+                {isSavingLayers ? 'Saving...' : 'Save Layers'}
               </button>
+            ) : null;
+          })()}
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-gray-500 px-2 border border-gray-200 rounded px-2 py-1">
+              <div>Unsaved: {hasUnsavedLayers ? '✅ Yes' : '❌ No'}</div>
+              <div>Initial: {initialOverlaysLoadedRef.current ? '✅' : '❌'}</div>
+              <div>Overlays: {editorOverlaysRef.current?.length || 0}</div>
+              <div>Saved IDs: {Array.from(savedOverlayIdsRef.current).length}</div>
+              <div>Unsaved IDs: {(() => {
+                const currentOverlays = editorOverlaysRef.current || [];
+                const currentOverlayIds = new Set(currentOverlays.map(o => o?.id).filter(Boolean));
+                const savedIds = savedOverlayIdsRef.current;
+                return Array.from(currentOverlayIds).filter(id => !savedIds.has(id)).length;
+              })()}</div>
             </div>
-          </div>
-        </div>
+          )}
         {onClose && (
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50">
             Back
           </button>
         )}
+        </div>
       </div>
       <div className="flex-1 flex flex-col overflow-hidden">
         {error && (
@@ -3448,6 +3782,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               showSidebar={sidebarVisible}
               sidebarLogo={null}
               sidebarFooterText=""
+              onOverlaysChange={handleOverlaysChange}
               // isLoadingProject={true}
               className="bg-white text-gray-900"
               style={{

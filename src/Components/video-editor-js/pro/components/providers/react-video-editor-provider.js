@@ -6,7 +6,7 @@ import { LocalMediaProvider } from "../../contexts/local-media-context";
 import { SidebarProvider as EditorSidebarProvider } from "../../contexts/sidebar-context";
 import { MediaAdaptorProvider } from "../../contexts/media-adaptor-context";
 import { ThemeProvider } from "../../contexts/theme-context";
-export const ReactVideoEditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, renderer, onSaving, onSaved, sidebarWidth = "16rem", sidebarIconWidth = "3rem", 
+export const ReactVideoEditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, renderer, onSaving, onSaved, onOverlaysChange, sidebarWidth = "16rem", sidebarIconWidth = "3rem", 
 // Loading State
 isLoadingProject = false, 
 // Player Configuration
@@ -37,5 +37,5 @@ availableThemes = [], selectedTheme, onThemeChange, showDefaultThemes = true, hi
                         showDefaultThemes,
                         hideThemeToggle,
                         defaultTheme,
-                    }, children: _jsx(EditorProvider, { projectId: projectId, defaultOverlays: defaultOverlays, defaultAspectRatio: defaultAspectRatio, defaultBackgroundColor: defaultBackgroundColor, autoSaveInterval: autoSaveInterval, fps: fps, isLoadingProject: isLoadingProject, ...(onSaving && { onSaving }), ...(onSaved && { onSaved }), ...(playerRef && { playerRef }), ...(baseUrl !== undefined && { baseUrl }), initialRows: initialRows, maxRows: maxRows, zoomConstraints: zoomConstraints, snappingConfig: snappingConfig, disableMobileLayout: disableMobileLayout, disableVideoKeyframes: disableVideoKeyframes, enablePushOnDrag: enablePushOnDrag, videoWidth: videoWidth, videoHeight: videoHeight, children: _jsx(LocalMediaProvider, { children: _jsx(EditorSidebarProvider, { children: children }) }) }) }) }) }) }));
+                    }, children: _jsx(EditorProvider, { projectId: projectId, defaultOverlays: defaultOverlays, defaultAspectRatio: defaultAspectRatio, defaultBackgroundColor: defaultBackgroundColor, autoSaveInterval: autoSaveInterval, fps: fps, isLoadingProject: isLoadingProject, ...(onSaving && { onSaving }), ...(onSaved && { onSaved }), ...(onOverlaysChange && { onOverlaysChange }), ...(playerRef && { playerRef }), ...(baseUrl !== undefined && { baseUrl }), initialRows: initialRows, maxRows: maxRows, zoomConstraints: zoomConstraints, snappingConfig: snappingConfig, disableMobileLayout: disableMobileLayout, disableVideoKeyframes: disableVideoKeyframes, enablePushOnDrag: enablePushOnDrag, videoWidth: videoWidth, videoHeight: videoHeight, children: _jsx(LocalMediaProvider, { children: _jsx(EditorSidebarProvider, { children: children }) }) }) }) }) }) }));
 };
