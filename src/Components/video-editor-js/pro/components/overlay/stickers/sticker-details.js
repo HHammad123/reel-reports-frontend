@@ -1,4 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
+import { useCallback, useMemo } from "react";
 import { UnifiedTabs } from "../shared/unified-tabs";
 import { StickerStylesPanel } from "./sticker-styles-panel";
 import { StickerSettingsPanel } from "./sticker-settings-panel";
@@ -26,15 +27,27 @@ import { StickerSettingsPanel } from "./sticker-settings-panel";
  * ```
  */
 export const StickerDetails = ({ localOverlay, setLocalOverlay, }) => {
-    const handleStyleChange = (updates) => {
-        const updatedOverlay = {
-            ...localOverlay,
-            styles: {
-                ...localOverlay.styles,
-                ...updates,
-            },
-        };
-        setLocalOverlay(updatedOverlay);
-    };
-    return (_jsx("div", { className: "space-y-4", children: _jsx(UnifiedTabs, { settingsContent: _jsx(StickerSettingsPanel, { localOverlay: localOverlay, handleStyleChange: handleStyleChange }), styleContent: _jsx(StickerStylesPanel, {}) }) }));
+    // FIXED: Memoize callback to prevent recreation on every render
+    const handleStyleChange = useCallback((updates) => {
+        setLocalOverlay((prevOverlay) => {
+            return {
+                ...prevOverlay,
+                styles: {
+                    ...prevOverlay.styles,
+                    ...updates,
+                },
+            };
+        });
+    }, [setLocalOverlay]);
+    
+    // FIXED: Memoize content components to prevent UnifiedTabs re-renders
+    const settingsContent = useMemo(() => {
+        return _jsx(StickerSettingsPanel, { localOverlay: localOverlay, handleStyleChange: handleStyleChange });
+    }, [localOverlay, handleStyleChange]);
+    
+    const styleContent = useMemo(() => {
+        return _jsx(StickerStylesPanel, {});
+    }, []);
+    
+    return (_jsx("div", { className: "space-y-4", children: _jsx(UnifiedTabs, { settingsContent: settingsContent, styleContent: styleContent }) }));
 };

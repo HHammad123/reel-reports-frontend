@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
 import { useAspectRatio } from "../../../hooks/use-aspect-ratio";
@@ -34,14 +34,36 @@ export const ImageOverlayPanel = () => {
     const { addAtPlayhead } = useTimelinePositioning();
     const { getAspectRatioDimensions } = useAspectRatio();
     const [localOverlay, setLocalOverlay] = useState(null);
+    
+    // Track previous selectedOverlayId to prevent unnecessary updates
+    const prevSelectedIdRef = useRef(selectedOverlayId);
+    const prevOverlayIdRef = useRef(null);
+    
+    // CRITICAL FIX: Only update when selectedOverlayId changes, not when overlays array is recreated
     useEffect(() => {
-        if (selectedOverlayId === null) {
-            setLocalOverlay(null);
+        // Only proceed if selectedOverlayId actually changed
+        if (selectedOverlayId === prevSelectedIdRef.current) {
+            // selectedOverlayId didn't change, skip update to prevent infinite loop
+            // The localOverlay will be updated by handleUpdateOverlay when user makes changes
             return;
         }
+        
+        // selectedOverlayId changed - update
+        prevSelectedIdRef.current = selectedOverlayId;
+        
+        if (selectedOverlayId === null) {
+            setLocalOverlay(null);
+            prevOverlayIdRef.current = null;
+            return;
+        }
+        
         const selectedOverlay = overlays.find((overlay) => overlay.id === selectedOverlayId);
-        if ((selectedOverlay === null || selectedOverlay === void 0 ? void 0 : selectedOverlay.type) === OverlayType.IMAGE) {
+        if (selectedOverlay && selectedOverlay.type === OverlayType.IMAGE) {
             setLocalOverlay(selectedOverlay);
+            prevOverlayIdRef.current = selectedOverlay.id;
+        } else {
+            setLocalOverlay(null);
+            prevOverlayIdRef.current = null;
         }
     }, [selectedOverlayId, overlays]);
     /**

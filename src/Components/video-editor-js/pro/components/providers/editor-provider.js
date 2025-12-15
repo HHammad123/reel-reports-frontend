@@ -71,6 +71,54 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     const [trackHeight, setTrackHeight] = useState(TIMELINE_CONSTANTS.TRACK_HEIGHT);
     const [timelineItemHeight, setTimelineItemHeight] = useState(TIMELINE_CONSTANTS.TRACK_ITEM_HEIGHT);
     const { durationInFrames, durationInSeconds } = useCompositionDuration(overlays, fps);
+    // State for extracted SRT text to auto-populate captions panel
+    const [extractedSRTText, setExtractedSRTText] = useState(null);
+    const extractedSRTTextQueueRef = useRef([]); // Queue to store multiple extracted texts
+    
+    // Set up global event listener for SRT text extraction (always active)
+    useEffect(() => {
+        console.log('[EditorProvider] Setting up global SRT text extraction listener');
+        
+        const handleSRTTextExtracted = (event) => {
+            console.log('[EditorProvider] Global listener received srtTextExtracted event:', event.detail);
+            
+            if (event.detail && event.detail.text) {
+                const { text, sceneIndex, srtUrl } = event.detail;
+                console.log('[EditorProvider] Storing extracted SRT text in context:', {
+                    textLength: text.length,
+                    textPreview: text.substring(0, 100),
+                    sceneIndex,
+                    srtUrl
+                });
+                
+                // Store in queue for processing
+                extractedSRTTextQueueRef.current.push({
+                    text,
+                    sceneIndex,
+                    srtUrl,
+                    timestamp: Date.now()
+                });
+                
+                // Also set the latest one in state
+                setExtractedSRTText({
+                    text,
+                    sceneIndex,
+                    srtUrl,
+                    timestamp: Date.now()
+                });
+            } else {
+                console.warn('[EditorProvider] Event detail missing or no text:', event.detail);
+            }
+        };
+        
+        window.addEventListener('srtTextExtracted', handleSRTTextExtracted);
+        console.log('[EditorProvider] Global event listener added successfully');
+        
+        return () => {
+            console.log('[EditorProvider] Removing global event listener');
+            window.removeEventListener('srtTextExtracted', handleSRTTextExtracted);
+        };
+    }, []);
     // Normalize aspect ratio: convert underscores to colons (e.g., "9_16" -> "9:16", "16_9" -> "16:9")
     const normalizeAspectRatio = useCallback((value) => {
         if (!value || typeof value !== 'string') return value;
@@ -277,6 +325,10 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
         setTrackHeight,
         timelineItemHeight,
         setTimelineItemHeight,
+        // SRT Text Extraction
+        extractedSRTText,
+        setExtractedSRTText,
+        extractedSRTTextQueue: extractedSRTTextQueueRef.current,
         // Combined loading state: wait for both autosave check AND project loading
         isInitialLoadComplete: true, // Autosave removed, always true
     };

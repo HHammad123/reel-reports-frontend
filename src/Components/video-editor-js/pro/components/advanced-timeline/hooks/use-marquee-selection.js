@@ -7,23 +7,35 @@ export const useMarqueeSelection = ({ timelineRef, tracks, totalDuration, select
     // Throttle marquee mouse move updates to improve performance
     const marqueeThrottleRef = useRef(null);
     const handleTimelineMouseDown = useCallback((e) => {
+        // Validate event object
+        if (!e || typeof e !== 'object') {
+            return;
+        }
         // Only allow left mouse button and prevent marquee during drag or context menu
         if (e.button !== 0 || isDragging || isContextMenuOpen) {
             return;
         }
         // Check if we clicked on an empty area (not on an item or timeline markers)
         const target = e.target;
+        if (!target || typeof target.closest !== 'function') {
+            return;
+        }
         if (target.closest('.timeline-item') ||
             target.closest('.timeline-markers-container') ||
             target.closest('[data-timeline-marker]')) {
             return; // Don't start marquee if clicking on an item or timeline markers
         }
         if (timelineRef === null || timelineRef === void 0 ? void 0 : timelineRef.current) {
-            e.preventDefault();
-            e.stopPropagation();
+            // Safely call preventDefault and stopPropagation
+            if (typeof e.preventDefault === 'function') {
+                e.preventDefault();
+            }
+            if (typeof e.stopPropagation === 'function') {
+                e.stopPropagation();
+            }
             const rect = timelineRef.current.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const x = (typeof e.clientX === 'number' ? e.clientX : 0) - rect.left;
+            const y = (typeof e.clientY === 'number' ? e.clientY : 0) - rect.top;
             setIsMarqueeSelecting(true);
             setMarqueeStartPoint({ x, y });
             setMarqueeEndPoint({ x, y });
@@ -37,6 +49,10 @@ export const useMarqueeSelection = ({ timelineRef, tracks, totalDuration, select
         }
     }, [isDragging, isContextMenuOpen, timelineRef, onSelectedItemsChange]);
     const handleMarqueeMouseMove = useCallback((e) => {
+        // Validate event object
+        if (!e || typeof e !== 'object') {
+            return;
+        }
         if (isMarqueeSelecting &&
             (timelineRef === null || timelineRef === void 0 ? void 0 : timelineRef.current) &&
             marqueeStartPoint &&
@@ -52,8 +68,8 @@ export const useMarqueeSelection = ({ timelineRef, tracks, totalDuration, select
                 if (!rect)
                     return;
                 const currentMarqueeEndPoint = {
-                    x: e.clientX - rect.left,
-                    y: e.clientY - rect.top,
+                    x: (typeof e.clientX === 'number' ? e.clientX : 0) - rect.left,
+                    y: (typeof e.clientY === 'number' ? e.clientY : 0) - rect.top,
                 };
                 setMarqueeEndPoint(currentMarqueeEndPoint);
                 // Calculate marquee rectangle
@@ -104,8 +120,15 @@ export const useMarqueeSelection = ({ timelineRef, tracks, totalDuration, select
         onSelectedItemsChange,
     ]);
     const handleMarqueeMouseUp = useCallback((e) => {
+        // Validate event object
+        if (!e || typeof e !== 'object') {
+            return false;
+        }
         if (isMarqueeSelecting) {
-            e.stopPropagation();
+            // Safely call stopPropagation
+            if (typeof e.stopPropagation === 'function') {
+                e.stopPropagation();
+            }
             // Cancel any pending throttled updates
             if (marqueeThrottleRef.current) {
                 cancelAnimationFrame(marqueeThrottleRef.current);

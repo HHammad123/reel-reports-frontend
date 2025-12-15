@@ -1,4 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useCallback, useMemo } from "react";
 import { ImageStylePanel } from "./image-style-panel";
 import { ImageSettingsPanel } from "./image-settings-panel";
 import { ImagePreview } from "./image-preview";
@@ -30,44 +31,57 @@ import { Settings, PaintBucket, Sparkles } from "lucide-react";
  * ```
  */
 export const ImageDetails = ({ localOverlay, setLocalOverlay, onChangeImage, }) => {
-    const handleStyleChange = (updates) => {
-        const updatedOverlay = {
-            ...localOverlay,
-            styles: {
-                ...localOverlay.styles,
-                ...updates,
-            },
-        };
-        setLocalOverlay(updatedOverlay);
-    };
+    // FIXED: Memoize callbacks to prevent recreation on every render
+    const handleStyleChange = useCallback((updates) => {
+        setLocalOverlay((prevOverlay) => {
+            return {
+                ...prevOverlay,
+                styles: {
+                    ...prevOverlay.styles,
+                    ...updates,
+                },
+            };
+        });
+    }, [setLocalOverlay]);
+    
     /**
      * Handles position and size changes for the image overlay
      */
-    const handlePositionChange = (updates) => {
-        const updatedOverlay = {
-            ...localOverlay,
-            ...updates,
-        };
-        setLocalOverlay(updatedOverlay);
-    };
-    return (_jsxs("div", { className: "space-y-4", children: [_jsx(ImagePreview, { overlay: localOverlay, onChangeImage: onChangeImage }), _jsx(UnifiedTabs, { tabs: [
-                    {
-                        value: "settings",
-                        label: "Settings",
-                        icon: _jsx(Settings, { className: "w-4 h-4" }),
-                        content: (_jsx(ImageSettingsPanel, { localOverlay: localOverlay, handleStyleChange: handleStyleChange, onPositionChange: handlePositionChange })),
-                    },
-                    {
-                        value: "style",
-                        label: "Style",
-                        icon: _jsx(PaintBucket, { className: "w-4 h-4" }),
-                        content: (_jsx(ImageStylePanel, { localOverlay: localOverlay, handleStyleChange: handleStyleChange })),
-                    },
-                    {
-                        value: "ai",
-                        label: "AI",
-                        icon: _jsx(Sparkles, { className: "w-4 h-4" }),
-                        content: (_jsx(ImageAIPanel, { localOverlay: localOverlay })),
-                    },
-                ] })] }));
+    const handlePositionChange = useCallback((updates) => {
+        setLocalOverlay((prevOverlay) => {
+            return {
+                ...prevOverlay,
+                ...updates,
+            };
+        });
+    }, [setLocalOverlay]);
+    
+    // FIXED: Memoize tabs array to prevent UnifiedTabs re-renders
+    // Stable icon references created once
+    const settingsIcon = useMemo(() => _jsx(Settings, { className: "w-4 h-4" }), []);
+    const paintBucketIcon = useMemo(() => _jsx(PaintBucket, { className: "w-4 h-4" }), []);
+    const sparklesIcon = useMemo(() => _jsx(Sparkles, { className: "w-4 h-4" }), []);
+    
+    const tabs = useMemo(() => [
+        {
+            value: "settings",
+            label: "Settings",
+            icon: settingsIcon,
+            content: _jsx(ImageSettingsPanel, { localOverlay: localOverlay, handleStyleChange: handleStyleChange, onPositionChange: handlePositionChange }),
+        },
+        {
+            value: "style",
+            label: "Style",
+            icon: paintBucketIcon,
+            content: _jsx(ImageStylePanel, { localOverlay: localOverlay, handleStyleChange: handleStyleChange }),
+        },
+        {
+            value: "ai",
+            label: "AI",
+            icon: sparklesIcon,
+            content: _jsx(ImageAIPanel, { localOverlay: localOverlay }),
+        },
+    ], [localOverlay, handleStyleChange, handlePositionChange, settingsIcon, paintBucketIcon, sparklesIcon]);
+    
+    return (_jsxs("div", { className: "space-y-4", children: [_jsx(ImagePreview, { overlay: localOverlay, onChangeImage: onChangeImage }), _jsx(UnifiedTabs, { tabs: tabs })] }));
 };

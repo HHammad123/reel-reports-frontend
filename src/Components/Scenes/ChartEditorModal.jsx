@@ -192,6 +192,17 @@ const extractChartData = (chartData, chartType) => {
       dataset[name] = yValues
     })
     
+    // Debug logging
+    try {
+      console.log('[extractChartData] Extracted data:', {
+        chartType,
+        xValuesCount: xValues.length,
+        dataEntriesCount: dataEntries.length,
+        datasetKeys: Object.keys(dataset),
+        dataset: dataset
+      });
+    } catch(_) {}
+    
     // If we have both x and dataset, return it (even if some series are empty)
     if (Object.keys(dataset).length && xValues.length) {
       return { categories: xValues, dataset }
@@ -1164,6 +1175,14 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
     
     // Debug logging
+    try {
+      console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
+        chart_type: nextType,
+        has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
+        chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
+        sceneData_keys: Object.keys(sceneData || {})
+      })
+    } catch(_) {}
     const targets = computeColorTargets(nextType, parsedData)
     // Use selected preset if available, otherwise fall back to sceneData preset
     const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
@@ -1392,12 +1411,15 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   }, [])
 
   const handleColorOverrideChange = useCallback((target, color) => {
+  console.log('🎨 Color change:', target, color)
   if (historyInitializedRef.current) saveToHistory()
   setSeriesColorOverrides((prev) => {
-    return {
+    const newOverrides = {
       ...prev,
       [target]: color
     }
+    console.log('🎨 New color overrides:', newOverrides)
+    return newOverrides
   })
   markDirty()
 }, [markDirty, saveToHistory])
@@ -1505,379 +1527,39 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   const colorControlsVisible = colorTargets.length > 0
 
   const handleSaveChart = useCallback(async () => {
-    if (!plotRef.current) return
-    const sessionId = localStorage.getItem('session_id')
-    const userId = localStorage.getItem('token')
-    if (!sessionId || !userId || !sceneNumber) {
-      setSaveError('Missing session, user, or scene number.')
-      return
+  if (!plotRef.current) return
+  const sessionId = localStorage.getItem('session_id')
+  const userId = localStorage.getItem('token')
+  if (!sessionId || !userId || !sceneNumber) {
+    setSaveError('Missing session, user, or scene number.')
+    return
+  }
+  setIsSaving(true)
+  setSaveError('')
+  try {
+    const plotElement = plotRef.current?.el
+    if (!plotElement) {
+      throw new Error('Chart preview is not ready yet.')
     }
-    setIsSaving(true)
-    setSaveError('')
-    let updatedOverlayElements = []
+    
+    console.log('📸 Exporting chart with Plotly.toImage...')
+    
+    // Wait a moment to ensure plot is fully rendered
+    await new Promise(resolve => setTimeout(resolve, 100))
+    
+    const presetSections = sectionsState || sceneData?.preset?.preset_definitions?.[0]?.sections || {}
+
+    console.log('🔍 Full sceneData keys:', Object.keys(sceneData || {}))
+
+    let plotWidth, plotHeight
+    let existingBoundingBox = null
+
+    // Fetch the complete scene data from API to get base_image dimensions AND bounding_box
     try {
-      const plotElement = plotRef.current?.el
-      if (!plotElement) {
-        throw new Error('Chart preview is not ready yet.')
-      }
-      
-      // Wait a moment to ensure plot is fully rendered
-      await new Promise(resolve => setTimeout(resolve, 100))
-      
-      // ✅ Get dimensions from overlay image
-      const overlayElements = sceneData?.overlay_elements || sceneData?.overlayElements || []
-      const chartOverlay = overlayElements.find(el => 
-        el?.element_id === 'chart_overlay' || 
-        el?.label_name === 'Chart' || 
-        overlayElements.indexOf(el) === 0
-      )
-      
-      // Use overlay image dimensions directly
-      const overlayImageDims = chartOverlay?.overlay_image?.image_dimensions
-      const plotWidth = overlayImageDims?.width || 810
-      const plotHeight = overlayImageDims?.height || 1440
-      
-      // Use Plotly's built-in toImage method (same as download as PNG feature)
-      // This uses Plotly's native export functionality that handles all scaling automatically
-      // Use scale: 3 for high-resolution export with proper font scaling
-      // Note: width/height are optional - if omitted, Plotly uses the element's dimensions
-      const imageDataUrl = await Plotly.toImage(plotElement, {
-        format: 'png',
-        width: plotWidth,
-        height: plotHeight,
-        scale: 3 // High resolution - Plotly automatically scales fonts, labels, titles, etc.
-      })
-      
-      // Convert data URL to blob (matching ImageList.js pattern)
-      const response = await fetch(imageDataUrl)
-      if (!response.ok) {
-        throw new Error('Failed to convert image data URL to blob')
-      }
-      const blob = await response.blob()
-      
-      if (!blob || blob.size === 0) {
-        throw new Error('Failed to create blob from image data')
-      }
-      
-      // Generate filename
-      const fileName = `scene-${sceneNumber}-chart.png`
-      
-      // Create a File object from the blob
-      const file = new File([blob], fileName, {
-        type: 'image/png',
-        lastModified: Date.now()
-      })
-      
-      // Upload the chart image to the upload_chart API
-      const uploadFormData = new FormData()
-      uploadFormData.append('session_id', sessionId)
-      uploadFormData.append('user_id', userId)
-      uploadFormData.append('scene_number', String(sceneNumber))
-      uploadFormData.append('file', file, fileName)
-
-      const uploadResponse = await fetch(
-        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/upload_chart',
-        {
-          method: 'POST',
-          body: uploadFormData
-        }
-      )
-      
-      // Get the response text first (can only read once)
-      const uploadResponseText = await uploadResponse.text()
-      
-      if (!uploadResponse.ok) {
-        throw new Error(uploadResponseText || 'Failed to upload chart')
-      }
-      
-      // Get the URL from the upload response
-      let chartImageUrl = null
-      try {
-        const uploadData = JSON.parse(uploadResponseText)
-        chartImageUrl = uploadData?.url || uploadData?.image_url || uploadData?.chart_url || uploadData?.chart_image_url
-        if (!chartImageUrl && typeof uploadData === 'string') {
-          // If response is just a URL string
-          chartImageUrl = uploadData
-        }
-      } catch (parseError) {
-        // If not JSON, try treating response as plain text URL
-        chartImageUrl = uploadResponseText.trim()
-        if (chartImageUrl && (chartImageUrl.startsWith('http://') || chartImageUrl.startsWith('https://'))) {
-        } else {
-          throw new Error('Failed to extract chart URL from upload response')
-        }
-      }
-      
-      if (!chartImageUrl) {
-        throw new Error('Chart upload succeeded but no URL was returned')
-      }
-      
-      // Call elements API to update overlay_elements with the new chart URL
-      try {
-        // First, fetch user session data to get the complete overlay structure
-        const sessionReqBody = { user_id: userId, session_id: sessionId }
-        const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sessionReqBody)
-        })
+      if (sessionId && userId && sceneNumber) {
+        console.log('🔄 Fetching complete scene data from API for scene:', sceneNumber)
         
-        if (!sessionResp.ok) {
-          const text = await sessionResp.text()
-          throw new Error(`Failed to fetch user session data: ${sessionResp.status} ${text}`)
-        }
-        
-        const sessionDataResponse = await sessionResp.json()
-        const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
-        const images = Array.isArray(sessionData?.images) ? sessionData.images : []
-        
-        // Find the scene data for the current scene number
-        const sceneImageData = images.find(img => 
-          (img?.scene_number === sceneNumber) || 
-          (img?.sceneNumber === sceneNumber) ||
-          (images.indexOf(img) + 1 === sceneNumber)
-        )
-        
-        // Get overlay_elements from the fetched session data for this scene
-        // Check multiple possible locations for overlay_elements
-        let existingOverlayElements = []
-        if (sceneImageData) {
-          // Try to get from imageFrames first (if it's an array of frames)
-          if (Array.isArray(sceneImageData.imageFrames)) {
-            const frame = sceneImageData.imageFrames.find(f => 
-              f?.overlay_elements || f?.overlayElements
-            ) || sceneImageData.imageFrames[0]
-            existingOverlayElements = frame?.overlay_elements || frame?.overlayElements || []
-          }
-          // Otherwise try direct properties
-          if (existingOverlayElements.length === 0) {
-            existingOverlayElements = sceneImageData?.overlay_elements || 
-                                     sceneImageData?.overlayElements || 
-                                     []
-          }
-        }
-        
-        // Fallback to sceneData if session data doesn't have overlay_elements
-        if (existingOverlayElements.length === 0) {
-          existingOverlayElements = sceneData?.overlay_elements || 
-                                   sceneData?.overlayElements || 
-                                   []
-        }
-        
-        // Update overlay_elements with the new chart URL while preserving all other data
-        // The overlay object structure should match: { layout, offset, element_id, label_name, synced_with, bounding_box, overlay_image }
-        if (Array.isArray(existingOverlayElements) && existingOverlayElements.length > 0) {
-          updatedOverlayElements = existingOverlayElements.map((overlay, idx) => {
-            // Update the URL for chart overlays, preserving the complete structure
-            // Check if this is a chart overlay by element_id, label_name, or type
-            const isChartOverlay = overlay?.element_id === 'chart_overlay' || 
-                                  overlay?.label_name === 'Chart' || 
-                                  overlay?.type === 'chart' || 
-                                  overlay?.isChartOverlay ||
-                                  idx === 0 // Default to first overlay if no identifier
-            
-            if (isChartOverlay) {
-              // Deep clone the overlay to preserve all properties (layout, offset, element_id, label_name, synced_with, bounding_box, overlay_image)
-              const updatedOverlay = JSON.parse(JSON.stringify(overlay))
-              
-              // Only update the image_url inside overlay_image, preserve everything else
-              if (updatedOverlay.overlay_image) {
-                updatedOverlay.overlay_image = {
-                  ...updatedOverlay.overlay_image,
-                  image_url: chartImageUrl
-                }
-        } else {
-                // If overlay_image doesn't exist, create it with the new URL but preserve other structure
-                updatedOverlay.overlay_image = {
-                  enabled: true,
-                  scaling: {
-                    enabled: false,
-                    scale_x: 1,
-                    scale_y: 1,
-                    fit_mode: "contain"
-                  },
-                  position: {
-                    x: 0,
-                    y: 0
-                  },
-                  image_url: chartImageUrl,
-                  image_dimensions: {
-                    width: 810,
-                    height: 1440
-                  }
-                }
-              }
-              
-              return updatedOverlay
-            }
-            return overlay
-          })
-        } else {
-          // Create a new overlay element structure for the chart if none exist
-          // Use the exact structure format provided by the user
-          updatedOverlayElements = [{
-            layout: {
-              zIndex: 2,
-              rotation: 0,
-              alignment: "center",
-              anchor_point: "center"
-            },
-            offset: {
-              x: 0,
-              y: 0
-            },
-            element_id: "chart_overlay",
-            label_name: "Chart",
-            synced_with: null,
-            bounding_box: {
-              x: 0,
-              y: 0,
-              width: 1,
-              height: 1
-            },
-            overlay_image: {
-              enabled: true,
-              scaling: {
-                enabled: false,
-                scale_x: 1,
-                scale_y: 1,
-                fit_mode: "contain"
-              },
-              position: {
-                x: 0,
-                y: 0
-              },
-              image_url: chartImageUrl,
-              image_dimensions: {
-                width: 810,
-                height: 1440
-              }
-            }
-          }]
-        }
-        
-        // Get existing text_elements from the fetched session data or sceneData
-        let existingTextElements = []
-        if (sceneImageData) {
-          if (Array.isArray(sceneImageData.imageFrames)) {
-            const frame = sceneImageData.imageFrames.find(f => 
-              f?.text_elements || f?.textElements
-            ) || sceneImageData.imageFrames[0]
-            existingTextElements = frame?.text_elements || frame?.textElements || []
-          }
-          if (existingTextElements.length === 0) {
-            existingTextElements = sceneImageData?.text_elements || 
-                                 sceneImageData?.textElements || 
-                                 []
-          }
-        }
-        
-        // Fallback to sceneData
-        if (existingTextElements.length === 0) {
-          existingTextElements = sceneData?.text_elements || 
-                               sceneData?.textElements || 
-                               []
-        }
-        
-        // Build elements API request body with two updates (image_index 0 and 1)
-        const elementsRequestBody = {
-          session_id: sessionId,
-          user_id: userId,
-          updates: [
-            {
-              image_index: 0,
-              overlay_elements: updatedOverlayElements,
-              scene_number: sceneNumber,
-              text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
-            },
-            {
-              image_index: 1,
-              overlay_elements: updatedOverlayElements,
-              scene_number: sceneNumber,
-              text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
-            }
-          ]
-        }
-        
-        
-        const elementsResponse = await fetch(
-          'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/elements',
-          {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(elementsRequestBody)
-          }
-        )
-        
-        if (!elementsResponse.ok) {
-          const errorText = await elementsResponse.text()
-          throw new Error(`Failed to update elements: ${elementsResponse.status} ${errorText}`)
-        }
-        
-      } catch (elementsError) {
-        console.error('❌ Error updating elements:', elementsError)
-        throw elementsError // Re-throw to be caught by outer try-catch
-      }
-      
-      // Build JSON data and send to chart-preset/update API
-      try {
-        // Get merged sections (same logic as in useEffect)
-        const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-        const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-        const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
-        
-        // Merge base sections with user-edited sectionsState
-        const mergedBase = { ...baseSections }
-        Object.keys(sectionsState).forEach(key => {
-          if (sectionsState[key]) {
-            mergedBase[key] = sectionsState[key]
-          }
-        })
-        const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
-
-        
-        // Build JSON output structure (matching App.jsx format)
-        const output = {
-          preset: {
-            chart_type: sceneData?.preset?.chart_type || (chartTypeState === 'donut' ? 'pie_donut' : chartTypeState),
-            preset_definitions: [
-              {
-                name: "final",
-                sections: mergedSections
-              }
-            ]
-          },
-          chart_data: chartDataState,
-          chart_type: chartTypeState,
-          scene_number: sceneNumber
-        }
-        
-        const jsonString = JSON.stringify(output, null, 2)
-        
-        // Send JSON to chart-preset/update API using PUT method
-        const updateUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/update?session_id=${encodeURIComponent(sessionId)}&user_id=${encodeURIComponent(userId)}`
-        
-        const updateResponse = await fetch(updateUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: jsonString
-        })
-        
-        if (!updateResponse.ok) {
-          const errorText = await updateResponse.text()
-          throw new Error(`Failed to update chart preset: ${updateResponse.status} ${errorText}`)
-        }
-      } catch (jsonError) {
-        console.error('❌ Error updating chart preset:', jsonError)
-        throw jsonError // Re-throw to be caught by outer try-catch
-      }
-      
-      // Fetch updated user session data to refresh the UI
-      try {
+        // Fetch user session data
         const sessionReqBody = { user_id: userId, session_id: sessionId }
         const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
@@ -1887,46 +1569,461 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         
         if (sessionResp.ok) {
           const sessionDataResponse = await sessionResp.json()
-          try {
-            localStorage.setItem('last_session_data', JSON.stringify(sessionDataResponse))
-          } catch (_) {
-            // Ignore localStorage errors
+          const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
+          const allImages = Array.isArray(sessionData?.images) ? sessionData.images : []
+          
+          // Find the current scene
+          const currentScene = allImages.find(img => 
+            (img?.scene_number === sceneNumber) || 
+            (img?.sceneNumber === sceneNumber) ||
+            (allImages.indexOf(img) + 1 === sceneNumber)
+          )
+          
+          if (currentScene?.images) {
+            const currentVersion = currentScene.images.current_version || 'v1'
+            const versionData = currentScene.images[currentVersion]
+            
+            if (versionData?.images?.[0]) {
+              const firstFrame = versionData.images[0]
+              
+              // Get base_image dimensions
+              const baseImageDims = firstFrame?.base_image?.image_dimensions
+              if (baseImageDims) {
+                const frameWidth = baseImageDims.width
+                const frameHeight = baseImageDims.height
+                
+                const isPortrait = frameHeight > frameWidth
+                
+                console.log('📐 Detected from API:', frameWidth, 'x', frameHeight, '→', isPortrait ? '9:16 (portrait)' : '16:9 (landscape)')
+                
+                if (isPortrait) {
+                  plotWidth = 810
+                  plotHeight = 1440
+                } else {
+                  plotWidth = 960
+                  plotHeight = 540
+                }
+              }
+              
+              // Get bounding_box from overlay_elements
+              const overlayElements = firstFrame?.overlay_elements || []
+              const chartOverlay = overlayElements.find(el => 
+                el?.element_id === 'chart_overlay' || 
+                el?.label_name === 'Chart' || 
+                overlayElements.indexOf(el) === 0
+              )
+              
+              if (chartOverlay?.bounding_box) {
+                existingBoundingBox = chartOverlay.bounding_box
+                console.log('📦 Found existing bounding_box from API:', existingBoundingBox)
+              }
+            }
           }
-        } else {
-          const text = await sessionResp.text()
-          console.warn(`⚠️ Failed to fetch updated session data: ${sessionResp.status} ${text}`)
-        }
-      } catch (sessionError) {
-        console.warn('⚠️ Error fetching updated session data:', sessionError)
-        // Don't fail the whole operation if session refresh fails
-      }
-      
-      setIsDirty(false)
-      
-      // Call onSave callback to let parent update UI without full reload
-      if (onSave) {
-        try {
-          onSave({
-            sceneNumber,
-            chartImageUrl,
-            overlayElements: updatedOverlayElements
-          })
-        } catch (_) {
-          // Ignore errors from parent callback
         }
       }
-      
-      // Close the modal instead of reloading
-      if (onClose) {
-        onClose()
-      }
-    } catch (err) {
-      console.error('❌ Error saving chart:', err)
-      setSaveError(err?.message || 'Failed to save chart')
-    } finally {
-      setIsSaving(false)
+    } catch (e) {
+      console.error('❌ Error fetching scene dimensions:', e)
     }
-  }, [sceneNumber, figure, sceneData, availablePresets, selectedPresetIndex, seriesColorOverrides, sectionsState, chartTypeState, chartDataState, onSave, onClose])
+
+    // If still not found, throw error
+    if (!plotWidth || !plotHeight) {
+      console.error('❌ Could not determine chart dimensions from API')
+      console.error('sceneNumber:', sceneNumber)
+      throw new Error('Unable to determine chart dimensions - please ensure scene data is available')
+    }
+
+    console.log('📐 Final dimensions:', plotWidth, 'x', plotHeight)
+    console.log('📦 Bounding box:', existingBoundingBox || 'will use default if creating new')
+
+    // Use Plotly's built-in toImage method
+    const imageDataUrl = await Plotly.toImage(plotElement, {
+      format: 'png',
+      width: plotWidth,
+      height: plotHeight,
+    })
+    console.log('✅ Chart exported to data URL, converting to blob...')
+
+    // Convert data URL to blob
+    const response = await fetch(imageDataUrl)
+    if (!response.ok) {
+      throw new Error('Failed to convert image data URL to blob')
+    }
+    const blob = await response.blob()
+
+    if (!blob || blob.size === 0) {
+      throw new Error('Failed to create blob from image data')
+    }
+
+    console.log(`✅ Blob created: ${blob.size} bytes`)
+
+    // Generate filename
+    const fileName = `scene-${sceneNumber}-chart.png`
+
+    // Create a File object from the blob
+    const file = new File([blob], fileName, {
+      type: 'image/png',
+      lastModified: Date.now()
+    })
+
+    // Upload the chart image to the upload_chart API
+    console.log(`📤 Uploading chart to upload_chart API...`)
+    const uploadFormData = new FormData()
+    uploadFormData.append('session_id', sessionId)
+    uploadFormData.append('user_id', userId)
+    uploadFormData.append('scene_number', String(sceneNumber))
+    uploadFormData.append('file', file, fileName)
+
+    const uploadResponse = await fetch(
+      'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/upload_chart',
+      {
+        method: 'POST',
+        body: uploadFormData
+      }
+    )
+
+    // Get the response text first (can only read once)
+    const uploadResponseText = await uploadResponse.text()
+
+    if (!uploadResponse.ok) {
+      throw new Error(uploadResponseText || 'Failed to upload chart')
+    }
+
+    // Get the URL from the upload response
+    let chartImageUrl = null
+    try {
+      const uploadData = JSON.parse(uploadResponseText)
+      chartImageUrl = uploadData?.url || uploadData?.image_url || uploadData?.chart_url || uploadData?.chart_image_url
+      if (!chartImageUrl && typeof uploadData === 'string') {
+        chartImageUrl = uploadData
+      }
+      console.log('✅ Chart uploaded successfully, URL:', chartImageUrl)
+    } catch (parseError) {
+      chartImageUrl = uploadResponseText.trim()
+      if (chartImageUrl && (chartImageUrl.startsWith('http://') || chartImageUrl.startsWith('https://'))) {
+        console.log('✅ Chart URL extracted from text response:', chartImageUrl)
+      } else {
+        throw new Error('Failed to extract chart URL from upload response')
+      }
+    }
+
+    if (!chartImageUrl) {
+      throw new Error('Chart upload succeeded but no URL was returned')
+    }
+
+    // Declare updatedOverlayElements at function scope so it's accessible for onSave callback
+    let updatedOverlayElements = []
+
+    // Call elements API to update overlay_elements with the new chart URL
+    console.log('📤 Calling elements API to update overlay_elements...')
+    try {
+      // First, fetch user session data to get the complete overlay structure
+      console.log('🔄 Fetching user session data to get complete overlay structure...')
+      const sessionReqBody = { user_id: userId, session_id: sessionId }
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sessionReqBody)
+      })
+      
+      if (!sessionResp.ok) {
+        const text = await sessionResp.text()
+        throw new Error(`Failed to fetch user session data: ${sessionResp.status} ${text}`)
+      }
+      
+      const sessionDataResponse = await sessionResp.json()
+      const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
+      const images = Array.isArray(sessionData?.images) ? sessionData.images : []
+      
+      // Find the scene data for the current scene number
+      const sceneImageData = images.find(img => 
+        (img?.scene_number === sceneNumber) || 
+        (img?.sceneNumber === sceneNumber) ||
+        (images.indexOf(img) + 1 === sceneNumber)
+      )
+      
+      // Get overlay_elements from the fetched session data for this scene
+      let existingOverlayElements = []
+      if (sceneImageData) {
+        if (Array.isArray(sceneImageData.imageFrames)) {
+          const frame = sceneImageData.imageFrames.find(f => 
+            f?.overlay_elements || f?.overlayElements
+          ) || sceneImageData.imageFrames[0]
+          existingOverlayElements = frame?.overlay_elements || frame?.overlayElements || []
+        }
+        if (existingOverlayElements.length === 0) {
+          existingOverlayElements = sceneImageData?.overlay_elements || 
+                                   sceneImageData?.overlayElements || 
+                                   []
+        }
+      }
+      
+      // Fallback to sceneData if session data doesn't have overlay_elements
+      if (existingOverlayElements.length === 0) {
+        existingOverlayElements = sceneData?.overlay_elements || 
+                                 sceneData?.overlayElements || 
+                                 []
+      }
+      
+      // Update overlay_elements with the new chart URL while preserving all other data
+      if (Array.isArray(existingOverlayElements) && existingOverlayElements.length > 0) {
+        updatedOverlayElements = existingOverlayElements.map((overlay, idx) => {
+          const isChartOverlay = overlay?.element_id === 'chart_overlay' || 
+                                overlay?.label_name === 'Chart' || 
+                                overlay?.type === 'chart' || 
+                                overlay?.isChartOverlay ||
+                                idx === 0
+          
+          if (isChartOverlay) {
+            const updatedOverlay = JSON.parse(JSON.stringify(overlay))
+            
+            // ONLY update image_url and image_dimensions, preserve everything else INCLUDING bounding_box
+            if (updatedOverlay.overlay_image) {
+              updatedOverlay.overlay_image.image_url = chartImageUrl
+              updatedOverlay.overlay_image.image_dimensions = {
+                width: plotWidth,
+                height: plotHeight
+              }
+            } else {
+              updatedOverlay.overlay_image = {
+                enabled: true,
+                scaling: {
+                  enabled: false,
+                  scale_x: 1,
+                  scale_y: 1,
+                  fit_mode: "contain"
+                },
+                position: {
+                  x: 0,
+                  y: 0
+                },
+                image_url: chartImageUrl,
+                image_dimensions: {
+                  width: plotWidth,
+                  height: plotHeight
+                }
+              }
+            }
+            
+            return updatedOverlay
+          }
+
+          return overlay
+        })
+      } else {
+        // Create a new overlay element structure for the chart if none exist
+        const boundingBoxToUse = existingBoundingBox || {
+          x: 0.17172897196261683,
+          y: 0.14583333333333334,
+          width: 0.6869158878504672,
+          height: 0.6479166666666667
+        }
+
+        updatedOverlayElements = [{
+          layout: {
+            zIndex: 2,  
+            rotation: 0,
+            alignment: "center",
+            anchor_point: "center"
+          },
+          offset: {
+            x: 0,
+            y: 0
+          },
+          element_id: "chart_overlay",
+          label_name: "Chart",
+          synced_with: null,
+          bounding_box: boundingBoxToUse,
+          overlay_image: {
+            enabled: true,
+            scaling: {
+              enabled: false,
+              scale_x: 1,
+              scale_y: 1,
+              fit_mode: "contain"
+            },
+            position: {
+              x: 0,
+              y: 0
+            },
+            image_url: chartImageUrl,
+            image_dimensions: {
+              width: plotWidth,
+              height: plotHeight
+            }
+          }
+        }]
+      }
+      
+      // Get existing text_elements from the fetched session data or sceneData
+      let existingTextElements = []
+      if (sceneImageData) {
+        if (Array.isArray(sceneImageData.imageFrames)) {
+          const frame = sceneImageData.imageFrames.find(f => 
+            f?.text_elements || f?.textElements
+          ) || sceneImageData.imageFrames[0]
+          existingTextElements = frame?.text_elements || frame?.textElements || []
+        }
+        if (existingTextElements.length === 0) {
+          existingTextElements = sceneImageData?.text_elements || 
+                               sceneImageData?.textElements || 
+                               []
+        }
+      }
+      
+      if (existingTextElements.length === 0) {
+        existingTextElements = sceneData?.text_elements || 
+                             sceneData?.textElements || 
+                             []
+      }
+      
+      // Build elements API request body with two updates (image_index 0 and 1)
+      const elementsRequestBody = {
+        session_id: sessionId,
+        user_id: userId,
+        updates: [
+          {
+            image_index: 0,
+            overlay_elements: updatedOverlayElements,
+            scene_number: sceneNumber,
+            text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
+          },
+          {
+            image_index: 1,
+            overlay_elements: updatedOverlayElements,
+            scene_number: sceneNumber,
+            text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
+          }
+        ]
+      }
+      
+      console.log('📋 Elements API request body:', JSON.stringify(elementsRequestBody, null, 2))
+      
+      const elementsResponse = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/elements',
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(elementsRequestBody)
+        }
+      )
+      
+      if (!elementsResponse.ok) {
+        const errorText = await elementsResponse.text()
+        throw new Error(`Failed to update elements: ${elementsResponse.status} ${errorText}`)
+      }
+      
+      console.log('✅ Elements updated successfully')
+    } catch (elementsError) {
+      console.error('❌ Error updating elements:', elementsError)
+      throw elementsError
+    }
+
+    // Build JSON data and send to chart-preset/update API
+    console.log('📤 Preparing JSON data for chart-preset/update API...')
+    try {
+      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+      const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+      const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
+      
+      // Merge base sections with user-edited sectionsState
+      const mergedBase = { ...baseSections }
+      Object.keys(sectionsState).forEach(key => {
+        if (sectionsState[key]) {
+          mergedBase[key] = sectionsState[key]
+        }
+      })
+      const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
+
+      // Build JSON output structure
+      const output = {
+        preset: {
+          chart_type: sceneData?.preset?.chart_type || (chartTypeState === 'donut' ? 'pie_donut' : chartTypeState),
+          preset_definitions: [
+            {
+              name: "final",
+              sections: mergedSections
+            }
+          ]
+        },
+        chart_data: chartDataState,
+        chart_type: chartTypeState,
+        scene_number: sceneNumber
+      }
+      
+      const jsonString = JSON.stringify(output, null, 2)
+      
+      // Send JSON to chart-preset/update API using PUT method
+      const updateUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/update?session_id=${encodeURIComponent(sessionId)}&user_id=${encodeURIComponent(userId)}`
+      
+      console.log('📤 Sending JSON to chart-preset/update API (PUT)...')
+      const updateResponse = await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonString
+      })
+      
+      if (!updateResponse.ok) {
+        const errorText = await updateResponse.text()
+        throw new Error(`Failed to update chart preset: ${updateResponse.status} ${errorText}`)
+      }
+      console.log('✅ Chart preset updated successfully')
+    } catch (jsonError) {
+      console.error('❌ Error updating chart preset:', jsonError)
+      throw jsonError
+    }
+    
+    // Fetch updated user session data to refresh the UI
+    console.log('🔄 Fetching updated user session data...')
+    try {
+      const sessionReqBody = { user_id: userId, session_id: sessionId }
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sessionReqBody)
+      })
+      
+      if (!sessionResp.ok) {
+        const text = await sessionResp.text()
+        console.warn(`⚠️ Failed to fetch updated session data: ${sessionResp.status} ${text}`)
+      } else {
+        const sessionDataResponse = await sessionResp.json()
+        console.log('✅ User session data refreshed')
+        try {
+          localStorage.setItem('last_session_data', JSON.stringify(sessionDataResponse))
+        } catch (_) {
+          // Ignore localStorage errors
+        }
+      }
+    } catch (sessionError) {
+      console.warn('⚠️ Error fetching updated session data:', sessionError)
+    }
+    
+    setIsDirty(false)
+    
+    // Pass the updated data to onSave callback
+    if (onSave) {
+      onSave({
+        sceneNumber,
+        overlayElements: updatedOverlayElements,
+        chartImageUrl
+      })
+    }
+    
+    // Close the modal after successful save
+    if (onClose) {
+      onClose()
+    }
+  } catch (err) {
+    console.error('❌ Error saving chart:', err)
+    setSaveError(err?.message || 'Failed to save chart')
+  } finally {
+    setIsSaving(false)
+  }
+}, [sceneNumber, figure, sceneData, availablePresets, selectedPresetIndex, seriesColorOverrides, sectionsState, chartTypeState, chartDataState, onSave, onClose])
 
   useEffect(() => {
     if (!sceneData) return

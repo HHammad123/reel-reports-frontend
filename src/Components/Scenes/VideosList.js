@@ -1719,6 +1719,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             opacity: chartLayer.opacity !== undefined ? chartLayer.opacity : 1,
             rotation: chartLayer.rotation || 0,
             enabled: chartLayer.enabled !== undefined ? chartLayer.enabled : true,
+            has_background: chartLayer.has_background !== undefined ? chartLayer.has_background : true,
           };
         }
       }
@@ -1776,59 +1777,130 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       return null;
     };
 
-    // Helper function to parse SRT file and convert to caption format
-    const parseSRTToCaption = async (srtUrl, fps = 30) => {
+    // SRT file upload function removed - using URLs directly
+
+    // Helper function to generate captions from text (replicates generateFromText logic)
+    const generateCaptionsFromText = (text, wordsPerMinute = 160, sentenceGapMs = 500) => {
+      if (!text || !text.trim()) {
+        return [];
+      }
+      
+      const sentences = text
+        .split(/[.!?]+/)
+        .map(sentence => sentence.trim())
+        .filter(sentence => sentence.length > 0);
+      
+      if (sentences.length === 0) {
+        return [];
+      }
+      
+      let currentStartTime = 0;
+      const msPerWord = (60 * 1000) / wordsPerMinute;
+      
+      const captions = sentences.map((sentence) => {
+        const words = sentence.split(/\s+/).filter(word => word.length > 0);
+        const sentenceStartTime = currentStartTime;
+        const sentenceDuration = words.length * msPerWord;
+        const sentenceEndTime = sentenceStartTime + sentenceDuration;
+        
+        // Distribute word timing evenly across sentence duration
+        const wordTiming = words.map((word, index) => {
+          const wordDuration = sentenceDuration / words.length;
+          return {
+            word: word.trim(),
+            startMs: Math.round(sentenceStartTime + index * wordDuration),
+            endMs: Math.round(sentenceStartTime + (index + 1) * wordDuration),
+            confidence: 0.99,
+          };
+        });
+        
+        const caption = {
+          text: sentence,
+          startMs: sentenceStartTime,
+          endMs: sentenceEndTime,
+          timestampMs: null,
+          confidence: 0.99,
+          words: wordTiming,
+        };
+        
+        currentStartTime = caption.endMs + sentenceGapMs;
+        return caption;
+      });
+      
+      return captions;
+    };
+
+    // Helper function to parse SRT file, extract text, and generate captions
+    const parseSRTToCaption = async (srtUrl, fps = 30, sceneIndex = null) => {
       try {
+        console.log(`[VideosList] Fetching SRT file for Scene ${sceneIndex !== null ? sceneIndex + 1 : 'Unknown'}:`, srtUrl);
+        
         // Fetch SRT file content
         const response = await fetch(srtUrl);
         if (!response.ok) {
-          return null;
+          console.error(`[VideosList] Failed to fetch SRT file: ${response.status} ${response.statusText}`);
+          return { captions: null, extractedText: null };
         }
         
         const srtContent = await response.text();
+        console.log(`[VideosList] SRT file fetched, length: ${srtContent.length} characters`);
         
-        // Parse SRT content into caption entries
-        const captions = [];
+        // Extract all text from SRT file
+        const allTexts = [];
         const blocks = srtContent.trim().split('\n\n');
         
         blocks.forEach((block, index) => {
           const lines = block.split('\n');
           if (lines.length < 3) return;
           
-          // Parse timing line (format: 00:00:00,000 --> 00:00:05,000)
-          const timingLine = lines[1];
-          const timingMatch = timingLine.match(/(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})/);
-          
-          if (!timingMatch) {
-            return;
-          }
-          
-          const [_, startH, startM, startS, startMs, endH, endM, endS, endMs] = timingMatch;
-          
-          // Convert to milliseconds
-          const startTimeMs = (parseInt(startH) * 3600 + parseInt(startM) * 60 + parseInt(startS)) * 1000 + parseInt(startMs);
-          const endTimeMs = (parseInt(endH) * 3600 + parseInt(endM) * 60 + parseInt(endS)) * 1000 + parseInt(endMs);
-          
-          // Get text content (lines 2 onwards)
+          // Get text content (lines 2 onwards, skip sequence number and timing)
           const text = lines.slice(2).join(' ').trim();
-          
-          // Create caption entry
-          captions.push({
-            startMs: startTimeMs,
-            endMs: endTimeMs,
-            words: [{ 
-              word: text, 
-              startMs: startTimeMs, 
-              endMs: endTimeMs 
-            }]
-          });
+          if (text) {
+            allTexts.push(text);
+          }
         });
         
-        return captions;
+        // Join all extracted text
+        const extractedText = allTexts.join(' ').trim();
+        
+        if (!extractedText) {
+          console.warn(`[VideosList] No text extracted from SRT file for Scene ${sceneIndex !== null ? sceneIndex + 1 : 'Unknown'}`);
+          return { captions: null, extractedText: null };
+        }
+        
+        console.log(`[VideosList] ✅ Text extracted from SRT for Scene ${sceneIndex !== null ? sceneIndex + 1 : 'Unknown'}:`, {
+          textLength: extractedText.length,
+          textPreview: extractedText.substring(0, 200),
+          totalBlocks: blocks.length,
+          extractedBlocks: allTexts.length
+        });
+        
+        // Generate captions from extracted text using generateFromText logic
+        console.log(`[VideosList] Generating captions from extracted text...`);
+        const generatedCaptions = generateCaptionsFromText(extractedText);
+        
+        console.log(`[VideosList] ✅ Captions generated from text:`, {
+          captionCount: generatedCaptions.length,
+          totalDuration: generatedCaptions.length > 0 ? generatedCaptions[generatedCaptions.length - 1].endMs : 0,
+          firstCaption: generatedCaptions[0],
+          lastCaption: generatedCaptions[generatedCaptions.length - 1]
+        });
+        
+        // Dispatch event for captions panel (optional, for UI updates)
+        const event = new CustomEvent('srtTextExtracted', {
+          detail: {
+            text: extractedText,
+            sceneIndex: sceneIndex !== null ? sceneIndex + 1 : null,
+            srtUrl: srtUrl
+          }
+        });
+        window.dispatchEvent(event);
+        
+        return { captions: generatedCaptions, extractedText };
         
       } catch (error) {
-        console.error(`❌ Error parsing SRT file:`, error);
-        return null;
+        console.error(`[VideosList] ❌ Error parsing SRT file:`, error);
+        return { captions: null, extractedText: null };
       }
     };
 
@@ -1872,7 +1944,91 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       return null;
     };
 
+    // Helper to create complete text overlay styles from layer data
+    // This ensures TextStylePanel never needs to auto-apply defaults
+    // textLayerData has properties at top level (new schema) or nested in style (legacy)
+    const createTextOverlayStyles = (textLayerData) => {
+      // Convert fontSize (px number) to fontSizeScale (0.3-3 range)
+      // Base size is 28px, so fontSizeScale = fontSize / 28
+      const fontSize = textLayerData.fontSize || textLayerData.style?.fontSize || 28;
+      const fontSizeScale = Math.max(0.3, Math.min(3, fontSize / 28)); // Normalize to base size of 28, clamp to 0.3-3
+      
+      // Convert letterSpacing from px to em
+      const letterSpacingPx = textLayerData.letterSpacing || textLayerData.style?.letterSpacing || 0;
+      let letterSpacingEm;
+      if (typeof letterSpacingPx === 'number') {
+        letterSpacingEm = `${(letterSpacingPx / 16).toFixed(2)}em`; // Convert px to em (16px = 1em)
+      } else if (typeof letterSpacingPx === 'string') {
+        if (letterSpacingPx.endsWith('px')) {
+          const pxValue = parseFloat(letterSpacingPx) || 0;
+          letterSpacingEm = `${(pxValue / 16).toFixed(2)}em`;
+        } else if (letterSpacingPx.endsWith('em')) {
+          letterSpacingEm = letterSpacingPx;
+        } else {
+          letterSpacingEm = letterSpacingPx === '0' || letterSpacingPx === '' ? '0em' : `${letterSpacingPx}em`;
+        }
+      } else {
+        letterSpacingEm = '0em';
+      }
+      
+      // Map fontWeight to numeric string
+      const fontWeightMap = {
+        'thin': '100',
+        'extra-light': '200',
+        'light': '300',
+        'normal': '400',
+        'regular': '400',
+        'medium': '500',
+        'semi-bold': '600',
+        'semibold': '600',
+        'bold': '700',
+        'extra-bold': '800',
+        'black': '900',
+      };
+      
+      const rawWeight = textLayerData.fontWeight || textLayerData.style?.fontWeight || '400';
+      const fontWeight = fontWeightMap[String(rawWeight).toLowerCase()] || String(rawWeight);
+      
+      // Map animation type
+      let animationType = 'none';
+      if (textLayerData.animation?.type === 'fade_in_out' || 
+          textLayerData.animation?.type === 'fade') {
+        animationType = 'fade';
+      }
+      
+      // Create stable animation config object
+      const animationConfig = {
+        enter: animationType,
+        exit: animationType,
+        duration: textLayerData.animation?.duration || 0.5,
+      };
+      
+      // Return complete styles object with ALL required properties
+      return {
+        // CRITICAL: TextStylePanel expects fontSizeScale (number 0.3-3)
+        fontSizeScale: fontSizeScale,
+        // Keep fontSize for rendering
+        fontSize: `${fontSize}px`,
+        fontFamily: textLayerData.fontFamily || textLayerData.style?.fontFamily || 'Inter',
+        fontWeight: fontWeight,
+        color: textLayerData.color || textLayerData.fill || textLayerData.style?.color || '#000000',
+        textAlign: textLayerData.alignment || textLayerData.textAlign || textLayerData.style?.textAlign || 'center',
+        lineHeight: String(textLayerData.lineHeight || textLayerData.style?.lineHeight || 1.2),
+        letterSpacing: letterSpacingEm,
+        opacity: textLayerData.opacity !== undefined ? textLayerData.opacity : 
+                (textLayerData.textOpacity !== undefined ? textLayerData.textOpacity : 1),
+        textShadow: textLayerData.textShadow || textLayerData.style?.textShadow || textLayerData.effects?.textShadow || null,
+        backgroundColor: textLayerData.backgroundColor || textLayerData.style?.backgroundColor || 'transparent',
+        padding: textLayerData.padding || textLayerData.style?.padding || '0px',
+        borderRadius: textLayerData.borderRadius || textLayerData.style?.borderRadius || '0px',
+        zIndex: 350, // Same as other text overlays
+        transform: `scale(${textLayerData.scale !== undefined ? textLayerData.scale : 1})`,
+        animation: animationConfig, // Stable reference
+      };
+    };
+
     // Get text overlay layer data from layers array (supports multiple text overlays)
+    // Extracts data from new schema: { name: "text_overlay", text: "...", fontSize: 28, color: "#000000", ... }
     const getTextOverlayLayerData = (entry = {}) => {
       if (Array.isArray(entry?.videos?.v1?.layers)) {
         // Filter all text_overlay layers (there might be multiple)
@@ -1880,6 +2036,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         
         if (textLayers.length > 0) {
           return textLayers.map((textLayer, index) => {
+            // Extract data directly from layer object (new schema) or nested style object (legacy)
             return {
               text: textLayer.text || '',
               url: textLayer.url || null, // URL for text overlay video/text source
@@ -1887,21 +2044,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               position: textLayer.position || { x: 0.5, y: 0.5 }, // Default center
               bounding_box: textLayer.bounding_box || null,
               size: textLayer.size || null,
-              style: {
-                fontSize: textLayer.fontSize || textLayer.style?.fontSize || 28,
-                fontFamily: textLayer.fontFamily || textLayer.style?.fontFamily || 'Inter',
-                fontWeight: textLayer.fontWeight || textLayer.style?.fontWeight || 'bold',
-                color: textLayer.fill || textLayer.style?.color || textLayer.style?.fill || '#000000',
-                textAlign: textLayer.textAlign || textLayer.style?.textAlign || 'center',
-                lineHeight: textLayer.lineHeight || textLayer.style?.lineHeight || 1.2,
-                letterSpacing: textLayer.letterSpacing || textLayer.style?.letterSpacing || 1,
-                opacity: textLayer.textOpacity !== undefined ? textLayer.textOpacity : 
-                        (textLayer.opacity !== undefined ? textLayer.opacity : 1),
-                textShadow: textLayer.style?.textShadow || textLayer.effects?.textShadow || null,
-                backgroundColor: textLayer.style?.backgroundColor || 'transparent',
-                padding: textLayer.style?.padding || '0px',
-                borderRadius: textLayer.style?.borderRadius || '0px',
-              },
+              // Extract style properties directly from layer (new schema) or from nested style (legacy)
+              fontSize: textLayer.fontSize || textLayer.style?.fontSize || 28,
+              fontFamily: textLayer.fontFamily || textLayer.style?.fontFamily || 'Inter',
+              fontWeight: textLayer.fontWeight || textLayer.style?.fontWeight || 'bold',
+              color: textLayer.color || textLayer.fill || textLayer.style?.color || textLayer.style?.fill || '#000000',
+              alignment: textLayer.alignment || textLayer.textAlign || textLayer.style?.textAlign || 'center',
+              textAlign: textLayer.alignment || textLayer.textAlign || textLayer.style?.textAlign || 'center',
+              lineHeight: textLayer.lineHeight || textLayer.style?.lineHeight || 1.2,
+              letterSpacing: textLayer.letterSpacing || textLayer.style?.letterSpacing || 1,
+              opacity: textLayer.textOpacity !== undefined ? textLayer.textOpacity : 
+                      (textLayer.opacity !== undefined ? textLayer.opacity : 1),
+              textShadow: textLayer.style?.textShadow || textLayer.effects?.textShadow || null,
+              backgroundColor: textLayer.style?.backgroundColor || 'transparent',
+              padding: textLayer.style?.padding || '0px',
+              borderRadius: textLayer.style?.borderRadius || '0px',
               effects: textLayer.effects || null,
               animation: textLayer.animation || { type: 'fade_in_out', duration: 0.5 },
               rotation: textLayer.rotation || 0,
@@ -1927,12 +2084,12 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         
         const file = videoFiles[i];
         try {
-          // UPDATED LAYER ORGANIZATION (dynamic based on number of text overlays):
-          // Rows 1 to N: Text Overlays (TEXT) - zIndex 350 (N = number of text overlays)
-          // Row N+1: Logo (IMAGE) - zIndex 400
-          // Row N+2: Chart Video (VIDEO) - zIndex 200 (if present)
-          // Row N+3: Base Video (VIDEO) - zIndex 100 (MAIN CONTENT)
-          // Row N+4: Subtitles (CAPTION) - zIndex 350 (SAME as text overlays)
+          // UPDATED LAYER ORGANIZATION (fixed subtitle row, dynamic text rows):
+          // Row 1: Subtitles (CAPTION) - zIndex 350 - FIXED (all scene subtitles go to row 1, above text layers)
+          // Rows 2 to N+1: Text Overlays (TEXT) - zIndex 350 (N = number of text overlays, starts at row 2)
+          // Row N+2: Logo (IMAGE) - zIndex 400
+          // Row N+3: Chart Video (VIDEO) - zIndex 200 (if present)
+          // Row N+4: Base Video (VIDEO) - zIndex 100 (MAIN CONTENT)
           // Row N+5: Audio (SOUND) - no visual component
           // Note: Row numbers in timeline are for organization, z-index determines actual visual stacking on canvas
           
@@ -2005,12 +2162,13 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           const canvasWidth = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1080 : 1920;
           const canvasHeight = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1920 : 1080;
           
-          // STEP 1: Process text overlay(s) FIRST with dynamic row assignment
-          // Each text overlay gets its own row: Row 1, Row 2, Row 3, etc.
+          // STEP 1: Process text overlay(s) with dynamic row assignment
+          // CRITICAL: Row 1 is reserved for subtitles (all scene subtitles go to row 1)
+          // Text overlays start at row 2: Row 2, Row 3, Row 4, etc.
           // This ensures multiple text overlays from the same scene don't overlap
           const textOverlayLayers = getTextOverlayLayerData(file);
-          let currentTextRow = 1; // Start at row 1 for first text overlay
-          let lastTextRow = 0; // Track last row used by text overlays
+          let currentTextRow = 2; // Start at row 2 (row 1 is reserved for subtitles)
+          let lastTextRow = 1; // Track last row used by text overlays (minimum is 1 for subtitle row)
           
           if (textOverlayLayers.length > 0) {
             textOverlayLayers.forEach((textLayerData, textIndex) => {
@@ -2027,77 +2185,79 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 : (fromFrame + durationInFrames);
               const textDurationInFrames = Math.max(1, textEndFrame - textStartFrame);
               
-              // Calculate text position
+              // Calculate text position and size
               let textLeft = 0;
               let textTop = 0;
               let textWidth = 400; // Default text box width
               let textHeight = 100; // Default text box height
               
+              // Priority 1: Use bounding_box for absolute positioning (0-1 normalized)
               if (textLayerData.bounding_box) {
-                // Use bounding_box for absolute positioning
                 textLeft = Math.round((textLayerData.bounding_box.x || 0) * canvasWidth);
                 textTop = Math.round((textLayerData.bounding_box.y || 0) * canvasHeight);
                 textWidth = Math.round((textLayerData.bounding_box.width || 0.3) * canvasWidth);
                 textHeight = Math.round((textLayerData.bounding_box.height || 0.1) * canvasHeight);
-              } else if (textLayerData.position) {
-                // Use position (center by default)
-                textLeft = Math.round((textLayerData.position.x || 0.5) * canvasWidth) - (textWidth / 2);
-                textTop = Math.round((textLayerData.position.y || 0.5) * canvasHeight) - (textHeight / 2);
+              } 
+              // Priority 2: Use position for center-based positioning (0-1 normalized)
+              else if (textLayerData.position) {
+                const posX = textLayerData.position.x !== undefined ? textLayerData.position.x : 0.5;
+                const posY = textLayerData.position.y !== undefined ? textLayerData.position.y : 0.5;
+                
+                // Center the text box at the position
+                textLeft = Math.round((posX * canvasWidth) - (textWidth / 2));
+                textTop = Math.round((posY * canvasHeight) - (textHeight / 2));
               }
               
-              // Ensure text is within canvas bounds
+              // CRITICAL: Ensure text stays within canvas bounds with comprehensive boundary checks
+              const originalTextLeft = textLeft;
+              const originalTextTop = textTop;
+              const originalTextWidth = textWidth;
+              const originalTextHeight = textHeight;
+              
+              // Clamp position to canvas bounds
               textLeft = Math.max(0, Math.min(textLeft, canvasWidth - textWidth));
               textTop = Math.max(0, Math.min(textTop, canvasHeight - textHeight));
               
-              // Map animation type ONCE - create stable animation config
-              let animationType = 'none';
-              if (textLayerData.animation?.type === 'fade_in_out' || textLayerData.animation?.type === 'fade') {
-                animationType = 'fade';
+              // Clamp dimensions to fit within remaining canvas space
+              textWidth = Math.min(textWidth, canvasWidth - textLeft);
+              textHeight = Math.min(textHeight, canvasHeight - textTop);
+              
+              // Ensure minimum dimensions
+              textWidth = Math.max(50, textWidth);
+              textHeight = Math.max(20, textHeight);
+              
+              // Final boundary check - ensure overlay doesn't exceed canvas
+              let wasClamped = false;
+              if (textLeft + textWidth > canvasWidth) {
+                textWidth = canvasWidth - textLeft;
+                wasClamped = true;
               }
               
-              // Create stable animation object - CRITICAL: Create once, reuse reference
-              const animationConfig = {
-                enter: animationType,
-                exit: animationType,
-                duration: textLayerData.animation?.duration || 0.5,
-              };
-              
-              // Create stable styles object - CRITICAL: Create once, reuse reference
-              // NOTE: TextStylePanel expects fontSizeScale (number 0.3-3) not fontSize (px)
-              // The panel uses fontSizeScale to control font size via slider
-              const fontSizeScale = 1.0; // Default scale (1.0 = 100%), can be adjusted via panel
-              
-              // Convert letterSpacing from px to em if needed (panel expects em units)
-              let letterSpacingEm = textLayerData.style.letterSpacing;
-              if (letterSpacingEm && typeof letterSpacingEm === 'string' && letterSpacingEm.endsWith('px')) {
-                const pxValue = parseFloat(letterSpacingEm) || 0;
-                letterSpacingEm = `${(pxValue / 16).toFixed(2)}em`; // Convert px to em (16px = 1em)
-              } else if (!letterSpacingEm || letterSpacingEm === '0px' || letterSpacingEm === 0) {
-                letterSpacingEm = '0em';
-              } else if (typeof letterSpacingEm === 'number') {
-                letterSpacingEm = `${letterSpacingEm}em`;
+              if (textTop + textHeight > canvasHeight) {
+                textHeight = canvasHeight - textTop;
+                wasClamped = true;
               }
               
-              const textStyles = {
-                // CRITICAL: TextStylePanel requires fontSizeScale (number 0.3-3)
-                fontSizeScale: fontSizeScale,
-                // Keep fontSize for backward compatibility and rendering
-                fontSize: `${textLayerData.style.fontSize || 28}px`,
-                fontFamily: textLayerData.style.fontFamily || 'Inter',
-                fontWeight: String(textLayerData.style.fontWeight || '400'),
-                color: textLayerData.style.color || '#000000',
-                textAlign: textLayerData.style.textAlign || 'center',
-                lineHeight: String(textLayerData.style.lineHeight || 1.2),
-                letterSpacing: letterSpacingEm || '0em',
-                opacity: textLayerData.style.opacity !== undefined ? textLayerData.style.opacity : 1,
-                textShadow: textLayerData.style.textShadow || null,
-                backgroundColor: textLayerData.style.backgroundColor || 'transparent',
-                padding: textLayerData.style.padding || '0px',
-                borderRadius: textLayerData.style.borderRadius || '0px',
-                zIndex: 350, // Same z-index for all text overlays
-                transform: `scale(${textLayerData.scale || 1})`,
-                animation: animationConfig, // Use stable reference
+              // Calculate normalized position (0-1 range) for saving/API - like chart editor
+              // Position represents the center of the text box in normalized coordinates
+              const normalizedX = (textLeft + textWidth / 2) / canvasWidth;
+              const normalizedY = (textTop + textHeight / 2) / canvasHeight;
+              const normalizedPosition = {
+                x: Math.max(0, Math.min(1, normalizedX)), // Clamp to 0-1
+                y: Math.max(0, Math.min(1, normalizedY))  // Clamp to 0-1
               };
+              
+              // Calculate normalized bounding box (0-1 range)
+              const normalizedBoundingBox = {
+                x: textLeft / canvasWidth,
+                y: textTop / canvasHeight,
+                width: textWidth / canvasWidth,
+                height: textHeight / canvasHeight
+              };
+              
+              // Create complete styles using helper function
+              // This ensures TextStylePanel never needs to auto-apply defaults
+              const textStyles = createTextOverlayStyles(textLayerData);
               
               // Generate stable ID
               const textId = file.name || file.title || file.id || `text-${i}-${textIndex}`;
@@ -2106,6 +2266,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 .replace(/-+/g, '-')
                 .replace(/^-|-$/g, '')
                 .toLowerCase();
+              const finalOverlayId = `text-${cleanTextId}-${textIndex}`;
               
               // Process text overlay URL for src property
               let textOverlaySrc = null;
@@ -2129,34 +2290,107 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 }
               }
               
-              // Console log the src URL and ID for debugging
-              const finalOverlayId = `text-${cleanTextId}-${textIndex}`;
-              console.log(`[VideosList] Text Overlay ${textIndex + 1} - Using ID as replacement for src:`, {
+              // CRITICAL: Verify text overlay is within canvas bounds before creating
+              const isWithinBounds = textLeft >= 0 && textTop >= 0 && 
+                                   (textLeft + textWidth) <= canvasWidth && 
+                                   (textTop + textHeight) <= canvasHeight;
+              
+              // Log warning if overlay was clamped
+              if (wasClamped) {
+                console.warn(`[VideosList] Text overlay ${finalOverlayId} dimensions clamped to fit canvas:`, {
+                  original: { left: originalTextLeft, top: originalTextTop, width: originalTextWidth, height: originalTextHeight },
+                  adjusted: { left: textLeft, top: textTop, width: textWidth, height: textHeight },
+                  canvas: { width: canvasWidth, height: canvasHeight }
+                });
+              }
+              
+              // Verify final position is within bounds
+              if (!isWithinBounds) {
+                console.error(`[VideosList] CRITICAL: Text overlay ${finalOverlayId} still outside canvas bounds!`, {
+                  position: { left: textLeft, top: textTop, width: textWidth, height: textHeight },
+                  canvas: { width: canvasWidth, height: canvasHeight },
+                  bounds: {
+                    leftValid: textLeft >= 0,
+                    topValid: textTop >= 0,
+                    rightValid: textLeft + textWidth <= canvasWidth,
+                    bottomValid: textTop + textHeight <= canvasHeight
+                  }
+                });
+              }
+              
+              // Debug logging for text overlay creation with comprehensive position info
+              console.log('[VideosList] Creating text overlay:', {
                 overlayId: finalOverlayId,
+                pixelPosition: { 
+                  left: textLeft, 
+                  top: textTop, 
+                  width: textWidth, 
+                  height: textHeight,
+                  right: textLeft + textWidth,
+                  bottom: textTop + textHeight
+                },
+                normalizedPosition: normalizedPosition,
+                normalizedBoundingBox: normalizedBoundingBox,
+                canvas: { 
+                  width: canvasWidth, 
+                  height: canvasHeight,
+                  aspectRatio: currentAspectRatio
+                },
+                boundsCheck: {
+                  withinBounds: isWithinBounds,
+                  leftValid: textLeft >= 0,
+                  topValid: textTop >= 0,
+                  rightValid: (textLeft + textWidth) <= canvasWidth,
+                  bottomValid: (textTop + textHeight) <= canvasHeight
+                },
+                styles: {
+                  fontSizeScale: textStyles.fontSizeScale,
+                  fontSize: textStyles.fontSize,
+                  fontFamily: textStyles.fontFamily,
+                  fontWeight: textStyles.fontWeight,
+                  color: textStyles.color,
+                  letterSpacing: textStyles.letterSpacing,
+                  textAlign: textStyles.textAlign,
+                  opacity: textStyles.opacity,
+                  zIndex: textStyles.zIndex,
+                  display: 'block',
+                  visibility: 'visible'
+                },
+                content: textLayerData.text || '',
+                contentLength: (textLayerData.text || '').length,
+                hasSrc: !!textOverlaySrc,
                 originalUrl: textLayerData.url || null,
                 processedSrc: textOverlaySrc,
-                hasSrc: !!textOverlaySrc,
-                usingIdAsReplacement: !textOverlaySrc, // True if no src, will use ID instead
-                note: !textOverlaySrc ? 'No URL available - using overlay ID to fetch text style' : 'URL available - can use src',
+                type: OverlayType.TEXT,
+                row: currentTextRow
               });
               
-              // Create overlay object with stable references
+              if (!isWithinBounds) {
+                console.error(`[VideosList] WARNING: Text overlay ${finalOverlayId} position is outside canvas bounds!`, {
+                  position: { left: textLeft, top: textTop, width: textWidth, height: textHeight },
+                  canvas: { width: canvasWidth, height: canvasHeight }
+                });
+              }
+              
+              // Create overlay object with complete styles
               // NOTE: Text overlays can have a 'src' property with the text/video URL
               const textOverlay = {
-                id: `text-${cleanTextId}-${textIndex}`, // CRITICAL: Add textIndex to ensure uniqueness
-                left: textLeft,
-                top: textTop,
-                width: textWidth,
-                height: textHeight,
+                id: finalOverlayId, // CRITICAL: Add textIndex to ensure uniqueness
+                left: textLeft, // Pixel position for rendering
+                top: textTop, // Pixel position for rendering
+                width: textWidth, // Pixel width for rendering
+                height: textHeight, // Pixel height for rendering
+                position: normalizedPosition, // Normalized position (0-1) like chart editor
+                bounding_box: normalizedBoundingBox, // Normalized bounding box (0-1) for API
                 durationInFrames: textDurationInFrames,
                 from: textStartFrame,
                 rotation: textLayerData.rotation || 0,
-                row: currentTextRow, // CRITICAL: Each text overlay gets its own row (1, 2, 3, etc.)
+                row: currentTextRow, // CRITICAL: Each text overlay gets its own row (2, 3, 4, etc. - row 1 is reserved for subtitles)
                 isDragging: false,
                 type: OverlayType.TEXT, // CRITICAL: Use TEXT type for text panel
                 content: textLayerData.text || '', // Ensure content is always a string
                 src: textOverlaySrc, // URL for text overlay video/text source (can be null if no URL)
-                styles: textStyles, // Use stable reference with all required properties
+                styles: textStyles, // Complete styles from helper - TextStylePanel will never need to auto-apply defaults
               };
               
               newOverlays.push(textOverlay);
@@ -2168,12 +2402,13 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           }
           
           // Calculate row offsets based on number of text overlays
+          // CRITICAL: Row 1 is FIXED for subtitles (all scene subtitles go to row 1)
           const textOverlayCount = textOverlayLayers.filter(layer => layer.enabled).length;
+          const subtitleRow = 1; // FIXED: All subtitles go to row 1 (above text layers)
           const logoRow = Math.max(lastTextRow + 1, 2); // Logo after all text overlays (minimum row 2)
           const chartRow = logoRow + 1; // Chart after logo
           const baseVideoRow = chartRow + 1; // Base video after chart
-          const subtitleRow = baseVideoRow + 1; // Subtitles after base video
-          const audioRow = subtitleRow + 1; // Audio after subtitles
+          const audioRow = baseVideoRow + 1; // Audio after base video
           
           // STEP 2: Add logo overlay (use calculated logoRow)
           const logoLayerData = getLogoLayerData(file);
@@ -2271,19 +2506,23 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           let chartVideoUrl = null;
           let chartPosition = { x: 0.5, y: 0.5 };
           let chartBoundingBox = null;
+          let chartSize = null;
           let chartScaling = { scale_x: 1, scale_y: 1, fit_mode: 'contain' };
           let chartAnimation = { type: 'none', duration: 0.5 };
           let chartOpacity = 1;
           let chartLayout = { align: 'center', verticalAlign: 'middle' };
+          let chartHasBackground = true;
           
           if (chartLayerData) {
             chartVideoUrl = chartLayerData.url;
             chartPosition = chartLayerData.position;
             chartBoundingBox = chartLayerData.bounding_box;
+            chartSize = chartLayerData.size;
             chartScaling = chartLayerData.scaling;
             chartAnimation = chartLayerData.animation;
             chartOpacity = chartLayerData.opacity;
             chartLayout = chartLayerData.layout;
+            chartHasBackground = chartLayerData.has_background !== undefined ? chartLayerData.has_background : true;
           } else {
             // Fallback to legacy chart extraction
             chartVideoUrl = file.chartVideoUrl || file.chart_video_url || '';
@@ -2364,7 +2603,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             
             const chartDurationInFrames = Math.max(1, Math.round(chartDurationSeconds * fps));
             
-            // Calculate position from bounding_box or position
+            // Calculate position and size from bounding_box, size, or position
             // Get aspect ratio from state (defaults to '16:9' if not set)
             const currentAspectRatio = aspectRatio || '16:9';
             const canvasWidth = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1080 : 1920;
@@ -2375,25 +2614,69 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             let chartWidth = DEFAULT_VIDEO_WIDTH;
             let chartHeight = DEFAULT_VIDEO_HEIGHT;
             
+            // Priority 1: Use bounding_box if available (most precise)
             if (chartBoundingBox) {
-              // Use bounding_box for absolute positioning
+              // Use bounding_box for absolute positioning and size
               chartLeft = Math.round((chartBoundingBox.x || 0) * canvasWidth);
               chartTop = Math.round((chartBoundingBox.y || 0) * canvasHeight);
               chartWidth = Math.round((chartBoundingBox.width || 1) * canvasWidth);
               chartHeight = Math.round((chartBoundingBox.height || 1) * canvasHeight);
-            } else if (chartPosition) {
-              // Use position for centered positioning
-              chartLeft = Math.round((chartPosition.x || 0.5) * canvasWidth);
-              chartTop = Math.round((chartPosition.y || 0.5) * canvasHeight);
+            } 
+            // Priority 2: Use size and position if available
+            else if (chartSize && chartPosition) {
+              // Use size for dimensions (can be absolute pixels or relative 0-1)
+              if (typeof chartSize === 'object' && chartSize.width && chartSize.height) {
+                // If size values are less than 1, treat as relative (0-1), otherwise absolute pixels
+                chartWidth = chartSize.width < 1 ? Math.round(chartSize.width * canvasWidth) : Math.round(chartSize.width);
+                chartHeight = chartSize.height < 1 ? Math.round(chartSize.height * canvasHeight) : Math.round(chartSize.height);
+              } else if (typeof chartSize === 'number') {
+                // Single number - treat as scale factor
+                chartWidth = Math.round(DEFAULT_VIDEO_WIDTH * chartSize);
+                chartHeight = Math.round(DEFAULT_VIDEO_HEIGHT * chartSize);
+              }
               
-              // Center the chart based on its size
-              chartLeft = chartLeft - (chartWidth / 2);
-              chartTop = chartTop - (chartHeight / 2);
-            } else {
-              // Default to center if neither bounding_box nor position is specified
+              // Use position for placement (0-1 normalized coordinates)
+              const posX = chartPosition.x !== undefined ? chartPosition.x : 0.5;
+              const posY = chartPosition.y !== undefined ? chartPosition.y : 0.5;
+              
+              // Calculate position - if position is 0-1, treat as normalized; if > 1, treat as absolute pixels
+              if (posX <= 1 && posY <= 1) {
+                // Normalized coordinates (0-1) - center the chart at this position
+                chartLeft = Math.round((posX * canvasWidth) - (chartWidth / 2));
+                chartTop = Math.round((posY * canvasHeight) - (chartHeight / 2));
+              } else {
+                // Absolute pixel coordinates
+                chartLeft = Math.round(posX);
+                chartTop = Math.round(posY);
+              }
+            }
+            // Priority 3: Use position only (center chart at position)
+            else if (chartPosition) {
+              const posX = chartPosition.x !== undefined ? chartPosition.x : 0.5;
+              const posY = chartPosition.y !== undefined ? chartPosition.y : 0.5;
+              
+              if (posX <= 1 && posY <= 1) {
+                // Normalized coordinates (0-1)
+                chartLeft = Math.round((posX * canvasWidth) - (chartWidth / 2));
+                chartTop = Math.round((posY * canvasHeight) - (chartHeight / 2));
+              } else {
+                // Absolute pixel coordinates
+                chartLeft = Math.round(posX - (chartWidth / 2));
+                chartTop = Math.round(posY - (chartHeight / 2));
+              }
+            } 
+            // Priority 4: Default to center if nothing specified
+            else {
               chartLeft = (canvasWidth - chartWidth) / 2;
               chartTop = (canvasHeight - chartHeight) / 2;
             }
+            
+            // Ensure chart stays within canvas bounds
+            chartLeft = Math.max(0, Math.min(chartLeft, canvasWidth - chartWidth));
+            chartTop = Math.max(0, Math.min(chartTop, canvasHeight - chartHeight));
+            // Ensure dimensions don't exceed canvas
+            chartWidth = Math.min(chartWidth, canvasWidth - chartLeft);
+            chartHeight = Math.min(chartHeight, canvasHeight - chartTop);
             
             // Map animation type
             let animationType = 'none';
@@ -2411,6 +2694,36 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               .replace(/^-|-$/g, '')
               .toLowerCase();
             
+            // Build styles object with background removal support
+            const chartStyles = {
+              opacity: chartOpacity,
+              zIndex: 200, // High zIndex to ensure chart video renders on top visually
+              transform: `scale(${chartScaling?.scale_x || 1}, ${chartScaling?.scale_y || 1})`,
+              objectFit: chartScaling?.fit_mode || 'contain',
+              animation: {
+                enter: animationType,
+                exit: animationType,
+                duration: chartAnimation?.duration || 0.5,
+              },
+              // Apply layout properties
+              textAlign: chartLayout ? (chartLayout.align || 'center') : 'center',
+              padding: chartLayout ? (chartLayout.padding || 0) : 0,
+              verticalAlign: chartLayout ? (chartLayout.verticalAlign || 'middle') : 'middle',
+            };
+            
+            // Apply background removal if has_background is false
+            if (!chartHasBackground) {
+              // Use mix-blend-mode to remove white/light backgrounds
+              // 'screen' blend mode works well for removing white backgrounds
+              // 'multiply' works for removing black backgrounds
+              // We'll use 'screen' as default for removing white backgrounds
+              chartStyles.mixBlendMode = 'screen';
+              // Alternative: Use CSS filter for chroma key effect (removes specific color)
+              // chartStyles.filter = 'chroma(color=white)'; // Not widely supported
+              // For better background removal, we can also add a CSS class
+              chartStyles.removeBackground = true; // Custom property for video editor to handle
+            }
+            
             newOverlays.push({
               id: `chart-${cleanChartId}`, // Use file name as ID for uniqueness
               left: chartLeft,
@@ -2427,21 +2740,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               src: chartMediaSrc, // Chart video URL from layers array or fallback - no prefixing, no modification
               videoStartTime: 0,
               mediaSrcDuration: chartDurationSeconds,
-              styles: {
-                opacity: chartOpacity,
-                zIndex: 200, // High zIndex to ensure chart video renders on top visually
-                transform: `scale(${chartScaling?.scale_x || 1}, ${chartScaling?.scale_y || 1})`,
-                objectFit: chartScaling?.fit_mode || 'contain',
-                animation: {
-                  enter: animationType,
-                  exit: animationType,
-                  duration: chartAnimation?.duration || 0.5,
-                },
-                // Apply layout properties
-                textAlign: chartLayout ? (chartLayout.align || 'center') : 'center',
-                padding: chartLayout ? (chartLayout.padding || 0) : 0,
-                verticalAlign: chartLayout ? (chartLayout.verticalAlign || 'middle') : 'middle',
-              },
+              has_background: chartHasBackground, // Store has_background flag for reference
+              styles: chartStyles,
             });
             
           }
@@ -2587,7 +2887,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             });
           }
 
-          // STEP 6: Add subtitle/caption overlay (use calculated subtitleRow and updated z-index)
+          // STEP 6: Add subtitle/caption overlay (FIXED to row 1 - all scene subtitles go to row 1, above text layers)
           const subtitleLayerData = getSubtitleLayerData(file);
           
           if (subtitleLayerData && subtitleLayerData.enabled) {
@@ -2626,18 +2926,82 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               subtitleTop = Math.round(posY * canvasHeight);
             }
             
-            // Ensure subtitle is within canvas bounds
+            // CRITICAL: Ensure subtitle stays within canvas bounds with comprehensive boundary checks
+            const originalSubtitleLeft = subtitleLeft;
+            const originalSubtitleTop = subtitleTop;
+            const originalSubtitleWidth = subtitleWidth;
+            const originalSubtitleHeight = subtitleHeight;
+            
+            // Clamp position to canvas bounds
             subtitleLeft = Math.max(0, Math.min(subtitleLeft, canvasWidth - subtitleWidth));
             subtitleTop = Math.max(0, Math.min(subtitleTop, canvasHeight - subtitleHeight));
             
-            // Parse captions from SRT file or use inline text
+            // Clamp dimensions to fit within remaining canvas space
+            subtitleWidth = Math.min(subtitleWidth, canvasWidth - subtitleLeft);
+            subtitleHeight = Math.min(subtitleHeight, canvasHeight - subtitleTop);
+            
+            // Ensure minimum dimensions for readability
+            subtitleWidth = Math.max(200, subtitleWidth);
+            subtitleHeight = Math.max(40, subtitleHeight);
+            
+            // Final boundary check - ensure overlay doesn't exceed canvas
+            let subtitleWasClamped = false;
+            if (subtitleLeft + subtitleWidth > canvasWidth) {
+              subtitleWidth = canvasWidth - subtitleLeft;
+              subtitleWasClamped = true;
+            }
+            
+            if (subtitleTop + subtitleHeight > canvasHeight) {
+              subtitleHeight = canvasHeight - subtitleTop;
+              subtitleWasClamped = true;
+            }
+            
+            // Calculate normalized position (0-1 range) for saving/API - like chart editor
+            // Position represents the center of the subtitle box in normalized coordinates
+            const normalizedX = (subtitleLeft + subtitleWidth / 2) / canvasWidth;
+            const normalizedY = (subtitleTop + subtitleHeight / 2) / canvasHeight;
+            const normalizedPosition = {
+              x: Math.max(0, Math.min(1, normalizedX)), // Clamp to 0-1
+              y: Math.max(0, Math.min(1, normalizedY))  // Clamp to 0-1
+            };
+            
+            // Calculate normalized bounding box (0-1 range)
+            const normalizedBoundingBox = {
+              x: subtitleLeft / canvasWidth,
+              y: subtitleTop / canvasHeight,
+              width: subtitleWidth / canvasWidth,
+              height: subtitleHeight / canvasHeight
+            };
+            
+            // Parse SRT file directly from URL
             let captions = null;
+            let srtUrl = null;
             
             if (subtitleLayerData.url) {
-              // Parse SRT file
-              captions = await parseSRTToCaption(subtitleLayerData.url, fps);
+              // Use SRT URL directly (no upload)
+              srtUrl = subtitleLayerData.url;
+              console.log('[VideosList] Processing subtitle - Extracting text from SRT and generating captions...', {
+                sceneIndex: i + 1,
+                srtUrl: srtUrl
+              });
+              
+              const result = await parseSRTToCaption(srtUrl, fps, i);
+              captions = result.captions;
+              const extractedText = result.extractedText;
+              
+              if (captions && captions.length > 0) {
+                console.log('[VideosList] ✅ Captions generated successfully from extracted text:', {
+                  captionCount: captions.length,
+                  extractedTextLength: extractedText ? extractedText.length : 0,
+                  firstCaption: captions[0],
+                  lastCaption: captions[captions.length - 1]
+                });
+              } else {
+                console.warn('[VideosList] No captions generated from SRT file');
+              }
             } else if (subtitleLayerData.text) {
-              // Use inline text
+              // Use inline text (no SRT file to upload)
+              console.log('[VideosList] Processing subtitle - Using inline text (no SRT file)');
               captions = convertTextToCaption(
                 subtitleLayerData.text, 
                 subtitleStartFrame, 
@@ -2655,34 +3019,142 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 .replace(/^-|-$/g, '')
                 .toLowerCase();
               
+              const captionOverlayId = `caption-${cleanSubtitleId}`;
+              
+              // CRITICAL: Verify subtitle overlay is within canvas bounds before creating
+              const isWithinBounds = subtitleLeft >= 0 && subtitleTop >= 0 && 
+                                     (subtitleLeft + subtitleWidth) <= canvasWidth && 
+                                     (subtitleTop + subtitleHeight) <= canvasHeight;
+              
+              // Log warning if overlay was clamped
+              if (subtitleWasClamped) {
+                console.warn(`[VideosList] Subtitle overlay ${captionOverlayId} dimensions clamped to fit canvas:`, {
+                  original: { left: originalSubtitleLeft, top: originalSubtitleTop, width: originalSubtitleWidth, height: originalSubtitleHeight },
+                  adjusted: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight },
+                  canvas: { width: canvasWidth, height: canvasHeight }
+                });
+              }
+              
+              // Verify final position is within bounds
+              if (!isWithinBounds) {
+                console.error(`[VideosList] CRITICAL: Subtitle overlay ${captionOverlayId} still outside canvas bounds!`, {
+                  position: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight },
+                  canvas: { width: canvasWidth, height: canvasHeight },
+                  bounds: {
+                    leftValid: subtitleLeft >= 0,
+                    topValid: subtitleTop >= 0,
+                    rightValid: subtitleLeft + subtitleWidth <= canvasWidth,
+                    bottomValid: subtitleTop + subtitleHeight <= canvasHeight
+                  }
+                });
+              }
+              
+              // Verify captions array is properly formatted
+              const validCaptions = captions.filter(caption => 
+                caption && 
+                typeof caption.startMs === 'number' && 
+                typeof caption.endMs === 'number' &&
+                caption.startMs >= 0 &&
+                caption.endMs > caption.startMs &&
+                (caption.text || '').trim().length > 0
+              );
+              
+              if (validCaptions.length === 0) {
+                console.warn(`[VideosList] No valid captions found for subtitle overlay ${captionOverlayId}`, {
+                  originalCaptions: captions,
+                  captionCount: captions.length
+                });
+              }
+              
+              // Debug logging for subtitle overlay creation with comprehensive visibility info
+              console.log('[VideosList] Creating subtitle/caption overlay:', {
+                overlayId: captionOverlayId,
+                pixelPosition: { 
+                  left: subtitleLeft, 
+                  top: subtitleTop, 
+                  width: subtitleWidth, 
+                  height: subtitleHeight,
+                  right: subtitleLeft + subtitleWidth,
+                  bottom: subtitleTop + subtitleHeight
+                },
+                normalizedPosition: normalizedPosition,
+                normalizedBoundingBox: normalizedBoundingBox,
+                canvas: { 
+                  width: canvasWidth, 
+                  height: canvasHeight,
+                  aspectRatio: currentAspectRatio
+                },
+                boundsCheck: {
+                  withinBounds: isWithinBounds,
+                  leftValid: subtitleLeft >= 0,
+                  topValid: subtitleTop >= 0,
+                  rightValid: (subtitleLeft + subtitleWidth) <= canvasWidth,
+                  bottomValid: (subtitleTop + subtitleHeight) <= canvasHeight
+                },
+                visibility: {
+                  display: 'block',
+                  visibility: 'visible',
+                  opacity: 1,
+                  zIndex: 350,
+                  backgroundColor: subtitleLayerData.style.backgroundColor || 'rgba(0, 0, 0, 0.7)'
+                },
+                captions: {
+                  totalCount: captions.length,
+                  validCount: validCaptions.length,
+                  sampleCaption: validCaptions[0] || null
+                },
+                content: subtitleLayerData.text || 'Subtitles',
+                contentLength: (subtitleLayerData.text || '').length,
+                hasSrc: !!srtUrl || !!subtitleLayerData.url,
+                originalUrl: subtitleLayerData.url,
+                srtUrl: srtUrl,
+                type: OverlayType.CAPTION,
+                row: subtitleRow
+              });
+              
+              if (!isWithinBounds) {
+                console.error(`[VideosList] WARNING: Subtitle overlay ${captionOverlayId} position is outside canvas bounds!`, {
+                  position: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight },
+                  canvas: { width: canvasWidth, height: canvasHeight }
+                });
+              }
+              
+              if (validCaptions.length === 0) {
+                console.error(`[VideosList] ERROR: Subtitle overlay ${captionOverlayId} has no valid captions!`, {
+                  originalCaptions: captions
+                });
+              }
+              
               newOverlays.push({
-                id: `caption-${cleanSubtitleId}`,
-                left: subtitleLeft,
-                top: subtitleTop,
-                width: subtitleWidth,
-                height: subtitleHeight,
+                id: captionOverlayId,
+                left: subtitleLeft, // Pixel position for rendering - relative to ReactVideoEditor canvas
+                top: subtitleTop, // Pixel position for rendering - relative to ReactVideoEditor canvas
+                width: subtitleWidth, // Pixel width for rendering
+                height: subtitleHeight, // Pixel height for rendering
+                position: normalizedPosition, // Normalized position (0-1) like chart editor
+                bounding_box: normalizedBoundingBox, // Normalized bounding box (0-1) for API
                 durationInFrames: subtitleDurationInFrames,
                 from: subtitleStartFrame,
                 rotation: 0,
-                row: subtitleRow, // CRITICAL: Use calculated row (after base video)
+                row: subtitleRow, // CRITICAL: FIXED to row 1 - all scene subtitles go to row 1 (above text layers)
                 isDragging: false,
                 type: OverlayType.CAPTION, // CRITICAL: Use CAPTION type for caption panel
                 content: subtitleLayerData.text || 'Subtitles',
-                src: subtitleLayerData.url || null, // SRT file URL
-                captions: captions, // Parsed caption data with timing
+                src: srtUrl || subtitleLayerData.url || null, // Use SRT URL directly
+                captions: validCaptions.length > 0 ? validCaptions : captions, // Use valid captions or fallback to original
                 styles: {
                   fontSize: `${subtitleLayerData.style.fontSize}px`,
                   fontFamily: subtitleLayerData.style.fontFamily,
                   fontWeight: String(subtitleLayerData.style.fontWeight),
                   color: subtitleLayerData.style.color,
-                  textAlign: subtitleLayerData.style.textAlign,
-                  lineHeight: String(subtitleLayerData.style.lineHeight),
-                  letterSpacing: `${subtitleLayerData.style.letterSpacing}px`,
+                  textAlign: subtitleLayerData.style.textAlign || 'center', // Default to center for subtitles
+                  lineHeight: String(subtitleLayerData.style.lineHeight || 1.2),
+                  letterSpacing: `${subtitleLayerData.style.letterSpacing || 0}px`,
                   opacity: 1, // CRITICAL: Full opacity for visibility
-                  textShadow: subtitleLayerData.style.textShadow,
-                  backgroundColor: subtitleLayerData.style.backgroundColor || 'rgba(0, 0, 0, 0.7)', // Semi-transparent background
-                  padding: subtitleLayerData.style.padding,
-                  borderRadius: subtitleLayerData.style.borderRadius,
+                  textShadow: subtitleLayerData.style.textShadow || '2px 2px 4px rgba(0,0,0,0.8)', // Default shadow for readability
+                  backgroundColor: subtitleLayerData.style.backgroundColor || 'rgba(0, 0, 0, 0.7)', // Semi-transparent background for readability
+                  padding: subtitleLayerData.style.padding || '12px 16px', // Default padding for readability
+                  borderRadius: subtitleLayerData.style.borderRadius || '4px', // Default border radius
                   zIndex: 350, // CRITICAL: Same z-index as text overlays for consistent stacking
                   display: 'block', // CRITICAL: Ensure display is not hidden
                   visibility: 'visible', // CRITICAL: Ensure visibility
@@ -2694,6 +3166,24 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                     duration: subtitleLayerData.animation?.duration || 0.3,
                   },
                 },
+              });
+              
+              // Subtitle added to timeline
+              console.log('[VideosList] Processing subtitle - Added to timeline successfully!', {
+                overlayId: captionOverlayId,
+                row: subtitleRow,
+                srtUrl: srtUrl,
+                captionCount: validCaptions.length > 0 ? validCaptions.length : captions.length,
+                position: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight }
+              });
+            } else {
+              console.warn(`[VideosList] Skipping subtitle overlay creation - no valid captions found`, {
+                subtitleLayerData: {
+                  text: subtitleLayerData.text,
+                  url: subtitleLayerData.url,
+                  enabled: subtitleLayerData.enabled
+                },
+                captions: captions
               });
             }
           }
@@ -3450,6 +3940,25 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             .rve-host button[class*="sticker"]:hover {
               border-color: #13008B !important;
               background-color: #E5E2FF !important;
+            }
+            /* Chart video background removal - apply mix-blend-mode when has_background is false */
+            .rve-host [data-overlay-id*="chart"] video,
+            .rve-host [data-overlay-id*="chart"] iframe,
+            .rve-host [class*="overlay"][class*="chart"] video,
+            .rve-host [class*="overlay"][class*="chart"] iframe {
+              /* Default: no background removal */
+            }
+            /* Apply background removal using mix-blend-mode for chart videos without background */
+            .rve-host [data-overlay-id*="chart"][data-remove-background="true"] video,
+            .rve-host [data-overlay-id*="chart"][data-remove-background="true"] iframe,
+            .rve-host [class*="overlay"][data-remove-background="true"] video,
+            .rve-host [class*="overlay"][data-remove-background="true"] iframe {
+              mix-blend-mode: screen !important;
+              /* Alternative blend modes for different background colors:
+                 - 'multiply' for removing black backgrounds
+                 - 'screen' for removing white/light backgrounds (default)
+                 - 'difference' for high contrast backgrounds
+              */
             }
           `}</style>
               </div>

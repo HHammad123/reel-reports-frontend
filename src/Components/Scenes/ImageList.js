@@ -10337,7 +10337,7 @@ const getOrderedRefs = useCallback((row) => {
             setShowChartEditor(false);
             setChartEditorData(null);
           }}
-          onSave={({ sceneNumber, overlayElements, chartImageUrl }) => {
+          onSave={async ({ sceneNumber, overlayElements, chartImageUrl }) => {
             // Update rows and selected scene in-place so chart changes appear immediately
             const targetSceneNumber =
               sceneNumber ||
@@ -10394,6 +10394,15 @@ const getOrderedRefs = useCallback((row) => {
             });
             // Bump chart version to force re-render of chart overlays with new image URL
             setChartVersion((v) => v + 1);
+            
+            // Close the modal
+            setShowChartEditor(false);
+            setChartEditorData(null);
+            
+            // Refresh the scene data to show the updated chart
+            if (refreshLoad) {
+              await refreshLoad(targetSceneNumber);
+            }
           }}
         />
       )}

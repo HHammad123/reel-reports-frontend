@@ -1,6 +1,16 @@
 import { jsxs as _jsxs, jsx as _jsx } from "react/jsx-runtime";
+import { useMemo, useRef } from "react";
 import { PaintBucket, Settings } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger, } from "../../ui/tabs";
+
+// ============================================================================
+// OPTIMIZATION: Stable icon references - created once, reused on every render
+// ============================================================================
+// These icons are created outside the component to prevent new object creation
+// on every render, which would cause child components to re-render unnecessarily
+const SETTINGS_ICON = _jsx(Settings, { className: "w-3 h-3" });
+const PAINT_BUCKET_ICON = _jsx(PaintBucket, { className: "w-3 h-3" });
+
 // Type guards
 function isSimpleProps(props) {
     return 'settingsContent' in props && 'styleContent' in props;
@@ -44,6 +54,133 @@ function isSourceProps(props) {
  */
 export const UnifiedTabs = (props) => {
     var _a;
+    
+    // ============================================================================
+    // DEBUG: Track prop changes to identify infinite loop causes
+    // ============================================================================
+    // This helps identify which props are changing and causing re-renders
+    // Remove this block once infinite loop is confirmed fixed
+    const propsRef = useRef();
+    const renderCountRef = useRef(0);
+    renderCountRef.current += 1;
+    
+    if (propsRef.current) {
+        const changed = Object.keys(props).filter(key => {
+            const oldVal = propsRef.current[key];
+            const newVal = props[key];
+            
+            // For functions and React elements, check reference equality only
+            if (typeof oldVal === 'function' || typeof newVal === 'function') {
+                return oldVal !== newVal;
+            }
+            
+            // Check if it's a React element (has $$typeof property)
+            if (oldVal && typeof oldVal === 'object' && '$$typeof' in oldVal) {
+                return oldVal !== newVal; // Reference equality for React elements
+            }
+            
+            // For primitive values, direct comparison
+            if (oldVal === null || newVal === null) {
+                return oldVal !== newVal;
+            }
+            
+            // For objects/arrays, use reference equality (safe, avoids circular refs)
+            // React props should be stable references if memoized correctly
+            if (typeof oldVal === 'object' && typeof newVal === 'object') {
+                return oldVal !== newVal; // Reference equality only
+            }
+            
+            return oldVal !== newVal;
+        });
+        
+        if (changed.length > 0 && renderCountRef.current <= 10) {
+            // Only log first 10 renders to avoid spam
+            // console.log('[UnifiedTabs] Props changed:', changed, {
+            //     renderCount: renderCountRef.current,
+            //     timestamp: Date.now()
+            // });
+        } else if (renderCountRef.current > 10) {
+            // console.warn('[UnifiedTabs] Render count exceeded 10. Possible infinite loop detected!', {
+            //     renderCount: renderCountRef.current,
+            //     lastChangedProps: changed
+            // });
+        }
+    }
+    propsRef.current = props;
+    
+    // ============================================================================
+    // CRITICAL: All hooks must be called before any conditional returns
+    // ============================================================================
+    // This ensures hooks are called in the same order on every render
+    
+    // ============================================================================
+    // OPTIMIZATION: Memoize tabsData to prevent unnecessary re-renders
+    // ============================================================================
+    // Only recreate tabsData array if the actual content props change
+    // Check props mode first to determine dependencies
+    const isSimpleMode = isSimpleProps(props);
+    const tabsData = useMemo(() => {
+        if (isSimpleMode) {
+            return [
+                {
+                    value: "settings",
+                    label: "Settings",
+                    icon: SETTINGS_ICON, // ✅ Stable reference - created outside component
+                    content: props.settingsContent,
+                },
+                {
+                    value: "style",
+                    label: "Style",
+                    icon: PAINT_BUCKET_ICON, // ✅ Stable reference - created outside component
+                    content: props.styleContent,
+                }
+            ];
+        }
+        return props.tabs || [];
+    }, [
+        // Only recreate if these specific props change
+        isSimpleMode,
+        isSimpleMode ? props.settingsContent : null,
+        isSimpleMode ? props.styleContent : null,
+        !isSimpleMode ? props.tabs : null,
+    ]);
+    
+    // Memoize defaultValue calculation
+    const defaultValue = useMemo(() => {
+        return props.defaultValue || ((_a = tabsData[0]) === null || _a === void 0 ? void 0 : _a.value) || "settings";
+    }, [props.defaultValue, tabsData]);
+    
+    const className = props.className || "";
+    const isControlled = 'activeTab' in props && 'onTabChange' in props;
+    
+    // Memoize getTabTriggerClassName function (stable reference)
+    const getTabTriggerClassName = useMemo(() => {
+        return (tab) => {
+            const baseClasses = "text-xs font-extralight border-b-2 border-transparent rounded-none";
+            if (tab.disabled) {
+                return `${baseClasses} cursor-not-allowed opacity-50`;
+            }
+            return baseClasses;
+        };
+    }, []);
+    
+    // ============================================================================
+    // OPTIMIZATION: Memoize tabsProps to prevent unnecessary re-renders
+    // ============================================================================
+    const tabsProps = useMemo(() => {
+        if (isControlled) {
+            return {
+                value: props.activeTab,
+                onValueChange: props.onTabChange
+            };
+        }
+        return { defaultValue };
+    }, [isControlled, props.activeTab, props.onTabChange, defaultValue]);
+    
+    // ============================================================================
+    // Now safe to have conditional returns after all hooks are called
+    // ============================================================================
+    
     // Handle source tabs mode
     if (isSourceProps(props)) {
         const { sourceResults, activeTab, onTabChange, className = "", showAllTab = true } = props;
@@ -54,39 +191,6 @@ export const UnifiedTabs = (props) => {
         }
         return (_jsx("div", { className: className, children: _jsx(Tabs, { value: activeTab, onValueChange: onTabChange, children: _jsxs(TabsList, { children: [showAllTab && (_jsxs(TabsTrigger, { value: "all", className: "text-xs font-extralight border-b-2 border-transparent rounded-none", children: ["All (", totalCount, ")"] })), sourceResults.map((source) => (_jsxs(TabsTrigger, { value: source.adaptorName, className: "text-xs font-extralight border-b-2 border-transparent rounded-none", children: [_jsx("span", { children: source.adaptorDisplayName }), _jsxs("span", { className: "text-[10px] opacity-70", children: ["(", source.itemCount, ")"] }), source.error && _jsx("span", { className: "text-[10px]", children: "\u26A0\uFE0F" })] }, source.adaptorName)))] }) }) }));
     }
-    // Convert simple props to flexible format for overlay tabs
-    const tabsData = isSimpleProps(props)
-        ? [
-            {
-                value: "settings",
-                label: "Settings",
-                icon: _jsx(Settings, { className: "w-3 h-3" }),
-                content: props.settingsContent,
-            },
-            {
-                value: "style",
-                label: "Style",
-                icon: _jsx(PaintBucket, { className: "w-3 h-3" }),
-                content: props.styleContent,
-            }
-        ]
-        : props.tabs;
-    const defaultValue = props.defaultValue || ((_a = tabsData[0]) === null || _a === void 0 ? void 0 : _a.value) || "settings";
-    const className = props.className || "";
-    const isControlled = 'activeTab' in props && 'onTabChange' in props;
-    const getTabTriggerClassName = (tab) => {
-        const baseClasses = "text-xs font-extralight border-b-2 border-transparent rounded-none";
-        if (tab.disabled) {
-            return `${baseClasses} cursor-not-allowed opacity-50`;
-        }
-        return baseClasses;
-    };
-    const tabsProps = isControlled
-        ? {
-            value: props.activeTab,
-            onValueChange: props.onTabChange
-        }
-        : { defaultValue };
     // Check if tabs should be at bottom (for stickers panel)
     const tabsAtBottom = props.tabsAtBottom !== undefined ? props.tabsAtBottom : false;
     
