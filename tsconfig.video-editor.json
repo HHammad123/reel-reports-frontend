@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "ESNext",
+    "jsx": "react-jsx",
+    "moduleResolution": "Node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmitOnError": false,
+    "resolveJsonModule": true,
+    "isolatedModules": false,
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "rootDir": "src/Components/video-editor",
+    "outDir": "src/Components/video-editor-js"
+  },
+  "include": ["src/Components/video-editor/**/*"]
+}
+

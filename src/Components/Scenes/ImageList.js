@@ -5842,7 +5842,7 @@ const getOrderedRefs = useCallback((row) => {
 
         {/* Only show selected image details when not polling */}
         {selected?.imageUrl && (!isPolling || rows.length > 0) && (
-          <div className="bg-white border rounded-xl p-4 h-[520px] overflow-y-auto scrollbar-hide">
+          <div className="bg-white border border-gray-200 rounded-xl p-4 h-[520px] overflow-y-auto scrollbar-hide">
           
 
           <div className="flex items-center justify-between mb-2">
@@ -10151,7 +10151,7 @@ const getOrderedRefs = useCallback((row) => {
 
         {/* Only show content when not polling (job completed or no job running) */}
         {(!isPolling || rows.length > 0) && (
-          <div className="bg-white border rounded-xl p-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-base font-semibold mb-3">Scene By Scene</div>
             <div className="flex gap-4 overflow-x-auto overflow-y-hidden scrollbar-hide">
               {rows.length === 0 && !isLoading && !error && (

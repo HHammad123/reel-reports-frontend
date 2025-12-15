@@ -28,6 +28,7 @@ import OAuthCallback from './Components/Login/OAuthCallback';
 import AdminUsers from './pages/AdminUsers';
 import AdminCreateUser from './pages/AdminCreateUser';
 import VideoEditor from './pages/VideoEditor';
+import VideoEditorPage from './pages/VideoEditorPage';
 
 
 function App() {
@@ -49,7 +50,8 @@ function App() {
    
        
     <Route path="/v1/auth/callback/:provider" element={<OAuthCallback />} />
-         
+         {/* test route */  }
+         <Route path="/video-editor" element={<VideoEditorPage/>} />
          {/* Protected routes */}
          <Route path="/" element={
            <ProtectedRoute>

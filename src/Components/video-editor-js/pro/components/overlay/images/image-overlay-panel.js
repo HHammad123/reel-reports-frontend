@@ -1,0 +1,151 @@
+import { jsx as _jsx } from "react/jsx-runtime";
+import { useState, useEffect } from "react";
+import { useEditorContext } from "../../../contexts/editor-context";
+import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
+import { useAspectRatio } from "../../../hooks/use-aspect-ratio";
+import { OverlayType } from "../../../types";
+import { ImageDetails } from "./image-details";
+import { useMediaAdaptors } from "../../../contexts/media-adaptor-context";
+import { MediaOverlayPanel } from "../shared/media-overlay-panel";
+import { calculateIntelligentAssetSize, getAssetDimensions } from "../../../utils/asset-sizing";
+import { useImageReplacement } from "../../../hooks/use-image-replacement";
+import { DEFAULT_IMAGE_DURATION_FRAMES, IMAGE_DURATION_PERCENTAGE } from "../../../../constants";
+/**
+ * ImageOverlayPanel Component
+ *
+ * A panel that provides functionality to:
+ * 1. Search and select images from all configured image adaptors
+ * 2. Add selected images as overlays to the editor
+ * 3. Modify existing image overlay properties
+ * 4. Filter images by source using tabs
+ *
+ * The panel has two main states:
+ * - Search/Selection mode: Shows a search bar, source tabs, and masonry grid of images
+ * - Edit mode: Shows image details editor when an existing image overlay is selected
+ */
+export const ImageOverlayPanel = () => {
+    const [searchQuery, setSearchQuery] = useState("");
+    const [images, setImages] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [sourceResults, setSourceResults] = useState([]);
+    const { searchImages, imageAdaptors } = useMediaAdaptors();
+    const { isReplaceMode, startReplaceMode, cancelReplaceMode, replaceImage } = useImageReplacement();
+    const { overlays, selectedOverlayId, changeOverlay, currentFrame, setOverlays, setSelectedOverlayId, durationInFrames, } = useEditorContext();
+    const { addAtPlayhead } = useTimelinePositioning();
+    const { getAspectRatioDimensions } = useAspectRatio();
+    const [localOverlay, setLocalOverlay] = useState(null);
+    useEffect(() => {
+        if (selectedOverlayId === null) {
+            setLocalOverlay(null);
+            return;
+        }
+        const selectedOverlay = overlays.find((overlay) => overlay.id === selectedOverlayId);
+        if ((selectedOverlay === null || selectedOverlay === void 0 ? void 0 : selectedOverlay.type) === OverlayType.IMAGE) {
+            setLocalOverlay(selectedOverlay);
+        }
+    }, [selectedOverlayId, overlays]);
+    /**
+     * Handles the image search form submission
+     * Searches across all configured image adaptors
+     */
+    const handleSearch = async (e) => {
+        e.preventDefault();
+        if (!searchQuery.trim())
+            return;
+        setIsLoading(true);
+        try {
+            const results = await searchImages({ query: searchQuery, page: 1, perPage: 50 });
+            setImages(results.items);
+            setSourceResults(results.sourceResults || []);
+        }
+        catch (error) {
+            console.error('Failed to search images:', error);
+            setImages([]);
+            setSourceResults([]);
+        }
+        finally {
+            setIsLoading(false);
+        }
+    };
+    /**
+     * Handles adding or replacing an image
+     * @param image - The selected image to add or use as replacement
+     */
+    const handleAddImage = async (image) => {
+        // Check if we're in replace mode
+        if (isReplaceMode && localOverlay) {
+            // Replace mode: Use the hook to handle replacement
+            await replaceImage(localOverlay, image, (updatedOverlay) => {
+                setLocalOverlay(updatedOverlay);
+                // Clear search state
+                setSearchQuery("");
+                setImages([]);
+                setSourceResults([]);
+            });
+        }
+        else {
+            // Add mode: Create new overlay
+            const canvasDimensions = getAspectRatioDimensions();
+            const assetDimensions = getAssetDimensions(image);
+            // Use intelligent sizing if asset dimensions are available, otherwise fall back to canvas dimensions
+            const { width, height } = assetDimensions
+                ? calculateIntelligentAssetSize(assetDimensions, canvasDimensions)
+                : canvasDimensions;
+            const { from, row, updatedOverlays } = addAtPlayhead(currentFrame, overlays, 'top');
+            // Create the new overlay without an ID (addOverlay will generate it)
+            // Use a percentage of composition duration for smart image length when there are existing overlays,
+            // otherwise default to DEFAULT_IMAGE_DURATION_FRAMES
+            const smartDuration = overlays.length > 0
+                ? Math.round(durationInFrames * IMAGE_DURATION_PERCENTAGE)
+                : DEFAULT_IMAGE_DURATION_FRAMES;
+            const newOverlay = {
+                left: 0,
+                top: 0,
+                width,
+                height,
+                durationInFrames: smartDuration,
+                from,
+                rotation: 0,
+                row,
+                isDragging: false,
+                type: OverlayType.IMAGE,
+                src: image.src['original'] || image.src['large'] || image.src['medium'] || image.src['small'] || '',
+                styles: {
+                    objectFit: "contain",
+                    animation: {
+                        enter: "fadeIn",
+                        exit: "fadeOut",
+                    },
+                },
+            };
+            // Update overlays with both the shifted overlays and the new overlay in a single operation
+            const newId = updatedOverlays.length > 0 ? Math.max(...updatedOverlays.map((o) => o.id)) + 1 : 0;
+            const overlayWithId = { ...newOverlay, id: newId };
+            const finalOverlays = [...updatedOverlays, overlayWithId];
+            setOverlays(finalOverlays);
+            setSelectedOverlayId(newId);
+        }
+    };
+    /**
+     * Updates an existing image overlay's properties
+     * @param updatedOverlay - The modified overlay object
+     * Updates both local state and global editor context
+     */
+    const handleUpdateOverlay = (updatedOverlay) => {
+        setLocalOverlay(updatedOverlay);
+        changeOverlay(updatedOverlay.id, () => updatedOverlay);
+    };
+    const handleCancelReplace = () => {
+        cancelReplaceMode();
+        setSearchQuery("");
+        setImages([]);
+        setSourceResults([]);
+    };
+    const getThumbnailUrl = (image) => {
+        return image.src['medium'] || image.src['small'] || image.src['original'];
+    };
+    const getItemKey = (image) => {
+        return `${image._source}-${image.id}`;
+    };
+    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: images, isLoading: isLoading, hasAdaptors: imageAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddImage, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "images", searchPlaceholder: isReplaceMode ? "Search for replacement image" : "Search images", showSourceBadge: true, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(ImageDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeImage: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay }));
+};

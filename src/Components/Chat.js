@@ -1267,7 +1267,6 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         if (!cancelled) {
           if (normalizedAspect && normalizedAspect !== 'Unspecified') {
             setSessionTemplateAspect(normalizedAspect);
-            try { console.log('[templates] session aspect ratio detected:', normalizedAspect); } catch (_) { /* noop */ }
           } else {
             setSessionTemplateAspect('');
           }
@@ -8130,10 +8129,10 @@ const saveAnchorPromptTemplate = async () => {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                     <select value={newSceneChartType} onChange={(e)=>setNewSceneChartType(e.target.value)} className="w-full p-2 border rounded">
                       <option value="">Select</option>
-                      <option value="clustered_bar">clustered_bar</option>
+                      <option value="clustered_bar">Cluster Bar</option>
                       <option value="clustered_column">clustered_column</option>
                       <option value="line">line</option>
-                      <option value="pie">pie</option>
+                      <option value="pie">Pie Chart</option>
                       <option value="stacked_bar">stacked_bar</option>
                       <option value="stacked_column">stacked_column</option>
                       <option value="waterfall_bar">waterfall_bar</option>
@@ -8929,10 +8928,10 @@ const saveAnchorPromptTemplate = async () => {
                         <div className="text-xs text-gray-600 mb-1">Chart Type</div>
                         <select value={switchChartType} onChange={(e)=>setSwitchChartType(e.target.value)} className="w-full px-3 py-2 border rounded mb-2">
                           <option value="">Select</option>
-                          <option value="clustered_bar">clustered_bar</option>
+                          <option value="clustered_bar">Cluster Bar</option>
                           <option value="clustered_column">clustered_column</option>
                           <option value="line">line</option>
-                          <option value="pie">pie</option>
+                          <option value="pie">Pie Chart</option>
                           <option value="stacked_bar">stacked_bar</option>
                           <option value="stacked_column">stacked_column</option>
                           <option value="waterfall_bar">waterfall_bar</option>
@@ -10778,10 +10777,10 @@ const saveAnchorPromptTemplate = async () => {
                                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
                                     >
                                       <option value="">Select</option>
-                                      <option value="clustered_bar">clustered_bar</option>
+                                      <option value="clustered_bar">Cluster Bar</option>
                                       <option value="clustered_column">clustered_column</option>
                                       <option value="line">line</option>
-                                      <option value="pie">pie</option>
+                                      <option value="pie">Pie Chart</option>
                                       <option value="stacked_bar">stacked_bar</option>
                                       <option value="waterfall_bar">waterfall_bar</option>
                                       <option value="waterfall_column">waterfall_column</option>
@@ -13402,14 +13401,6 @@ const saveAnchorPromptTemplate = async () => {
                       });
                     }
                   });
-                  try {
-                    console.log('[Assets Modal] Uploaded template images by aspect', {
-                      targetAspect: targetAspect || 'All',
-                      normalizedTarget,
-                      count: images.length,
-                      images
-                    });
-                  } catch (_) { /* noop */ }
                   return images;
                 };
 
@@ -14078,10 +14069,10 @@ const saveAnchorPromptTemplate = async () => {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                     <select value={regenChartType} onChange={(e)=>setRegenChartType(e.target.value)} className="w-full p-2 border rounded">
                       <option value="">Select</option>
-                      <option value="clustered_bar">clustered_bar</option>
+                      <option value="clustered_bar">Cluster Bar</option>
                       <option value="clustered_column">clustered_column</option>
                       <option value="line">line</option>
-                      <option value="pie">pie</option>
+                      <option value="pie">Pie Chart</option>
                       <option value="stacked_bar">stacked_bar</option>
                       <option value="stacked_column">stacked_column</option>
                       <option value="waterfall_bar">waterfall_bar</option>

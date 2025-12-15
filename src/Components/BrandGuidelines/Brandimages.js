@@ -2501,7 +2501,6 @@ const Brandimages = () => {
       console.log('Text Elements Count:', templateDetails.text_elements?.length || 0)
       console.log('Overlay Elements:', templateDetails.overlay_elements)
       console.log('Overlay Elements Count:', templateDetails.overlay_elements?.length || 0)
-      console.log('Aspect Ratio:', templateDetails.aspect_ratio || apiResponse.metadata?.aspect_ratio || templateEntry.meta?.aspect || '')
       
       // Deep search function to find image URL in any nested structure
       const deepSearchImageUrl = (obj, depth = 0, maxDepth = 5) => {
@@ -2661,7 +2660,6 @@ const Brandimages = () => {
                          templateEntry.meta?.aspect || 
                          ''
       
-      console.log('Aspect Ratio:', aspectRatio)
       
       // Normalize the API response using normalizeTemplateEntry
       let normalizedEntry = normalizeTemplateEntry(templateDetails, label, {

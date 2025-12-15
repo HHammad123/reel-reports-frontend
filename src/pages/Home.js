@@ -1359,12 +1359,6 @@ const Home = () => {
           )}
           {currentStep === 5 && (
             <div className='bg-white rounded-lg'>
-              <div className='flex items-center justify-between p-4 border-b border-gray-200'>
-                <h3 className='text-lg font-semibold text-[#13008B]'>Videos</h3>
-                <div className='flex items-center gap-2'>
-                  <button onClick={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }} className='px-3 py-1.5 rounded-lg border text-sm'>Back</button>
-                </div>
-              </div>
               <VideosList 
                 jobId={videosJobId} 
                 onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}
