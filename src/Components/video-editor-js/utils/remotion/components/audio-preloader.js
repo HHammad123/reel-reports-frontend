@@ -2,6 +2,8 @@ import { jsx as _jsx } from "react/jsx-runtime";
 import { useEffect, useRef } from "react";
 import { toAbsoluteUrl } from "../../general/url-helper";
 import { useEditorContext } from "../../../pro/contexts/editor-context";
+import { OverlayType } from "../../../types";
+
 /**
  * Hook to safely use editor context only when available
  */
@@ -27,82 +29,73 @@ const useSafeEditorContext = () => {
  */
 export const AudioPreloader = ({ overlays = [], baseUrl }) => {
     const { baseUrl: contextBaseUrl } = useSafeEditorContext();
-    const resolvedBaseUrl = baseUrl || contextBaseUrl;
+    // Resolve baseUrl: use prop first, then context, then fallback to window.location.origin
+    const resolvedBaseUrl = baseUrl || contextBaseUrl || (typeof window !== 'undefined' ? window.location.origin : undefined);
     const preloadedAudioRef = useRef(new Set()); // Track which audio URLs we've already preloaded
     const audioElementsRef = useRef(new Map()); // Store audio elements to prevent garbage collection
     
-    // Log component render
-    console.log(`[AudioPreloader] 🎯 Component rendered with ${overlays.length} overlay(s)`, {
-        baseUrl: baseUrl,
-        contextBaseUrl: contextBaseUrl,
-        resolvedBaseUrl: resolvedBaseUrl
-    });
-    
     useEffect(() => {
-        console.log(`[AudioPreloader] ⚡ useEffect triggered. Total overlays: ${overlays.length}`);
-        
-        // Debug: log all overlay types
-        const overlayTypes = overlays.map(o => ({ 
-            id: o?.id, 
-            type: o?.type, 
-            typeString: String(o?.type || '').toLowerCase(),
-            hasSrc: !!o?.src,
-            src: o?.src 
-        }));
-        console.log(`[AudioPreloader] All overlay types:`, overlayTypes);
         
         // Filter to only sound/audio overlays
-        // Check for both 'sound' string and OverlayType.SOUND enum value
+        // CRITICAL: Check multiple conditions to handle all possible type representations
         const audioOverlays = overlays.filter(overlay => {
+            // Must have a valid src
+            if (!overlay?.src || overlay.src.trim() === '') {
+                return false;
+            }
+            
             const overlayType = overlay?.type;
             const overlayTypeString = String(overlayType || '').toLowerCase();
-            // Check for 'sound' type (handles both string "sound" and OverlayType.SOUND which is "sound")
-            const isSound = (overlayTypeString === 'sound' || overlayType === 'sound' || overlayTypeString === 'audio') && overlay?.src && overlay.src.trim() !== '';
+            const overlayId = String(overlay?.id || '').toLowerCase();
             
-            // Debug: log all overlays to see what we're getting
-            if (overlay?.src) {
-                console.log(`[AudioPreloader] Checking overlay with src:`, {
-                    id: overlay.id,
-                    type: overlayType,
-                    typeString: overlayTypeString,
-                    src: overlay.src,
-                    isSound: isSound
-                });
-            }
+            // Multiple checks to catch audio overlays in all scenarios:
+            // 1. Direct enum comparison (OverlayType.SOUND === "sound")
+            // 2. String comparison (case-insensitive)
+            // 3. ID-based detection (if ID contains 'audio')
+            // 4. Row-based detection (audio typically on higher rows, but not reliable)
+            const isSound = (
+                overlayType === OverlayType.SOUND ||  // Direct enum comparison (most reliable)
+                overlayTypeString === 'sound' ||      // String "sound" (lowercase)
+                overlayTypeString === 'audio' ||      // String "audio" (lowercase)
+                overlayType === 'sound' ||            // String "sound" (exact match)
+                overlayType === 'audio' ||            // String "audio" (exact match)
+                overlayId.includes('audio') ||        // ID contains "audio" (fallback)
+                (overlay.id && String(overlay.id).startsWith('audio-')) // ID starts with "audio-"
+            );
             
-            if (isSound) {
-                console.log(`[AudioPreloader] ✅ Found audio overlay:`, {
-                    id: overlay.id,
-                    type: overlay.type,
-                    src: overlay.src
-                });
-            }
             return isSound;
         });
         
-        console.log(`[AudioPreloader] Found ${audioOverlays.length} audio overlay(s) out of ${overlays.length} total overlays`);
-        
         if (audioOverlays.length === 0) {
-            console.log(`[AudioPreloader] No audio overlays found. Exiting.`);
             return;
         }
         
-        console.log(`[AudioPreloader] 🎵 Preloading ${audioOverlays.length} audio file(s) immediately...`);
+        // CRITICAL: Separate Scene 1 audio (from === 0) from other audio
+        // Scene 1 audio MUST load first before other audio starts
+        const scene1AudioOverlays = audioOverlays.filter(overlay => (overlay.from || 0) === 0);
+        const otherAudioOverlays = audioOverlays.filter(overlay => (overlay.from || 0) !== 0);
         
-        // Preload each audio file
-        audioOverlays.forEach((overlay, index) => {
+        // Helper function to preload a single audio overlay
+        const preloadAudioOverlay = (overlay) => {
             const audioSrc = overlay.src;
             if (!audioSrc || audioSrc.trim() === '') {
                 return;
             }
             
             // Determine the final audio source URL
+            // toAbsoluteUrl handles undefined baseUrl by using window.location.origin as fallback
             let finalAudioSrc = audioSrc;
-            if (audioSrc.startsWith("/api/")) {
+            if (audioSrc.startsWith("http://") || audioSrc.startsWith("https://") || audioSrc.startsWith("blob:")) {
+                // Already absolute URL, use as-is
+                finalAudioSrc = audioSrc;
+            } else if (audioSrc.startsWith("/api/")) {
+                // API route - use toAbsoluteUrl which handles undefined baseUrl
                 finalAudioSrc = toAbsoluteUrl(audioSrc, resolvedBaseUrl);
-            } else if (audioSrc.startsWith("/") && resolvedBaseUrl) {
-                finalAudioSrc = `${resolvedBaseUrl}${audioSrc}`;
             } else if (audioSrc.startsWith("/")) {
+                // Relative URL starting with / - use toAbsoluteUrl which handles undefined baseUrl
+                finalAudioSrc = toAbsoluteUrl(audioSrc, resolvedBaseUrl);
+            } else {
+                // Relative URL without / - use toAbsoluteUrl which handles undefined baseUrl
                 finalAudioSrc = toAbsoluteUrl(audioSrc, resolvedBaseUrl);
             }
             
@@ -114,46 +107,35 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             // Mark as preloaded immediately to prevent duplicates
             preloadedAudioRef.current.add(finalAudioSrc);
             
-            // Log preloading start
-            console.log(`[AudioPreloader] 🎵 Preloading audio ${index + 1}/${audioOverlays.length}:`, {
-                overlayId: overlay.id,
-                src: overlay.src,
-                finalAudioSrc: finalAudioSrc,
-                from: overlay.from,
-                durationInFrames: overlay.durationInFrames
-            });
+            const isScene1Audio = overlay.from === 0;
             
             // METHOD 1: Use fetch to trigger network request (appears in network tab)
+            // CRITICAL: For Scene 1 audio, this MUST succeed and appear in network tab
             fetch(finalAudioSrc, { 
                 method: 'GET',
-                headers: {
-                    'Range': 'bytes=0-', // Request the entire file to trigger full download
-                }
+                // Don't use Range header - request entire file to ensure it loads
+                credentials: 'same-origin' // Include credentials for authenticated requests
             })
             .then(response => {
-                console.log(`[AudioPreloader] 📡 Fetch request initiated for:`, finalAudioSrc, {
-                    status: response.status,
-                    headers: Object.fromEntries(response.headers.entries())
-                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
                 // Read the response to ensure the request completes
                 return response.blob();
             })
             .then(blob => {
-                console.log(`[AudioPreloader] ✅ Audio file fetched successfully:`, finalAudioSrc, {
-                    size: blob.size,
-                    type: blob.type
-                });
                 // Store the blob URL for later use
                 const blobUrl = URL.createObjectURL(blob);
                 audioElementsRef.current.set(finalAudioSrc, { blobUrl, blob });
             })
             .catch(error => {
-                console.warn(`[AudioPreloader] ⚠️ Fetch error for ${finalAudioSrc}:`, error);
+                // Silently handle errors - audio will still try to load via audio element
             });
             
             // METHOD 2: Also create audio element for browser caching (backup method)
+            // CRITICAL: This ensures audio is preloaded and cached by browser
             const audio = document.createElement('audio');
-            audio.preload = 'auto'; // Preload entire file
+            audio.preload = 'auto'; // Preload entire file - CRITICAL for Scene 1
             audio.crossOrigin = 'anonymous';
             audio.src = finalAudioSrc;
             
@@ -161,6 +143,8 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             audio.style.display = 'none';
             audio.style.position = 'absolute';
             audio.style.visibility = 'hidden';
+            audio.style.width = '0';
+            audio.style.height = '0';
             document.body.appendChild(audio);
             
             // Store audio element reference
@@ -170,59 +154,18 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             });
             
             // Set up event listeners to track loading
-            const handleLoadedMetadata = () => {
-                console.log(`[AudioPreloader] 📊 Audio metadata loaded:`, finalAudioSrc, {
-                    duration: audio.duration,
-                    readyState: audio.readyState
-                });
+            const handleError = () => {
+                // Silently handle errors
             };
             
-            const handleCanPlay = () => {
-                console.log(`[AudioPreloader] ▶️ Audio can play:`, finalAudioSrc);
-            };
-            
-            const handleCanPlayThrough = () => {
-                console.log(`[AudioPreloader] ✅ Audio preloaded and ready:`, finalAudioSrc);
-            };
-            
-            const handleLoadedData = () => {
-                console.log(`[AudioPreloader] 📦 Audio data loaded:`, finalAudioSrc);
-            };
-            
-            const handleProgress = () => {
-                if (audio.buffered.length > 0) {
-                    const loaded = audio.buffered.end(0);
-                    const total = audio.duration;
-                    const percent = total > 0 ? (loaded / total * 100).toFixed(1) : 0;
-                    console.log(`[AudioPreloader] 📈 Audio loading progress: ${percent}%`, finalAudioSrc);
-                }
-            };
-            
-            const handleError = (error) => {
-                console.warn(`[AudioPreloader] ⚠️ Error preloading audio:`, finalAudioSrc, error);
-            };
-            
-            audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-            audio.addEventListener('canplay', handleCanPlay);
-            audio.addEventListener('canplaythrough', handleCanPlayThrough);
-            audio.addEventListener('loadeddata', handleLoadedData);
-            audio.addEventListener('progress', handleProgress);
             audio.addEventListener('error', handleError);
             
             // Explicitly call load() to trigger network request immediately
-            // This should trigger a network request that appears in the network tab
-            console.log(`[AudioPreloader] 🚀 Calling audio.load() for:`, finalAudioSrc);
+            // This triggers the network request that appears in the network tab
             audio.load();
             
-            // Also log the audio element state after a short delay
+            // Remove from DOM after loading starts (keep in memory for cache)
             setTimeout(() => {
-                console.log(`[AudioPreloader] 📋 Audio state after load (${finalAudioSrc}):`, {
-                    readyState: audio.readyState,
-                    networkState: audio.networkState,
-                    preload: audio.preload,
-                    src: audio.src
-                });
-                // Remove from DOM after loading starts (keep in memory for cache)
                 try {
                     if (audio.parentNode) {
                         audio.parentNode.removeChild(audio);
@@ -231,9 +174,107 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                     // Ignore errors removing from DOM
                 }
             }, 1000);
-        });
+        };
         
-        console.log(`[AudioPreloader] ✅ Started preloading ${audioOverlays.length} audio file(s). Check network tab for requests.`);
+        // CRITICAL: Load Scene 1 audio FIRST and IMMEDIATELY (no waiting)
+        // Fetch Scene 1 audio right away, before timeline rendering
+        if (scene1AudioOverlays.length > 0) {
+            // IMMEDIATELY fetch Scene 1 audio - don't wait for anything
+            scene1AudioOverlays.forEach(overlay => {
+                const audioSrc = overlay.src;
+                if (!audioSrc || audioSrc.trim() === '') {
+                    return;
+                }
+                
+                let finalAudioSrc = audioSrc;
+                if (audioSrc.startsWith("http://") || audioSrc.startsWith("https://") || audioSrc.startsWith("blob:")) {
+                    finalAudioSrc = audioSrc;
+                } else {
+                    finalAudioSrc = toAbsoluteUrl(audioSrc, resolvedBaseUrl);
+                }
+                
+                if (preloadedAudioRef.current.has(finalAudioSrc)) {
+                    return;
+                }
+                
+                preloadedAudioRef.current.add(finalAudioSrc);
+                
+                // IMMEDIATELY trigger fetch - this should appear in network tab right away
+                fetch(finalAudioSrc, { 
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'default' // Use default cache, but force fresh request if needed
+                })
+                .then(response => {
+                    if (response.ok) {
+                        return response.blob();
+                    }
+                    return null;
+                })
+                .then(blob => {
+                    if (blob) {
+                        const blobUrl = URL.createObjectURL(blob);
+                        audioElementsRef.current.set(finalAudioSrc, { blobUrl, blob });
+                    }
+                })
+                .catch(() => {
+                    // Silently handle errors
+                });
+                
+                // Also create audio element immediately for browser caching
+                const audio = document.createElement('audio');
+                audio.preload = 'auto';
+                audio.crossOrigin = 'anonymous';
+                audio.src = finalAudioSrc;
+                
+                // Add to DOM immediately to trigger loading
+                audio.style.display = 'none';
+                audio.style.position = 'absolute';
+                audio.style.visibility = 'hidden';
+                audio.style.width = '0';
+                audio.style.height = '0';
+                document.body.appendChild(audio);
+                
+                audioElementsRef.current.set(finalAudioSrc, { 
+                    audio, 
+                    ...(audioElementsRef.current.get(finalAudioSrc) || {})
+                });
+                
+                // Immediately call load() to trigger network request
+                audio.load();
+                
+                // Reset audio to start when ready
+                const handleCanPlayThrough = () => {
+                    audio.currentTime = 0;
+                };
+                audio.addEventListener('canplaythrough', handleCanPlayThrough);
+                
+                // Clean up DOM after a delay
+                setTimeout(() => {
+                    try {
+                        if (audio.parentNode) {
+                            audio.parentNode.removeChild(audio);
+                        }
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                }, 2000);
+            });
+            
+            // Now load other audio files (Scene 1 audio fetch has already started)
+            // Small delay to ensure Scene 1 audio fetch request appears in network tab first
+            setTimeout(() => {
+                otherAudioOverlays.forEach(preloadAudioOverlay);
+            }, 50);
+        } else {
+            // No Scene 1 audio, load all audio in order
+            const sortedAudioOverlays = [...audioOverlays].sort((a, b) => {
+                const aFrom = a.from || 0;
+                const bFrom = b.from || 0;
+                return aFrom - bFrom;
+            });
+            sortedAudioOverlays.forEach(preloadAudioOverlay);
+        }
         
         // Cleanup function: clean up DOM elements but keep refs for cache
         return () => {

@@ -3432,89 +3432,103 @@
               // Get audio duration and preload audio for smooth playback
               // CRITICAL: Preload ALL audio files fully for smooth playback
               let audioDurationSeconds = durationSeconds; // Default to video duration
-              const isFirstScene = i === 0; // First video/scene
-              const startsAtFrameZero = fromFrame === 0;
+              const isFirstScene = i === 0; // First video/scene (index 0)
               
-              try {
-                const audio = document.createElement('audio');
-                audio.crossOrigin = 'anonymous';
-                // CRITICAL: Preload entire audio file for ALL scenes to ensure smooth playback
-                audio.preload = 'auto';
-                
-                await new Promise((resolve) => {
-                  let metadataLoaded = false;
-                  let audioReady = false;
+              // CRITICAL FIX: Always ensure Scene 1 (i === 0) starts at frame 0
+              // Use Math.min to guarantee frame 0 for first scene, regardless of fromFrame value
+              const audioStartFrame = isFirstScene ? 0 : fromFrame;
+              
+              // Preload audio asynchronously (non-blocking) - don't await to avoid blocking overlay creation
+              // This allows overlay creation to proceed even if audio preload is slow
+              (async () => {
+                try {
+                  const audio = document.createElement('audio');
+                  audio.crossOrigin = 'anonymous';
+                  // CRITICAL: Preload entire audio file for ALL scenes to ensure smooth playback
+                  audio.preload = 'auto';
                   
-                  const timeout = setTimeout(() => {
-                    if (metadataLoaded) {
-                      if (audioReady) {
-                        console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded (timeout, but ready)`);
-                      } else {
-                        console.warn(`[VideosList] Audio ${i + 1} preload timeout (metadata loaded), continuing...`);
-                      }
-                      resolve();
-                    } else {
-                      console.warn(`[VideosList] Audio ${i + 1} metadata timeout, using video duration:`, audioDurationSeconds);
-                      resolve();
-                    }
-                  }, 10000); // 10 second timeout for all audio files
-                  
-                  const handleLoadedMetadata = () => {
-                    metadataLoaded = true;
-                    const dur = audio.duration;
-                    if (isFinite(dur) && dur > 0) {
-                      audioDurationSeconds = dur;
-                    }
-                    // Wait for audio to be ready to play (for all scenes)
-                    if (audioReady) {
-                      clearTimeout(timeout);
-                      resolve();
-                    }
-                  };
-                  
-                  // Wait for audio to be ready to play (for ALL scenes)
-                  const handleCanPlayThrough = () => {
-                    audioReady = true;
-                    if (metadataLoaded) {
-                      console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded and ready to play`);
-                      clearTimeout(timeout);
-                      resolve();
-                    }
-                  };
-                  
-                  // Fallback: If canplaythrough doesn't fire, use loadeddata
-                  const handleLoadedData = () => {
-                    if (!audioReady) {
-                      setTimeout(() => {
-                        if (!audioReady && metadataLoaded) {
-                          audioReady = true;
-                          console.log(`[VideosList] ✅ Audio ${i + 1} loaded (fallback)`);
-                          clearTimeout(timeout);
-                          resolve();
+                  await new Promise((resolve) => {
+                    let metadataLoaded = false;
+                    let audioReady = false;
+                    
+                    const timeout = setTimeout(() => {
+                      if (metadataLoaded) {
+                        if (audioReady) {
+                          console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded (timeout, but ready)`);
+                        } else {
+                          console.warn(`[VideosList] Audio ${i + 1} preload timeout (metadata loaded), continuing...`);
                         }
-                      }, 200);
-                    }
-                  };
-                  
-                  audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-                  audio.addEventListener('canplaythrough', handleCanPlayThrough);
-                  audio.addEventListener('loadeddata', handleLoadedData);
-                  
-                  audio.onerror = (error) => {
-                    clearTimeout(timeout);
-                    console.warn(`[VideosList] Audio ${i + 1} load error, using video duration:`, audioDurationSeconds, error);
-                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                    audio.removeEventListener('canplaythrough', handleCanPlayThrough);
-                    audio.removeEventListener('loadeddata', handleLoadedData);
-                    resolve();
-                  };
-                  
-                  audio.src = audioMediaSrc;
-                  audio.load(); // Explicitly start loading
-                });
-              } catch (error) {
-                console.warn(`[VideosList] Error loading audio ${i + 1}:`, error);
-              }
+                        resolve();
+                      } else {
+                        console.warn(`[VideosList] Audio ${i + 1} metadata timeout, using video duration:`, audioDurationSeconds);
+                        resolve();
+                      }
+                    }, 10000); // 10 second timeout for all audio files
+                    
+                    const handleLoadedMetadata = () => {
+                      metadataLoaded = true;
+                      const dur = audio.duration;
+                      if (isFinite(dur) && dur > 0) {
+                        audioDurationSeconds = dur;
+                        // Update duration if needed (though overlay is already created)
+                        console.log(`[VideosList] Audio ${i + 1} metadata loaded:`, {
+                          duration: dur,
+                          sceneIndex: i + 1,
+                          isFirstScene: isFirstScene
+                        });
+                      }
+                      // Wait for audio to be ready to play (for all scenes)
+                      if (audioReady) {
+                        clearTimeout(timeout);
+                        resolve();
+                      }
+                    };
+                    
+                    // Wait for audio to be ready to play (for ALL scenes)
+                    const handleCanPlayThrough = () => {
+                      audioReady = true;
+                      if (metadataLoaded) {
+                        console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded and ready to play`);
+                        clearTimeout(timeout);
+                        resolve();
+                      }
+                    };
+                    
+                    // Fallback: If canplaythrough doesn't fire, use loadeddata
+                    const handleLoadedData = () => {
+                      if (!audioReady) {
+                        setTimeout(() => {
+                          if (!audioReady && metadataLoaded) {
+                            audioReady = true;
+                            console.log(`[VideosList] ✅ Audio ${i + 1} loaded (fallback)`);
+                            clearTimeout(timeout);
+                            resolve();
+                          }
+                        }, 200);
+                      }
+                    };
+                    
+                    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+                    audio.addEventListener('canplaythrough', handleCanPlayThrough);
+                    audio.addEventListener('loadeddata', handleLoadedData);
+                    
+                    audio.onerror = (error) => {
+                      clearTimeout(timeout);
+                      console.warn(`[VideosList] Audio ${i + 1} load error, using video duration:`, audioDurationSeconds, error);
+                      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                      audio.removeEventListener('canplaythrough', handleCanPlayThrough);
+                      audio.removeEventListener('loadeddata', handleLoadedData);
+                      resolve();
+                    };
+                    
+                    audio.src = audioMediaSrc;
+                    audio.load(); // Explicitly start loading
+                  });
+                } catch (error) {
+                  console.warn(`[VideosList] Error loading audio ${i + 1}:`, error);
+                  // Continue even if preload fails - overlay is already created
+                }
+              })(); // Execute async without blocking
               
               const audioDurationInFrames = Math.max(1, Math.round(audioDurationSeconds * fps));
               
@@ -3526,20 +3540,23 @@
                 .replace(/^-|-$/g, '')
                 .toLowerCase();
               
-              // CRITICAL: Ensure first scene audio starts at frame 0
-              const audioStartFrame = i === 0 ? 0 : fromFrame;
+              // CRITICAL FIX: Ensure Scene 1 (i === 0) ALWAYS starts at frame 0
+              // Double-check: if this is the first scene in the loop, force frame 0
+              const finalAudioStartFrame = isFirstScene ? 0 : audioStartFrame;
               
-              // Log audio overlay creation for all scenes
+              // Log audio overlay creation for all scenes - with detailed positioning info
               console.log(`[VideosList] ✅ Creating audio overlay for SCENE ${i + 1}:`, {
                 id: `audio-${cleanAudioId}`,
-                from: audioStartFrame,
+                from: finalAudioStartFrame,
+                fromFrame_accumulator: fromFrame,
+                isFirstScene: isFirstScene,
+                sceneIndex: i + 1,
                 durationInFrames: audioDurationInFrames,
                 src: audioMediaSrc,
                 originalUrl: audioUrl,
                 volume: audioVolume,
-                startsAtZero: audioStartFrame === 0,
-                row: audioRow,
-                sceneIndex: i + 1
+                startsAtZero: finalAudioStartFrame === 0,
+                row: audioRow
               });
               
               const audioOverlay = {
@@ -3549,7 +3566,7 @@
                 width: 0, // Audio has no visual dimensions
                 height: 0,
                 durationInFrames: audioDurationInFrames,
-                from: audioStartFrame, // CRITICAL: First scene must start at frame 0
+                from: finalAudioStartFrame, // CRITICAL: Scene 1 (i === 0) MUST start at frame 0
                 rotation: 0,
                 row: audioRow, // CRITICAL: Use calculated row (after subtitles, bottom track)
                 isDragging: false,
@@ -3565,13 +3582,15 @@
               
               newOverlays.push(audioOverlay);
               
-              // Log the complete audio overlay object for all scenes
+              // Log the complete audio overlay object with positioning verification
               console.log(`[VideosList] ✅ Audio overlay object created for scene ${i + 1}:`, {
                 id: audioOverlay.id,
                 from: audioOverlay.from,
+                from_VERIFIED: audioOverlay.from === 0 && isFirstScene ? '✅ CORRECT (Scene 1 at frame 0)' : (isFirstScene ? '❌ ERROR (Scene 1 not at frame 0!)' : `Scene ${i + 1} starts at frame ${audioOverlay.from}`),
                 durationInFrames: audioOverlay.durationInFrames,
                 src: audioOverlay.src,
-                volume: audioOverlay.styles.volume
+                volume: audioOverlay.styles.volume,
+                sceneIndex: i + 1
               });
             }
 
@@ -3856,6 +3875,49 @@
             
             // Count text overlays for summary
             const textOverlayCount = newOverlays.filter(o => o.type === OverlayType.TEXT).length;
+            
+            // CRITICAL VERIFICATION STEP: Ensure first scene audio overlay ALWAYS starts at frame 0
+            // This fixes any edge cases where Scene 1 audio might not be positioned correctly
+            let audioOverlaysVerified = newOverlays.filter(o => o.type === OverlayType.SOUND);
+            
+            if (audioOverlaysVerified.length > 0) {
+              // Sort audio overlays by their 'from' frame to find the earliest one
+              audioOverlaysVerified.sort((a, b) => (a.from || 0) - (b.from || 0));
+              const earliestAudioOverlay = audioOverlaysVerified[0];
+              
+              // If the earliest audio overlay doesn't start at frame 0, we need to fix it
+              // This should be Scene 1 audio, which MUST start at frame 0
+              if (earliestAudioOverlay.from !== 0) {
+                console.warn(`[VideosList] ⚠️ VERIFICATION: Earliest audio overlay starts at frame ${earliestAudioOverlay.from}, not 0. Auto-correcting...`, {
+                  overlayId: earliestAudioOverlay.id,
+                  originalFrom: earliestAudioOverlay.from,
+                  src: earliestAudioOverlay.src
+                });
+                
+                // Find this overlay in newOverlays and fix it
+                const overlayToFix = newOverlays.find(o => o.id === earliestAudioOverlay.id);
+                if (overlayToFix) {
+                  overlayToFix.from = 0;
+                  console.log(`[VideosList] ✅ VERIFICATION: Fixed audio overlay ${overlayToFix.id} to start at frame 0`);
+                }
+              } else {
+                console.log(`[VideosList] ✅ VERIFICATION: First scene audio overlay correctly starts at frame 0:`, {
+                  overlayId: earliestAudioOverlay.id,
+                  from: earliestAudioOverlay.from,
+                  src: earliestAudioOverlay.src
+                });
+              }
+              
+              // Log all audio overlays with their timing for debugging
+              console.log(`[VideosList] 📊 VERIFICATION: All audio overlays timing:`, 
+                audioOverlaysVerified.map(a => ({
+                  id: a.id,
+                  from: a.from,
+                  durationInFrames: a.durationInFrames,
+                  src: a.src?.substring(0, 50) + '...' // Truncate long URLs
+                }))
+              );
+            }
             
             // Only update if overlays actually changed (using ref to avoid unnecessary updates)
             if (!areOverlaysEqual(lastOverlaysRef.current, newOverlays)) {

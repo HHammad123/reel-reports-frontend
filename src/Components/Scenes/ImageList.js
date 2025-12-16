@@ -311,6 +311,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   // New regenerate options
   const [regenerateFrames, setRegenerateFrames] = useState(['opening', 'closing']); // For SORA: ['opening'], ['closing'], or both
   const [regenerateSaveAsNewVersion, setRegenerateSaveAsNewVersion] = useState(false);
+  // Reference image upload for regenerate
+  const [regenerateReferenceFile, setRegenerateReferenceFile] = useState(null);
+  const [regenerateReferencePreview, setRegenerateReferencePreview] = useState(null);
   // VEO3 Avatar management
   const [showAvatarManager, setShowAvatarManager] = useState(false);
   const [managingAvatarSceneNumber, setManagingAvatarSceneNumber] = useState(null);
@@ -3624,6 +3627,10 @@ const getOrderedRefs = useCallback((row) => {
     // Reset save as new version to false
     setRegenerateSaveAsNewVersion(false);
     
+    // Reset reference image upload state
+    setRegenerateReferenceFile(null);
+    setRegenerateReferencePreview(null);
+    
     setShowRegeneratePopup(true);
   }, [getSceneModel, isSORAModel, isVEO3Model, isANCHORModel, scriptsData]);
 
@@ -3690,50 +3697,86 @@ const getOrderedRefs = useCallback((row) => {
       // Use user-entered query if available, otherwise fallback to original query
       const finalUserQuery = regenerateUserQuery.trim() || originalUserQuery.trim();
 
-      // Build request payload
-      const payload = {
-        user_id: user_id,
-        session_id: session_id,
-        scene_number: regeneratingSceneNumber,
-        model: model,
-        action: 'regenerate',
-        user_query: finalUserQuery,
-        frames_to_regenerate: framesToRegenerate,
-        save_as_new_version: regenerateSaveAsNewVersion,
-        aspect_ratio: aspectRatio
-      };
+      // Check if reference image is uploaded
+      if (regenerateReferenceFile) {
+        // Flow 1: Generate from reference image
+        // Step 1: Upload the reference image to get a URL
+        const base64Image = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = reader.result.split(',')[1]; // Remove data:image/...;base64, prefix
+            resolve(base64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(regenerateReferenceFile);
+        });
 
-      // Call regenerate API endpoint
-      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+        // Step 2: Upload to /v1/bf_remove/upload to get blob URL
+        const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/bf_remove/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ base64_image: base64Image })
+        });
 
-      const text = await response.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (_) {
-        data = text;
-      }
+        const uploadText = await uploadResponse.text();
+        let uploadData;
+        try {
+          uploadData = JSON.parse(uploadText);
+        } catch (_) {
+          uploadData = uploadText;
+        }
 
-      if (!response.ok) {
-        throw new Error(`Regenerate failed: ${response.status} ${text}`);
-      }
+        if (!uploadResponse.ok) {
+          throw new Error(`Failed to upload reference image: ${uploadResponse.status} ${uploadText}`);
+        }
 
-      // Handle successful response
-      if (data && data.success) {
-        
+        const referenceImageUrl = uploadData?.image_url || uploadData?.imageUrl || uploadData?.url;
+        if (!referenceImageUrl) {
+          throw new Error('No image URL returned from upload');
+        }
+
+        // Step 3: Call generate-from-reference API
+        const payload = {
+          user_id: user_id,
+          session_id: session_id,
+          scene_number: regeneratingSceneNumber,
+          model: model,
+          reference_image_url: referenceImageUrl,
+          user_query: finalUserQuery,
+          frames_to_regenerate: framesToRegenerate,
+          aspect_ratio: aspectRatio
+        };
+
+        const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/generate-from-reference', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Generate from reference failed: ${response.status} ${text}`);
+        }
+
+        // Handle successful response
         // Store scene number before resetting state
         const sceneNumberToRefresh = regeneratingSceneNumber;
         
         // Close popup and reset all states
-      setShowRegeneratePopup(false);
-      setRegenerateUserQuery('');
-      setRegeneratingSceneNumber(null);
+        setShowRegeneratePopup(false);
+        setRegenerateUserQuery('');
+        setRegeneratingSceneNumber(null);
         setIsRegenerateForDescription(false);
         setIsRegenerating(false);
+        setRegenerateReferenceFile(null);
+        setRegenerateReferencePreview(null);
         
         // Reset regenerate options to defaults
         setRegenerateFrames(['opening', 'closing']);
@@ -3743,7 +3786,62 @@ const getOrderedRefs = useCallback((row) => {
         // Pass the scene number to maintain selection
         await refreshLoad(sceneNumberToRefresh);
       } else {
-        throw new Error('Regenerate API did not return success');
+        // Flow 2: Regular regenerate (no reference image)
+        // Build request payload
+        const payload = {
+          user_id: user_id,
+          session_id: session_id,
+          scene_number: regeneratingSceneNumber,
+          model: model,
+          action: 'regenerate',
+          user_query: finalUserQuery,
+          frames_to_regenerate: framesToRegenerate,
+          save_as_new_version: regenerateSaveAsNewVersion,
+          aspect_ratio: aspectRatio
+        };
+
+        // Call regenerate API endpoint
+        const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/regenerate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Regenerate failed: ${response.status} ${text}`);
+        }
+
+        // Handle successful response
+        if (data && data.success) {
+          
+          // Store scene number before resetting state
+          const sceneNumberToRefresh = regeneratingSceneNumber;
+          
+          // Close popup and reset all states
+        setShowRegeneratePopup(false);
+        setRegenerateUserQuery('');
+        setRegeneratingSceneNumber(null);
+          setIsRegenerateForDescription(false);
+          setIsRegenerating(false);
+          
+          // Reset regenerate options to defaults
+          setRegenerateFrames(['opening', 'closing']);
+          setRegenerateSaveAsNewVersion(false);
+          
+          // Refresh images by calling user session data API instead of reloading
+          // Pass the scene number to maintain selection
+          await refreshLoad(sceneNumberToRefresh);
+        } else {
+          throw new Error('Regenerate API did not return success');
+        }
       }
     } catch (e) {
       setError(e?.message || 'Failed to regenerate image');
@@ -3755,6 +3853,7 @@ const getOrderedRefs = useCallback((row) => {
     regeneratingSceneNumber, 
     regenerateFrames, 
     regenerateSaveAsNewVersion,
+    regenerateReferenceFile,
     getSceneModel, 
     isSORAModel, 
     isVEO3Model, 
@@ -10421,6 +10520,8 @@ const getOrderedRefs = useCallback((row) => {
                   setIsRegenerateForDescription(false);
                   setIsRegenerating(false);
                   setError('');
+                  setRegenerateReferenceFile(null);
+                  setRegenerateReferencePreview(null);
                 }
               }}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -10450,6 +10551,77 @@ const getOrderedRefs = useCallback((row) => {
                   className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
                   disabled={isRegenerating}
                 />
+              </div>
+
+              {/* Reference Image Upload (Optional) */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Upload Reference Image (Optional)
+                </label>
+                <p className="text-xs text-gray-500 mb-3">
+                  If you upload a reference image, the system will generate new images based on your reference image and description.
+                </p>
+                {!regenerateReferencePreview ? (
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-[#13008B] transition-colors">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setRegenerateReferenceFile(file);
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            setRegenerateReferencePreview(event.target?.result);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      disabled={isRegenerating}
+                      className="hidden"
+                      id="regenerate-reference-upload"
+                    />
+                    <label
+                      htmlFor="regenerate-reference-upload"
+                      className={`cursor-pointer flex flex-col items-center gap-2 ${isRegenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      <span className="text-sm text-gray-600">
+                        Click to upload or drag and drop
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        PNG, JPG, GIF up to 10MB
+                      </span>
+                    </label>
+                  </div>
+                ) : (
+                  <div className="relative border border-gray-300 rounded-lg p-4">
+                    <img
+                      src={regenerateReferencePreview}
+                      alt="Reference preview"
+                      className="w-full h-48 object-contain rounded"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRegenerateReferenceFile(null);
+                        setRegenerateReferencePreview(null);
+                        const input = document.getElementById('regenerate-reference-upload');
+                        if (input) input.value = '';
+                      }}
+                      disabled={isRegenerating}
+                      className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Remove reference image"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Frame Selection - Show for all models except VEO3 */}
@@ -10561,7 +10733,11 @@ const getOrderedRefs = useCallback((row) => {
                 <button
                   onClick={handleGenerateImage}
                   disabled={(() => {
-                    if (isRegenerating || !regenerateUserQuery.trim()) return true;
+                    if (isRegenerating) return true;
+                    // Allow submission if either user query OR reference image is provided
+                    const hasQuery = regenerateUserQuery.trim().length > 0;
+                    const hasReferenceImage = !!regenerateReferenceFile;
+                    if (!hasQuery && !hasReferenceImage) return true;
                     // For non-VEO3 models, require at least one frame selected
                     // VEO3 uses background, ANCHOR and others use opening/closing frames
                     if (regeneratingSceneNumber) {

@@ -41,11 +41,17 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
         audioSrc = toAbsoluteUrl(overlay.src, resolvedBaseUrl);
     }
     // Preload audio before rendering to ensure smooth playback
-    // CRITICAL: Preload ALL audio files fully for smooth playback
+    // CRITICAL: For Scene 1 audio (startsAtFrameZero), we MUST NOT block rendering
+    // If we use delayRender, it blocks Html5Audio from rendering, which prevents audio from playing
     const startsAtFrameZero = (overlay.from || 0) === 0;
     useEffect(() => {
         let isMounted = true;
-        const handle = delayRender("Loading audio");
+        
+        // CRITICAL FIX: For Scene 1 audio (frame 0), don't block rendering with delayRender
+        // Html5Audio needs to render immediately to start playing
+        // Only use delayRender for non-Scene-1 audio as a performance optimization
+        const handle = startsAtFrameZero ? null : delayRender("Loading audio");
+        
         const audio = document.createElement("audio");
         audio.preload = "auto"; // CRITICAL: Preload entire audio file for ALL scenes
         audio.crossOrigin = "anonymous";
@@ -58,7 +64,8 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
             audioSrc: audioSrc,
             from: overlay.from,
             startsAtFrameZero: startsAtFrameZero,
-            durationInFrames: overlay.durationInFrames
+            durationInFrames: overlay.durationInFrames,
+            blockingRender: !startsAtFrameZero
         });
         
         let metadataLoaded = false;
@@ -74,7 +81,10 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
             if (isMounted) {
                 console.log(`[SoundLayerContent] ✅ Audio fully loaded and ready to play:`, audioSrc);
                 setIsAudioReady(true);
-                continueRender(handle);
+                // Only call continueRender if we used delayRender (non-Scene-1 audio)
+                if (handle) {
+                    continueRender(handle);
+                }
             }
         };
         
@@ -86,9 +96,12 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
                         audioReady = true;
                         console.log(`[SoundLayerContent] ✅ Audio loaded (fallback):`, audioSrc);
                         setIsAudioReady(true);
-                        continueRender(handle);
+                        // Only call continueRender if we used delayRender (non-Scene-1 audio)
+                        if (handle) {
+                            continueRender(handle);
+                        }
                     }
-                }, 300); // Wait a bit to ensure audio is really ready
+                }, startsAtFrameZero ? 100 : 300); // Shorter delay for Scene 1
             }
         };
         
@@ -96,7 +109,10 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
             console.error(`[SoundLayerContent] Error loading audio ${overlay.src}:`, error);
             if (isMounted) {
                 setIsAudioReady(true); // Continue even on error
-                continueRender(handle);
+                // Only call continueRender if we used delayRender (non-Scene-1 audio)
+                if (handle) {
+                    continueRender(handle);
+                }
             }
         };
         
@@ -114,20 +130,25 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
             src: audioSrc,
             overlayId: overlay.id,
             startsAtFrameZero: startsAtFrameZero,
-            preload: audio.preload
+            preload: audio.preload,
+            blockingRender: !!handle
         });
         
-        // Timeout fallback - 10 seconds for all audio files
+        // Timeout fallback - much shorter for Scene 1 to avoid blocking
         const timeout = setTimeout(() => {
             if (isMounted && !audioReady) {
                 console.warn(`[SoundLayerContent] Audio loading timeout for ${overlay.src}, continuing anyway`, {
                     startsAtFrameZero,
-                    metadataLoaded
+                    metadataLoaded,
+                    blockingRender: !!handle
                 });
                 setIsAudioReady(true);
-                continueRender(handle);
+                // Only call continueRender if we used delayRender (non-Scene-1 audio)
+                if (handle) {
+                    continueRender(handle);
+                }
             }
-        }, 10000); // 10 seconds timeout for all audio files
+        }, startsAtFrameZero ? 2000 : 10000); // 2 seconds for Scene 1, 10 seconds for others
         
         return () => {
             isMounted = false;
@@ -164,17 +185,29 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // CRITICAL: Html5Audio's trimBefore expects seconds
     // startFromSound is typically 0 (start from beginning of audio file)
     // Convert frames to seconds if startFromSound appears to be in frames (value > 10)
-    const trimBeforeSeconds = (overlay.startFromSound || 0) > 10 
-        ? (overlay.startFromSound / fps)  // Likely in frames, convert to seconds
-        : (overlay.startFromSound || 0);  // Already in seconds (0 means start from beginning)
+    const startFromSoundValue = overlay.startFromSound || 0;
+    const trimBeforeSeconds = startFromSoundValue > 10 
+        ? (startFromSoundValue / fps)  // Likely in frames, convert to seconds
+        : startFromSoundValue;  // Already in seconds (0 means start from beginning)
     
-    // Log audio playback info for first scene at frame 0 to verify it's starting
+    // CRITICAL: Ensure trimBeforeSeconds is 0 for audio to start from beginning
+    // If it's somehow not 0, log a warning
+    if (trimBeforeSeconds !== 0 && startsAtFrameZero) {
+        console.warn(`[SoundLayerContent] ⚠️ WARNING: First scene audio trimBeforeSeconds is ${trimBeforeSeconds}, not 0!`, {
+            overlayId: overlay.id,
+            startFromSound: startFromSoundValue,
+            trimBeforeSeconds: trimBeforeSeconds
+        });
+    }
+    
+    // Log audio playback info for first scene at frame 0 to verify it's starting from beginning
     if (startsAtFrameZero && frame <= 2) {
-        console.log(`[SoundLayerContent] 🎵 First scene audio rendering at frame ${frame}:`, {
+        console.log(`[SoundLayerContent] 🎵 First scene audio rendering at frame ${frame} (should start from beginning):`, {
             overlayId: overlay.id,
             src: audioSrc,
             trimBeforeSeconds: trimBeforeSeconds,
-            startFromSound: overlay.startFromSound,
+            startFromSound: startFromSoundValue,
+            startsFromBeginning: trimBeforeSeconds === 0,
             volume: finalVolume,
             from: overlay.from,
             currentFrame: frame,
@@ -187,10 +220,11 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // Sequence wrapper (in layer.js) ensures this only renders when frame >= overlay.from
     // For first scene (overlay.from === 0), this renders immediately at frame 0
     // Html5Audio automatically syncs playback with Remotion's frame timeline
-    // trimBefore: offset into the audio file in seconds (0 = start from beginning)
+    // trimBefore: offset into the audio file in seconds (0 = start from beginning of audio file)
+    // CRITICAL: trimBeforeSeconds should be 0 to ensure audio plays from the start
     return (_jsx(Html5Audio, { 
         src: audioSrc, 
-        trimBefore: trimBeforeSeconds, 
+        trimBefore: trimBeforeSeconds,  // 0 = start from beginning of audio file
         volume: finalVolume
     }));
 };

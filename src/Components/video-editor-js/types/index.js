@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // Define overlay types enum
 export var OverlayType;
 (function (OverlayType) {
@@ -12,7 +14,6 @@ export var OverlayType;
     OverlayType["TEMPLATE"] = "TEMPLATE";
     OverlayType["SETTINGS"] = "settings";
 })(OverlayType || (OverlayType = {}));
-import { z } from "zod";
 // Zod schema for composition props
 export const CompositionProps = z.object({
     overlays: z.array(z.any()), // Replace with your actual Overlay type
