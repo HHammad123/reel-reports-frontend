@@ -1173,12 +1173,12 @@ const Home = () => {
           </div>
         </div>
       )}
-      <Sidebar/>
-      <div className="flex-1 mx-[2rem] mt-[1rem] overflow-x-hidden min-w-0">
+       <Sidebar/>
+      <div className={`flex-1 mx-[2rem] mt-[1rem] overflow-x-hidden min-w-0`}>
         <Topbar/>
-        <Typetabs onChangeVideoType={handleVideoTypeTabChange} />
+        {currentStep !== 5 && <Typetabs onChangeVideoType={handleVideoTypeTabChange} />}
         {/* Step-based component rendering */}
-        <div className='overflow-y-auto overflow-x-hidden h-[85vh] mt-2 scrollbar-hide'>
+        <div className={`overflow-y-auto overflow-x-hidden h-[100vh] mt-2 scrollbar-hide`}>
           {/* Debug info - remove this later */}
           {/* <div className="mb-2 text-sm text-gray-500">Current Step: {currentStep} | Chat Messages: {chatHistory.length}</div> */}
          {/* <Typetabs /> */}
@@ -1358,7 +1358,7 @@ const Home = () => {
             </div>
           )}
           {currentStep === 5 && (
-            <div className='bg-white rounded-lg'>
+            <div className='bg-white rounded-lg h-full w-full'>
               <VideosList 
                 jobId={videosJobId} 
                 onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}

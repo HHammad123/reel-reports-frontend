@@ -152,7 +152,21 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                                     src: src?.substring(0, 60)
                                 });
                             });
+                            
+                            // CRITICAL: Store reference to sync playback state
+                            if (!window.__ALL_AUDIO_ELEMENTS) {
+                                window.__ALL_AUDIO_ELEMENTS = new Set();
+                            }
+                            window.__ALL_AUDIO_ELEMENTS.add(audioElement);
+                            
+                            console.log('[EditorProvider] 💾 Stored audio element reference (total:', window.__ALL_AUDIO_ELEMENTS.size, ')');
                         }
+                        
+                        // Store ALL audio elements, not just Scene 1
+                        if (!window.__ALL_AUDIO_ELEMENTS) {
+                            window.__ALL_AUDIO_ELEMENTS = new Set();
+                        }
+                        window.__ALL_AUDIO_ELEMENTS.add(audioElement);
                     }
                 });
             });
@@ -269,69 +283,237 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
         }
     }, [isPlaying, currentFrame]);
     
-    // CRITICAL: Last resort - manually play Scene 1 audio when timeline reaches frame 0
+    // CRITICAL: Sync audio playback with timeline state
     useEffect(() => {
-        if (isPlaying && currentFrame >= 0 && currentFrame <= 3) {
-            console.log('[EditorProvider] At frame 0-3 during playback, manually checking audio...');
+        console.log('[EditorProvider] Playback state changed:', { isPlaying, currentFrame });
+        
+        // Find all audio overlays (not just Scene 1)
+        const audioOverlays = overlays.filter(o => {
+            const overlayType = String(o?.type || '').toLowerCase();
+            return overlayType === 'sound' || o.type === 'sound';
+        });
+        
+        if (audioOverlays.length === 0) {
+            return;
+        }
+        
+        // Process all audio overlays
+        audioOverlays.forEach((overlay) => {
+            const audioStartFrame = overlay.from || 0;
+            const audioEndFrame = audioStartFrame + (overlay.durationInFrames || 0);
+            const isWithinAudioRange = currentFrame >= audioStartFrame && currentFrame < audioEndFrame;
             
-            // Find Scene 1 audio overlays
-            const scene1AudioOverlays = overlays.filter(o => {
-                const overlayType = String(o?.type || '').toLowerCase();
-                return (overlayType === 'sound' || o.type === 'sound') && (o.from || 0) === 0;
-            });
+            // Find all audio elements for this overlay
+            const audioElements = document.querySelectorAll(`audio[src="${overlay.src}"]`);
             
-            if (scene1AudioOverlays.length === 0) {
-                console.warn('[EditorProvider] ⚠️ No Scene 1 audio overlays found');
-                return;
-            }
-            
-            console.log('[EditorProvider] Found Scene 1 audio overlays:', scene1AudioOverlays.length);
-            
-            // Try to find and play the audio elements
-            scene1AudioOverlays.forEach((overlay) => {
-                const audioElements = document.querySelectorAll(`audio[src="${overlay.src}"]`);
-                
-                console.log(`[EditorProvider] Found ${audioElements.length} audio element(s) for overlay ${overlay.id}`);
-                
-                if (audioElements.length === 0) {
-                    console.error('[EditorProvider] ❌ No audio element found in DOM for:', {
-                        overlayId: overlay.id,
-                        src: overlay.src?.substring(0, 60)
-                    });
+            audioElements.forEach((audio) => {
+                // CRITICAL: If timeline is paused, ALWAYS pause audio (no exceptions)
+                if (!isPlaying) {
+                    if (!audio.paused) {
+                        console.log('[EditorProvider] ⏸️⏸️⏸️ FORCING PAUSE - timeline is paused:', {
+                            overlayId: overlay.id,
+                            src: audio.src?.substring(0, 60)
+                        });
+                        audio.pause();
+                    }
+                    return; // Don't do anything else if paused
                 }
                 
-                audioElements.forEach((audio, index) => {
-                    console.log(`[EditorProvider] Audio element ${index + 1} state:`, {
-                        paused: audio.paused,
-                        currentTime: audio.currentTime,
-                        volume: audio.volume,
-                        muted: audio.muted,
-                        readyState: audio.readyState,
-                        src: audio.src?.substring(0, 60)
-                    });
-                    
-                    // If audio is paused but should be playing
+                // Only proceed if timeline is playing
+                if (isPlaying && isWithinAudioRange) {
+                    // Timeline is playing and we're within this audio's time range
                     if (audio.paused && audio.readyState >= 2) {
-                        console.log('[EditorProvider] 🔊 MANUALLY PLAYING Scene 1 audio...');
+                        console.log('[EditorProvider] 🔊 Starting audio playback...', {
+                            overlayId: overlay.id,
+                            currentFrame,
+                            audioStartFrame,
+                            audioEndFrame
+                        });
                         
-                        // Ensure volume and unmute
                         audio.volume = overlay.styles?.volume || 1;
                         audio.muted = false;
-                        audio.currentTime = 0;
                         
-                        // Try to play
+                        // Calculate the correct currentTime based on frame position
+                        const framesIntoAudio = currentFrame - audioStartFrame;
+                        const secondsIntoAudio = framesIntoAudio / fps;
+                        audio.currentTime = Math.max(0, secondsIntoAudio);
+                        
                         audio.play()
                             .then(() => {
-                                console.log('[EditorProvider] ✅✅✅ Scene 1 audio PLAYING SUCCESSFULLY!');
+                                console.log('[EditorProvider] ✅ Audio playing', {
+                                    overlayId: overlay.id,
+                                    currentTime: audio.currentTime
+                                });
                             })
                             .catch((error) => {
-                                console.error('[EditorProvider] ❌ Failed to play Scene 1 audio:', error);
+                                console.error('[EditorProvider] ❌ Failed to play audio:', error);
                             });
+                    } else if (!audio.paused) {
+                        // Audio is already playing, but sync the currentTime in case we seeked
+                        const framesIntoAudio = currentFrame - audioStartFrame;
+                        const secondsIntoAudio = framesIntoAudio / fps;
+                        const targetTime = Math.max(0, secondsIntoAudio);
+                        
+                        // Only update if there's a significant difference to avoid constant updates
+                        if (Math.abs(audio.currentTime - targetTime) > 0.1) {
+                            audio.currentTime = targetTime;
+                        }
+                    }
+                }
+            });
+        });
+    }, [isPlaying, currentFrame, overlays, fps]);
+    
+    // CRITICAL: Pause ALL audio elements when timeline is paused - IMMEDIATE and AGGRESSIVE
+    useEffect(() => {
+        if (!isPlaying) {
+            console.log('[EditorProvider] ⏸️⏸️⏸️ Timeline PAUSED - IMMEDIATELY stopping all audio elements ⏸️⏸️⏸️');
+            
+            // IMMEDIATE: Pause all audio synchronously first
+            const pauseAllAudioImmediate = () => {
+                const allAudioElements = document.querySelectorAll('audio');
+                console.log(`[EditorProvider] Found ${allAudioElements.length} audio elements to pause`);
+                
+                let pausedCount = 0;
+                allAudioElements.forEach((audio, index) => {
+                    if (!audio.paused) {
+                        console.log(`[EditorProvider] ⏸️ IMMEDIATELY pausing audio ${index + 1}:`, {
+                            src: audio.src?.substring(0, 60),
+                            currentTime: audio.currentTime,
+                            paused: audio.paused
+                        });
+                        audio.pause();
+                        pausedCount++;
                     }
                 });
+                
+                console.log(`[EditorProvider] ✅ Paused ${pausedCount} audio element(s)`);
+            };
+            
+            // Execute immediately
+            pauseAllAudioImmediate();
+            
+            // Also use requestAnimationFrame to catch any audio that might start after
+            requestAnimationFrame(() => {
+                pauseAllAudioImmediate();
             });
+            
+            // And use setTimeout as a final catch
+            setTimeout(() => {
+                pauseAllAudioImmediate();
+            }, 0);
+            
+            // Set up an interval to continuously check and pause for a short period
+            const checkInterval = setInterval(() => {
+                const allAudioElements = document.querySelectorAll('audio');
+                let foundPlaying = false;
+                
+                allAudioElements.forEach((audio) => {
+                    if (!audio.paused) {
+                        foundPlaying = true;
+                        console.log('[EditorProvider] ⚠️ Found audio still playing, forcing pause:', {
+                            src: audio.src?.substring(0, 60)
+                        });
+                        audio.pause();
+                    }
+                });
+                
+                if (!foundPlaying) {
+                    clearInterval(checkInterval);
+                    console.log('[EditorProvider] ✅ All audio confirmed paused');
+                }
+            }, 50); // Check every 50ms
+            
+            // Clear interval after 1 second (should be enough)
+            setTimeout(() => {
+                clearInterval(checkInterval);
+            }, 1000);
+            
+        } else {
+            // Timeline is playing - ensure audio that should be playing actually plays
+            console.log('[EditorProvider] Timeline PLAYING - ensuring audio resumes');
+            
+            // Give Remotion a moment to handle playback, then check if we need to step in
+            setTimeout(() => {
+                const audioOverlays = overlays.filter(o => {
+                    const overlayType = String(o?.type || '').toLowerCase();
+                    return overlayType === 'sound' || o.type === 'sound';
+                });
+                
+                audioOverlays.forEach((overlay) => {
+                    const audioStartFrame = overlay.from || 0;
+                    const audioEndFrame = audioStartFrame + (overlay.durationInFrames || 0);
+                    const isWithinAudioRange = currentFrame >= audioStartFrame && currentFrame < audioEndFrame;
+                    
+                    if (isWithinAudioRange) {
+                        const audioElements = document.querySelectorAll(`audio[src="${overlay.src}"]`);
+                        
+                        audioElements.forEach((audio) => {
+                            if (audio.paused && audio.readyState >= 2) {
+                                console.log('[EditorProvider] 🔊 Resuming audio after play...', {
+                                    overlayId: overlay.id,
+                                    currentFrame
+                                });
+                                
+                                audio.volume = overlay.styles?.volume || 1;
+                                audio.muted = false;
+                                
+                                const framesIntoAudio = currentFrame - audioStartFrame;
+                                const secondsIntoAudio = framesIntoAudio / fps;
+                                audio.currentTime = Math.max(0, secondsIntoAudio);
+                                
+                                audio.play()
+                                    .then(() => {
+                                        console.log('[EditorProvider] ✅ Audio resumed successfully');
+                                    })
+                                    .catch((error) => {
+                                        console.error('[EditorProvider] ❌ Failed to resume audio:', error);
+                                    });
+                            }
+                        });
+                    }
+                });
+            }, 100); // Small delay to let Remotion handle it first
         }
-    }, [isPlaying, currentFrame, overlays]);
+    }, [isPlaying, currentFrame, overlays, fps]);
+    
+    // Pause all audio when window loses focus
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                console.log('[EditorProvider] Window hidden - pausing all audio');
+                
+                const allAudioElements = document.querySelectorAll('audio');
+                allAudioElements.forEach((audio) => {
+                    if (!audio.paused) {
+                        audio.pause();
+                        // Mark that we paused it
+                        audio.setAttribute('data-paused-by-visibility', 'true');
+                    }
+                });
+            }
+        };
+        
+        const handleBlur = () => {
+            console.log('[EditorProvider] Window blur - pausing all audio');
+            
+            const allAudioElements = document.querySelectorAll('audio');
+            allAudioElements.forEach((audio) => {
+                if (!audio.paused) {
+                    audio.pause();
+                }
+            });
+        };
+        
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('blur', handleBlur);
+        
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('blur', handleBlur);
+        };
+    }, []);
+    
     const [playbackRate, setPlaybackRate] = useState(1);
     const [showAlignmentGuides, setShowAlignmentGuides] = useState(true);
     const [backgroundColor, setBackgroundColor] = useState(defaultBackgroundColor || "black");
@@ -521,6 +703,28 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
             },
         }));
     }, [changeOverlay]);
+    
+    // Cleanup: Stop all audio on unmount
+    useEffect(() => {
+        return () => {
+            console.log('[EditorProvider] Component unmounting - stopping all audio');
+            
+            const allAudioElements = document.querySelectorAll('audio');
+            allAudioElements.forEach((audio) => {
+                audio.pause();
+                audio.currentTime = 0;
+            });
+            
+            // Clear stored references
+            if (window.__ALL_AUDIO_ELEMENTS) {
+                window.__ALL_AUDIO_ELEMENTS.clear();
+            }
+            if (window.__SCENE_1_AUDIO_ELEMENTS) {
+                window.__SCENE_1_AUDIO_ELEMENTS.clear();
+            }
+        };
+    }, []);
+    
     // Context value
     const contextValue = {
         // Overlay Management

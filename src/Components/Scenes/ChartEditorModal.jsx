@@ -234,93 +234,54 @@ const extractChartData = (chartData, chartType) => {
   return null
 }
 
-const createPieChart = (data, presetData, chartData, sections) => {
+const createPieChart = (data, presetData, chartData, chartType, sections) => {
+  console.log('🥧 createPieChart called with chartType:', chartType, 'Type:', typeof chartType)
+  
   const labels = data.categories ?? []
   const values = data.values ?? []
   const effectiveSections = sections ?? presetData?.preset_definitions?.[0]?.sections ?? {}
-  const series = chartData?.series || {}
   
-  // Get colors with opacity baked in
-  const colors = labels.map((label, idx) => {
-    const baseColor = getConfig(effectiveSections, 'colors', 'color', label) || '#1470D2'
-    
-    // Get opacity for this slice
-    const sliceOpacity = getConfig(effectiveSections, 'slices', 'opacity', label)
-    const opacity = sliceOpacity !== null ? sliceOpacity : (getConfig(effectiveSections, 'slices', 'opacity', 'global') ?? 1)
-    
-    // Convert hex to rgba
-    if (baseColor.startsWith('#')) {
-      const r = parseInt(baseColor.slice(1, 3), 16)
-      const g = parseInt(baseColor.slice(3, 5), 16)
-      const b = parseInt(baseColor.slice(5, 7), 16)
-      return `rgba(${r}, ${g}, ${b}, ${opacity})`
-    } else if (baseColor.startsWith('rgba')) {
-      // Replace existing alpha with our opacity
-      return baseColor.replace(/[\d.]+\)$/, `${opacity})`)
-    } else if (baseColor.startsWith('rgb')) {
-      // Convert rgb to rgba
-      return baseColor.replace('rgb', 'rgba').replace(')', `, ${opacity})`)
-    }
-    
-    return baseColor
+  // ✅ CRITICAL: Check if labels should be shown - must check explicitly for false
+  const showLabelsConfig = getConfig(effectiveSections, 'segment_values', 'show', 'global')
+  const showLabels = showLabelsConfig !== false
+  
+  // ✅ Determine if this should be a donut (check multiple possible values)
+  const isDonut = chartType === 'donut' || 
+                  chartType === 'pie_donut' || 
+                  chartType?.includes('donut')
+  
+  console.log('🥧 Pie/Donut chart config:', {
+    chartType,
+    isDonut,
+    showLabelsConfig,
+    showLabels,
+    segment_values_section: effectiveSections?.segment_values
   })
-  
-  // Get border properties per slice - Plotly DOES support arrays for line properties
-  const borderWidths = labels.map(label => {
-    const sliceWidth = getConfig(effectiveSections, 'slices', 'border_width', label)
-    if (sliceWidth !== null) return sliceWidth
-    const globalWidth = getConfig(effectiveSections, 'slices', 'border_width', 'global')
-    return globalWidth !== null ? globalWidth : 2
-  })
-  
-  const borderColors = labels.map(label => {
-    const sliceColor = getConfig(effectiveSections, 'slices', 'border_color', label)
-    if (sliceColor !== null) return sliceColor
-    const globalColor = getConfig(effectiveSections, 'slices', 'border_color', 'global')
-    return globalColor !== null ? globalColor : '#FFFFFF'
-  })
-  
-  // Get label configuration - NOTE: Plotly only supports GLOBAL textposition for pie charts
-  const showLabelsGlobal = getConfig(effectiveSections, 'segment_values', 'show', 'global')
-  
-  // Build text info based on label visibility
-  let textInfo = 'label'
-  
-  // Check if we should show values (globally)
-  const shouldShowValues = showLabelsGlobal !== false
-  
-  if (shouldShowValues) {
-    textInfo = 'label+percent'
-  }
-  
-  // Get label formatting - global only for pie/donut
-  const labelFormat = getConfig(effectiveSections, 'segment_values', 'format', 'global') || '.0f'
-  const labelPrefix = getConfig(effectiveSections, 'segment_values', 'prefix', 'global') || ''
-  const labelSuffix = getConfig(effectiveSections, 'segment_values', 'suffix', 'global') || ''
-  
-  // Get label position - GLOBAL ONLY (Plotly limitation)
-  const labelPosition = getConfig(effectiveSections, 'segment_values', 'position', 'global') || 'inside'
 
   return [
     {
       type: 'pie',
-      labels,
-      values,
-      marker: {
-        colors: colors, // Now includes opacity via rgba
-        line: {
-          color: borderColors,
-          width: borderWidths
-        }
-      },
-      hole: (chartData?.chart_type || '').toLowerCase() === 'donut' ? 0.4 : 0,
-      textinfo: textInfo,
-      textposition: labelPosition, // Global only - Plotly doesn't support per-segment
+      labels: labels,
+      values: values,
+      // ✅ Set hole based on isDonut check
+      hole: isDonut ? 0.4 : 0,
+      // ✅ When showLabels is false, completely hide text
+      textinfo: showLabels ? 'label+percent' : 'none',
+      textposition: getConfig(effectiveSections, 'segment_values', 'position', 'global') || 'inside',
       textfont: {
         size: getConfig(effectiveSections, 'segment_values', 'font_size', 'global') || 16,
         color: getConfig(effectiveSections, 'segment_values', 'font_color', 'global') || '#FFFFFF',
         family: resolveBrandFont(getConfig(effectiveSections, 'segment_values', 'font_family', 'global'))
       },
+      marker: {
+        colors: labels.map(label => getConfig(effectiveSections, 'colors', 'color', label)),
+        line: {
+          color: labels.map(label => getConfig(effectiveSections, 'slices', 'border_color', label) || '#FFFFFF'),
+          width: labels.map(label => getConfig(effectiveSections, 'slices', 'border_width', label) || 0)
+        }
+      },
+      opacity: labels.map(label => getConfig(effectiveSections, 'slices', 'opacity', label) ?? 1),
+      hoverinfo: 'label+percent+value',
       pull: labels.map(label => getConfig(effectiveSections, 'slices', 'explode', label) || 0)
     }
   ]
@@ -346,20 +307,26 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
   }
 
   const traces = Object.entries(dataset).map(([seriesName, yValues]) => {
-    const color = getConfig(effectiveSections, 'colors', 'color', seriesName) || '#1470D2'
+    const color = getConfig(effectiveSections, 'colors', 'color', seriesName)
     
     // Ensure yValues is an array and has the same length as categories
     const safeYValues = Array.isArray(yValues) ? yValues : []
-    // Pad or trim yValues to match categories length
     const paddedYValues = categories.map((_, idx) => safeYValues[idx] ?? 0)
     
-    // Bar properties
-    const barOpacity = getValue('bars', 'opacity', seriesName, 1)
-    const cornerRadius = getValue('bars', 'corner_radius', seriesName, 0)
-    const borderWidth = getValue('bars', 'border_width', seriesName, 0)
-    const borderColor = getValue('bars', 'border_color', seriesName, '#FFFFFF')
+    // ✅ Bar properties - READ FROM PRESET (no defaults)
+    const barOpacity = getValue('bars', 'opacity', seriesName, undefined)
+    const cornerRadius = getValue('bars', 'corner_radius', seriesName, undefined)
+    const borderWidth = getValue('bars', 'border_width', seriesName, undefined)
+    const borderColor = getValue('bars', 'border_color', seriesName, undefined)
+    console.log('🎨 Bar styling for series:', seriesName, {
+  barOpacity,
+  cornerRadius,
+  borderWidth,
+  borderColor,
+  sectionsStateBars: effectiveSections?.bars
+})
     
-    // Label properties
+    // ✅ Label properties
     const showLabels = getValue('segment_values', 'show', seriesName, true)
     const labelPosition = getValue('segment_values', 'position', seriesName, 'inside')
     const labelFormat = getValue('segment_values', 'format', seriesName, '.0f')
@@ -368,8 +335,43 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
     const labelFontSize = getValue('segment_values', 'font_size', seriesName, 16)
     const labelFontColor = getValue('segment_values', 'font_color', seriesName, '#FFFFFF')
     const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Arial'))
+    const labelFontWeight = getValue('segment_values', 'font_weight', seriesName, 'bold')
     
     const textValues = showLabels ? paddedYValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
+    
+    // ✅ Build marker with opacity baked into color
+    const marker = {}
+    
+    // Convert color to rgba with opacity
+    if (color) {
+      const finalOpacity = barOpacity !== null && barOpacity !== undefined ? barOpacity : 1
+      
+      // Convert hex to rgba
+      if (color.startsWith('#')) {
+        const r = parseInt(color.slice(1, 3), 16)
+        const g = parseInt(color.slice(3, 5), 16)
+        const b = parseInt(color.slice(5, 7), 16)
+        marker.color = `rgba(${r}, ${g}, ${b}, ${finalOpacity})`
+      } else if (color.startsWith('rgba')) {
+        marker.color = color.replace(/[\d.]+\)$/, `${finalOpacity})`)
+      } else if (color.startsWith('rgb')) {
+        marker.color = color.replace('rgb', 'rgba').replace(')', `, ${finalOpacity})`)
+      } else {
+        marker.color = color
+        marker.opacity = finalOpacity
+      }
+    }
+    
+    if (cornerRadius !== null && cornerRadius !== undefined) {
+      marker.cornerradius = cornerRadius
+    }
+    
+    if (borderWidth !== null && borderWidth !== undefined && borderWidth > 0) {
+      marker.line = {
+        width: borderWidth,
+        color: borderColor || '#FFFFFF'
+      }
+    }
     
     return {
       type: 'bar',
@@ -381,27 +383,20 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
       textfont: {
         size: labelFontSize,
         color: labelFontColor,
-        family: labelFontFamily
+        family: labelFontFamily,
+        weight: labelFontWeight
       },
       constraintext: 'none',
       insidetextanchor: 'middle',
-      marker: {
-        color: color,
-        opacity: barOpacity,
-        line: {
-          width: borderWidth,
-          color: borderColor
-        },
-        cornerradius: cornerRadius
-      },
+      marker: marker,
       orientation: isHorizontal ? 'h' : 'v'
     }
   })
 
   const layout = {
     barmode: isStacked ? 'stack' : 'group',
-    bargap: getConfig(effectiveSections, 'spacing', 'bargap') || 0.15,
-    bargroupgap: getConfig(effectiveSections, 'spacing', 'bargroupgap') || 0
+    bargap: getConfig(effectiveSections, 'spacing', 'bargap') ?? 0.15,
+    bargroupgap: getConfig(effectiveSections, 'spacing', 'bargroupgap') ?? 0
   }
   return { traces, layout }
 }
@@ -657,12 +652,15 @@ const applyTitle = (fig, sections) => {
   const titleText = getConfig(sections, 'title', 'text')
   if (titleText !== null) {
     const xAlign = getConfig(sections, 'title', 'x_align') || 'left'
+    const fontWeight = getConfig(sections, 'title', 'font_weight') || 'bold'  // ✅ ADD THIS
+    
     fig.layout.title = {
       text: titleText || '',
       font: {
         family: resolveBrandFont(getConfig(sections, 'title', 'font_family')),
         size: getConfig(sections, 'title', 'font_size') || 40,
-        color: getConfig(sections, 'title', 'font_color') || '#000000'
+        color: getConfig(sections, 'title', 'font_color') || '#000000',
+        weight: fontWeight  // ✅ ADD THIS - Map to Plotly's font.weight
       },
       x: xAlign === 'center' ? 0.5 : (xAlign === 'right' ? 1 : 0),
       xanchor: xAlign || 'left'
@@ -701,7 +699,11 @@ const applyLegend = (fig, sections) => {
 
 const applyPresetFormatting = (fig, sections, chartType, chartData) => {
   if (!sections) return
-
+  console.log('📝 applyPresetFormatting called with sections.y_axis.line:', 
+    sections?.y_axis?.line,
+    'Line visible value:', 
+    getAxisConfig(sections, 'y_axis', 'line', 'visible')
+  )
   applyDimensions(fig, sections)
   applyMargins(fig, sections)
   applyBackground(fig, sections)
@@ -712,67 +714,227 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
   
   // Only add axis configs if not pie/donut
   if (!isPieDonut) {
-    const xShowGrid = getAxisConfig(sections, 'x_axis', 'grid', 'show')
-    const yShowGrid = getAxisConfig(sections, 'y_axis', 'grid', 'show')
-    const xTickSize = getAxisConfig(sections, 'x_axis', 'ticks', 'font_size')
-    const yTickSize = getAxisConfig(sections, 'y_axis', 'ticks', 'font_size')
-    const xShowLine = getAxisConfig(sections, 'x_axis', 'line', 'visible')
-    const yShowLine = getAxisConfig(sections, 'y_axis', 'line', 'visible')
-    const yShowZeroline = getAxisConfig(sections, 'y_axis', 'zeroline', 'show')
-    
-    fig.layout.xaxis = {
-      showgrid: xShowGrid !== null && xShowGrid !== undefined ? xShowGrid : false,
-      gridcolor: getAxisConfig(sections, 'x_axis', 'grid', 'color') || '#E5E7EB',
-      gridwidth: getAxisConfig(sections, 'x_axis', 'grid', 'width') || 1,
-      showline: xShowLine !== null && xShowLine !== undefined ? xShowLine : false,
-      linecolor: getAxisConfig(sections, 'x_axis', 'line', 'color') || '#000000',
-      linewidth: getAxisConfig(sections, 'x_axis', 'line', 'width') || 1,
-      showticklabels: xTickSize !== 0,
-      tickfont: {
-        family: resolveBrandFont(getAxisConfig(sections, 'x_axis', 'ticks', 'font_family')),
-        size: xTickSize || 12,
-        color: getAxisConfig(sections, 'x_axis', 'ticks', 'font_color') || '#000000'
-      },
-      tickangle: getAxisConfig(sections, 'x_axis', 'ticks', 'angle') || 0,
-      tickformat: getAxisConfig(sections, 'x_axis', 'ticks', 'format') || '',
-      tickprefix: getAxisConfig(sections, 'x_axis', 'ticks', 'prefix') || '',
-      ticksuffix: getAxisConfig(sections, 'x_axis', 'ticks', 'suffix') || '',
-      title: {
-        text: getAxisConfig(sections, 'x_axis', 'title', 'text') || '',
-        font: {
-          family: resolveBrandFont(getAxisConfig(sections, 'x_axis', 'title', 'font_family')),
-          size: getAxisConfig(sections, 'x_axis', 'title', 'font_size') || 14,
-          color: getAxisConfig(sections, 'x_axis', 'title', 'font_color') || '#000000'
+    // ✅ X-AXIS - Exactly like Python (lines 777-796)
+    const xAxisSection = sections.x_axis
+    if (xAxisSection && typeof xAxisSection === 'object') {
+      const xAxisDict = {}
+      
+      // Grid
+      const xGridShow = getAxisConfig(sections, 'x_axis', 'grid', 'show')
+      if (xGridShow !== null && xGridShow !== undefined) {
+        xAxisDict.showgrid = xGridShow
+        if (xGridShow) {
+          const gridColor = getAxisConfig(sections, 'x_axis', 'grid', 'color')
+          const gridWidth = getAxisConfig(sections, 'x_axis', 'grid', 'width')
+          if (gridColor) xAxisDict.gridcolor = gridColor
+          if (gridWidth !== null && gridWidth !== undefined) xAxisDict.gridwidth = gridWidth
+        }
+      }
+      
+      // Line
+      const xLineVisible = getAxisConfig(sections, 'x_axis', 'line', 'visible')
+      if (xLineVisible !== null && xLineVisible !== undefined) {
+        xAxisDict.showline = xLineVisible
+        if (xLineVisible) {
+          const lineColor = getAxisConfig(sections, 'x_axis', 'line', 'color')
+          const lineWidth = getAxisConfig(sections, 'x_axis', 'line', 'width')
+          if (lineColor) xAxisDict.linecolor = lineColor
+          if (lineWidth !== null && lineWidth !== undefined) xAxisDict.linewidth = lineWidth
+        }
+      }
+      
+      // Ticks
+      const xTickSize = getAxisConfig(sections, 'x_axis', 'ticks', 'font_size')
+      if (xTickSize !== null && xTickSize !== undefined) {
+        xAxisDict.showticklabels = xTickSize !== 0
+        
+        const tickFont = {}
+        const tickFamily = getAxisConfig(sections, 'x_axis', 'ticks', 'font_family')
+        const tickColor = getAxisConfig(sections, 'x_axis', 'ticks', 'font_color')
+        
+        if (tickFamily) tickFont.family = resolveBrandFont(tickFamily)
+        tickFont.size = xTickSize === 0 ? 1 : xTickSize
+        if (tickColor) tickFont.color = tickColor
+        
+        xAxisDict.tickfont = tickFont
+        
+        const tickAngle = getAxisConfig(sections, 'x_axis', 'ticks', 'angle')
+        if (tickAngle !== null && tickAngle !== undefined) {
+          xAxisDict.tickangle = tickAngle
+        }
+        
+        const tickFormat = getAxisConfig(sections, 'x_axis', 'ticks', 'format')
+        const tickPrefix = getAxisConfig(sections, 'x_axis', 'ticks', 'prefix')
+        const tickSuffix = getAxisConfig(sections, 'x_axis', 'ticks', 'suffix')
+        
+        if (tickFormat) xAxisDict.tickformat = tickFormat
+        if (tickPrefix) xAxisDict.tickprefix = tickPrefix
+        if (tickSuffix) xAxisDict.ticksuffix = tickSuffix
+      }
+      
+      // Title
+      const xTitleText = getAxisConfig(sections, 'x_axis', 'title', 'text')
+      if (xTitleText) {
+        const titleObj = { text: xTitleText }
+        const titleFont = {}
+        
+        const titleFamily = getAxisConfig(sections, 'x_axis', 'title', 'font_family')
+        const titleSize = getAxisConfig(sections, 'x_axis', 'title', 'font_size')
+        const titleColor = getAxisConfig(sections, 'x_axis', 'title', 'font_color')
+        
+        if (titleFamily) titleFont.family = resolveBrandFont(titleFamily)
+        if (titleSize !== null && titleSize !== undefined) titleFont.size = titleSize
+        if (titleColor) titleFont.color = titleColor
+        
+        titleObj.font = titleFont
+        xAxisDict.title = titleObj
+      }
+      
+      // ✅ CRITICAL: Merge with existing, don't replace
+      if (Object.keys(xAxisDict).length > 0) {
+        fig.layout.xaxis = {
+          ...(fig.layout.xaxis || {}),
+          ...xAxisDict
         }
       }
     }
     
-    fig.layout.yaxis = {
-      showgrid: yShowGrid !== null && yShowGrid !== undefined ? yShowGrid : true,
-      gridcolor: getAxisConfig(sections, 'y_axis', 'grid', 'color') || '#E5E7EB',
-      gridwidth: getAxisConfig(sections, 'y_axis', 'grid', 'width') || 1,
-      showline: yShowLine !== null && yShowLine !== undefined ? yShowLine : false,
-      linecolor: getAxisConfig(sections, 'y_axis', 'line', 'color') || '#000000',
-      linewidth: getAxisConfig(sections, 'y_axis', 'line', 'width') || 1,
-      zeroline: yShowZeroline !== null && yShowZeroline !== undefined ? yShowZeroline : false,
-      zerolinecolor: getAxisConfig(sections, 'y_axis', 'zeroline', 'color') || '#000000',
-      zerolinewidth: getAxisConfig(sections, 'y_axis', 'zeroline', 'width') || 1,
-      showticklabels: yTickSize !== 0,
-      tickfont: {
-        family: resolveBrandFont(getAxisConfig(sections, 'y_axis', 'ticks', 'font_family')),
-        size: yTickSize || 12,
-        color: getAxisConfig(sections, 'y_axis', 'ticks', 'font_color') || '#000000'
-      },
-      tickformat: getAxisConfig(sections, 'y_axis', 'ticks', 'format') || '',
-      tickprefix: getAxisConfig(sections, 'y_axis', 'ticks', 'prefix') || '',
-      ticksuffix: getAxisConfig(sections, 'y_axis', 'ticks', 'suffix') || '',
-      title: {
-        text: getAxisConfig(sections, 'y_axis', 'title', 'text') || '',
-        font: {
-          family: resolveBrandFont(getAxisConfig(sections, 'y_axis', 'title', 'font_family')),
-          size: getAxisConfig(sections, 'y_axis', 'title', 'font_size') || 14,
-          color: getAxisConfig(sections, 'y_axis', 'title', 'font_color') || '#000000'
+    // ✅ Y-AXIS - Exactly like Python (lines 798-821)
+    const yAxisSection = sections.y_axis
+    if (yAxisSection && typeof yAxisSection === 'object') {
+      const yAxisDict = {}
+      
+      // Grid
+      const yGridShow = getAxisConfig(sections, 'y_axis', 'grid', 'show')
+      if (yGridShow !== null && yGridShow !== undefined) {
+        yAxisDict.showgrid = yGridShow
+        if (yGridShow) {
+          const gridColor = getAxisConfig(sections, 'y_axis', 'grid', 'color')
+          const gridWidth = getAxisConfig(sections, 'y_axis', 'grid', 'width')
+          if (gridColor) yAxisDict.gridcolor = gridColor
+          if (gridWidth !== null && gridWidth !== undefined) yAxisDict.gridwidth = gridWidth
         }
+      }
+      
+      // Line
+const yLineVisible = getAxisConfig(sections, 'y_axis', 'line', 'visible')
+console.log('🔍 In applyPresetFormatting - yLineVisible:', yLineVisible)
+
+if (yLineVisible !== null && yLineVisible !== undefined) {
+  yAxisDict.showline = yLineVisible
+  console.log('✅ Setting yAxisDict.showline to:', yLineVisible)
+  if (yLineVisible) {
+    const lineColor = getAxisConfig(sections, 'y_axis', 'line', 'color')
+    const lineWidth = getAxisConfig(sections, 'y_axis', 'line', 'width')
+    if (lineColor) yAxisDict.linecolor = lineColor
+    if (lineWidth !== null && lineWidth !== undefined) yAxisDict.linewidth = lineWidth
+  }
+}
+      
+      // Zeroline
+      const yZerolineShow = getAxisConfig(sections, 'y_axis', 'zeroline', 'show')
+      if (yZerolineShow !== null && yZerolineShow !== undefined) {
+        yAxisDict.zeroline = yZerolineShow
+        if (yZerolineShow) {
+          const zerolineColor = getAxisConfig(sections, 'y_axis', 'zeroline', 'color')
+          const zerolineWidth = getAxisConfig(sections, 'y_axis', 'zeroline', 'width')
+          if (zerolineColor) yAxisDict.zerolinecolor = zerolineColor
+          if (zerolineWidth !== null && zerolineWidth !== undefined) yAxisDict.zerolinewidth = zerolineWidth
+        }
+      }
+      
+      // Ticks
+      const yTickSize = getAxisConfig(sections, 'y_axis', 'ticks', 'font_size')
+      if (yTickSize !== null && yTickSize !== undefined) {
+        yAxisDict.showticklabels = yTickSize !== 0
+        
+        const tickFont = {}
+        const tickFamily = getAxisConfig(sections, 'y_axis', 'ticks', 'font_family')
+        const tickColor = getAxisConfig(sections, 'y_axis', 'ticks', 'font_color')
+        
+        if (tickFamily) tickFont.family = resolveBrandFont(tickFamily)
+        tickFont.size = yTickSize === 0 ? 1 : yTickSize
+        if (tickColor) tickFont.color = tickColor
+        
+        yAxisDict.tickfont = tickFont
+        
+        const tickFormat = getAxisConfig(sections, 'y_axis', 'ticks', 'format')
+        const tickPrefix = getAxisConfig(sections, 'y_axis', 'ticks', 'prefix')
+        const tickSuffix = getAxisConfig(sections, 'y_axis', 'ticks', 'suffix')
+        
+        if (tickFormat) yAxisDict.tickformat = tickFormat
+        if (tickPrefix) yAxisDict.tickprefix = tickPrefix
+        if (tickSuffix) yAxisDict.ticksuffix = tickSuffix
+      }
+      
+      // Title
+      const yTitleText = getAxisConfig(sections, 'y_axis', 'title', 'text')
+      if (yTitleText) {
+        const titleObj = { text: yTitleText }
+        const titleFont = {}
+        
+        const titleFamily = getAxisConfig(sections, 'y_axis', 'title', 'font_family')
+        const titleSize = getAxisConfig(sections, 'y_axis', 'title', 'font_size')
+        const titleColor = getAxisConfig(sections, 'y_axis', 'title', 'font_color')
+        
+        if (titleFamily) titleFont.family = resolveBrandFont(titleFamily)
+        if (titleSize !== null && titleSize !== undefined) titleFont.size = titleSize
+        if (titleColor) titleFont.color = titleColor
+        
+        titleObj.font = titleFont
+        yAxisDict.title = titleObj
+      }
+      
+      // ✅ CRITICAL: Merge with existing, don't replace
+      if (Object.keys(yAxisDict).length > 0) {
+        fig.layout.yaxis = {
+          ...(fig.layout.yaxis || {}),
+          ...yAxisDict
+        }
+      }
+    }
+    
+    // ✅✅✅ NUCLEAR OPTION: Force override Plotly defaults if NOT in preset
+    // This is what Python does - if no config, Plotly shows defaults
+    // We need to EXPLICITLY hide things not in preset
+    
+    // If x_axis section doesn't exist or line.visible not set, force hide
+    if (!xAxisSection || getAxisConfig(sections, 'x_axis', 'line', 'visible') === null) {
+      fig.layout.xaxis = {
+        ...(fig.layout.xaxis || {}),
+        showline: false,
+        linewidth: 0
+      }
+    }
+    
+    // Same for grid
+    if (!xAxisSection || getAxisConfig(sections, 'x_axis', 'grid', 'show') === null) {
+      fig.layout.xaxis = {
+        ...(fig.layout.xaxis || {}),
+        showgrid: false
+      }
+    }
+    
+    // Y-axis - only hide if NOT explicitly set
+    if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'line', 'visible') === null) {
+      fig.layout.yaxis = {
+        ...(fig.layout.yaxis || {}),
+        showline: false,
+        linewidth: 0
+      }
+    }
+    
+    if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'grid', 'show') === null) {
+      fig.layout.yaxis = {
+        ...(fig.layout.yaxis || {}),
+        showgrid: false
+      }
+    }
+    
+    if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'zeroline', 'show') === null) {
+      fig.layout.yaxis = {
+        ...(fig.layout.yaxis || {}),
+        zeroline: false
       }
     }
   }
@@ -780,9 +942,8 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
   // Annotations for subtitle and center value
   fig.layout.annotations = []
   
-  // Add subtitle
   const subtitleText = getConfig(sections, 'subtitle', 'text')
-  if (subtitleText) {
+  if (subtitleText && subtitleText.trim() !== '') {
     fig.layout.annotations.push({
       text: subtitleText,
       xref: 'paper',
@@ -800,7 +961,6 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
     })
   }
   
-  // Center value for donut
   if (chartType === 'donut') {
     const showCenterValue = getConfig(sections, 'center_value', 'show')
     if (showCenterValue) {
@@ -998,9 +1158,9 @@ const generateChart = (sceneData, sectionsOverride = null) => {
   }
 
   if (['pie', 'donut'].includes(chartType)) {
-    const pieData = createPieChart(data, presetData, { ...chartData, chart_type: chartType }, sections)
-    fig.data = pieData
-  } else if (
+  const pieData = createPieChart(data, presetData, { ...chartData, chart_type: chartType }, chartType, sections)
+  fig.data = pieData
+}else if (
     ['bar', 'column', 'stacked_bar', 'stacked_column', 'clustered_column', 'clustered_bar'].includes(
       chartType
     )
@@ -1042,9 +1202,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     showlegend: true,
     legend: { orientation: 'v', x: 1.02, y: 0.5, font: { size: 12, color: '#000000', family: 'Arial' } },
     paper_bgcolor: '#FFFFFF',
-    plot_bgcolor: '#FFFFFF',
-    xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
-    yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
+    plot_bgcolor: '#FFFFFF'
   })
   const [expandedSections, setExpandedSections] = useState({
     dimensions: false,
@@ -1076,6 +1234,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     slices: 'global',
     dataLabels: 'global'
   })
+  const [tempInputValues, setTempInputValues] = useState({})  // ← ADD THIS LINE
   const [history, setHistory] = useState([])
   const [currentHistoryIndex, setCurrentHistoryIndex] = useState(-1)
   const historyInitializedRef = useRef(false)
@@ -1162,48 +1321,82 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   const canRedo = currentHistoryIndex < history.length - 1 && history.length > 0
 
   const rebuildEditorStateFromScene = useCallback(() => {
-    if (!sceneData) {
-      console.warn('[ChartEditorModal] rebuildEditorStateFromScene called but sceneData is null/undefined')
-      return
-    }
-    // Get chart_type from sceneData - prioritize chart_type over chartType, and don't default to 'unknown'
-    const nextType = (sceneData?.chart_type || sceneData?.chartType || '').toLowerCase()
-    if (!nextType) {
-      console.warn('[ChartEditorModal] No chart_type found in sceneData. Available keys:', Object.keys(sceneData || {}))
-      return
-    }
-    const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
-    
-    // Debug logging
-    try {
-      console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
-        chart_type: nextType,
-        has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
-        chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
-        sceneData_keys: Object.keys(sceneData || {})
-      })
-    } catch(_) {}
-    const targets = computeColorTargets(nextType, parsedData)
-    // Use selected preset if available, otherwise fall back to sceneData preset
-    const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-    const presetSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-    const titleConfig = getConfigDict(presetSections.title ?? [])
-    const legendConfig = getConfigDict(presetSections.legend ?? [])
-    const bgConfig = getConfigDict(presetSections.background ?? [])
-    
-    setChartTypeState(nextType)
-    setChartDataState(parsedData)
-    setSectionsState(presetSections)
-    // Create a modified sceneData with selected preset for color extraction
-    const sceneDataWithSelectedPreset = selectedPreset 
-      ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
-      : sceneData
-    setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets, nextType))
-    setRawChartDataInput(JSON.stringify(parsedData, null, 2))
-    setRawChartError('')
-    setIsDirty(false)
-    setSaveError('')
-    setLayoutOverrides({
+  if (!sceneData) {
+    console.warn('[ChartEditorModal] rebuildEditorStateFromScene called but sceneData is null/undefined')
+    return
+  }
+  
+  const nextType = (sceneData?.chart_type || sceneData?.chartType || '').toLowerCase()
+  if (!nextType) {
+    console.warn('[ChartEditorModal] No chart_type found in sceneData. Available keys:', Object.keys(sceneData || {}))
+    return
+  }
+  const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
+  
+  try {
+    console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
+      chart_type: nextType,
+      has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
+      chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
+      sceneData_keys: Object.keys(sceneData || {})
+    })
+  } catch(_) {}
+  
+  const targets = computeColorTargets(nextType, parsedData)
+  const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+  const presetSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+  
+  const titleConfig = getConfigDict(presetSections.title ?? [])
+  const legendConfig = getConfigDict(presetSections.legend ?? [])
+  const bgConfig = getConfigDict(presetSections.background ?? [])
+  
+  setChartTypeState(nextType)
+  setChartDataState(parsedData)
+  
+  // ✅ CRITICAL FIX: Deep clone the entire preset sections into sectionsState
+  // This ensures all axis configs are available in the UI
+  setSectionsState(JSON.parse(JSON.stringify(presetSections)))
+  
+  const sceneDataWithSelectedPreset = selectedPreset 
+    ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
+    : sceneData
+  setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets, nextType))
+  setRawChartDataInput(JSON.stringify(parsedData, null, 2))
+  setRawChartError('')
+  setIsDirty(false)
+  setSaveError('')
+  setLayoutOverrides({
+    title: {
+      text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
+      font: {
+        size: titleConfig.font_size || 20,
+        color: titleConfig.font_color || '#000000',
+        family: titleConfig.font_family || 'Arial'
+      },
+      x: titleConfig.x_align === 'left' ? 0 : 0.5,
+      xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
+    },
+    showlegend: legendConfig.show !== false,
+    legend: {
+      orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
+      x: legendConfig.x ?? 1.02,
+      y: legendConfig.y ?? 0.5,
+      font: {
+        size: legendConfig.font_size || 12,
+        color: legendConfig.font_color || '#000000',
+        family: legendConfig.font_family || 'Arial'
+      }
+    },
+    paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
+    plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF'
+  })
+  
+  // Initialize history with initial state
+  const initialState = {
+    chartTypeState: nextType,
+    chartDataState: deepClone(parsedData),
+    seriesColorOverrides: extractInitialColorOverrides(sceneData, targets),
+    layoutOverrides: {
       title: {
         text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
         font: {
@@ -1229,46 +1422,14 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF',
       xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
       yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
-    })
-    // Initialize history with initial state
-    const initialState = {
-      chartTypeState: nextType,
-      chartDataState: deepClone(parsedData),
-      seriesColorOverrides: extractInitialColorOverrides(sceneData, targets),
-      layoutOverrides: {
-        title: {
-          text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
-          font: {
-            size: titleConfig.font_size || 20,
-            color: titleConfig.font_color || '#000000',
-            family: titleConfig.font_family || 'Arial'
-          },
-          x: titleConfig.x_align === 'left' ? 0 : 0.5,
-          xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
-        },
-        showlegend: legendConfig.show !== false,
-        legend: {
-          orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
-          x: legendConfig.x ?? 1.02,
-          y: legendConfig.y ?? 0.5,
-          font: {
-            size: legendConfig.font_size || 12,
-            color: legendConfig.font_color || '#000000',
-            family: legendConfig.font_family || 'Arial'
-          }
-        },
-        paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
-        plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF',
-        xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
-        yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
-      },
-      rawChartDataInput: JSON.stringify(parsedData, null, 2)
-    }
-    setHistory([initialState])
-    setCurrentHistoryIndex(0)
-    currentHistoryIndexRef.current = 0
-    historyInitializedRef.current = true
-  }, [sceneData, availablePresets, selectedPresetIndex])
+    },
+    rawChartDataInput: JSON.stringify(parsedData, null, 2)
+  }
+  setHistory([initialState])
+  setCurrentHistoryIndex(0)
+  currentHistoryIndexRef.current = 0
+  historyInitializedRef.current = true
+}, [sceneData, availablePresets, selectedPresetIndex])
 
   useEffect(() => {
     if (isOpen && sceneData) {
@@ -1377,27 +1538,289 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     () => computeColorTargets(chartTypeState, chartDataState),
     [chartTypeState, chartDataState]
   )
+  // Auto-select first series when colorTargets changes
+useEffect(() => {
+  if (colorTargets.length > 0) {
+    setSelectedSeriesForSection(prev => ({
+      ...prev,
+      bars: colorTargets[0],
+      lines: colorTargets[0],
+      markers: colorTargets[0],
+      areas: colorTargets[0],
+      dataLabels: colorTargets[0]
+    }))
+  }
+}, [colorTargets])
 
   useEffect(() => {
-    if (!sceneData) return
-    setSeriesColorOverrides((prev) => {
-      // Use selected preset if available
-      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-      const sceneDataWithSelectedPreset = selectedPreset 
-        ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
-        : sceneData
-      const baseColors = extractInitialColorOverrides(sceneDataWithSelectedPreset, colorTargets, chartTypeState)
-      const next = {}
-      colorTargets.forEach((target) => {
-        if (Object.prototype.hasOwnProperty.call(prev, target)) {
-          next[target] = prev[target]
-        } else if (baseColors[target]) {
-          next[target] = baseColors[target]
-        }
-      })
-      return next
+  if (!sceneData) return
+  try {
+    // Use selected preset if available, otherwise fall back to sceneData preset
+    const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+    const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+    const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
+    // Merge base sections with user-edited sectionsState
+    const mergedBase = JSON.parse(JSON.stringify(baseSections))
+    Object.keys(sectionsState).forEach(key => {
+      if (sectionsState[key]) {
+        mergedBase[key] = JSON.parse(JSON.stringify(sectionsState[key]))
+      }
     })
-  }, [colorTargets, sceneData, availablePresets, selectedPresetIndex])
+    const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
+    const preparedPreset = selectedPreset || sceneData?.preset
+      ? {
+          ...(selectedPreset || sceneData.preset),
+          preset_definitions: [
+            {
+              ...((selectedPreset || sceneData.preset?.preset_definitions?.[0]) ?? {}),
+              sections: mergedSections
+            }
+          ]
+        }
+      : {
+          preset_definitions: [
+            {
+              name: 'Editable',
+              sections: mergedSections
+            }
+          ]
+        }
+    const prepared = {
+      ...sceneData,
+      chart_type: chartTypeState,
+      chart_data: chartDataState,
+      preset: preparedPreset
+    }
+    const fig = generateChart(prepared, mergedSections)
+    fig.config = {
+      ...fig.config,
+      editable: true,
+      edits: {
+        annotationPosition: true,
+        annotationTail: true,
+        annotationText: true,
+        axisTitleText: true,
+        colorbarPosition: true,
+        colorbarTitleText: true,
+        legendPosition: true,
+        legendText: true,
+        shapePosition: true,
+        titleText: true
+      },
+      displaylogo: false,
+      scrollZoom: true,
+      responsive: true,
+      modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+      modeBarButtonsToAdd: [
+        'drawline',
+        'drawopenpath',
+        'drawrect',
+        'drawcircle',
+        'drawclosedpath',
+        'eraseshape',
+        'toggleSpikelines',
+        'resetScale2d'
+      ]
+    }
+    // Exclude background colors from layoutOverrides to prevent conflicts
+    const { paper_bgcolor, plot_bgcolor, ...layoutOverridesWithoutBg } = layoutOverrides || {}
+    
+    fig.layout = {
+      ...fig.layout,
+      ...layoutOverridesWithoutBg,
+      dragmode: 'zoom',
+      hovermode: 'closest',
+      newshape: {
+        line: {
+          color: '#13008B',
+          width: 2
+        }
+      },
+      editrevision: (fig.layout?.editrevision || 0) + 1
+    }
+    console.log('🔍 BEFORE NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
+
+    // ✅✅✅ NUCLEAR FIX: Force axis settings AFTER everything else
+const isPieDonut = chartTypeState === 'pie' || chartTypeState === 'donut'
+if (!isPieDonut) {
+  // Determine if this is a horizontal bar chart (axes are swapped)
+  const isHorizontalBar = chartTypeState.includes('bar') && !chartTypeState.includes('column')
+  
+  // For horizontal bars: X-axis shows values, Y-axis shows categories
+  // For columns/others: X-axis shows categories, Y-axis shows values
+  const valueAxisKey = isHorizontalBar ? 'x_axis' : 'y_axis'
+  const categoryAxisKey = isHorizontalBar ? 'y_axis' : 'x_axis'
+  
+  // Get config for VALUE axis (the one with numbers)
+  const valueLineVisible = getAxisConfig(mergedSections, valueAxisKey, 'line', 'visible')
+  const valueGridShow = getAxisConfig(mergedSections, valueAxisKey, 'grid', 'show')
+  const valueZerolineShow = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'show')
+  const valueTickSize = getAxisConfig(mergedSections, valueAxisKey, 'ticks', 'font_size')
+  
+  // Get config for CATEGORY axis (the one with labels)
+  const categoryLineVisible = getAxisConfig(mergedSections, categoryAxisKey, 'line', 'visible')
+  const categoryGridShow = getAxisConfig(mergedSections, categoryAxisKey, 'grid', 'show')
+  const categoryTickSize = getAxisConfig(mergedSections, categoryAxisKey, 'ticks', 'font_size')
+  
+  console.log('🎯 NUCLEAR FIX - Axis config:', {
+    chartType: chartTypeState,
+    isHorizontalBar,
+    valueAxisKey,
+    categoryAxisKey,
+    valueLineVisible,
+    categoryLineVisible,
+    valueTickSize,
+    categoryTickSize
+  })
+  
+  // ✅ Apply to Plotly's X-axis
+  fig.layout.xaxis = fig.layout.xaxis || {}
+  const xAxisConfig = isHorizontalBar ? mergedSections[valueAxisKey] : mergedSections[categoryAxisKey]
+  const xLineVisible = isHorizontalBar ? valueLineVisible : categoryLineVisible
+  const xGridShow = isHorizontalBar ? valueGridShow : categoryGridShow
+  const xTickSize = isHorizontalBar ? valueTickSize : categoryTickSize
+  
+  // X-axis line
+if (xLineVisible === true) {
+  console.log('✅ Setting X-axis line VISIBLE')
+  fig.layout.xaxis.showline = true
+  fig.layout.xaxis.linecolor = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'line', 'color') || '#000000'
+  fig.layout.xaxis.linewidth = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'line', 'width') || 1
+  // ✅ Show ticks based on font_size (independent of line visibility)
+  fig.layout.xaxis.showticklabels = xTickSize !== 0
+} else {
+  console.log('✅ Setting X-axis line HIDDEN')
+  fig.layout.xaxis.showline = false
+  fig.layout.xaxis.linewidth = 0
+  fig.layout.xaxis.linecolor = 'rgba(0,0,0,0)'
+  fig.layout.xaxis.mirror = false
+  // ✅ CHANGED: When line is hidden, ticks are INDEPENDENT - controlled by font_size only
+  fig.layout.xaxis.showticklabels = xTickSize !== 0 && xTickSize !== null && xTickSize !== undefined
+}
+  // X-axis grid
+  if (xGridShow === true) {
+    fig.layout.xaxis.showgrid = true
+    fig.layout.xaxis.gridcolor = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'grid', 'color') || '#E5E7EB'
+    fig.layout.xaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'grid', 'width') || 1
+  } else {
+    fig.layout.xaxis.showgrid = false
+  }
+  
+  // X-axis zeroline
+  fig.layout.xaxis.zeroline = false
+  
+  // ✅ Apply to Plotly's Y-axis
+  fig.layout.yaxis = fig.layout.yaxis || {}
+  const yAxisConfig = isHorizontalBar ? mergedSections[categoryAxisKey] : mergedSections[valueAxisKey]
+  const yLineVisible = isHorizontalBar ? categoryLineVisible : valueLineVisible
+  const yGridShow = isHorizontalBar ? categoryGridShow : valueGridShow
+  const yZerolineShow = isHorizontalBar ? null : valueZerolineShow
+  const yTickSize = isHorizontalBar ? categoryTickSize : valueTickSize
+  
+ // Y-axis line
+if (yLineVisible === true) {
+  console.log('✅ Setting Y-axis line VISIBLE')
+  fig.layout.yaxis.showline = true
+  fig.layout.yaxis.linecolor = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'line', 'color') || '#000000'
+  fig.layout.yaxis.linewidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'line', 'width') || 1
+  // ✅ Show ticks based on font_size (independent of line visibility)
+  fig.layout.yaxis.showticklabels = yTickSize !== 0
+} else {
+  console.log('✅ Setting Y-axis line HIDDEN')
+  fig.layout.yaxis.showline = false
+  fig.layout.yaxis.linewidth = 0
+  fig.layout.yaxis.linecolor = 'rgba(0,0,0,0)'
+  fig.layout.yaxis.mirror = false
+  // ✅ CHANGED: When line is hidden, ticks are INDEPENDENT - controlled by font_size only
+  fig.layout.yaxis.showticklabels = yTickSize !== 0 && yTickSize !== null && yTickSize !== undefined
+}
+  
+  // Y-axis grid
+  if (yGridShow === true) {
+    fig.layout.yaxis.showgrid = true
+    fig.layout.yaxis.gridcolor = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'color') || '#E5E7EB'
+    fig.layout.yaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'width') || 1
+  } else {
+    fig.layout.yaxis.showgrid = false
+  }
+  
+  // Y-axis zeroline (only for value axis)
+  if (yZerolineShow === true && !isHorizontalBar) {
+    fig.layout.yaxis.zeroline = true
+    fig.layout.yaxis.zerolinecolor = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'color') || '#000000'
+    fig.layout.yaxis.zerolinewidth = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'width') || 1
+  } else {
+    fig.layout.yaxis.zeroline = false
+  }
+  
+  console.log('📊 Final axis config:', {
+    xaxis: {
+      showline: fig.layout.xaxis.showline,
+      showgrid: fig.layout.xaxis.showgrid,
+      showticklabels: fig.layout.xaxis.showticklabels
+    },
+    yaxis: {
+      showline: fig.layout.yaxis.showline,
+      showgrid: fig.layout.yaxis.showgrid,
+      showticklabels: fig.layout.yaxis.showticklabels
+    }
+  })
+}
+      console.log('🔍 AFTER NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
+
+    
+    // Apply background colors AFTER layoutOverrides to ensure they take precedence
+    applyBackground(fig, mergedSections)
+    
+    // Re-apply title and subtitle from sectionsState AFTER layoutOverrides to ensure they take precedence
+    applyTitle(fig, mergedSections)
+    
+    // Re-apply subtitle annotation
+    const subtitleText = getConfig(mergedSections, 'subtitle', 'text')
+    if (subtitleText) {
+      if (!fig.layout.annotations) {
+        fig.layout.annotations = []
+      }
+      const subtitleIndex = fig.layout.annotations.findIndex(ann => 
+        ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom'
+      )
+      const subtitleAnnotation = {
+        text: subtitleText,
+        xref: 'paper',
+        yref: 'paper',
+        x: 0.5,
+        y: 1,
+        xanchor: 'center',
+        yanchor: 'bottom',
+        showarrow: false,
+        font: {
+          family: resolveBrandFont(getConfig(mergedSections, 'subtitle', 'font_family')),
+          size: getConfig(mergedSections, 'subtitle', 'font_size') || 14,
+          color: getConfig(mergedSections, 'subtitle', 'font_color') || '#666666'
+        }
+      }
+      if (subtitleIndex >= 0) {
+        fig.layout.annotations[subtitleIndex] = subtitleAnnotation
+      } else {
+        fig.layout.annotations = fig.layout.annotations.filter(ann => 
+          !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
+        )
+        fig.layout.annotations.unshift(subtitleAnnotation)
+      }
+    } else {
+      if (fig.layout.annotations) {
+        fig.layout.annotations = fig.layout.annotations.filter(ann => 
+          !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
+        )
+      }
+    }
+    setFigure(fig)
+    setError('')
+  } catch (err) {
+    setFigure(null)
+    setError(err?.message || 'Unable to render chart')
+  }
+}, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex, sectionsState])
 
   const datasetSummary = useMemo(() => {
     const extracted = extractChartData(chartDataState, chartTypeState)
@@ -1505,20 +1928,37 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   }, [markDirty, saveToHistory])
 
   const updateAxisSection = useCallback((axis, subsection, configName, value) => {
-    if (historyInitializedRef.current) saveToHistory()
-    setSectionsState((prev) => {
-      const newSections = prev ? JSON.parse(JSON.stringify(prev)) : {}
-      const axisKey = axis === 'x' ? 'x_axis' : axis === 'y' ? 'y_axis' : axis
-      
-      if (!newSections[axisKey]) newSections[axisKey] = {}
-      if (!newSections[axisKey][subsection]) newSections[axisKey][subsection] = []
-      
-      newSections[axisKey][subsection] = setConfigValue(newSections[axisKey][subsection], configName, value)
-      
-      return newSections
+  console.log('🔧 updateAxisSection called:', { axis, subsection, configName, value })
+  
+  if (historyInitializedRef.current) saveToHistory()
+  setSectionsState((prev) => {
+    const newSections = prev ? JSON.parse(JSON.stringify(prev)) : {}
+    const axisKey = axis === 'x' ? 'x_axis' : axis === 'y' ? 'y_axis' : axis
+    
+    if (!newSections[axisKey]) newSections[axisKey] = {}
+    if (!newSections[axisKey][subsection]) newSections[axisKey][subsection] = []
+    
+    newSections[axisKey][subsection] = setConfigValue(newSections[axisKey][subsection], configName, value)
+    
+    // ✅ AUTOMATIC: When line visibility is set to false, also set ticks font_size to 0
+    if (subsection === 'line' && configName === 'visible' && value === false) {
+      console.log('🔧 Line unchecked - setting ticks font_size to 0')
+      if (!newSections[axisKey]['ticks']) newSections[axisKey]['ticks'] = []
+      newSections[axisKey]['ticks'] = setConfigValue(newSections[axisKey]['ticks'], 'font_size', 0)
+    }
+    
+    console.log('✅ Updated sectionsState:', {
+      axis: axisKey,
+      subsection,
+      configName,
+      value,
+      newConfig: newSections[axisKey][subsection]
     })
-    markDirty()
-  }, [markDirty, saveToHistory])
+    
+    return newSections
+  })
+  markDirty()
+}, [markDirty, saveToHistory])
 
   const toggleSection = useCallback((section) => {
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }))
@@ -2025,150 +2465,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   }
 }, [sceneNumber, figure, sceneData, availablePresets, selectedPresetIndex, seriesColorOverrides, sectionsState, chartTypeState, chartDataState, onSave, onClose])
 
-  useEffect(() => {
-    if (!sceneData) return
-    try {
-      // Use selected preset if available, otherwise fall back to sceneData preset
-      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-      const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-      const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
-      // Merge base sections with user-edited sectionsState
-      const mergedBase = { ...baseSections }
-      Object.keys(sectionsState).forEach(key => {
-        if (sectionsState[key]) {
-          mergedBase[key] = sectionsState[key]
-        }
-      })
-      const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
-      const preparedPreset = selectedPreset || sceneData?.preset
-        ? {
-            ...(selectedPreset || sceneData.preset),
-            preset_definitions: [
-              {
-                ...((selectedPreset || sceneData.preset?.preset_definitions?.[0]) ?? {}),
-                sections: mergedSections
-              }
-            ]
-          }
-        : {
-            preset_definitions: [
-              {
-                name: 'Editable',
-                sections: mergedSections
-              }
-            ]
-          }
-      const prepared = {
-        ...sceneData,
-        chart_type: chartTypeState,
-        chart_data: chartDataState,
-        preset: preparedPreset
-      }
-      const fig = generateChart(prepared, mergedSections)
-      fig.config = {
-        ...fig.config,
-        editable: true,
-        edits: {
-          annotationPosition: true,
-          annotationTail: true,
-          annotationText: true,
-          axisTitleText: true,
-          colorbarPosition: true,
-          colorbarTitleText: true,
-          legendPosition: true,
-          legendText: true,
-          shapePosition: true,
-          titleText: true
-        },
-        displaylogo: false,
-        scrollZoom: true,
-        responsive: true,
-        modeBarButtonsToRemove: ['select2d', 'lasso2d'],
-        modeBarButtonsToAdd: [
-          'drawline',
-          'drawopenpath',
-          'drawrect',
-          'drawcircle',
-          'drawclosedpath',
-          'eraseshape',
-          'toggleSpikelines',
-          'resetScale2d'
-        ]
-      }
-      // Exclude background colors from layoutOverrides to prevent conflicts
-      const { paper_bgcolor, plot_bgcolor, ...layoutOverridesWithoutBg } = layoutOverrides || {}
-      
-      fig.layout = {
-        ...fig.layout,
-        ...layoutOverridesWithoutBg,
-        dragmode: 'zoom',
-        hovermode: 'closest',
-        newshape: {
-          line: {
-            color: '#13008B',
-            width: 2
-          }
-        },
-        editrevision: (fig.layout?.editrevision || 0) + 1
-      }
-      // Apply background colors AFTER layoutOverrides to ensure they take precedence
-      applyBackground(fig, mergedSections)
-      
-      // Re-apply title and subtitle from sectionsState AFTER layoutOverrides to ensure they take precedence
-      // This ensures that when user changes title/subtitle, it updates the chart immediately
-      applyTitle(fig, mergedSections)
-      
-      // Re-apply subtitle annotation (it's in annotations array)
-      const subtitleText = getConfig(mergedSections, 'subtitle', 'text')
-      if (subtitleText) {
-        // Find and update existing subtitle annotation, or add new one
-        if (!fig.layout.annotations) {
-          fig.layout.annotations = []
-        }
-        const subtitleIndex = fig.layout.annotations.findIndex(ann => 
-          ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom'
-        )
-        const subtitleAnnotation = {
-          text: subtitleText,
-          xref: 'paper',
-          yref: 'paper',
-          x: 0.5,
-          y: 1,
-          xanchor: 'center',
-          yanchor: 'bottom',
-          showarrow: false,
-          font: {
-            family: resolveBrandFont(getConfig(mergedSections, 'subtitle', 'font_family')),
-            size: getConfig(mergedSections, 'subtitle', 'font_size') || 14,
-            color: getConfig(mergedSections, 'subtitle', 'font_color') || '#666666'
-          }
-        }
-        if (subtitleIndex >= 0) {
-          fig.layout.annotations[subtitleIndex] = subtitleAnnotation
-        } else {
-          // Remove any existing subtitle annotations first, then add new one
-          fig.layout.annotations = fig.layout.annotations.filter(ann => 
-            !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
-          )
-          // Add subtitle at the beginning (before center value for donut)
-          fig.layout.annotations.unshift(subtitleAnnotation)
-        }
-      } else {
-        // Remove subtitle annotation if text is empty
-        if (fig.layout.annotations) {
-          fig.layout.annotations = fig.layout.annotations.filter(ann => 
-            !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
-          )
-        }
-      }
-      setFigure(fig)
-      setError('')
-    } catch (err) {
-      setFigure(null)
-      setError(err?.message || 'Unable to render chart')
-    }
-  }, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex, sectionsState])
-
+  
   if (!isOpen) return null
 
   return (
@@ -2649,41 +2946,66 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                       <div>
                         <label className="text-xs text-gray-600 block mb-1">Opacity ({selectedSeriesForSection.bars})</label>
                     <input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.1"
-                          value={getConfig(sectionsState, 'bars', 'opacity', selectedSeriesForSection.bars) ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? null : parseFloat(e.target.value)
-                            updateSection('bars', 'opacity', val, selectedSeriesForSection.bars)
-                          }}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    />
+  type="number"
+  min="0"
+  max="1"
+  step="0.1"
+  value={tempInputValues[`bars-opacity-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'opacity', selectedSeriesForSection.bars) ?? ''}
+  onChange={(e) => {
+    setTempInputValues(prev => ({ ...prev, [`bars-opacity-${selectedSeriesForSection.bars}`]: e.target.value }))
+  }}
+  onBlur={(e) => {
+    const val = e.target.value === '' ? null : parseFloat(e.target.value)
+    console.log('🔧 Setting opacity:', val, 'for series:', selectedSeriesForSection.bars)
+    updateSection('bars', 'opacity', val, selectedSeriesForSection.bars)
+    setTempInputValues(prev => {
+      const newState = { ...prev }
+      delete newState[`bars-opacity-${selectedSeriesForSection.bars}`]
+      return newState
+    })
+  }}
+  className="w-full text-sm border rounded px-2 py-1"
+/>
                   </div>
                   <div>
                         <label className="text-xs text-gray-600 block mb-1">Corner Radius ({selectedSeriesForSection.bars})</label>
                     <input
-                          type="number"
-                          value={getConfig(sectionsState, 'bars', 'corner_radius', selectedSeriesForSection.bars) ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? null : parseInt(e.target.value)
-                            updateSection('bars', 'corner_radius', val, selectedSeriesForSection.bars)
-                          }}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    />
+  type="number"
+  value={tempInputValues[`bars-corner_radius-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'corner_radius', selectedSeriesForSection.bars) ?? ''}
+  onChange={(e) => {
+    setTempInputValues(prev => ({ ...prev, [`bars-corner_radius-${selectedSeriesForSection.bars}`]: e.target.value }))
+  }}
+  onBlur={(e) => {
+    const val = e.target.value === '' ? null : parseInt(e.target.value)
+    updateSection('bars', 'corner_radius', val, selectedSeriesForSection.bars)
+    setTempInputValues(prev => {
+      const newState = { ...prev }
+      delete newState[`bars-corner_radius-${selectedSeriesForSection.bars}`]
+      return newState
+    })
+  }}
+  className="w-full text-sm border rounded px-2 py-1"
+/>
                   </div>
                       <div>
                         <label className="text-xs text-gray-600 block mb-1">Border Width ({selectedSeriesForSection.bars})</label>
                         <input
-                          type="number"
-                          value={getConfig(sectionsState, 'bars', 'border_width', selectedSeriesForSection.bars) ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? null : parseInt(e.target.value)
-                            updateSection('bars', 'border_width', val, selectedSeriesForSection.bars)
-                          }}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
+  type="number"
+  value={tempInputValues[`bars-border_width-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'border_width', selectedSeriesForSection.bars) ?? ''}
+  onChange={(e) => {
+    setTempInputValues(prev => ({ ...prev, [`bars-border_width-${selectedSeriesForSection.bars}`]: e.target.value }))
+  }}
+  onBlur={(e) => {
+    const val = e.target.value === '' ? null : parseInt(e.target.value)
+    updateSection('bars', 'border_width', val, selectedSeriesForSection.bars)
+    setTempInputValues(prev => {
+      const newState = { ...prev }
+      delete newState[`bars-border_width-${selectedSeriesForSection.bars}`]
+      return newState
+    })
+  }}
+  className="w-full text-sm border rounded px-2 py-1"
+/>
                       </div>
                       <div>
                         <label className="text-xs text-gray-600 block mb-1">Border Color ({selectedSeriesForSection.bars})</label>
@@ -3167,12 +3489,20 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                   </div>
                   <div className="flex items-center gap-2">
                         <input
-                          type="checkbox"
-                      checked={getConfig(sectionsState, 'segment_values', 'show', selectedSeriesForSection.dataLabels) !== false}
-                      onChange={(e) => updateSection('segment_values', 'show', e.target.checked, selectedSeriesForSection.dataLabels)}
-                          className="w-4 h-4"
-                        />
-                    <label className="text-xs text-gray-700">Show ({selectedSeriesForSection.dataLabels})</label>
+  type="checkbox"
+  checked={getConfig(sectionsState, 'segment_values', 'show', selectedSeriesForSection.dataLabels) !== false}
+  onChange={(e) => {
+    const seriesTarget = (chartTypeState === 'pie' || chartTypeState === 'donut') ? 'global' : selectedSeriesForSection.dataLabels
+    console.log('🏷️ Data Labels checkbox changed:', {
+      checked: e.target.checked,
+      series: seriesTarget,
+      chartType: chartTypeState
+    })
+    updateSection('segment_values', 'show', e.target.checked, seriesTarget)
+  }}
+  className="w-4 h-4"
+/>
+                    <label className="text-xs text-gray-700">Show</label>
                     </div>
                   {(chartTypeState === 'pie' || chartTypeState === 'donut') && selectedSeriesForSection.dataLabels !== 'global' ? (
                     <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
@@ -3257,120 +3587,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
               )}
             </div>
 
-            {/* Enhanced Legend */}
-            <div className="border rounded-lg bg-white">
-              <button
-                type="button"
-                onClick={() => toggleSection('legend')}
-                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
-              >
-                <span>Legend</span>
-                <span className={`transform transition-transform ${expandedSections.legend ? 'rotate-180' : ''}`}>▼</span>
-              </button>
-              {expandedSections.legend && (
-                <div className="px-3 pb-3 space-y-2 border-t">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={(() => {
-                        const val = getConfig(sectionsState, 'legend', 'show')
-                        return val !== false
-                      })()}
-                      onChange={(e) => updateSection('legend', 'show', e.target.checked)}
-                      className="w-4 h-4"
-                    />
-                    <label className="text-xs text-gray-700">Show</label>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Orientation</label>
-                    <select
-                      value={getConfig(sectionsState, 'legend', 'orientation') || 'vertical'}
-                      onChange={(e) => updateSection('legend', 'orientation', e.target.value)}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    >
-                      <option value="vertical">Vertical</option>
-                      <option value="horizontal">Horizontal</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Position</label>
-                    <select
-                      value={getConfig(sectionsState, 'legend', 'position') || 'right'}
-                            onChange={(e) => {
-                        const pos = LEGEND_POSITIONS[e.target.value]
-                        updateSection('legend', 'position', e.target.value)
-                        if (pos) {
-                          updateSection('legend', 'x', pos.x)
-                          updateSection('legend', 'y', pos.y)
-                          updateSection('legend', 'xanchor', pos.xanchor)
-                          updateSection('legend', 'yanchor', pos.yanchor)
-                        }
-                      }}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    >
-                      {Object.keys(LEGEND_POSITIONS).map(pos => (
-                        <option key={pos} value={pos}>{pos.replace('-', ' ')}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Font</label>
-                    <select
-                      value={resolveBrandFont(getConfig(sectionsState, 'legend', 'font_family')) || 'Arial'}
-                      onChange={(e) => updateSection('legend', 'font_family', e.target.value)}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    >
-                      {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Font Size</label>
-                    <input
-                      type="number"
-                      value={getConfig(sectionsState, 'legend', 'font_size') || 20}
-                      onChange={(e) => updateSection('legend', 'font_size', parseInt(e.target.value) || 20)}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Font Color</label>
-                    <input
-                      type="color"
-                      value={getConfig(sectionsState, 'legend', 'font_color') || '#000000'}
-                      onChange={(e) => updateSection('legend', 'font_color', e.target.value)}
-                            className="w-full h-8 border rounded"
-                          />
-                        </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Background</label>
-                    <input
-                      type="color"
-                      value={getConfig(sectionsState, 'legend', 'background_color') || 'rgba(255,255,255,0)'}
-                      onChange={(e) => updateSection('legend', 'background_color', e.target.value)}
-                      className="w-full h-8 border rounded"
-                    />
-                  </div>
-                  <div>
-                          <label className="text-xs text-gray-600 block mb-1">Border Width</label>
-                          <input
-                            type="number"
-                      value={getConfig(sectionsState, 'legend', 'border_width') || 0}
-                      onChange={(e) => updateSection('legend', 'border_width', parseInt(e.target.value) || 0)}
-                            className="w-full text-sm border rounded px-2 py-1"
-                          />
-                        </div>
-                  <div>
-                    <label className="text-xs text-gray-600 block mb-1">Border Color</label>
-                    <input
-                      type="color"
-                      value={getConfig(sectionsState, 'legend', 'border_color') || '#000000'}
-                      onChange={(e) => updateSection('legend', 'border_color', e.target.value)}
-                      className="w-full h-8 border rounded"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+            
 
             {/* Margins */}
             <div className="border rounded-lg bg-white">
@@ -3613,214 +3830,240 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
             )}
 
             {/* Y-Axis Settings - Enhanced */}
-            {!(chartTypeState === 'pie' || chartTypeState === 'donut') && (
-              <div className="border rounded-lg bg-white">
-                <button
-                  type="button"
-                  onClick={() => toggleSection('yAxis')}
-                  className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
-                >
-                  <span>Y-Axis</span>
-                  <span className={`transform transition-transform ${expandedSections.yAxis ? 'rotate-180' : ''}`}>▼</span>
-                </button>
-                {expandedSections.yAxis && (
-                  <div className="px-3 pb-3 space-y-3 border-t">
-                    <div className="space-y-2 border-b pb-2">
-                      <p className="text-xs font-medium text-gray-700">Grid</p>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={getAxisConfig(sectionsState, 'y_axis', 'grid', 'show') === true}
-                          onChange={(e) => updateAxisSection('y_axis', 'grid', 'show', e.target.checked)}
-                          className="w-4 h-4"
-                        />
-                        <label className="text-xs text-gray-700">Show</label>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Color</label>
-                        <input
-                          type="color"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'color') || '#E5E7EB'}
-                          onChange={(e) => updateAxisSection('y_axis', 'grid', 'color', e.target.value)}
-                          className="w-full h-8 border rounded"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Width</label>
-                        <input
-                          type="number"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'width') || 1}
-                          onChange={(e) => updateAxisSection('y_axis', 'grid', 'width', parseInt(e.target.value) || 1)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2 border-b pb-2">
-                      <p className="text-xs font-medium text-gray-700">Line</p>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={getAxisConfig(sectionsState, 'y_axis', 'line', 'visible') === true}
-                          onChange={(e) => updateAxisSection('y_axis', 'line', 'visible', e.target.checked)}
-                          className="w-4 h-4"
-                        />
-                        <label className="text-xs text-gray-700">Visible</label>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Color</label>
-                        <input
-                          type="color"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'line', 'color') || '#000000'}
-                          onChange={(e) => updateAxisSection('y_axis', 'line', 'color', e.target.value)}
-                          className="w-full h-8 border rounded"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Width</label>
-                        <input
-                          type="number"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'line', 'width') || 1}
-                          onChange={(e) => updateAxisSection('y_axis', 'line', 'width', parseInt(e.target.value) || 1)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2 border-b pb-2">
-                      <p className="text-xs font-medium text-gray-700">Zero Line</p>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'show') === true}
-                          onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'show', e.target.checked)}
-                          className="w-4 h-4"
-                        />
-                        <label className="text-xs text-gray-700">Show</label>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Color</label>
-                        <input
-                          type="color"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'color') || '#000000'}
-                          onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'color', e.target.value)}
-                          className="w-full h-8 border rounded"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Width</label>
-                        <input
-                          type="number"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'width') || 1}
-                          onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'width', parseInt(e.target.value) || 1)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2 border-b pb-2">
-                      <p className="text-xs font-medium text-gray-700">Ticks</p>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Font</label>
-                        <select
-                          value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_family'))}
-                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_family', e.target.value)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        >
-                          {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Size</label>
-                        <input
-                          type="number"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_size') || 0}
-                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_size', parseInt(e.target.value) || 0)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Color</label>
-                        <input
-                          type="color"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_color') || '#000000'}
-                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_color', e.target.value)}
-                          className="w-full h-8 border rounded"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Format</label>
-                        <input
-                          type="text"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'format') || ''}
-                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'format', e.target.value)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Prefix</label>
-                        <input
-                          type="text"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'prefix') || ''}
-                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'prefix', e.target.value)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Suffix</label>
-                        <input
-                          type="text"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'suffix') || ''}
-                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'suffix', e.target.value)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-gray-700">Title</p>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Text</label>
-                        <input
-                          type="text"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'title', 'text') || ''}
-                          onChange={(e) => updateAxisSection('y_axis', 'title', 'text', e.target.value)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Font</label>
-                        <select
-                          value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'title', 'font_family'))}
-                          onChange={(e) => updateAxisSection('y_axis', 'title', 'font_family', e.target.value)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        >
-                          {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Size</label>
-                        <input
-                          type="number"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_size') || 14}
-                          onChange={(e) => updateAxisSection('y_axis', 'title', 'font_size', parseInt(e.target.value) || 14)}
-                          className="w-full text-sm border rounded px-2 py-1"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Color</label>
-                        <input
-                          type="color"
-                          value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_color') || '#000000'}
-                          onChange={(e) => updateAxisSection('y_axis', 'title', 'font_color', e.target.value)}
-                          className="w-full h-8 border rounded"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+{!(chartTypeState === 'pie' || chartTypeState === 'donut') && (
+  <div className="border rounded-lg bg-white">
+    <button
+      type="button"
+      onClick={() => {
+        toggleSection('yAxis')
+        // Debug: Log ALL possible sources when opening Y-Axis
+        console.log('📂 Opening Y-Axis section - checking all sources:')
+        console.log('1. sectionsState.y_axis:', sectionsState?.y_axis)
+        console.log('2. sceneData.preset:', sceneData?.preset?.preset_definitions?.[0]?.sections?.y_axis)
+        console.log('3. selectedPresetIndex:', selectedPresetIndex)
+        console.log('4. availablePresets[selectedPresetIndex]:', availablePresets[selectedPresetIndex]?.sections?.y_axis)
+      }}
+      className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+    >
+      <span>Y-Axis</span>
+      <span className={`transform transition-transform ${expandedSections.yAxis ? 'rotate-180' : ''}`}>▼</span>
+    </button>
+    {expandedSections.yAxis && (
+      <div className="px-3 pb-3 space-y-3 border-t">
+        <div className="space-y-2 border-b pb-2">
+          <p className="text-xs font-medium text-gray-700">Grid</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={(() => {
+                const value = getAxisConfig(sectionsState, 'y_axis', 'grid', 'show')
+                console.log('🔍 Y-Axis Grid Show:', value, 'Type:', typeof value, 'sectionsState.y_axis:', sectionsState?.y_axis)
+                return value === true
+              })()}
+              onChange={(e) => {
+                console.log('✏️ Grid Show changed to:', e.target.checked)
+                updateAxisSection('y_axis', 'grid', 'show', e.target.checked)
+              }}
+              className="w-4 h-4"
+            />
+            <label className="text-xs text-gray-700">Show</label>
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Color</label>
+            <input
+              type="color"
+              value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'color') || '#E5E7EB'}
+              onChange={(e) => updateAxisSection('y_axis', 'grid', 'color', e.target.value)}
+              className="w-full h-8 border rounded"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Width</label>
+            <input
+              type="number"
+              value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'width') || 1}
+              onChange={(e) => updateAxisSection('y_axis', 'grid', 'width', parseInt(e.target.value) || 1)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+        </div>
+        
+        <div className="space-y-2 border-b pb-2">
+          <p className="text-xs font-medium text-gray-700">Line</p>
+          <div className="flex items-center gap-2">
+  <input
+    type="checkbox"
+    checked={(() => {
+      const value = getAxisConfig(sectionsState, 'y_axis', 'line', 'visible')
+      const isChecked = value === true
+      console.log('🔍 Y-Axis Line checkbox render:')
+      console.log('  - Raw value:', value, 'Type:', typeof value)
+      console.log('  - Computed checked:', isChecked)
+      console.log('  - sectionsState.y_axis.line:', sectionsState?.y_axis?.line)
+      return isChecked
+    })()}
+    onChange={(e) => {
+      console.log('✏️ Line Visible checkbox clicked, new checked state:', e.target.checked)
+      updateAxisSection('y_axis', 'line', 'visible', e.target.checked)
+    }}
+    className="w-4 h-4"
+  />
+  <label className="text-xs text-gray-700">Visible</label>
+</div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Color</label>
+            <input
+              type="color"
+              value={getAxisConfig(sectionsState, 'y_axis', 'line', 'color') || '#000000'}
+              onChange={(e) => updateAxisSection('y_axis', 'line', 'color', e.target.value)}
+              className="w-full h-8 border rounded"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Width</label>
+            <input
+              type="number"
+              value={getAxisConfig(sectionsState, 'y_axis', 'line', 'width') || 1}
+              onChange={(e) => updateAxisSection('y_axis', 'line', 'width', parseInt(e.target.value) || 1)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+        </div>
+        
+        <div className="space-y-2 border-b pb-2">
+          <p className="text-xs font-medium text-gray-700">Zero Line</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'show') === true}
+              onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'show', e.target.checked)}
+              className="w-4 h-4"
+            />
+            <label className="text-xs text-gray-700">Show</label>
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Color</label>
+            <input
+              type="color"
+              value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'color') || '#000000'}
+              onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'color', e.target.value)}
+              className="w-full h-8 border rounded"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Width</label>
+            <input
+              type="number"
+              value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'width') || 1}
+              onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'width', parseInt(e.target.value) || 1)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+        </div>
+        
+        <div className="space-y-2 border-b pb-2">
+          <p className="text-xs font-medium text-gray-700">Ticks</p>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Font</label>
+            <select
+              value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_family'))}
+              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_family', e.target.value)}
+              className="w-full text-sm border rounded px-2 py-1"
+            >
+              {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Size</label>
+            <input
+              type="number"
+              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_size') ?? 12}
+              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_size', parseInt(e.target.value) || 12)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Color</label>
+            <input
+              type="color"
+              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_color') || '#000000'}
+              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_color', e.target.value)}
+              className="w-full h-8 border rounded"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Format</label>
+            <input
+              type="text"
+              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'format') || ''}
+              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'format', e.target.value)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Prefix</label>
+            <input
+              type="text"
+              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'prefix') || ''}
+              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'prefix', e.target.value)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Suffix</label>
+            <input
+              type="text"
+              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'suffix') || ''}
+              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'suffix', e.target.value)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+        </div>
+        
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-gray-700">Title</p>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Text</label>
+            <input
+              type="text"
+              value={getAxisConfig(sectionsState, 'y_axis', 'title', 'text') || ''}
+              onChange={(e) => updateAxisSection('y_axis', 'title', 'text', e.target.value)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Font</label>
+            <select
+              value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'title', 'font_family'))}
+              onChange={(e) => updateAxisSection('y_axis', 'title', 'font_family', e.target.value)}
+              className="w-full text-sm border rounded px-2 py-1"
+            >
+              {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Size</label>
+            <input
+              type="number"
+              value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_size') || 14}
+              onChange={(e) => updateAxisSection('y_axis', 'title', 'font_size', parseInt(e.target.value) || 14)}
+              className="w-full text-sm border rounded px-2 py-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-600 block mb-1">Color</label>
+            <input
+              type="color"
+              value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_color') || '#000000'}
+              onChange={(e) => updateAxisSection('y_axis', 'title', 'font_color', e.target.value)}
+              className="w-full h-8 border rounded"
+            />
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+)}
 
             {/* Data Editing */}
             {datasetSummary && (
@@ -4008,7 +4251,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           <div className="col-span-4 min-h-[320px] p-4">
             {figure ? (
               <Plot
-                key={`chart-${sceneNumber}-${figure.layout?.editrevision || 0}`}
+                key={`chart-${sceneNumber}-${figure.layout?.editrevision || 0}-yline-${figure.layout?.yaxis?.showline}-xline-${figure.layout?.xaxis?.showline}`}
                 ref={plotRef}
                 data={figure.data}
                 layout={figure.layout}
@@ -4029,4 +4272,3 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
 }
 
 export default ChartEditorModal
-

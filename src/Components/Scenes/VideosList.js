@@ -4271,7 +4271,7 @@
               .rve-host [data-sidebar="sidebar"]:last-child [data-sidebar="content"] > div[class*="flex-col"] > div:last-child,
               .rve-host [data-sidebar="sidebar"]:last-child [data-sidebar="content"] > div[class*="flex"] > div:last-child:not([class*="grid"]):not([class*="columns"]) {
                 display: flex !important;
-                flex-direction: column-reverse !important;
+                flex-direction: column !important;
                 flex-wrap: wrap !important;
                 justify-content: flex-start !important;
                 gap: 0.5rem !important;
