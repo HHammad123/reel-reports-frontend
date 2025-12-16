@@ -66,7 +66,7 @@
     // Logo and Subtitle toggle states (default both on)
     const [logoEnabled, setLogoEnabled] = useState(true);
     const [subtitleEnabled, setSubtitleEnabled] = useState(true);
-    const [sidebarVisible, setSidebarVisible] = useState(true);
+    const [sidebarVisible, setSidebarVisible] = useState(false);
     // Aspect ratio from session/script data
     const [aspectRatio, setAspectRatio] = useState('16:9');
     
@@ -1346,7 +1346,6 @@
               volume: 1.0,
             };
             
-            console.log(`✅ Audio preloaded and ready: ${itemTitle || itemId}`, { duration, url: audioUrl });
             resolve(audioClip);
           }
         };
@@ -1369,7 +1368,6 @@
               volume: 1.0,
             };
             
-            console.log(`✅ Audio preloaded and ready: ${itemTitle || itemId}`, { duration, url: audioUrl });
             resolve(audioClip);
           }
         };
@@ -1395,7 +1393,6 @@
                   volume: 1.0,
                 };
                 
-                console.log(`✅ Audio loaded (fallback): ${itemTitle || itemId}`, { duration, url: audioUrl });
                 resolve(audioClip);
               }
             }, 100);
@@ -3352,19 +3349,10 @@
             if (audioLayerData) {
               audioUrl = audioLayerData.url;
               audioVolume = audioLayerData.volume;
-              console.log(`[VideosList] Scene ${i + 1} - Audio found in layers:`, {
-                url: audioUrl,
-                volume: audioVolume,
-                enabled: audioLayerData.enabled
-              });
             } else {
               // PRIORITY 2: Check file-level audio properties
               audioUrl = file.audioUrl || file.audio_url || '';
               if (audioUrl) {
-                console.log(`[VideosList] Scene ${i + 1} - Audio found in file properties:`, {
-                  url: audioUrl,
-                  source: file.audioUrl ? 'audioUrl' : 'audio_url'
-                });
               } else {
                 // PRIORITY 3: Check scenes array - especially for first scene (index 0)
                 // Some video entries have audio stored in their scenes array
@@ -3374,10 +3362,6 @@
                   const targetScene = file.scenes[targetSceneIndex];
                   if (targetScene && targetScene.audioUrl) {
                     audioUrl = targetScene.audioUrl;
-                    console.log(`[VideosList] Scene ${i + 1} - Audio found in scenes array (scene ${targetSceneIndex}):`, {
-                      url: audioUrl,
-                      sceneIndex: targetSceneIndex
-                    });
                   }
                 }
                 
@@ -3386,9 +3370,6 @@
                   const entryAudioUrl = getAudioUrlFromEntryLocal(file);
                   if (entryAudioUrl) {
                     audioUrl = entryAudioUrl;
-                    console.log(`[VideosList] Scene ${i + 1} - Audio found via getAudioUrlFromEntryLocal:`, {
-                      url: audioUrl
-                    });
                   }
                 }
                 
@@ -3447,13 +3428,6 @@
                   fromFrame,
                   expected: 0
                 });
-              } else if (isFirstScene) {
-                console.log('[VideosList] ✅ Scene 1 audio correctly positioned at frame 0:', {
-                  sceneIndex: i,
-                  itemTitle: file.title || file.name,
-                  audioStartFrame,
-                  audioUrl: audioUrl.substring(0, 60)
-                });
               }
               
               // Preload audio asynchronously (non-blocking) - don't await to avoid blocking overlay creation
@@ -3472,7 +3446,6 @@
                     const timeout = setTimeout(() => {
                       if (metadataLoaded) {
                         if (audioReady) {
-                          console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded (timeout, but ready)`);
                         } else {
                           console.warn(`[VideosList] Audio ${i + 1} preload timeout (metadata loaded), continuing...`);
                         }
@@ -3488,12 +3461,6 @@
                       const dur = audio.duration;
                       if (isFinite(dur) && dur > 0) {
                         audioDurationSeconds = dur;
-                        // Update duration if needed (though overlay is already created)
-                        console.log(`[VideosList] Audio ${i + 1} metadata loaded:`, {
-                          duration: dur,
-                          sceneIndex: i + 1,
-                          isFirstScene: isFirstScene
-                        });
                       }
                       // Wait for audio to be ready to play (for all scenes)
                       if (audioReady) {
@@ -3506,7 +3473,6 @@
                     const handleCanPlayThrough = () => {
                       audioReady = true;
                       if (metadataLoaded) {
-                        console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded and ready to play`);
                         clearTimeout(timeout);
                         resolve();
                       }
@@ -3518,7 +3484,6 @@
                         setTimeout(() => {
                           if (!audioReady && metadataLoaded) {
                             audioReady = true;
-                            console.log(`[VideosList] ✅ Audio ${i + 1} loaded (fallback)`);
                             clearTimeout(timeout);
                             resolve();
                           }
@@ -3562,21 +3527,6 @@
               // Double-check: if this is the first scene in the loop, force frame 0
               const finalAudioStartFrame = isFirstScene ? 0 : audioStartFrame;
               
-              // Log audio overlay creation for all scenes - with detailed positioning info
-              console.log(`[VideosList] ✅ Creating audio overlay for SCENE ${i + 1}:`, {
-                id: `audio-${cleanAudioId}`,
-                from: finalAudioStartFrame,
-                fromFrame_accumulator: fromFrame,
-                isFirstScene: isFirstScene,
-                sceneIndex: i + 1,
-                durationInFrames: audioDurationInFrames,
-                src: audioMediaSrc,
-                originalUrl: audioUrl,
-                volume: audioVolume,
-                startsAtZero: finalAudioStartFrame === 0,
-                row: audioRow
-              });
-              
               const audioOverlay = {
                 id: `audio-${cleanAudioId}`, // Use file name as ID for uniqueness
                 left: 0,
@@ -3599,37 +3549,6 @@
               };
               
               newOverlays.push(audioOverlay);
-              
-              // VERIFICATION: Log the created audio overlay
-              console.log(`[VideosList] ✅ Audio overlay created for scene ${i + 1}:`, {
-                id: audioOverlay.id,
-                from: audioOverlay.from,
-                FROM_VERIFIED: (isFirstScene && audioOverlay.from === 0) ? '✅ CORRECT (Scene 1 at frame 0)' : 
-                               (isFirstScene ? '❌ ERROR (Scene 1 NOT at frame 0!)' : `Scene ${i + 1} at frame ${audioOverlay.from}`),
-                durationInFrames: audioOverlay.durationInFrames,
-                src: audioOverlay.src.substring(0, 60),
-                sceneIndex: i + 1,
-                isFirstScene,
-                volume: audioOverlay.styles.volume
-              });
-              
-              // CRITICAL: Verify overlay properties are correct for Remotion
-              if (isFirstScene) {
-                console.log('[VideosList] 🔊 Scene 1 AUDIO OVERLAY COMPLETE CONFIG:', {
-                  id: audioOverlay.id,
-                  type: audioOverlay.type,
-                  typeIsSound: audioOverlay.type === OverlayType.SOUND,
-                  from: audioOverlay.from,
-                  durationInFrames: audioOverlay.durationInFrames,
-                  src: audioOverlay.src,
-                  mediaSrcDuration: audioOverlay.mediaSrcDuration,
-                  startFromSound: audioOverlay.startFromSound,
-                  volume: audioOverlay.styles?.volume,
-                  row: audioOverlay.row,
-                  hasValidSrc: !!(audioOverlay.src && audioOverlay.src.trim()),
-                  srcLength: audioOverlay.src?.length
-                });
-              }
             }
 
             // STEP 6: Add subtitle/caption overlay (FIXED to row 1 - all scene subtitles go to row 1, above text layers)
@@ -3873,14 +3792,7 @@
               }
             });
             
-            // Log audio overlays summary, especially first scene
             if (audioOverlays.length > 0) {
-              console.log(`[VideosList] ✅ Audio overlays created:`, {
-                totalAudioOverlays: audioOverlays.length,
-                audioOverlays: audioOverlays,
-                firstSceneAudio: audioOverlays.find(a => a.startsAtZero) || null,
-                allOverlaysByType: overlaysByType
-              });
             } else {
               console.warn(`[VideosList] ⚠️ No audio overlays found in newOverlays!`, {
                 totalOverlays: newOverlays.length,
@@ -3901,13 +3813,6 @@
                   from: o.from,
                   src: o.src
                 }))
-              });
-            } else {
-              console.log(`[VideosList] ✅ First scene audio overlay verified:`, {
-                id: firstSceneAudioOverlay.id,
-                from: firstSceneAudioOverlay.from,
-                src: firstSceneAudioOverlay.src,
-                durationInFrames: firstSceneAudioOverlay.durationInFrames
               });
             }
             
@@ -3936,25 +3841,8 @@
                 const overlayToFix = newOverlays.find(o => o.id === earliestAudioOverlay.id);
                 if (overlayToFix) {
                   overlayToFix.from = 0;
-                  console.log(`[VideosList] ✅ VERIFICATION: Fixed audio overlay ${overlayToFix.id} to start at frame 0`);
                 }
-              } else {
-                console.log(`[VideosList] ✅ VERIFICATION: First scene audio overlay correctly starts at frame 0:`, {
-                  overlayId: earliestAudioOverlay.id,
-                  from: earliestAudioOverlay.from,
-                  src: earliestAudioOverlay.src
-                });
               }
-              
-              // Log all audio overlays with their timing for debugging
-              console.log(`[VideosList] 📊 VERIFICATION: All audio overlays timing:`, 
-                audioOverlaysVerified.map(a => ({
-                  id: a.id,
-                  from: a.from,
-                  durationInFrames: a.durationInFrames,
-                  src: a.src?.substring(0, 50) + '...' // Truncate long URLs
-                }))
-              );
             }
             
             // Only update if overlays actually changed (using ref to avoid unnecessary updates)
@@ -3981,15 +3869,6 @@
                     const overlayType = String(o?.type || '').toLowerCase();
                     return overlayType === 'sound' || o.type === OverlayType.SOUND;
                   })
-                });
-              } else {
-                console.log('[VideosList] ✅✅✅ Scene 1 audio CONFIRMED in overlaysToSet:', {
-                  id: scene1AudioInOverlays.id,
-                  from: scene1AudioInOverlays.from,
-                  src: scene1AudioInOverlays.src?.substring(0, 60),
-                  durationInFrames: scene1AudioInOverlays.durationInFrames,
-                  volume: scene1AudioInOverlays.styles?.volume,
-                  totalOverlays: overlaysToSet.length
                 });
               }
               
@@ -4222,8 +4101,8 @@
                   '--rve-border': '#E5E2FF',
                   '--rve-timeline-bg': '#ffffff',
                   '--rve-timeline-scrim': '#ffffff',
-                  '--sidebar-width': '16rem',
-                  '--sidebar-width-icon': '3rem',
+                  '--sidebar-width': '20rem',  // Standardized panel width - all panels use same width
+                  '--sidebar-width-icon': '4rem',  // Standardized icon sidebar width
                   width: '100%',
                   height: '100%',
                 }}
@@ -4275,7 +4154,6 @@
                 flex-wrap: wrap !important;
                 justify-content: flex-start !important;
                 gap: 0.5rem !important;
-                align-items: center !important;
               }
               /* Ensure buttons are inline */
               .rve-host [data-sidebar="sidebar"]:last-child [data-sidebar="content"] button + button,

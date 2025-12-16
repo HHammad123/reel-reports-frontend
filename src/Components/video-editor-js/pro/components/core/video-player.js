@@ -140,7 +140,11 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
     ]);
     return (_jsx("div", { ref: containerRef, className: `w-full h-full overflow-hidden ${className || ''}`, style: style, children: !isPlayerOnly ? (
         /* Editor mode: Grid background container */
-        _jsx("div", { className: "z-0 video-container relative w-full h-full select-none\n          bg-muted\n          bg-[linear-gradient(to_right,#80808015_1px,transparent_1px),linear-gradient(to_bottom,#80808015_1px,transparent_1px)] \n          dark:bg-[linear-gradient(to_right,#80808010_1px,transparent_1px),linear-gradient(to_bottom,#80808010_1px,transparent_1px)]\n          bg-size-[16px_16px] \n          shadow-lg", children: _jsx("div", { className: "z-10 absolute inset-2 sm:inset-4 flex items-center justify-center", children: _jsx("div", { className: "relative mx-2 sm:mx-0", style: {
+        _jsx("div", { className: "z-0 video-container relative w-full h-full select-none shadow-lg", style: {
+                background: '#2a2a2a',
+                backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px)',
+                backgroundSize: '20px 20px'
+            }, children: _jsx("div", { className: "z-10 absolute inset-2 sm:inset-4 flex items-center justify-center", children: _jsx("div", { className: "relative mx-2 sm:mx-0", style: {
                         width: Math.min(playerDimensions.width, compositionWidth),
                         height: Math.min(playerDimensions.height, compositionHeight),
                         maxWidth: "100%",

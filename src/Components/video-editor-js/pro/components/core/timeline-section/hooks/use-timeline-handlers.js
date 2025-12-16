@@ -107,8 +107,11 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
         // Set the appropriate sidebar panel based on overlay type
         let panelToSet = null;
         
-        // Check for SOUND type first (most common issue)
-        if (typeString === 'sound' || overlayType === OverlayType.SOUND) {
+        // Check for IMAGE type first to ensure it's always handled
+        if (typeString === 'image' || overlayType === OverlayType.IMAGE) {
+            console.log('[setSidebarForOverlay] Matched IMAGE type, setting panel to IMAGE');
+            panelToSet = OverlayType.IMAGE;
+        } else if (typeString === 'sound' || overlayType === OverlayType.SOUND) {
             console.log('[setSidebarForOverlay] Matched SOUND type, setting panel to SOUND');
             panelToSet = OverlayType.SOUND;
         } else if (typeString === 'text' || overlayType === OverlayType.TEXT) {
@@ -117,8 +120,6 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
             panelToSet = OverlayType.VIDEO;
         } else if (typeString === 'sticker' || overlayType === OverlayType.STICKER) {
             panelToSet = OverlayType.STICKER;
-        } else if (typeString === 'image' || overlayType === OverlayType.IMAGE) {
-            panelToSet = OverlayType.IMAGE;
         } else if (typeString === 'caption' || overlayType === OverlayType.CAPTION) {
             panelToSet = OverlayType.CAPTION;
         } else if (typeString === 'shape' || overlayType === OverlayType.SHAPE) {
@@ -128,8 +129,11 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
         } else {
             console.log('[setSidebarForOverlay] Default case, checking overlay properties');
             // If type doesn't match, try to infer from overlay properties
-            // Audio overlays typically have src but minimal content
-            if (overlay.src && (!overlay.content || overlay.content === overlay.src)) {
+            // Images typically have src with image extensions or are identified by type
+            if (overlay.src && (overlay.src.match(/\.(jpg|jpeg|png|gif|webp|svg)/i) || typeString === 'image')) {
+                console.log('[setSidebarForOverlay] Inferred IMAGE from properties');
+                panelToSet = OverlayType.IMAGE;
+            } else if (overlay.src && (!overlay.content || overlay.content === overlay.src)) {
                 console.log('[setSidebarForOverlay] Inferred SOUND from properties');
                 panelToSet = OverlayType.SOUND;
             }
@@ -144,12 +148,15 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
         requestAnimationFrame(() => {
             setTimeout(() => {
                 // Set the panel and open sidebar
+                // Ensure panel is set for all overlay types including IMAGE
                 if (panelToSet && setActivePanel) {
                     console.log('[setSidebarForOverlay] Calling setActivePanel with:', panelToSet);
                     setActivePanel(panelToSet);
+                } else if (!panelToSet) {
+                    console.warn('[setSidebarForOverlay] No panel to set for overlay type:', overlayType);
                 }
                 
-                // Always open the sidebar when an overlay is selected
+                // Always open the sidebar when an overlay is selected (including IMAGE overlays)
                 if (setIsOpen) {
                     console.log('[setSidebarForOverlay] Calling setIsOpen(true)');
                     setIsOpen(true);
@@ -169,7 +176,7 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
         setSelectedOverlayId(overlayId);
         // Ensure sidebar opens and panel is set for the selected overlay
         setSidebarForOverlay(overlayId);
-    }, [setSelectedOverlayId, setSidebarForOverlay, safeParseOverlayId]);
+    }, [setSelectedOverlayId, setSidebarForOverlay, safeParseOverlayId, overlays]);
     // Handler for multiselect changes
     const handleSelectedItemsChange = React.useCallback((itemIds) => {
         const overlayIds = itemIds.map(id => safeParseOverlayId(id)).filter(id => id != null);

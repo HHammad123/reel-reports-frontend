@@ -69,38 +69,21 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     // CRITICAL: Force reload Scene 1 audio when timeline is at frame 0
     useEffect(() => {
         if (currentFrame === 0) {
-            console.log('[EditorProvider] At frame 0, checking Scene 1 audio elements...');
-            
             // Find all Scene 1 audio elements in DOM
             const scene1AudioElements = document.querySelectorAll('audio[data-scene-1-audio="true"]');
             
-            console.log('[EditorProvider] Found Scene 1 audio elements:', scene1AudioElements.length);
-            
             if (scene1AudioElements.length > 0) {
                 scene1AudioElements.forEach((audio, index) => {
-                    console.log(`[EditorProvider] Reloading Scene 1 audio ${index + 1}:`, {
-                        src: audio.src.substring(0, 60),
-                        readyState: audio.readyState,
-                        currentTime: audio.currentTime,
-                        paused: audio.paused
-                    });
-                    
                     // Force reload to ensure it's ready
                     audio.currentTime = 0;
                     audio.load();
-                    
-                    console.log(`[EditorProvider] ✅ Reloaded Scene 1 audio ${index + 1}`);
                 });
-            } else {
-                console.warn('[EditorProvider] ⚠️ No Scene 1 audio elements found in DOM at frame 0');
             }
         }
     }, [currentFrame]);
     
     // CRITICAL: Ensure Remotion uses preloaded Scene 1 audio - intercept audio element creation
     useEffect(() => {
-        console.log('[EditorProvider] Setting up Remotion audio override for Scene 1...');
-        
         // Watch for Remotion creating new audio elements
         const observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
@@ -109,16 +92,8 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                         const audioElement = node;
                         const src = audioElement.src;
                         
-                        console.log('[EditorProvider] Remotion created audio element:', {
-                            src: src?.substring(0, 60),
-                            currentTime: audioElement.currentTime,
-                            paused: audioElement.paused
-                        });
-                        
                         // Check if this is Scene 1 audio
                         if (window.__SCENE_1_AUDIO_ELEMENTS && window.__SCENE_1_AUDIO_ELEMENTS.has(src)) {
-                            console.log('[EditorProvider] 🎯 Found Scene 1 audio created by Remotion!');
-                            
                             const preloadedAudio = window.__SCENE_1_AUDIO_ELEMENTS.get(src);
                             
                             // Force the new element to use preloaded data
@@ -126,25 +101,8 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                             
                             // Mirror the preloaded audio state
                             if (preloadedAudio.readyState >= 3) {
-                                console.log('[EditorProvider] ✅ Preloaded audio ready, syncing to Remotion element');
                                 audioElement.currentTime = 0;
                             }
-                            
-                            // Add play event listener
-                            audioElement.addEventListener('play', () => {
-                                console.log('[EditorProvider] 🔊 Remotion audio PLAYING:', {
-                                    src: src?.substring(0, 60),
-                                    currentTime: audioElement.currentTime,
-                                    volume: audioElement.volume
-                                });
-                            });
-                            
-                            audioElement.addEventListener('pause', () => {
-                                console.log('[EditorProvider] ⏸️ Remotion audio PAUSED:', {
-                                    src: src?.substring(0, 60),
-                                    currentTime: audioElement.currentTime
-                                });
-                            });
                             
                             audioElement.addEventListener('error', (e) => {
                                 console.error('[EditorProvider] ❌ Remotion audio ERROR:', {
@@ -158,8 +116,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                                 window.__ALL_AUDIO_ELEMENTS = new Set();
                             }
                             window.__ALL_AUDIO_ELEMENTS.add(audioElement);
-                            
-                            console.log('[EditorProvider] 💾 Stored audio element reference (total:', window.__ALL_AUDIO_ELEMENTS.size, ')');
                         }
                         
                         // Store ALL audio elements, not just Scene 1
@@ -189,14 +145,8 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
         });
         
         if (audioOverlaysAtStart.length === 0) {
-            console.log('[EditorProvider] No Scene 1 audio overlays found');
             return;
         }
-        
-        console.log('[EditorProvider] Waiting for Scene 1 audio to be ready...', {
-            count: audioOverlaysAtStart.length,
-            overlays: audioOverlaysAtStart.map(o => ({ id: o.id, src: o.src?.substring(0, 50) }))
-        });
         
         let checkCount = 0;
         const maxChecks = 50; // 5 seconds max
@@ -229,15 +179,7 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                 }
             });
             
-            if (checkCount % 10 === 0) { // Log every second
-                console.log('[EditorProvider] Audio readiness check:', {
-                    attempt: checkCount,
-                    statuses
-                });
-            }
-            
             if (allReady) {
-                console.log('[EditorProvider] ✅✅✅ Scene 1 audio READY FOR PLAYBACK ✅✅✅');
                 clearInterval(checkAudioReady);
             } else if (checkCount >= maxChecks) {
                 console.warn('[EditorProvider] ⚠️ Scene 1 audio readiness check TIMEOUT after 5s:', statuses);
@@ -251,32 +193,16 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     // CRITICAL: Check Scene 1 audio volume when playback starts
     useEffect(() => {
         if (isPlaying && currentFrame <= 30) { // Within first second
-            console.log('[EditorProvider] Playback started, checking Scene 1 audio volume...');
-            
             // Find all audio elements
             const allAudioElements = document.querySelectorAll('audio');
-            console.log('[EditorProvider] Found audio elements in DOM:', allAudioElements.length);
             
             allAudioElements.forEach((audio, index) => {
-                console.log(`[EditorProvider] Audio ${index + 1}:`, {
-                    src: audio.src?.substring(0, 60),
-                    volume: audio.volume,
-                    muted: audio.muted,
-                    paused: audio.paused,
-                    currentTime: audio.currentTime,
-                    duration: audio.duration,
-                    readyState: audio.readyState,
-                    networkState: audio.networkState
-                });
-                
                 // Force unmute and set volume
                 if (audio.muted) {
-                    console.warn('[EditorProvider] ⚠️ Audio was muted! Unmuting...');
                     audio.muted = false;
                 }
                 
                 if (audio.volume === 0) {
-                    console.warn('[EditorProvider] ⚠️ Audio volume was 0! Setting to 1...');
                     audio.volume = 1;
                 }
             });
@@ -285,8 +211,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     
     // CRITICAL: Sync audio playback with timeline state
     useEffect(() => {
-        console.log('[EditorProvider] Playback state changed:', { isPlaying, currentFrame });
-        
         // Find all audio overlays (not just Scene 1)
         const audioOverlays = overlays.filter(o => {
             const overlayType = String(o?.type || '').toLowerCase();
@@ -310,10 +234,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                 // CRITICAL: If timeline is paused, ALWAYS pause audio (no exceptions)
                 if (!isPlaying) {
                     if (!audio.paused) {
-                        console.log('[EditorProvider] ⏸️⏸️⏸️ FORCING PAUSE - timeline is paused:', {
-                            overlayId: overlay.id,
-                            src: audio.src?.substring(0, 60)
-                        });
                         audio.pause();
                     }
                     return; // Don't do anything else if paused
@@ -323,13 +243,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                 if (isPlaying && isWithinAudioRange) {
                     // Timeline is playing and we're within this audio's time range
                     if (audio.paused && audio.readyState >= 2) {
-                        console.log('[EditorProvider] 🔊 Starting audio playback...', {
-                            overlayId: overlay.id,
-                            currentFrame,
-                            audioStartFrame,
-                            audioEndFrame
-                        });
-                        
                         audio.volume = overlay.styles?.volume || 1;
                         audio.muted = false;
                         
@@ -339,12 +252,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                         audio.currentTime = Math.max(0, secondsIntoAudio);
                         
                         audio.play()
-                            .then(() => {
-                                console.log('[EditorProvider] ✅ Audio playing', {
-                                    overlayId: overlay.id,
-                                    currentTime: audio.currentTime
-                                });
-                            })
                             .catch((error) => {
                                 console.error('[EditorProvider] ❌ Failed to play audio:', error);
                             });
@@ -367,27 +274,15 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     // CRITICAL: Pause ALL audio elements when timeline is paused - IMMEDIATE and AGGRESSIVE
     useEffect(() => {
         if (!isPlaying) {
-            console.log('[EditorProvider] ⏸️⏸️⏸️ Timeline PAUSED - IMMEDIATELY stopping all audio elements ⏸️⏸️⏸️');
-            
             // IMMEDIATE: Pause all audio synchronously first
             const pauseAllAudioImmediate = () => {
                 const allAudioElements = document.querySelectorAll('audio');
-                console.log(`[EditorProvider] Found ${allAudioElements.length} audio elements to pause`);
                 
-                let pausedCount = 0;
                 allAudioElements.forEach((audio, index) => {
                     if (!audio.paused) {
-                        console.log(`[EditorProvider] ⏸️ IMMEDIATELY pausing audio ${index + 1}:`, {
-                            src: audio.src?.substring(0, 60),
-                            currentTime: audio.currentTime,
-                            paused: audio.paused
-                        });
                         audio.pause();
-                        pausedCount++;
                     }
                 });
-                
-                console.log(`[EditorProvider] ✅ Paused ${pausedCount} audio element(s)`);
             };
             
             // Execute immediately
@@ -411,16 +306,12 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                 allAudioElements.forEach((audio) => {
                     if (!audio.paused) {
                         foundPlaying = true;
-                        console.log('[EditorProvider] ⚠️ Found audio still playing, forcing pause:', {
-                            src: audio.src?.substring(0, 60)
-                        });
                         audio.pause();
                     }
                 });
                 
                 if (!foundPlaying) {
                     clearInterval(checkInterval);
-                    console.log('[EditorProvider] ✅ All audio confirmed paused');
                 }
             }, 50); // Check every 50ms
             
@@ -431,8 +322,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
             
         } else {
             // Timeline is playing - ensure audio that should be playing actually plays
-            console.log('[EditorProvider] Timeline PLAYING - ensuring audio resumes');
-            
             // Give Remotion a moment to handle playback, then check if we need to step in
             setTimeout(() => {
                 const audioOverlays = overlays.filter(o => {
@@ -450,11 +339,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                         
                         audioElements.forEach((audio) => {
                             if (audio.paused && audio.readyState >= 2) {
-                                console.log('[EditorProvider] 🔊 Resuming audio after play...', {
-                                    overlayId: overlay.id,
-                                    currentFrame
-                                });
-                                
                                 audio.volume = overlay.styles?.volume || 1;
                                 audio.muted = false;
                                 
@@ -463,9 +347,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                                 audio.currentTime = Math.max(0, secondsIntoAudio);
                                 
                                 audio.play()
-                                    .then(() => {
-                                        console.log('[EditorProvider] ✅ Audio resumed successfully');
-                                    })
                                     .catch((error) => {
                                         console.error('[EditorProvider] ❌ Failed to resume audio:', error);
                                     });
@@ -481,8 +362,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     useEffect(() => {
         const handleVisibilityChange = () => {
             if (document.hidden) {
-                console.log('[EditorProvider] Window hidden - pausing all audio');
-                
                 const allAudioElements = document.querySelectorAll('audio');
                 allAudioElements.forEach((audio) => {
                     if (!audio.paused) {
@@ -495,8 +374,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
         };
         
         const handleBlur = () => {
-            console.log('[EditorProvider] Window blur - pausing all audio');
-            
             const allAudioElements = document.querySelectorAll('audio');
             allAudioElements.forEach((audio) => {
                 if (!audio.paused) {
@@ -526,19 +403,9 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     
     // Set up global event listener for SRT text extraction (always active)
     useEffect(() => {
-        console.log('[EditorProvider] Setting up global SRT text extraction listener');
-        
         const handleSRTTextExtracted = (event) => {
-            console.log('[EditorProvider] Global listener received srtTextExtracted event:', event.detail);
-            
             if (event.detail && event.detail.text) {
                 const { text, sceneIndex, srtUrl } = event.detail;
-                console.log('[EditorProvider] Storing extracted SRT text in context:', {
-                    textLength: text.length,
-                    textPreview: text.substring(0, 100),
-                    sceneIndex,
-                    srtUrl
-                });
                 
                 // Store in queue for processing
                 extractedSRTTextQueueRef.current.push({
@@ -555,16 +422,12 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                     srtUrl,
                     timestamp: Date.now()
                 });
-            } else {
-                console.warn('[EditorProvider] Event detail missing or no text:', event.detail);
             }
         };
         
         window.addEventListener('srtTextExtracted', handleSRTTextExtracted);
-        console.log('[EditorProvider] Global event listener added successfully');
         
         return () => {
-            console.log('[EditorProvider] Removing global event listener');
             window.removeEventListener('srtTextExtracted', handleSRTTextExtracted);
         };
     }, []);
@@ -707,8 +570,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     // Cleanup: Stop all audio on unmount
     useEffect(() => {
         return () => {
-            console.log('[EditorProvider] Component unmounting - stopping all audio');
-            
             const allAudioElements = document.querySelectorAll('audio');
             allAudioElements.forEach((audio) => {
                 audio.pause();

@@ -6,7 +6,7 @@ import { LocalMediaProvider } from "../../contexts/local-media-context";
 import { SidebarProvider as EditorSidebarProvider } from "../../contexts/sidebar-context";
 import { MediaAdaptorProvider } from "../../contexts/media-adaptor-context";
 import { ThemeProvider } from "../../contexts/theme-context";
-export const ReactVideoEditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, renderer, onSaving, onSaved, onOverlaysChange, sidebarWidth = "16rem", sidebarIconWidth = "3rem", 
+export const ReactVideoEditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, renderer, onSaving, onSaved, onOverlaysChange, sidebarWidth = "20rem", sidebarIconWidth = "4rem",  // Standardized panel widths 
 // Loading State
 isLoadingProject = false, 
 // Player Configuration
@@ -27,7 +27,7 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
 }, disableMobileLayout = false, disableVideoKeyframes = false, enablePushOnDrag = false, videoWidth = 1280, videoHeight = 720, 
 // Theme Configuration
 availableThemes = [], selectedTheme, onThemeChange, showDefaultThemes = true, hideThemeToggle = false, defaultTheme = 'dark', }) => {
-    return (_jsx(UISidebarProvider, { style: {
+    return (_jsx(UISidebarProvider, { defaultOpen: false, style: {
             "--sidebar-width": sidebarWidth,
             "--sidebar-width-icon": sidebarIconWidth,
         }, children: _jsx(RendererProvider, { config: { renderer }, children: _jsx(MediaAdaptorProvider, { adaptors: adaptors || {}, children: _jsx(ThemeProvider, { config: {

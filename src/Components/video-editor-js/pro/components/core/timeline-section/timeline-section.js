@@ -36,6 +36,78 @@ export const TimelineSection = () => {
     aspectRatio, setAspectRatio, } = useEditorContext();
     // Get sidebar context for setting active panel
     const { setActivePanel, setIsOpen } = useEditorSidebar();
+    // Track sidebar visibility and open state by checking DOM
+    const [sidebarVisible, setSidebarVisible] = React.useState(false);
+    const [contentSidebarOpen, setContentSidebarOpen] = React.useState(false);
+    
+    // Check sidebar state from DOM - this works even when showSidebar prop changes
+    React.useEffect(() => {
+        const checkSidebarState = () => {
+            // First, check if sidebar is visible at all (showSidebar prop)
+            const sidebarExists = document.querySelector('[data-sidebar="sidebar"]') !== null;
+            setSidebarVisible(sidebarExists);
+            
+            if (!sidebarExists) {
+                setContentSidebarOpen(false);
+                return;
+            }
+            
+            // Look for sidebar elements - check if content sidebar (not icon sidebar) is expanded
+            const allSidebars = document.querySelectorAll('[data-sidebar="sidebar"]');
+            let isContentOpen = false;
+            
+            allSidebars.forEach((sidebar) => {
+                // Find parent with data-state attribute
+                const parentWithState = sidebar.closest('[data-state]');
+                if (parentWithState) {
+                    const state = parentWithState.getAttribute('data-state');
+                    // Check if this is the content sidebar (not icon sidebar)
+                    // Icon sidebar has collapsible="none", content sidebar doesn't
+                    const isIconSidebar = sidebar.closest('[data-collapsible="none"]');
+                    if (!isIconSidebar && state === 'expanded') {
+                        isContentOpen = true;
+                    }
+                }
+            });
+            
+            // Fallback: check if any sidebar with expanded state exists
+            if (!isContentOpen) {
+                const expandedSidebar = document.querySelector('[data-state="expanded"][data-sidebar="sidebar"], [data-state="expanded"] [data-sidebar="sidebar"]');
+                if (expandedSidebar) {
+                    // Make sure it's not the icon sidebar
+                    const isIconSidebar = expandedSidebar.closest('[data-collapsible="none"]');
+                    if (!isIconSidebar) {
+                        isContentOpen = true;
+                    }
+                }
+            }
+            
+            setContentSidebarOpen(isContentOpen);
+        };
+        
+        // Initial check with small delay to ensure DOM is ready
+        const timeoutId = setTimeout(checkSidebarState, 50);
+        
+        // Watch for changes using MutationObserver
+        const observer = new MutationObserver(checkSidebarState);
+        
+        // Observe the document body for changes
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['data-state', 'data-sidebar', 'data-collapsible']
+        });
+        
+        // Also check periodically as a fallback
+        const interval = setInterval(checkSidebarState, 150);
+        
+        return () => {
+            clearTimeout(timeoutId);
+            observer.disconnect();
+            clearInterval(interval);
+        };
+    }, []);
     // Get transformation functions
     const { transformOverlaysToTracks } = useTimelineTransforms();
     // Scroll timeline when new items are added (top for most, bottom for audio)
@@ -191,8 +263,18 @@ export const TimelineSection = () => {
     // Calculate effective height based on collapse state
     const HEADER_HEIGHT = 57; // Height of timeline header
     const effectiveHeight = isTimelineCollapsed ? HEADER_HEIGHT : bottomHeight;
+    // Calculate margin-left based on sidebar state
+    // When sidebar is visible: shift by icon sidebar width + content sidebar width (if content sidebar is open)
+    // When sidebar is hidden: no shift
+    const sidebarOffset = sidebarVisible 
+        ? (contentSidebarOpen 
+            ? 'calc(var(--sidebar-width-icon) + var(--sidebar-width) * 1.0)'
+            : 'calc(var(--sidebar-width-icon) + var(--sidebar-width) * 1.0)')
+        : '0';
     return (_jsxs(_Fragment, { children: [_jsx(TimelineResizeHandle, { onMouseDown: handleMouseDown, onTouchStart: handleTouchStart, isResizing: isResizing }), _jsx("div", { style: {
                     height: `${effectiveHeight}px`,
+                    marginLeft: sidebarOffset,
+                    transition: 'margin-left 300ms ease-in-out',
                     // No maxHeight constraint - timeline can be dragged to bottom
                 }, className: "flex flex-col overflow-hidden", children: _jsx(Timeline, { ref: timelineRef, tracks: timelineTracks, totalDuration: durationInFrames / FPS, currentFrame: currentFrame, fps: FPS, onFrameChange: handleTimelineFrameChange, onItemMove: handleItemMove, onItemResize: handleItemResize, onItemSelect: handleItemSelect, onSelectedItemsChange: handleSelectedItemsChange, onDeleteItems: handleDeleteItems, onDuplicateItems: handleDuplicateItems, onSplitItems: handleSplitItems, selectedItemIds: selectedOverlayIds.filter((id) => typeof id === 'number' && !isNaN(id)).map((id) => id.toString()), onTracksChange: handleTracksChange, onNewItemDrop: handleNewItemDrop, showZoomControls: true, showTimelineGuidelines: true, enableTrackDrag: true, enableMagneticTrack: true, enableTrackDelete: true, showPlaybackControls: true, isPlaying: isPlaying, hideItemsOnDrag: true, onPlay: handlePlay, onPause: handlePause, onSeekToStart: handleSeekToStart, onSeekToEnd: handleSeekToEnd, playbackRate: playbackRate, setPlaybackRate: setPlaybackRate, showUndoRedoControls: true, aspectRatio: aspectRatio, onAspectRatioChange: setAspectRatio, showAspectRatioControls: true, onCollapseChange: handleCollapseChange, overlays: overlays }) })] }));
 };

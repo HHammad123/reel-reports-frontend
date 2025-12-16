@@ -32,8 +32,39 @@ import { Settings, PaintBucket, Sparkles } from "lucide-react";
  */
 export const ImageDetails = ({ localOverlay, setLocalOverlay, onChangeImage, }) => {
     // FIXED: Memoize callbacks to prevent recreation on every render
+    // Also prevent updates if the values haven't actually changed
     const handleStyleChange = useCallback((updates) => {
         setLocalOverlay((prevOverlay) => {
+            // Check if any values actually changed to prevent infinite loops
+            let hasChanges = false;
+            for (const key in updates) {
+                if (key === 'animation') {
+                    // Deep compare animation object
+                    const prevAnimation = prevOverlay.styles.animation || {};
+                    const newAnimation = updates.animation || {};
+                    if (prevAnimation.enter !== newAnimation.enter || prevAnimation.exit !== newAnimation.exit) {
+                        hasChanges = true;
+                        break;
+                    }
+                } else if (key === 'layout3D') {
+                    // Deep compare layout3D object
+                    const prevLayout3D = prevOverlay.styles.layout3D || {};
+                    const newLayout3D = updates.layout3D || {};
+                    if (prevLayout3D.layout !== newLayout3D.layout) {
+                        hasChanges = true;
+                        break;
+                    }
+                } else if (prevOverlay.styles[key] !== updates[key]) {
+                    hasChanges = true;
+                    break;
+                }
+            }
+            
+            // Only update if there are actual changes
+            if (!hasChanges) {
+                return prevOverlay;
+            }
+            
             return {
                 ...prevOverlay,
                 styles: {

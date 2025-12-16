@@ -38,8 +38,12 @@ export const ImageOverlayPanel = () => {
     // Track previous selectedOverlayId to prevent unnecessary updates
     const prevSelectedIdRef = useRef(selectedOverlayId);
     const prevOverlayIdRef = useRef(null);
+    // Store overlays in a ref to access latest without causing re-renders
+    const overlaysRef = useRef(overlays);
+    overlaysRef.current = overlays;
     
     // CRITICAL FIX: Only update when selectedOverlayId changes, not when overlays array is recreated
+    // This prevents infinite loops when handleUpdateOverlay updates the overlays array
     useEffect(() => {
         // Only proceed if selectedOverlayId actually changed
         if (selectedOverlayId === prevSelectedIdRef.current) {
@@ -57,7 +61,8 @@ export const ImageOverlayPanel = () => {
             return;
         }
         
-        const selectedOverlay = overlays.find((overlay) => overlay.id === selectedOverlayId);
+        // Use ref to get latest overlays without adding it as a dependency
+        const selectedOverlay = overlaysRef.current.find((overlay) => overlay.id === selectedOverlayId);
         if (selectedOverlay && selectedOverlay.type === OverlayType.IMAGE) {
             setLocalOverlay(selectedOverlay);
             prevOverlayIdRef.current = selectedOverlay.id;
@@ -65,7 +70,7 @@ export const ImageOverlayPanel = () => {
             setLocalOverlay(null);
             prevOverlayIdRef.current = null;
         }
-    }, [selectedOverlayId, overlays]);
+    }, [selectedOverlayId]); // Only depend on selectedOverlayId, not overlays
     /**
      * Handles the image search form submission
      * Searches across all configured image adaptors
