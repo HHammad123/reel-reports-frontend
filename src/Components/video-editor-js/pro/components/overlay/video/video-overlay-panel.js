@@ -110,18 +110,39 @@ export const VideoOverlayPanel = () => {
                 }
                 const canvasDimensions = getAspectRatioDimensions();
                 const assetDimensions = getAssetDimensions(video);
-                // Use intelligent sizing if asset dimensions are available, otherwise fall back to canvas dimensions
-                const { width, height } = assetDimensions
-                    ? calculateIntelligentAssetSize(assetDimensions, canvasDimensions)
-                    : canvasDimensions;
+                // Check if aspect ratios match - if so, always fill canvas for base videos
+                let width, height, fillsCanvas;
+                if (assetDimensions) {
+                    const assetAspectRatio = assetDimensions.width / assetDimensions.height;
+                    const canvasAspectRatio = canvasDimensions.width / canvasDimensions.height;
+                    const aspectRatioTolerance = 0.01;
+                    const aspectRatiosMatch = Math.abs(assetAspectRatio - canvasAspectRatio) < aspectRatioTolerance;
+                    // If aspect ratios match, always fill canvas (base video behavior)
+                    if (aspectRatiosMatch) {
+                        width = canvasDimensions.width;
+                        height = canvasDimensions.height;
+                        fillsCanvas = true;
+                    } else {
+                        // Use intelligent sizing for non-matching aspect ratios
+                        const sized = calculateIntelligentAssetSize(assetDimensions, canvasDimensions);
+                        width = sized.width;
+                        height = sized.height;
+                        fillsCanvas = false;
+                    }
+                } else {
+                    // No asset dimensions - use canvas dimensions (fill canvas)
+                    width = canvasDimensions.width;
+                    height = canvasDimensions.height;
+                    fillsCanvas = true;
+                }
                 const { from, row, updatedOverlays } = addAtPlayhead(currentFrame, overlays, 'top');
-                // Default position: CENTER (always center videos by default)
-                const left = Math.round((canvasDimensions.width - width) / 2);
-                const top = Math.round((canvasDimensions.height - height) / 2);
+                // If video fills canvas, position at (0,0), otherwise center it
+                const left = fillsCanvas ? 0 : Math.round((canvasDimensions.width - width) / 2);
+                const top = fillsCanvas ? 0 : Math.round((canvasDimensions.height - height) / 2);
                 // Create the new overlay without an ID (will be generated)
                 const newOverlay = {
-                    left: left, // Default: CENTERED horizontally
-                    top: top, // Default: CENTERED vertically
+                    left: left, // (0,0) if fills canvas, otherwise centered
+                    top: top, // (0,0) if fills canvas, otherwise centered
                     width,
                     height,
                     durationInFrames,
@@ -138,7 +159,7 @@ export const VideoOverlayPanel = () => {
                         opacity: 1,
                         zIndex: 100,
                         transform: "none",
-                        objectFit: "contain",
+                        objectFit: fillsCanvas ? "cover" : "contain", // Use "cover" when filling canvas to ensure no gaps
                         animation: {
                             enter: "none",
                             exit: "none",

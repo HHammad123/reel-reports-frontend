@@ -150,7 +150,7 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
                             height: "100%",
                         }, durationInFrames: PLAYER_CONFIG.durationInFrames, fps: PLAYER_CONFIG.fps, playbackRate: playbackRate, acknowledgeRemotionLicense: true, inputProps: editorInputProps, errorFallback: () => _jsx(_Fragment, {}), overflowVisible: true, onAutoPlayError: handleAutoPlayError }) }) }) })) : (
         /* Player-only mode: Simple centered container */
-        _jsx("div", { className: "w-full h-full flex items-center justify-center bg-black", children: _jsx("div", { className: "relative", style: {
+        _jsx("div", { className: "w-full h-full flex items-center justify-center ", children: _jsx("div", { className: "relative", style: {
                     width: playerSize.width,
                     height: playerSize.height,
                     maxWidth: "100%",

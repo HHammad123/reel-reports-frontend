@@ -6,7 +6,7 @@ import { Layer } from "./layer";
 import { AlignmentGuides } from "../../components/selection/alignment-guides";
 import { useAlignmentGuides } from "../../hooks/use-alignment-guides";
 const outer = {
-    backgroundColor: "white",
+    backgroundColor: "black",
 };
 const layerContainer = {
     overflow: "hidden",
@@ -19,7 +19,7 @@ const layerContainer = {
  * @param props - Component props of type MainProps
  * @returns React component that displays overlays and their interactive outlines
  */
-export const Main = ({ overlays, setSelectedOverlayId, selectedOverlayId, changeOverlay, width, height, baseUrl, showAlignmentGuides = true, backgroundColor = "white", fontInfos, }) => {
+export const Main = ({ overlays, setSelectedOverlayId, selectedOverlayId, changeOverlay, width, height, baseUrl, showAlignmentGuides = true, backgroundColor = "black", fontInfos, }) => {
     // Initialize alignment guides hook with responsive snap threshold
     // Calculate snap threshold as a percentage of canvas size for consistent sensitivity
     const snapThreshold = Math.min(width, height) * 0.01; // 1% of the smaller dimension

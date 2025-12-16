@@ -18,22 +18,23 @@
 export function calculateIntelligentAssetSize(assetSize, canvasSize) {
     const { width: assetWidth, height: assetHeight } = assetSize;
     const { width: canvasWidth, height: canvasHeight } = canvasSize;
-    // If asset is smaller than canvas in both dimensions, use original size
-    if (assetWidth <= canvasWidth && assetHeight <= canvasHeight) {
-        return {
-            width: assetWidth,
-            height: assetHeight,
-        };
-    }
-    // Calculate aspect ratios
+    // Calculate aspect ratios first
     const assetAspectRatio = assetWidth / assetHeight;
     const canvasAspectRatio = canvasWidth / canvasHeight;
-    // If aspect ratios are very close (within 1% tolerance), fill the canvas
+    // If aspect ratios are very close (within 1% tolerance), always fill the canvas
+    // This ensures base videos with matching aspect ratios cover the full canvas
     const aspectRatioTolerance = 0.01;
     if (Math.abs(assetAspectRatio - canvasAspectRatio) < aspectRatioTolerance) {
         return {
             width: canvasWidth,
             height: canvasHeight,
+        };
+    }
+    // If asset is smaller than canvas in both dimensions and aspect ratios don't match, use original size
+    if (assetWidth <= canvasWidth && assetHeight <= canvasHeight) {
+        return {
+            width: assetWidth,
+            height: assetHeight,
         };
     }
     // Calculate scale factors for both dimensions

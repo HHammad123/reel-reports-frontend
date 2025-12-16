@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { ReactVideoEditor } from '../video-editor-js/pro/components/react-video-editor';
 import { HttpRenderer } from '../video-editor-js/pro/utils/http-renderer';
 import { OverlayType } from '../video-editor-js/pro/types';
+import { calculateIntelligentAssetSize } from '../video-editor-js/pro/utils/asset-sizing';
 import '../video-editor-js/pro/styles.css';
 import '../video-editor-js/pro/styles.utilities.css';
 import '../video-editor-js/pro/styles/base-themes/dark.css';
@@ -2859,6 +2860,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           const DEFAULT_VIDEO_WIDTH = 1280;
           const DEFAULT_VIDEO_HEIGHT = 720;
           
+          // Note: currentAspectRatio, canvasWidth, and canvasHeight are already declared at line 2489
+          
           // ALWAYS CENTER VIDEOS BY DEFAULT
           const left = 0;
           const top = 0;
@@ -2931,10 +2934,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             const chartDurationInFrames = Math.max(1, Math.round(chartDurationSeconds * fps));
             
             // Calculate position and size from bounding_box, size, or position
-            // Get aspect ratio from state (defaults to '16:9' if not set)
-            const currentAspectRatio = aspectRatio || '16:9';
-            const canvasWidth = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1080 : 1920;
-            const canvasHeight = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1920 : 1080;
+            // Note: currentAspectRatio, canvasWidth, and canvasHeight are already declared above
             
             let chartLeft = 0;
             let chartTop = 0;
@@ -3081,12 +3081,68 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             .replace(/^-|-$/g, '')
             .toLowerCase();
           
+          // Note: currentAspectRatio, canvasWidth, and canvasHeight are already declared above
+          
+          // Try to get video dimensions from metadata if available
+          let videoWidth = null;
+          let videoHeight = null;
+          try {
+            // Try to get dimensions from file metadata if available
+            if (file.width && file.height) {
+              videoWidth = file.width;
+              videoHeight = file.height;
+            } else if (file.size && file.size.width && file.size.height) {
+              videoWidth = file.size.width;
+              videoHeight = file.size.height;
+            }
+          } catch (e) {
+            // Ignore errors, will use canvas dimensions
+          }
+          
+          // Determine base video dimensions and position
+          let baseVideoWidth, baseVideoHeight, baseVideoLeft, baseVideoTop, baseVideoObjectFit;
+          
+          if (videoWidth && videoHeight) {
+            // Check if aspect ratios match
+            const videoAspectRatio = videoWidth / videoHeight;
+            const canvasAspectRatio = canvasWidth / canvasHeight;
+            const aspectRatioTolerance = 0.01;
+            const aspectRatiosMatch = Math.abs(videoAspectRatio - canvasAspectRatio) < aspectRatioTolerance;
+            
+            if (aspectRatiosMatch) {
+              // Aspect ratios match - fill canvas (base video behavior)
+              baseVideoWidth = canvasWidth;
+              baseVideoHeight = canvasHeight;
+              baseVideoLeft = 0;
+              baseVideoTop = 0;
+              baseVideoObjectFit = 'cover';
+            } else {
+              // Aspect ratios don't match - use intelligent sizing
+              const sized = calculateIntelligentAssetSize(
+                { width: videoWidth, height: videoHeight },
+                { width: canvasWidth, height: canvasHeight }
+              );
+              baseVideoWidth = sized.width;
+              baseVideoHeight = sized.height;
+              baseVideoLeft = Math.round((canvasWidth - baseVideoWidth) / 2);
+              baseVideoTop = Math.round((canvasHeight - baseVideoHeight) / 2);
+              baseVideoObjectFit = 'contain';
+            }
+          } else {
+            // No video dimensions available - always fill canvas for base videos
+            baseVideoWidth = canvasWidth;
+            baseVideoHeight = canvasHeight;
+            baseVideoLeft = 0;
+            baseVideoTop = 0;
+            baseVideoObjectFit = 'cover';
+          }
+          
           newOverlays.push({
             id: `base-video-${cleanBaseVideoId}`, // Use file name as ID for uniqueness
-            left: left, // Default: CENTERED horizontally (320px from left)
-            top: top, // Default: CENTERED vertically (180px from top)
-            width: DEFAULT_VIDEO_WIDTH, // Fixed: 1280px
-            height: DEFAULT_VIDEO_HEIGHT, // Fixed: 720px
+            left: baseVideoLeft, // (0,0) if fills canvas, otherwise centered
+            top: baseVideoTop, // (0,0) if fills canvas, otherwise centered
+            width: baseVideoWidth, // Canvas width if aspect ratios match, otherwise intelligent sizing
+            height: baseVideoHeight, // Canvas height if aspect ratios match, otherwise intelligent sizing
             durationInFrames,
             from: fromFrame,
             rotation: 0,
@@ -3101,7 +3157,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               opacity: 1,
               zIndex: 90, // zIndex = 100 - (1 * 10) = 90
               transform: 'none',
-              objectFit: 'contain', // Maintain aspect ratio within 1280x720 container
+              objectFit: baseVideoObjectFit, // 'cover' when filling canvas, 'contain' otherwise
               animation: {
                 enter: 'none',
                 exit: 'none',
@@ -3228,9 +3284,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             const subtitleDurationInFrames = Math.max(1, subtitleEndFrame - subtitleStartFrame);
             
             // Calculate subtitle position - CRITICAL: Use absolute canvas coordinates
-            const currentAspectRatio = aspectRatio || '16:9';
-            const canvasWidth = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1080 : 1920;
-            const canvasHeight = currentAspectRatio === '9:16' || currentAspectRatio === '9/16' ? 1920 : 1080;
+            // Note: currentAspectRatio, canvasWidth, and canvasHeight are already declared at line 2489
             
             let subtitleLeft = 0;
             let subtitleTop = 0;
