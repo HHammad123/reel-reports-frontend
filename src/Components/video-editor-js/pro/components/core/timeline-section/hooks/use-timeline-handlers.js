@@ -347,13 +347,17 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                 const mediaSrcDuration = durationFromMetadata;
                 const assetDimensions = getAssetDimensions(video);
                 // Check if aspect ratios match - if so, always fill canvas for base videos
+                // Works for both 9:16 and 16:9 aspect ratios
+                // Examples:
+                // - 16:9 video (1920x1080) on 16:9 canvas (1920x1080) → matches → fills canvas
+                // - 9:16 video (1080x1920) on 9:16 canvas (1080x1920) → matches → fills canvas
                 let width, height, fillsCanvas;
                 if (assetDimensions) {
                     const assetAspectRatio = assetDimensions.width / assetDimensions.height;
                     const canvasAspectRatio = canvasDimensions.width / canvasDimensions.height;
-                    const aspectRatioTolerance = 0.01;
+                    const aspectRatioTolerance = 0.01; // 1% tolerance for floating point comparison
                     const aspectRatiosMatch = Math.abs(assetAspectRatio - canvasAspectRatio) < aspectRatioTolerance;
-                    // If aspect ratios match, always fill canvas (base video behavior)
+                    // If aspect ratios match (9:16 or 16:9), always fill canvas (base video behavior)
                     if (aspectRatiosMatch) {
                         width = canvasDimensions.width;
                         height = canvasDimensions.height;
@@ -366,19 +370,35 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                         fillsCanvas = false;
                     }
                 } else {
-                    // No asset dimensions - use canvas dimensions (fill canvas)
+                    // No asset dimensions - use canvas dimensions (fill canvas for both 9:16 and 16:9)
                     width = canvasDimensions.width;
                     height = canvasDimensions.height;
                     fillsCanvas = true;
                 }
                 // If video fills canvas, position at (0,0), otherwise center it
-                const left = fillsCanvas ? 0 : Math.round((canvasDimensions.width - width) / 2);
-                const top = fillsCanvas ? 0 : Math.round((canvasDimensions.height - height) / 2);
+                let left = fillsCanvas ? 0 : Math.round((canvasDimensions.width - width) / 2);
+                let top = fillsCanvas ? 0 : Math.round((canvasDimensions.height - height) / 2);
+                
+                // CRITICAL: Ensure video stays within canvas bounds
+                // Clamp position to canvas bounds
+                left = Math.max(0, Math.min(left, canvasDimensions.width - Math.max(1, width)));
+                top = Math.max(0, Math.min(top, canvasDimensions.height - Math.max(1, height)));
+                // Clamp dimensions to fit within remaining canvas space
+                width = Math.max(1, Math.min(width, canvasDimensions.width - left));
+                height = Math.max(1, Math.min(height, canvasDimensions.height - top));
+                // Final safety check: ensure position + size doesn't exceed canvas
+                if (left + width > canvasDimensions.width) {
+                    width = Math.max(1, canvasDimensions.width - left);
+                }
+                if (top + height > canvasDimensions.height) {
+                    height = Math.max(1, canvasDimensions.height - top);
+                }
+                
                 newOverlay = {
-                    left: left, // (0,0) if fills canvas, otherwise centered
-                    top: top, // (0,0) if fills canvas, otherwise centered
-                    width,
-                    height,
+                    left: left, // Constrained to canvas bounds
+                    top: top, // Constrained to canvas bounds
+                    width, // Constrained to canvas bounds
+                    height, // Constrained to canvas bounds
                     durationInFrames,
                     from: Math.round(startTime * FPS),
                     rotation: 0,

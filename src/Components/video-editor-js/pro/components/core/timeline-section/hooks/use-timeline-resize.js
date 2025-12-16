@@ -5,10 +5,10 @@ import { TIMELINE_CONSTANTS } from '../../../advanced-timeline/constants';
  * Constants for timeline height calculations
  */
 const HEIGHT_CONSTANTS = {
-    /** Reserved space for editor header and minimum video player */
-    RESERVED_VIEWPORT_SPACE: 260,
+    /** Reserved space for editor header and minimum video player - reduced to give more space to canvas */
+    RESERVED_VIEWPORT_SPACE: 200,
     /** Minimum timeline height to ensure usability */
-    MIN_TIMELINE_HEIGHT: 300,
+    MIN_TIMELINE_HEIGHT: 250,
     /** Additional padding for timeline (scrollbar + comfortable viewing) */
     TIMELINE_PADDING: 67,
 };
@@ -34,13 +34,32 @@ export const useTimelineResize = ({ overlays }) => {
     // Track previous bottomHeight to avoid dependency issues in auto-expand effect
     const prevBottomHeightRef = React.useRef(0);
     /**
-     * Calculate dynamic max height based on track count
-     * Formula: Markers Height + (Track Count × Track Height) + Padding
+     * Calculate dynamic max height - allow timeline to go to bottom of viewport
+     * When dragged down, timeline can expand to fill remaining space after canvas area
+     * Formula: Viewport height - (header + minimum canvas space)
+     * This allows dragging timeline all the way to the bottom
      */
     const dynamicMaxHeight = React.useMemo(() => {
-        return TIMELINE_CONSTANTS.MARKERS_HEIGHT +
+        if (typeof window === 'undefined') {
+            // SSR fallback - use track-based calculation
+            return TIMELINE_CONSTANTS.MARKERS_HEIGHT +
+                (trackCount * TIMELINE_CONSTANTS.TRACK_HEIGHT) +
+                HEIGHT_CONSTANTS.TIMELINE_PADDING;
+        }
+        // Calculate available space: viewport height minus header and minimum canvas space
+        const viewportHeight = window.innerHeight;
+        const headerHeight = 60; // Approximate header height
+        const minCanvasSpace = 150; // Minimum space to keep for canvas (very small to allow timeline to go to bottom)
+        const availableSpace = Math.max(viewportHeight - headerHeight - minCanvasSpace, 0);
+        
+        // Track-based minimum height calculation
+        const trackBasedHeight = TIMELINE_CONSTANTS.MARKERS_HEIGHT +
             (trackCount * TIMELINE_CONSTANTS.TRACK_HEIGHT) +
             HEIGHT_CONSTANTS.TIMELINE_PADDING;
+        
+        // Allow timeline to expand to bottom - use available space or track-based, whichever is larger
+        // This allows dragging timeline all the way down to the bottom of the viewport
+        return Math.max(availableSpace, trackBasedHeight);
     }, [trackCount]);
     /**
      * Calculate initial height: use full available viewport height on first load

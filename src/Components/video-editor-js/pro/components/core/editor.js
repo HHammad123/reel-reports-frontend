@@ -98,5 +98,5 @@ export const Editor = ({ availableThemes, selectedTheme, onThemeChange, showDefa
     return (_jsxs("div", { className: "flex flex-col overflow-hidden", style: {
             height: "calc(var(--vh, 1vh) * 100)",
             maxHeight: "-webkit-fill-available" /* Safari fix */,
-        }, children: [_jsx(EditorHeader, { availableThemes: availableThemes, selectedTheme: selectedTheme, onThemeChange: onThemeChange, showDefaultThemes: showDefaultThemes, hideThemeToggle: hideThemeToggle, defaultTheme: defaultTheme }), _jsx("div", { className: "flex-shrink-0 flex flex-col lg:flex-row overflow-hidden", style: { maxHeight: '40%', minHeight: '300px' }, children: _jsx(VideoPlayer, { playerRef: playerRef }) }), _jsx(TimelineSection, {}), _jsx(MobileNavBar, {})] }));
+        }, children: [_jsx(EditorHeader, { availableThemes: availableThemes, selectedTheme: selectedTheme, onThemeChange: onThemeChange, showDefaultThemes: showDefaultThemes, hideThemeToggle: hideThemeToggle, defaultTheme: defaultTheme }), _jsx("div", { className: "flex flex-col lg:flex-row overflow-hidden", style: { maxHeight: '65%', minHeight: '200px', flex: '1 1 auto' }, children: _jsx(VideoPlayer, { playerRef: playerRef }) }), _jsx(TimelineSection, {}), _jsx(MobileNavBar, {})] }));
 };

@@ -2998,12 +2998,20 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               chartTop = (canvasHeight - chartHeight) / 2;
             }
             
-            // Ensure chart stays within canvas bounds
-            chartLeft = Math.max(0, Math.min(chartLeft, canvasWidth - chartWidth));
-            chartTop = Math.max(0, Math.min(chartTop, canvasHeight - chartHeight));
-            // Ensure dimensions don't exceed canvas
-            chartWidth = Math.min(chartWidth, canvasWidth - chartLeft);
-            chartHeight = Math.min(chartHeight, canvasHeight - chartTop);
+            // CRITICAL: Ensure chart stays within canvas bounds - comprehensive boundary checks
+            // Clamp position to canvas bounds (prevent negative or out-of-bounds positions)
+            chartLeft = Math.max(0, Math.min(chartLeft, canvasWidth - Math.max(1, chartWidth)));
+            chartTop = Math.max(0, Math.min(chartTop, canvasHeight - Math.max(1, chartHeight)));
+            // Clamp dimensions to fit within remaining canvas space
+            chartWidth = Math.max(1, Math.min(chartWidth, canvasWidth - chartLeft));
+            chartHeight = Math.max(1, Math.min(chartHeight, canvasHeight - chartTop));
+            // Final safety check: ensure position + size doesn't exceed canvas
+            if (chartLeft + chartWidth > canvasWidth) {
+              chartWidth = Math.max(1, canvasWidth - chartLeft);
+            }
+            if (chartTop + chartHeight > canvasHeight) {
+              chartHeight = Math.max(1, canvasHeight - chartTop);
+            }
             
             // Map animation type
             let animationType = 'none';
@@ -3083,59 +3091,13 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           
           // Note: currentAspectRatio, canvasWidth, and canvasHeight are already declared above
           
-          // Try to get video dimensions from metadata if available
-          let videoWidth = null;
-          let videoHeight = null;
-          try {
-            // Try to get dimensions from file metadata if available
-            if (file.width && file.height) {
-              videoWidth = file.width;
-              videoHeight = file.height;
-            } else if (file.size && file.size.width && file.size.height) {
-              videoWidth = file.size.width;
-              videoHeight = file.size.height;
-            }
-          } catch (e) {
-            // Ignore errors, will use canvas dimensions
-          }
-          
-          // Determine base video dimensions and position
-          let baseVideoWidth, baseVideoHeight, baseVideoLeft, baseVideoTop, baseVideoObjectFit;
-          
-          if (videoWidth && videoHeight) {
-            // Check if aspect ratios match
-            const videoAspectRatio = videoWidth / videoHeight;
-            const canvasAspectRatio = canvasWidth / canvasHeight;
-            const aspectRatioTolerance = 0.01;
-            const aspectRatiosMatch = Math.abs(videoAspectRatio - canvasAspectRatio) < aspectRatioTolerance;
-            
-            if (aspectRatiosMatch) {
-              // Aspect ratios match - fill canvas (base video behavior)
-              baseVideoWidth = canvasWidth;
-              baseVideoHeight = canvasHeight;
-              baseVideoLeft = 0;
-              baseVideoTop = 0;
-              baseVideoObjectFit = 'cover';
-            } else {
-              // Aspect ratios don't match - use intelligent sizing
-              const sized = calculateIntelligentAssetSize(
-                { width: videoWidth, height: videoHeight },
-                { width: canvasWidth, height: canvasHeight }
-              );
-              baseVideoWidth = sized.width;
-              baseVideoHeight = sized.height;
-              baseVideoLeft = Math.round((canvasWidth - baseVideoWidth) / 2);
-              baseVideoTop = Math.round((canvasHeight - baseVideoHeight) / 2);
-              baseVideoObjectFit = 'contain';
-            }
-          } else {
-            // No video dimensions available - always fill canvas for base videos
-            baseVideoWidth = canvasWidth;
-            baseVideoHeight = canvasHeight;
-            baseVideoLeft = 0;
-            baseVideoTop = 0;
-            baseVideoObjectFit = 'cover';
-          }
+          // Base videos ALWAYS fill the canvas completely for both 9:16 and 16:9
+          // This ensures the base video covers the entire canvas regardless of video dimensions
+          const baseVideoWidth = canvasWidth;
+          const baseVideoHeight = canvasHeight;
+          const baseVideoLeft = 0;
+          const baseVideoTop = 0;
+          const baseVideoObjectFit = 'cover'; // Use cover to ensure full canvas fill with no gaps
           
           newOverlays.push({
             id: `base-video-${cleanBaseVideoId}`, // Use file name as ID for uniqueness
@@ -3724,20 +3686,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
             ) : null;
           })()}
           {/* Debug info in development */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="text-xs text-gray-500 px-2 border border-gray-200 rounded px-2 py-1">
-              <div>Unsaved: {hasUnsavedLayers ? '✅ Yes' : '❌ No'}</div>
-              <div>Initial: {initialOverlaysLoadedRef.current ? '✅' : '❌'}</div>
-              <div>Overlays: {editorOverlaysRef.current?.length || 0}</div>
-              <div>Saved IDs: {Array.from(savedOverlayIdsRef.current).length}</div>
-              <div>Unsaved IDs: {(() => {
-                const currentOverlays = editorOverlaysRef.current || [];
-                const currentOverlayIds = new Set(currentOverlays.map(o => o?.id).filter(Boolean));
-                const savedIds = savedOverlayIdsRef.current;
-                return Array.from(currentOverlayIds).filter(id => !savedIds.has(id)).length;
-              })()}</div>
-            </div>
-          )}
+          
         {onClose && (
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50">
             Back
