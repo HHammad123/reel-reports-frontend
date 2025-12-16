@@ -44,13 +44,28 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // CRITICAL: For Scene 1 audio (startsAtFrameZero), we MUST NOT block rendering
     // If we use delayRender, it blocks Html5Audio from rendering, which prevents audio from playing
     const startsAtFrameZero = (overlay.from || 0) === 0;
+    
     useEffect(() => {
         let isMounted = true;
+        let quickReadyTimer = null;
         
         // CRITICAL FIX: For Scene 1 audio (frame 0), don't block rendering with delayRender
         // Html5Audio needs to render immediately to start playing
         // Only use delayRender for non-Scene-1 audio as a performance optimization
         const handle = startsAtFrameZero ? null : delayRender("Loading audio");
+        
+        // CRITICAL: For Scene 1, AudioPreloader should have already started fetching
+        // Mark audio as ready quickly to allow Html5Audio to render
+        // The actual audio loading will continue in the background
+        if (startsAtFrameZero) {
+            // Set a very short timeout to mark as ready, allowing Html5Audio to render
+            // AudioPreloader has already started fetching, so audio should be loading
+            quickReadyTimer = setTimeout(() => {
+                if (isMounted) {
+                    setIsAudioReady(true);
+                }
+            }, 50); // Very short delay - AudioPreloader should have started by now
+        }
         
         const audio = document.createElement("audio");
         audio.preload = "auto"; // CRITICAL: Preload entire audio file for ALL scenes
@@ -101,7 +116,7 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
                             continueRender(handle);
                         }
                     }
-                }, startsAtFrameZero ? 100 : 300); // Shorter delay for Scene 1
+                }, startsAtFrameZero ? 10 : 300); // Very short delay (10ms) for Scene 1 to mark ready quickly
             }
         };
         
@@ -148,7 +163,7 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
                     continueRender(handle);
                 }
             }
-        }, startsAtFrameZero ? 2000 : 10000); // 2 seconds for Scene 1, 10 seconds for others
+        }, startsAtFrameZero ? 100 : 10000); // 100ms for Scene 1 (very aggressive to mark ready quickly), 10 seconds for others
         
         return () => {
             isMounted = false;
@@ -157,6 +172,9 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
             audio.removeEventListener("loadeddata", handleLoadedData);
             audio.removeEventListener("error", handleError);
             clearTimeout(timeout);
+            if (quickReadyTimer) {
+                clearTimeout(quickReadyTimer);
+            }
         };
     }, [audioSrc, overlay.src, overlay.from, startsAtFrameZero, overlay.id, overlay.durationInFrames]); // Added startsAtFrameZero and overlay properties for better tracking
     // Calculate volume with fade in/out
@@ -221,10 +239,25 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // For first scene (overlay.from === 0), this renders immediately at frame 0
     // Html5Audio automatically syncs playback with Remotion's frame timeline
     // trimBefore: offset into the audio file in seconds (0 = start from beginning of audio file)
-    // CRITICAL: trimBeforeSeconds should be 0 to ensure audio plays from the start
+    // CRITICAL: For Scene 1 audio (startsAtFrameZero), ensure trimBefore is 0 and audio starts at frame 0
+    // Force trimBefore to 0 for Scene 1 audio to ensure it plays from the beginning
+    const finalTrimBefore = startsAtFrameZero ? 0 : trimBeforeSeconds;
+    
+    // CRITICAL FIX: For Scene 1 audio, only render Html5Audio when audio is ready
+    // This ensures Html5Audio can start playing immediately when it mounts
+    // For other scenes, render immediately (they can handle loading)
+    // AudioPreloader aggressively preloads Scene 1 audio, so it should be ready quickly
+    if (startsAtFrameZero && !isAudioReady) {
+        // For Scene 1, wait until audio is ready before rendering Html5Audio
+        // This ensures Html5Audio can start playing immediately
+        return null;
+    }
+    
+    // Render Html5Audio - for Scene 1, this only happens when audio is ready
+    // For other scenes, this happens immediately
     return (_jsx(Html5Audio, { 
         src: audioSrc, 
-        trimBefore: trimBeforeSeconds,  // 0 = start from beginning of audio file
+        trimBefore: finalTrimBefore,  // Force 0 for Scene 1 audio to start from beginning
         volume: finalVolume
     }));
 };

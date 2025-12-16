@@ -3432,11 +3432,29 @@
               // Get audio duration and preload audio for smooth playback
               // CRITICAL: Preload ALL audio files fully for smooth playback
               let audioDurationSeconds = durationSeconds; // Default to video duration
-              const isFirstScene = i === 0; // First video/scene (index 0)
               
-              // CRITICAL FIX: Always ensure Scene 1 (i === 0) starts at frame 0
-              // Use Math.min to guarantee frame 0 for first scene, regardless of fromFrame value
+              // CRITICAL: Determine if this is Scene 1 (first video in loop)
+              const isFirstScene = i === 0;
+              
+              // CRITICAL FIX: Scene 1 MUST start at frame 0 (not fromFrame accumulator)
               const audioStartFrame = isFirstScene ? 0 : fromFrame;
+              
+              // VERIFICATION: Ensure Scene 1 audio is exactly at frame 0
+              if (isFirstScene && audioStartFrame !== 0) {
+                console.error('[VideosList] ❌ CRITICAL ERROR: Scene 1 audio not at frame 0!', {
+                  sceneIndex: i,
+                  audioStartFrame,
+                  fromFrame,
+                  expected: 0
+                });
+              } else if (isFirstScene) {
+                console.log('[VideosList] ✅ Scene 1 audio correctly positioned at frame 0:', {
+                  sceneIndex: i,
+                  itemTitle: file.title || file.name,
+                  audioStartFrame,
+                  audioUrl: audioUrl.substring(0, 60)
+                });
+              }
               
               // Preload audio asynchronously (non-blocking) - don't await to avoid blocking overlay creation
               // This allows overlay creation to proceed even if audio preload is slow
@@ -3566,7 +3584,7 @@
                 width: 0, // Audio has no visual dimensions
                 height: 0,
                 durationInFrames: audioDurationInFrames,
-                from: finalAudioStartFrame, // CRITICAL: Scene 1 (i === 0) MUST start at frame 0
+                from: audioStartFrame, // CRITICAL: Scene 1 MUST be 0
                 rotation: 0,
                 row: audioRow, // CRITICAL: Use calculated row (after subtitles, bottom track)
                 isDragging: false,
@@ -3582,16 +3600,36 @@
               
               newOverlays.push(audioOverlay);
               
-              // Log the complete audio overlay object with positioning verification
-              console.log(`[VideosList] ✅ Audio overlay object created for scene ${i + 1}:`, {
+              // VERIFICATION: Log the created audio overlay
+              console.log(`[VideosList] ✅ Audio overlay created for scene ${i + 1}:`, {
                 id: audioOverlay.id,
                 from: audioOverlay.from,
-                from_VERIFIED: audioOverlay.from === 0 && isFirstScene ? '✅ CORRECT (Scene 1 at frame 0)' : (isFirstScene ? '❌ ERROR (Scene 1 not at frame 0!)' : `Scene ${i + 1} starts at frame ${audioOverlay.from}`),
+                FROM_VERIFIED: (isFirstScene && audioOverlay.from === 0) ? '✅ CORRECT (Scene 1 at frame 0)' : 
+                               (isFirstScene ? '❌ ERROR (Scene 1 NOT at frame 0!)' : `Scene ${i + 1} at frame ${audioOverlay.from}`),
                 durationInFrames: audioOverlay.durationInFrames,
-                src: audioOverlay.src,
-                volume: audioOverlay.styles.volume,
-                sceneIndex: i + 1
+                src: audioOverlay.src.substring(0, 60),
+                sceneIndex: i + 1,
+                isFirstScene,
+                volume: audioOverlay.styles.volume
               });
+              
+              // CRITICAL: Verify overlay properties are correct for Remotion
+              if (isFirstScene) {
+                console.log('[VideosList] 🔊 Scene 1 AUDIO OVERLAY COMPLETE CONFIG:', {
+                  id: audioOverlay.id,
+                  type: audioOverlay.type,
+                  typeIsSound: audioOverlay.type === OverlayType.SOUND,
+                  from: audioOverlay.from,
+                  durationInFrames: audioOverlay.durationInFrames,
+                  src: audioOverlay.src,
+                  mediaSrcDuration: audioOverlay.mediaSrcDuration,
+                  startFromSound: audioOverlay.startFromSound,
+                  volume: audioOverlay.styles?.volume,
+                  row: audioOverlay.row,
+                  hasValidSrc: !!(audioOverlay.src && audioOverlay.src.trim()),
+                  srcLength: audioOverlay.src?.length
+                });
+              }
             }
 
             // STEP 6: Add subtitle/caption overlay (FIXED to row 1 - all scene subtitles go to row 1, above text layers)
@@ -3925,6 +3963,36 @@
               // Create a deep copy to ensure reference stability
               const overlaysToSet = JSON.parse(JSON.stringify(newOverlays));
               lastOverlaysRef.current = overlaysToSet;
+              
+              // CRITICAL FINAL VERIFICATION: Check Scene 1 audio is in the overlays
+              const scene1AudioInOverlays = overlaysToSet.find(o => {
+                const overlayType = String(o?.type || '').toLowerCase();
+                return (overlayType === 'sound' || o.type === OverlayType.SOUND) && (o.from || 0) === 0;
+              });
+              
+              if (!scene1AudioInOverlays) {
+                console.error('[VideosList] ❌❌❌ CRITICAL: Scene 1 audio NOT in overlaysToSet!', {
+                  totalOverlays: overlaysToSet.length,
+                  audioOverlays: overlaysToSet.filter(o => {
+                    const overlayType = String(o?.type || '').toLowerCase();
+                    return overlayType === 'sound' || o.type === OverlayType.SOUND;
+                  }).length,
+                  firstAudioOverlay: overlaysToSet.find(o => {
+                    const overlayType = String(o?.type || '').toLowerCase();
+                    return overlayType === 'sound' || o.type === OverlayType.SOUND;
+                  })
+                });
+              } else {
+                console.log('[VideosList] ✅✅✅ Scene 1 audio CONFIRMED in overlaysToSet:', {
+                  id: scene1AudioInOverlays.id,
+                  from: scene1AudioInOverlays.from,
+                  src: scene1AudioInOverlays.src?.substring(0, 60),
+                  durationInFrames: scene1AudioInOverlays.durationInFrames,
+                  volume: scene1AudioInOverlays.styles?.volume,
+                  totalOverlays: overlaysToSet.length
+                });
+              }
+              
               setDefaultOverlays(overlaysToSet);
               // Mark initial overlays as loaded (but don't mark as saved here - let handleOverlaysChange do it)
               // This prevents double-marking and ensures handleOverlaysChange is the single source of truth

@@ -176,13 +176,14 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             }, 1000);
         };
         
-        // CRITICAL: Load Scene 1 audio FIRST and IMMEDIATELY (no waiting)
-        // Fetch Scene 1 audio right away, before timeline rendering
+        // CRITICAL: Load Scene 1 audio FIRST with guaranteed playback readiness
         if (scene1AudioOverlays.length > 0) {
-            // IMMEDIATELY fetch Scene 1 audio - don't wait for anything
+            console.log('[AudioPreloader] Loading Scene 1 audio (PERSISTENT MODE):', scene1AudioOverlays.length);
+            
             scene1AudioOverlays.forEach(overlay => {
                 const audioSrc = overlay.src;
                 if (!audioSrc || audioSrc.trim() === '') {
+                    console.warn('[AudioPreloader] Scene 1 audio missing src:', overlay.id);
                     return;
                 }
                 
@@ -194,8 +195,14 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                 }
                 
                 if (preloadedAudioRef.current.has(finalAudioSrc)) {
+                    console.log('[AudioPreloader] Scene 1 audio already preloaded:', finalAudioSrc.substring(0, 50));
                     return;
                 }
+                
+                console.log('[AudioPreloader] ✅ Starting Scene 1 audio preload:', {
+                    overlayId: overlay.id,
+                    src: finalAudioSrc.substring(0, 80)
+                });
                 
                 preloadedAudioRef.current.add(finalAudioSrc);
                 
@@ -221,13 +228,17 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                     // Silently handle errors
                 });
                 
-                // Also create audio element immediately for browser caching
+                // Create PERSISTENT audio element for Scene 1 (never remove from DOM)
                 const audio = document.createElement('audio');
                 audio.preload = 'auto';
                 audio.crossOrigin = 'anonymous';
                 audio.src = finalAudioSrc;
                 
-                // Add to DOM immediately to trigger loading
+                // CRITICAL: Mark as Scene 1 audio so it persists in DOM
+                audio.setAttribute('data-scene-1-audio', 'true');
+                audio.setAttribute('data-overlay-id', overlay.id || 'scene-1-audio');
+                
+                // Add to DOM permanently (DO NOT REMOVE)
                 audio.style.display = 'none';
                 audio.style.position = 'absolute';
                 audio.style.visibility = 'hidden';
@@ -235,30 +246,75 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                 audio.style.height = '0';
                 document.body.appendChild(audio);
                 
+                console.log('[AudioPreloader] Scene 1 audio element added to DOM (persistent)');
+                
+                // Store with persistent flag
                 audioElementsRef.current.set(finalAudioSrc, { 
                     audio, 
+                    persistent: true, // CRITICAL: Mark as persistent
+                    overlayId: overlay.id,
                     ...(audioElementsRef.current.get(finalAudioSrc) || {})
                 });
                 
-                // Immediately call load() to trigger network request
-                audio.load();
-                
-                // Reset audio to start when ready
-                const handleCanPlayThrough = () => {
-                    audio.currentTime = 0;
+                // Track loading progress
+                const handleLoadedMetadata = () => {
+                    console.log('[AudioPreloader] ✅ Scene 1 audio metadata loaded:', {
+                        duration: audio.duration,
+                        readyState: audio.readyState,
+                        src: finalAudioSrc.substring(0, 60)
+                    });
                 };
-                audio.addEventListener('canplaythrough', handleCanPlayThrough);
                 
-                // Clean up DOM after a delay
-                setTimeout(() => {
-                    try {
-                        if (audio.parentNode) {
-                            audio.parentNode.removeChild(audio);
-                        }
-                    } catch (e) {
-                        // Ignore errors
+                const handleCanPlayThrough = () => {
+                    console.log('[AudioPreloader] ✅ Scene 1 audio READY FOR PLAYBACK:', {
+                        readyState: audio.readyState,
+                        duration: audio.duration,
+                        currentTime: audio.currentTime,
+                        paused: audio.paused
+                    });
+                    
+                    // Reset to start
+                    audio.currentTime = 0;
+                    
+                    // CRITICAL: Store reference globally for Remotion to find
+                    if (!window.__SCENE_1_AUDIO_ELEMENTS) {
+                        window.__SCENE_1_AUDIO_ELEMENTS = new Map();
                     }
-                }, 2000);
+                    window.__SCENE_1_AUDIO_ELEMENTS.set(finalAudioSrc, audio);
+                    
+                    console.log('[AudioPreloader] 💾 Stored Scene 1 audio in window.__SCENE_1_AUDIO_ELEMENTS');
+                };
+                
+                const handleLoadedData = () => {
+                    console.log('[AudioPreloader] Scene 1 audio data loaded (readyState:', audio.readyState, ')');
+                };
+                
+                const handleError = (e) => {
+                    console.error('[AudioPreloader] ❌ Scene 1 audio load ERROR:', {
+                        error: e,
+                        src: finalAudioSrc.substring(0, 60),
+                        networkState: audio.networkState,
+                        readyState: audio.readyState
+                    });
+                };
+                
+                // Add all event listeners
+                audio.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true });
+                audio.addEventListener('canplaythrough', handleCanPlayThrough, { once: true });
+                audio.addEventListener('loadeddata', handleLoadedData, { once: true });
+                audio.addEventListener('error', handleError);
+                
+                // Immediately start loading
+                audio.load();
+                console.log('[AudioPreloader] Called audio.load() for Scene 1');
+                
+                // CRITICAL: Also store reference immediately (before load completes)
+                if (!window.__SCENE_1_AUDIO_ELEMENTS) {
+                    window.__SCENE_1_AUDIO_ELEMENTS = new Map();
+                }
+                window.__SCENE_1_AUDIO_ELEMENTS.set(finalAudioSrc, audio);
+                
+                // DO NOT REMOVE FROM DOM - Scene 1 audio stays permanently
             });
             
             // Now load other audio files (Scene 1 audio fetch has already started)
@@ -276,19 +332,29 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             sortedAudioOverlays.forEach(preloadAudioOverlay);
         }
         
-        // Cleanup function: clean up DOM elements but keep refs for cache
+        // Cleanup function: preserve Scene 1 audio, clean up others
         return () => {
-            // Remove any audio elements from DOM if still there
+            console.log('[AudioPreloader] Cleanup: preserving Scene 1 audio, removing others');
+            
+            // Remove audio elements from DOM, EXCEPT Scene 1 audio (persistent)
             audioElementsRef.current.forEach((value, url) => {
+                // CRITICAL: Never remove Scene 1 audio from DOM
+                if (value?.persistent) {
+                    console.log('[AudioPreloader] Preserving Scene 1 audio in DOM:', url.substring(0, 60));
+                    return;
+                }
+                
+                // Remove non-Scene-1 audio from DOM
                 if (value?.audio && value.audio.parentNode) {
                     try {
                         value.audio.parentNode.removeChild(value.audio);
+                        console.log('[AudioPreloader] Removed non-Scene-1 audio from DOM');
                     } catch (e) {
                         // Ignore errors
                     }
                 }
             });
-            // Keep refs in memory for browser cache
+            // Keep all refs in memory for browser cache
         };
     }, [overlays, resolvedBaseUrl]); // Re-run when overlays change
     

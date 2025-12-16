@@ -65,6 +65,273 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     const { isPlaying, currentFrame, playerRef: internalPlayerRef, togglePlayPause, formatTime, play, pause, seekTo } = useVideoPlayer(fps, externalPlayerRef);
     // Use external playerRef if provided, otherwise use internal one
     const playerRef = externalPlayerRef || internalPlayerRef;
+    
+    // CRITICAL: Force reload Scene 1 audio when timeline is at frame 0
+    useEffect(() => {
+        if (currentFrame === 0) {
+            console.log('[EditorProvider] At frame 0, checking Scene 1 audio elements...');
+            
+            // Find all Scene 1 audio elements in DOM
+            const scene1AudioElements = document.querySelectorAll('audio[data-scene-1-audio="true"]');
+            
+            console.log('[EditorProvider] Found Scene 1 audio elements:', scene1AudioElements.length);
+            
+            if (scene1AudioElements.length > 0) {
+                scene1AudioElements.forEach((audio, index) => {
+                    console.log(`[EditorProvider] Reloading Scene 1 audio ${index + 1}:`, {
+                        src: audio.src.substring(0, 60),
+                        readyState: audio.readyState,
+                        currentTime: audio.currentTime,
+                        paused: audio.paused
+                    });
+                    
+                    // Force reload to ensure it's ready
+                    audio.currentTime = 0;
+                    audio.load();
+                    
+                    console.log(`[EditorProvider] ✅ Reloaded Scene 1 audio ${index + 1}`);
+                });
+            } else {
+                console.warn('[EditorProvider] ⚠️ No Scene 1 audio elements found in DOM at frame 0');
+            }
+        }
+    }, [currentFrame]);
+    
+    // CRITICAL: Ensure Remotion uses preloaded Scene 1 audio - intercept audio element creation
+    useEffect(() => {
+        console.log('[EditorProvider] Setting up Remotion audio override for Scene 1...');
+        
+        // Watch for Remotion creating new audio elements
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (node.tagName === 'AUDIO') {
+                        const audioElement = node;
+                        const src = audioElement.src;
+                        
+                        console.log('[EditorProvider] Remotion created audio element:', {
+                            src: src?.substring(0, 60),
+                            currentTime: audioElement.currentTime,
+                            paused: audioElement.paused
+                        });
+                        
+                        // Check if this is Scene 1 audio
+                        if (window.__SCENE_1_AUDIO_ELEMENTS && window.__SCENE_1_AUDIO_ELEMENTS.has(src)) {
+                            console.log('[EditorProvider] 🎯 Found Scene 1 audio created by Remotion!');
+                            
+                            const preloadedAudio = window.__SCENE_1_AUDIO_ELEMENTS.get(src);
+                            
+                            // Force the new element to use preloaded data
+                            audioElement.load();
+                            
+                            // Mirror the preloaded audio state
+                            if (preloadedAudio.readyState >= 3) {
+                                console.log('[EditorProvider] ✅ Preloaded audio ready, syncing to Remotion element');
+                                audioElement.currentTime = 0;
+                            }
+                            
+                            // Add play event listener
+                            audioElement.addEventListener('play', () => {
+                                console.log('[EditorProvider] 🔊 Remotion audio PLAYING:', {
+                                    src: src?.substring(0, 60),
+                                    currentTime: audioElement.currentTime,
+                                    volume: audioElement.volume
+                                });
+                            });
+                            
+                            audioElement.addEventListener('pause', () => {
+                                console.log('[EditorProvider] ⏸️ Remotion audio PAUSED:', {
+                                    src: src?.substring(0, 60),
+                                    currentTime: audioElement.currentTime
+                                });
+                            });
+                            
+                            audioElement.addEventListener('error', (e) => {
+                                console.error('[EditorProvider] ❌ Remotion audio ERROR:', {
+                                    error: e,
+                                    src: src?.substring(0, 60)
+                                });
+                            });
+                        }
+                    }
+                });
+            });
+        });
+        
+        // Observe the entire document for audio elements
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        
+        return () => observer.disconnect();
+    }, []);
+    
+    // CRITICAL: Wait for Scene 1 audio to be ready on mount
+    useEffect(() => {
+        const audioOverlaysAtStart = overlays.filter(o => {
+            const overlayType = String(o?.type || '').toLowerCase();
+            return (overlayType === 'sound' || o.type === 'sound') && (o.from || 0) === 0;
+        });
+        
+        if (audioOverlaysAtStart.length === 0) {
+            console.log('[EditorProvider] No Scene 1 audio overlays found');
+            return;
+        }
+        
+        console.log('[EditorProvider] Waiting for Scene 1 audio to be ready...', {
+            count: audioOverlaysAtStart.length,
+            overlays: audioOverlaysAtStart.map(o => ({ id: o.id, src: o.src?.substring(0, 50) }))
+        });
+        
+        let checkCount = 0;
+        const maxChecks = 50; // 5 seconds max
+        
+        const checkAudioReady = setInterval(() => {
+            checkCount++;
+            
+            let allReady = true;
+            const statuses = [];
+            
+            audioOverlaysAtStart.forEach(overlay => {
+                const audioElement = document.querySelector(`audio[data-scene-1-audio="true"][data-overlay-id="${overlay.id}"]`);
+                
+                if (!audioElement) {
+                    allReady = false;
+                    statuses.push({ id: overlay.id, status: 'NOT_FOUND' });
+                } else if (audioElement.readyState < 3) { // Less than HAVE_FUTURE_DATA
+                    allReady = false;
+                    statuses.push({ 
+                        id: overlay.id, 
+                        status: 'LOADING', 
+                        readyState: audioElement.readyState 
+                    });
+                } else {
+                    statuses.push({ 
+                        id: overlay.id, 
+                        status: 'READY', 
+                        readyState: audioElement.readyState 
+                    });
+                }
+            });
+            
+            if (checkCount % 10 === 0) { // Log every second
+                console.log('[EditorProvider] Audio readiness check:', {
+                    attempt: checkCount,
+                    statuses
+                });
+            }
+            
+            if (allReady) {
+                console.log('[EditorProvider] ✅✅✅ Scene 1 audio READY FOR PLAYBACK ✅✅✅');
+                clearInterval(checkAudioReady);
+            } else if (checkCount >= maxChecks) {
+                console.warn('[EditorProvider] ⚠️ Scene 1 audio readiness check TIMEOUT after 5s:', statuses);
+                clearInterval(checkAudioReady);
+            }
+        }, 100);
+        
+        return () => clearInterval(checkAudioReady);
+    }, [overlays]);
+    
+    // CRITICAL: Check Scene 1 audio volume when playback starts
+    useEffect(() => {
+        if (isPlaying && currentFrame <= 30) { // Within first second
+            console.log('[EditorProvider] Playback started, checking Scene 1 audio volume...');
+            
+            // Find all audio elements
+            const allAudioElements = document.querySelectorAll('audio');
+            console.log('[EditorProvider] Found audio elements in DOM:', allAudioElements.length);
+            
+            allAudioElements.forEach((audio, index) => {
+                console.log(`[EditorProvider] Audio ${index + 1}:`, {
+                    src: audio.src?.substring(0, 60),
+                    volume: audio.volume,
+                    muted: audio.muted,
+                    paused: audio.paused,
+                    currentTime: audio.currentTime,
+                    duration: audio.duration,
+                    readyState: audio.readyState,
+                    networkState: audio.networkState
+                });
+                
+                // Force unmute and set volume
+                if (audio.muted) {
+                    console.warn('[EditorProvider] ⚠️ Audio was muted! Unmuting...');
+                    audio.muted = false;
+                }
+                
+                if (audio.volume === 0) {
+                    console.warn('[EditorProvider] ⚠️ Audio volume was 0! Setting to 1...');
+                    audio.volume = 1;
+                }
+            });
+        }
+    }, [isPlaying, currentFrame]);
+    
+    // CRITICAL: Last resort - manually play Scene 1 audio when timeline reaches frame 0
+    useEffect(() => {
+        if (isPlaying && currentFrame >= 0 && currentFrame <= 3) {
+            console.log('[EditorProvider] At frame 0-3 during playback, manually checking audio...');
+            
+            // Find Scene 1 audio overlays
+            const scene1AudioOverlays = overlays.filter(o => {
+                const overlayType = String(o?.type || '').toLowerCase();
+                return (overlayType === 'sound' || o.type === 'sound') && (o.from || 0) === 0;
+            });
+            
+            if (scene1AudioOverlays.length === 0) {
+                console.warn('[EditorProvider] ⚠️ No Scene 1 audio overlays found');
+                return;
+            }
+            
+            console.log('[EditorProvider] Found Scene 1 audio overlays:', scene1AudioOverlays.length);
+            
+            // Try to find and play the audio elements
+            scene1AudioOverlays.forEach((overlay) => {
+                const audioElements = document.querySelectorAll(`audio[src="${overlay.src}"]`);
+                
+                console.log(`[EditorProvider] Found ${audioElements.length} audio element(s) for overlay ${overlay.id}`);
+                
+                if (audioElements.length === 0) {
+                    console.error('[EditorProvider] ❌ No audio element found in DOM for:', {
+                        overlayId: overlay.id,
+                        src: overlay.src?.substring(0, 60)
+                    });
+                }
+                
+                audioElements.forEach((audio, index) => {
+                    console.log(`[EditorProvider] Audio element ${index + 1} state:`, {
+                        paused: audio.paused,
+                        currentTime: audio.currentTime,
+                        volume: audio.volume,
+                        muted: audio.muted,
+                        readyState: audio.readyState,
+                        src: audio.src?.substring(0, 60)
+                    });
+                    
+                    // If audio is paused but should be playing
+                    if (audio.paused && audio.readyState >= 2) {
+                        console.log('[EditorProvider] 🔊 MANUALLY PLAYING Scene 1 audio...');
+                        
+                        // Ensure volume and unmute
+                        audio.volume = overlay.styles?.volume || 1;
+                        audio.muted = false;
+                        audio.currentTime = 0;
+                        
+                        // Try to play
+                        audio.play()
+                            .then(() => {
+                                console.log('[EditorProvider] ✅✅✅ Scene 1 audio PLAYING SUCCESSFULLY!');
+                            })
+                            .catch((error) => {
+                                console.error('[EditorProvider] ❌ Failed to play Scene 1 audio:', error);
+                            });
+                    }
+                });
+            });
+        }
+    }, [isPlaying, currentFrame, overlays]);
     const [playbackRate, setPlaybackRate] = useState(1);
     const [showAlignmentGuides, setShowAlignmentGuides] = useState(true);
     const [backgroundColor, setBackgroundColor] = useState(defaultBackgroundColor || "black");

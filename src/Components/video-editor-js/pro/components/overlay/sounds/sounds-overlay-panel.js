@@ -228,6 +228,40 @@ const SoundsOverlayPanel = () => {
         return overlays.filter(overlay => overlay.type === OverlayType.SOUND);
     }, [overlays]);
     
+    // VERIFICATION: Check Scene 1 audio exists
+    useEffect(() => {
+        console.log('[SoundsOverlayPanel] Audio overlays in timeline:', {
+            count: audioOverlays.length,
+            overlays: audioOverlays.map(o => ({
+                id: o.id,
+                from: o.from,
+                content: o.content,
+                duration: o.mediaSrcDuration,
+                src: o.src?.substring(0, 50)
+            }))
+        });
+        
+        // Check for Scene 1 audio specifically
+        const scene1Audio = audioOverlays.find(o => (o.from || 0) === 0);
+        
+        if (!scene1Audio && audioOverlays.length > 0) {
+            console.error('[SoundsOverlayPanel] ❌ NO SCENE 1 AUDIO FOUND (no overlay with from: 0)!', {
+                firstOverlay: audioOverlays[0] ? {
+                    id: audioOverlays[0].id,
+                    from: audioOverlays[0].from,
+                    expected: 0
+                } : null
+            });
+        } else if (scene1Audio) {
+            console.log('[SoundsOverlayPanel] ✅ Scene 1 audio verified in timeline:', {
+                id: scene1Audio.id,
+                from: scene1Audio.from,
+                src: scene1Audio.src?.substring(0, 50),
+                duration: scene1Audio.mediaSrcDuration
+            });
+        }
+    }, [audioOverlays]);
+    
     // Filter out "Default Audio" source and show all audio tracks without tabs
     const filteredAudioTracks = useMemo(() => {
         return audioTracks.filter(track => {
