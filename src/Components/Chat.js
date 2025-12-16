@@ -665,7 +665,7 @@ const extractAspectRatioFromSessionPayload = (payload) => {
   }
 };
 
-const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false, isSwitchingVideoType = false, loadingVideoType = null }) => {
+const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false, isSwitchingVideoType = false, loadingVideoType = null, onScriptChange = null }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [thinkingMessageId, setThinkingMessageId] = useState(null);
@@ -1228,6 +1228,46 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     }
   };
   
+  // Load brand assets when modal opens
+  useEffect(() => {
+    if (!showAssetsModal) {
+      setIsAssetsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIsAssetsLoading(true);
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (!token) {
+          if (!cancelled) {
+            setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+            setIsAssetsLoading(false);
+          }
+          return;
+        }
+        const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+        const resp = await fetch(url);
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = {}; }
+        if (cancelled) return;
+        const normalized = normalizeBrandAssetsResponse(data);
+        if (!cancelled) {
+          setAssetsData(normalized);
+          setIsAssetsLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to load brand assets:', err);
+          setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+          setIsAssetsLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; setIsAssetsLoading(false); };
+  }, [showAssetsModal]);
+
   useEffect(() => {
     if (!showAssetsModal || !['preset_templates', 'uploaded_templates'].includes(assetsTab)) {
       setIsLoadingTemplates(false);
@@ -3694,43 +3734,43 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const isSora = modelUpper === 'SORA';
       const isAnchor = modelUpper === 'ANCHOR';
       
-      // Extract background images from ref_image array
+      // Extract background images - prioritize background_image array over ref_image
       let backgroundImages = [];
-      if (Array.isArray(scene?.ref_image) && scene.ref_image.length > 0) {
+      
+      // First check background_image array (primary source for background images)
+      if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
+        // Extract URLs from array of objects or strings
+        backgroundImages = scene.background_image
+          .map(item => {
+            if (typeof item === 'string' && item.trim()) return item.trim();
+            if (item && typeof item === 'object') {
+              return item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
+            }
+            return '';
+          })
+          .filter(url => url && typeof url === 'string');
+      } else if (typeof scene?.background_image === 'string' && scene.background_image.trim()) {
+        backgroundImages = [scene.background_image.trim()];
+      } else if (typeof scene?.background === 'string' && scene.background.trim()) {
+        backgroundImages = [scene.background.trim()];
+      }
+      
+      // Fallback to ref_image only if background_image is empty
+      if (backgroundImages.length === 0 && Array.isArray(scene?.ref_image) && scene.ref_image.length > 0) {
         backgroundImages = scene.ref_image
           .filter(item => item && typeof item === 'string' ? item.trim() : item)
           .map(item => typeof item === 'string' ? item.trim() : item);
       }
       
-      // Also check background_image field (could be string or array)
-      if (!backgroundImages.length) {
-        if (Array.isArray(scene?.background_image)) {
-          // Extract URLs from array of objects or strings
-          backgroundImages = scene.background_image
-            .map(item => {
-              if (typeof item === 'string' && item.trim()) return item.trim();
-              if (item && typeof item === 'object') {
-                return item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
-              }
-              return '';
-            })
-            .filter(url => url && typeof url === 'string');
-        } else if (typeof scene?.background === 'string' && scene.background.trim()) {
-          backgroundImages = [scene.background.trim()];
-        } else if (typeof scene?.background_image === 'string' && scene.background_image.trim()) {
-          backgroundImages = [scene.background_image.trim()];
-        }
-      }
-      
-      // Set selectedRefImages based on model type
+      // Set selectedRefImages - show ALL background images (no limit, but typically up to 2)
       if (backgroundImages.length > 0) {
-        if (isSora) {
-          // For SORA, select up to 2 images
-          setSelectedRefImages(backgroundImages.slice(0, 2));
-        } else {
-          // For ANCHOR/VEO3/PLOTLY, select the first image
-          setSelectedRefImages(backgroundImages.slice(0, 1));
-        }
+        // Show all background images, not just the first 2
+        setSelectedRefImages(backgroundImages);
+        console.log('[Background Images] Setting selectedRefImages:', {
+          count: backgroundImages.length,
+          images: backgroundImages,
+          scene: scene?.scene_number
+        });
       } else {
         setSelectedRefImages([]);
       }
@@ -3741,31 +3781,36 @@ const [textEditorFormat, setTextEditorFormat] = useState({
 
   const openScriptModal = (script) => {
     try {
-      // Decide which script version to show: prefer the one with richer ref_images
+      // In scenesMode (ScriptEditor), always use the script from API, don't check localStorage
+      // This ensures we always show the latest data from the backend
       let scriptToShow = script;
       let normalizedIncoming = null;
       try { normalizedIncoming = normalizeScriptToRows(script); } catch (_) { normalizedIncoming = null; }
-      try {
-        const latest = localStorage.getItem(scopedKey('updated_script_structure'));
-        if (latest) {
-          const stored = JSON.parse(latest);
-          const normalizedStored = normalizeScriptToRows(stored);
-          const countImgs = (rows) => {
-            try {
-              return (Array.isArray(rows) ? rows : []).reduce((acc, r) => acc + (Array.isArray(r?.ref_image) ? r.ref_image.length : 0), 0);
-            } catch (_) { return 0; }
-          };
-          const storedImgs = countImgs(normalizedStored?.rows);
-          const incomingImgs = countImgs(normalizedIncoming?.rows);
-          // If stored has no images but incoming has, use incoming; otherwise use stored
-          if (storedImgs === 0 && incomingImgs > 0) {
-            scriptToShow = script;
-          } else {
-            scriptToShow = stored;
-            normalizedIncoming = normalizedStored; // keep in sync for header auto-select below
+      
+      // Only check localStorage if NOT in scenesMode (for regular chat flow)
+      if (!scenesMode) {
+        try {
+          const latest = localStorage.getItem(scopedKey('updated_script_structure'));
+          if (latest) {
+            const stored = JSON.parse(latest);
+            const normalizedStored = normalizeScriptToRows(stored);
+            const countImgs = (rows) => {
+              try {
+                return (Array.isArray(rows) ? rows : []).reduce((acc, r) => acc + (Array.isArray(r?.ref_image) ? r.ref_image.length : 0), 0);
+              } catch (_) { return 0; }
+            };
+            const storedImgs = countImgs(normalizedStored?.rows);
+            const incomingImgs = countImgs(normalizedIncoming?.rows);
+            // If stored has no images but incoming has, use incoming; otherwise use stored
+            if (storedImgs === 0 && incomingImgs > 0) {
+              scriptToShow = script;
+            } else {
+              scriptToShow = stored;
+              normalizedIncoming = normalizedStored; // keep in sync for header auto-select below
+            }
           }
-        }
-      } catch (_) { /* noop */ }
+        } catch (_) { /* noop */ }
+      }
 
       const currentScriptHash = JSON.stringify(scriptToShow);
       const normalizedRows = normalizeScriptToRows(scriptToShow);
@@ -3804,8 +3849,25 @@ const [textEditorFormat, setTextEditorFormat] = useState({
 
   // If rendering Scenes inline (Home page section), open when initialScenes provided
   useEffect(() => {
-    if (scenesMode && initialScenes) {
-      try { openScriptModal(initialScenes); } catch (_) { /* noop */ }
+    if (scenesMode) {
+      // Check if initialScenes is provided and not empty
+      const hasScenes = initialScenes !== null && initialScenes !== undefined && 
+        (Array.isArray(initialScenes) ? initialScenes.length > 0 : true);
+      
+      if (hasScenes) {
+        console.log('[Chat] Opening script modal with initialScenes:', {
+          type: Array.isArray(initialScenes) ? 'array' : typeof initialScenes,
+          length: Array.isArray(initialScenes) ? initialScenes.length : 'N/A',
+          initialScenes: initialScenes
+        });
+        try { 
+          openScriptModal(initialScenes); 
+        } catch (error) { 
+          console.error('[Chat] Error opening script modal:', error);
+        }
+      } else {
+        console.log('[Chat] No initialScenes provided or empty, not opening script modal');
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenesMode, initialScenes]);
@@ -4274,6 +4336,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       setHasOrderChanged(false);
       // After delete, enable undo; redo disabled until an undo occurs
       setCanUndo(true); setCanRedo(false);
+      // Trigger script refresh callback if provided
+      if (onScriptChange) {
+        onScriptChange();
+      }
     } catch (e) {
       console.error('Delete scene failed:', e);
       alert('Failed to delete scene. Please try again.');
@@ -4659,6 +4725,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         setCanUndo(true); setCanRedo(false);
       } catch(_) {}
       setShowAddSceneModal(false);
+      // Trigger script refresh callback if provided
+      if (onScriptChange) {
+        onScriptChange();
+      }
     } catch (e) {
       console.error('Add scene failed:', e);
       alert('Failed to add scene. Please try again.');
@@ -6103,6 +6173,11 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           console.warn('Failed to load presenter options after model switch:', err);
         }
       }
+
+      // Trigger script refresh after successful model switch
+      if (onScriptChange) {
+        onScriptChange();
+      }
     } catch (e) {
       console.error('Video type switch failed:', e);
       alert('Failed to switch video type. Please try again.');
@@ -6529,7 +6604,12 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           applyField(clone, ['text_to_be_included'], targetRow.text_to_be_included);
         }
         // Set ref_image from refImages (which includes refImagesOverride if provided)
-        clone.ref_image = Array.isArray(refImages) && refImages.length > 0 ? refImages : [];
+        // If backgroundImageArrayOverride is provided, don't set ref_image (send empty array)
+        if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
+          clone.ref_image = [];
+        } else {
+          clone.ref_image = Array.isArray(refImages) && refImages.length > 0 ? refImages : [];
+        }
         // Remove avatar field - we'll use avatar_urls instead
         if ('avatar' in clone) {
           delete clone.avatar;
@@ -6538,8 +6618,14 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         if ('background' in clone) {
           delete clone.background;
         }
-        // Set background_image array only
-        if (Array.isArray(targetRow?.background_image) && targetRow.background_image.length > 0) {
+        // Set background_image array - prioritize backgroundImageArrayOverride if provided
+        if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
+          // Use backgroundImageArrayOverride directly (already in correct format)
+          clone.background_image = backgroundImageArrayOverride.map(item => ({
+            template_id: item?.template_id || '',
+            image_url: item?.image_url || ''
+          }));
+        } else if (Array.isArray(targetRow?.background_image) && targetRow.background_image.length > 0) {
           clone.background_image = targetRow.background_image;
         } else if (backgroundImageVal && typeof backgroundImageVal === 'string' && backgroundImageVal.trim()) {
           // Convert single background string to array format if needed
@@ -6547,8 +6633,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           const rawTemplate = templateEntry?.raw || {};
           const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
           clone.background_image = [{
-            imageurl: backgroundImageVal.trim(),
-            imageid: templateId ? String(templateId) : ''
+            template_id: templateId ? String(templateId) : '',
+            image_url: backgroundImageVal.trim()
           }];
         }
         // Handle presenter_options - ensure preset_id is included for ANCHOR models
@@ -6658,17 +6744,30 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           text_to_be_included: Array.isArray(fallbackRow?.text_to_be_included)
             ? fallbackRow.text_to_be_included
             : (typeof fallbackRow?.text_to_include === 'string' && fallbackRow.text_to_include.trim() ? [fallbackRow.text_to_include.trim()] : []),
-          ref_image: Array.isArray(refImages) && refImages.length > 0 ? refImages : [],
+          ref_image: (() => {
+            // If backgroundImageArrayOverride is provided, don't set ref_image (send empty array)
+            if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
+              return [];
+            }
+            return Array.isArray(refImages) && refImages.length > 0 ? refImages : [];
+          })(),
           // Don't include avatar field - use avatar_urls instead
           // Don't include background field - use background_image array only
           background_image: (() => {
+            // Prioritize backgroundImageArrayOverride if provided
+            if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
+              return backgroundImageArrayOverride.map(item => ({
+                template_id: item?.template_id || '',
+                image_url: item?.image_url || ''
+              }));
+            }
             if (backgroundImageVal && typeof backgroundImageVal === 'string' && backgroundImageVal.trim()) {
               const templateEntry = templateLookupByUrl.get(backgroundImageVal.trim());
               const rawTemplate = templateEntry?.raw || {};
               const templateId = templateEntry?.id || rawTemplate?.template_id || rawTemplate?.templateId || rawTemplate?.id || '';
               return [{
-                imageurl: backgroundImageVal.trim(),
-                imageid: templateId ? String(templateId) : ''
+                template_id: templateId ? String(templateId) : '',
+                image_url: backgroundImageVal.trim()
               }];
             }
             if (Array.isArray(fallbackRow?.background_image)) {
@@ -7890,6 +7989,11 @@ const saveAnchorPromptTemplate = async () => {
       setShowSaveConfirm(false);
       setHasOrderChanged(false);
 
+      // Trigger script refresh callback if provided
+      if (onScriptChange) {
+        onScriptChange();
+      }
+
       // No chat message needed on reorder success; UI already updates
     } catch (e) {
       console.error('Failed to reorder script:', e);
@@ -8049,9 +8153,12 @@ const saveAnchorPromptTemplate = async () => {
       {/* Add Scene Modal */}
       {showAddSceneModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[95%] max-w-2xl rounded-lg shadow-xl p-6">
-            <h3 className="text-lg font-semibold text-[#13008B]">Add New Scene</h3>
-            <div className="mt-4 space-y-4">
+          <div className="bg-white w-[95%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+            <div className="px-6 pt-6 pb-4 flex-shrink-0">
+              <h3 className="text-lg font-semibold text-[#13008B]">Add New Scene</h3>
+            </div>
+            <div className="px-6 overflow-y-auto flex-1 min-h-0">
+              <div className="space-y-4 pb-4">
               {/* Step 1: Model selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Video Type</label>
@@ -8514,8 +8621,9 @@ const saveAnchorPromptTemplate = async () => {
                   )}
                 </div>
               )}
+              </div>
             </div>
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="px-6 pt-4 pb-6 flex justify-end gap-2 flex-shrink-0 border-t border-gray-200">
               <button
                 onClick={() => setShowAddSceneModal(false)}
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -11979,40 +12087,53 @@ const saveAnchorPromptTemplate = async () => {
                         const refs = (() => {
                           const urls = [];
                           
-                          // First try ref_image (primary source)
-                          const r = scene?.ref_image;
-                          if (Array.isArray(r) && r.length > 0) {
-                            r.forEach(url => {
-                              const trimmed = typeof url === 'string' ? url.trim() : url;
-                              if (trimmed && !urls.includes(trimmed)) {
-                                urls.push(trimmed);
-                              }
-                            });
-                          } else if (typeof r === 'string' && r.trim()) {
-                            const trimmed = r.trim();
-                            if (!urls.includes(trimmed)) urls.push(trimmed);
-                          }
-                          
-                          // Fallback to background_image array (only if ref_image is empty)
-                          if (urls.length === 0 && Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
+                          // First try background_image array (primary source for background images)
+                          if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
                             scene.background_image.forEach(item => {
                               let url = '';
                               if (typeof item === 'string' && item.trim()) {
                                 url = item.trim();
                               } else if (item && typeof item === 'object') {
-                                url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
+                                // Try all possible URL fields
+                                url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || item?.image || '';
                                 if (url) url = url.trim();
                               }
-                              if (url && !urls.includes(url)) {
+                              if (url && typeof url === 'string' && url.length > 0 && !urls.includes(url)) {
                                 urls.push(url);
                               }
                             });
+                          }
+                          
+                          // Fallback to ref_image (only if background_image is empty)
+                          if (urls.length === 0) {
+                            const r = scene?.ref_image;
+                            if (Array.isArray(r) && r.length > 0) {
+                              r.forEach(url => {
+                                const trimmed = typeof url === 'string' ? url.trim() : url;
+                                if (trimmed && !urls.includes(trimmed)) {
+                                  urls.push(trimmed);
+                                }
+                              });
+                            } else if (typeof r === 'string' && r.trim()) {
+                              const trimmed = r.trim();
+                              if (!urls.includes(trimmed)) urls.push(trimmed);
+                            }
                           }
                           
                           // Fallback to background field (only if still empty)
                           if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
                             const trimmed = scene.background.trim();
                             if (!urls.includes(trimmed)) urls.push(trimmed);
+                          }
+                          
+                          // Log for debugging
+                          if (urls.length > 0) {
+                            console.log('[Background Images] Extracted background images:', {
+                              count: urls.length,
+                              urls: urls,
+                              background_image: scene?.background_image,
+                              ref_image: scene?.ref_image
+                            });
                           }
                           
                           return urls;
@@ -12072,13 +12193,37 @@ const saveAnchorPromptTemplate = async () => {
                                               } catch(_) {}
                                             }
                                           } else {
-                                            // For ANCHOR/VEO3/PLOTLY, background is a single string
-                                            setSelectedRefImages([url]);
+                                            // For ANCHOR/VEO3/PLOTLY, allow up to 2 background images
+                                            const currentSelected = selectedRefImages || [];
+                                            const exists = currentSelected.includes(url);
+                                            let newSelected;
+                                            if (exists) {
+                                              newSelected = currentSelected.filter(u => u !== url);
+                                            } else {
+                                              const next = [...currentSelected, url];
+                                              newSelected = next.length > 2 ? next.slice(-2) : next;
+                                            }
+                                            setSelectedRefImages(newSelected);
                                             if (Array.isArray(scriptRows) && scriptRows[currentSceneIndex]) {
                                               const rows = [...scriptRows]; const s = { ...rows[currentSceneIndex] };
-                                              s.background = url; s.background_image = url;
+                                              // Store first image in background field for backward compatibility
+                                              s.background = newSelected[0] || '';
+                                              // Store all images in background_image array
+                                              s.background_image = newSelected.length > 0 ? newSelected.map(u => ({
+                                                template_id: '',
+                                                image_url: u
+                                              })) : [];
                                               rows[currentSceneIndex] = s; setScriptRows(rows);
-                                              try { await updateSceneGenImageFlag(currentSceneIndex, { backgroundOverride: url, backgroundImageOverride: url }); } catch(_) {}
+                                              try {
+                                                const backgroundImageArray = newSelected.map((u) => ({
+                                                  image_url: u,
+                                                  template_id: ''
+                                                }));
+                                                await updateSceneGenImageFlag(currentSceneIndex, { 
+                                                  refImagesOverride: [],
+                                                  backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined
+                                                });
+                                              } catch(_) {}
                                             }
                                           }
                                         } catch(_) {}
@@ -13648,41 +13793,37 @@ const saveAnchorPromptTemplate = async () => {
                       const imagesToUse = selectedTemplateUrls.length > 0 ? selectedTemplateUrls.slice(0, 2) : [];
                       if (imagesToUse.length === 0) return;
                       
-                      // Update scene with selected images
+                      // Update scene with selected images - store in background_image, not ref_image
                         if (isAnchor || isPlotly || isVEO3) {
                         // For models that use background, use first image as background
                         scene.background = imagesToUse[0]; 
                         scene.background_image = imagesToUse[0];
-                        // Also store all images in ref_image for API calls
-                        scene.ref_image = imagesToUse;
+                        // Don't store in ref_image - we'll send in background_image array
+                        scene.ref_image = [];
                       } else {
-                        scene.ref_image = imagesToUse;
-                        }
+                        // For all models, store in background_image, not ref_image
+                        scene.ref_image = [];
+                        scene.background_image = imagesToUse[0] || '';
+                      }
                         rows[currentSceneIndex] = scene;
                         setScriptRows(rows);
-                      setSelectedRefImages(imagesToUse);
-                        if (scene.ref_image) updateRefMapForScene(scene.scene_number, scene.ref_image);
+                      setSelectedRefImages([]); // Clear ref images since we're using background_image
+                        // Don't update ref map since we're not using ref_image
                       
                       // Call update-text API for Keep Default
                       try {
                         setIsApplyingKeepDefault(true);
-                          // Use all selected images (up to 2) for all models
-                          const refImagesToUse = scene.ref_image || [];
                           
-                        // Build background_image array for image-related tabs
+                        // Build background_image array for ALL tabs when selecting background images
                         // Format: [{template_id: "", image_url: "<url>"}]
-                        let backgroundImageArray = undefined;
-                        if (['generated_images', 'uploaded_images', 'uploaded_templates', 'documents_images'].includes(assetsTab)) {
-                          backgroundImageArray = refImagesToUse.filter(Boolean).map((url) => {
-                            const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-                            if (!trimmedUrl) return null;
-                            return {
-                              template_id: '',
-                              image_url: trimmedUrl
-                            };
-                          }).filter(item => item !== null);
-                        }
-                        // For preset_templates tab, don't send backgroundImageArray (keep it as undefined)
+                        const backgroundImageArray = imagesToUse.filter(Boolean).map((url) => {
+                          const trimmedUrl = typeof url === 'string' ? url.trim() : '';
+                          if (!trimmedUrl) return null;
+                          return {
+                            template_id: '',
+                            image_url: trimmedUrl
+                          };
+                        }).filter(item => item !== null);
 
                           // Get avatar_url from selected avatar or scene
                           const currentAvatarUrl = scene?.avatar || selectedAvatar || '';
@@ -13690,8 +13831,8 @@ const saveAnchorPromptTemplate = async () => {
                           await updateSceneGenImageFlag(currentSceneIndex, {
                             genImage: false,
                             descriptionOverride: scene?.description ?? '',
-                            refImagesOverride: refImagesToUse.filter(Boolean),
-                          backgroundImageArrayOverride: backgroundImageArray && backgroundImageArray.length > 0 ? backgroundImageArray : undefined,
+                            refImagesOverride: [], // Don't send ref_image - send in background_image instead
+                          backgroundImageArrayOverride: backgroundImageArray.length > 0 ? backgroundImageArray : undefined,
                             avatarUrl: currentAvatarUrl || undefined
                           });
                       } catch(_) { 

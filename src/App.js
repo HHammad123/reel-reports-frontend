@@ -29,6 +29,7 @@ import AdminUsers from './pages/AdminUsers';
 import AdminCreateUser from './pages/AdminCreateUser';
 import VideoEditor from './pages/VideoEditor';
 import VideoEditorPage from './pages/VideoEditorPage';
+import VideoBackgroundRemover from './pages/VideoBackgroundRemover';
 
 
 function App() {
@@ -47,7 +48,7 @@ function App() {
          {/* Public routes */}
          <Route path="/login" element={<Login/>} />
          <Route path="/onboarding" element={<Onboarding/>}/>
-   
+         <Route path="/video-background-remover" element={<VideoBackgroundRemover/>}/>
        
     <Route path="/v1/auth/callback/:provider" element={<OAuthCallback />} />
          {/* test route */  }

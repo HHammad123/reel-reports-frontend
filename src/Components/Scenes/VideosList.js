@@ -798,7 +798,6 @@
                   
                   if (finalStatus === 'failed' || finalStatus === 'error') {
                     // If failed, hide loader and show error
-                    console.error('❌ Video job failed');
                     setIsLoading(false);
                     setShowVideoLoader(false);
                     setError('Video generation failed. Please try again.');
@@ -813,8 +812,6 @@
                     const videoResult = jdata?.video_result || jdata?.videoResult || jdata?.result || jdata?.result_data;
                     
                     if (videoResult) {
-                      console.log('✅ Job API contains video_result, processing videos and layers...', videoResult);
-                      
                       try {
                         // Keep loader visible during processing
                         setIsLoading(true);
@@ -848,8 +845,6 @@
                           const jobVideos = parseVideosPayload(jobPayload);
                           
                           if (!cancelled && jobVideos.length > 0) {
-                            console.log(`✅ Processed ${jobVideos.length} videos from job API video_result`);
-                            
                             // Set items from job API results
                             setItems(jobVideos);
                             setSelectedIndex(0);
@@ -993,15 +988,10 @@
                             setShowVideoLoader(false);
                             return; // Exit early since we got videos from job API
                           }
-                        } else {
-                          console.warn('⚠️ Job API video_result found but no videos to process');
                         }
                       } catch (jobResultError) {
-                        console.error('❌ Error processing video_result from job API:', jobResultError);
                         // Continue to fallback session data refresh
                       }
-                    } else {
-                      console.log('ℹ️ Job API response does not contain video_result, falling back to session data');
                     }
                   }
                   
@@ -1043,7 +1033,6 @@
                           return;
                         }
                       } else {
-                        console.warn('⚠️ Failed to refresh session data:', refreshText);
                         // Continue polling if refresh failed
                         timeoutId = setTimeout(poll, 3000);
                         return;
@@ -1054,7 +1043,6 @@
                       setShowVideoLoader(false);
                     }
                   } catch (refreshError) {
-                    console.error('❌ Error refreshing session data:', refreshError);
                     // Continue polling if refresh failed
                     timeoutId = setTimeout(poll, 3000);
                     return;
@@ -1120,7 +1108,6 @@
             setVideoBlobUrl(objectUrl);
           }
         } catch (error) {
-          console.error('Video load error:', error);
           if (!cancelled) setError(`Failed to load video: ${error.message}`);
         } finally {
           if (!cancelled) setVideoLoading(false);
@@ -1156,7 +1143,6 @@
         ffmpegRef.current = ffmpeg;
         return ffmpeg;
       } catch (error) {
-        console.error('❌ Failed to load FFmpeg:', error);
         setFfmpegError(error?.message || 'Failed to load FFmpeg');
         throw error;
       } finally {
@@ -1221,7 +1207,6 @@
           }
         } catch (error) {
           if (!cancelled) {
-            console.error('❌ Error polling merge job:', error);
             setFfmpegError(error?.message || 'Unable to poll final reel status');
             timeoutId = setTimeout(pollMerge, 4000);
           }
@@ -1273,7 +1258,6 @@
         const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
         setFinalReel720Url(url);
       } catch (error) {
-        console.error('❌ FFmpeg 720p export failed:', error);
         setFfmpegError(error?.message || '720p export failed');
       } finally {
         setIsTranscodingFinal(false);
@@ -1298,7 +1282,6 @@
         videoElement.onloadedmetadata = () => {
           const duration = videoElement.duration;
           if (!isFinite(duration) || duration <= 0) {
-            console.warn('⚠️ Video duration is invalid, using default');
             resolve(null);
             return;
           }
@@ -1320,7 +1303,6 @@
         };
         
         videoElement.onerror = (error) => {
-          console.error('Error loading video:', error);
           reject(error);
         };
         
@@ -1328,15 +1310,20 @@
       });
     }, []);
 
-    // Helper function to convert audio URL to clip by loading metadata
+    // Helper function to convert audio URL to clip by loading metadata and preloading audio
     const convertAudioUrlToClip = useCallback(async (audioUrl, itemId, itemTitle) => {
       return new Promise((resolve, reject) => {
         const audioElement = document.createElement('audio');
         audioElement.crossOrigin = 'anonymous'; // Must be set BEFORE src
-        audioElement.preload = 'metadata';
+        audioElement.preload = 'auto'; // CRITICAL: Preload entire audio file for smooth playback
         audioElement.src = audioUrl;
         
-        audioElement.onloadedmetadata = () => {
+        let metadataLoaded = false;
+        let audioReady = false;
+        
+        // First, wait for metadata to get duration
+        const handleLoadedMetadata = () => {
+          metadataLoaded = true;
           const duration = audioElement.duration;
           if (!isFinite(duration) || duration <= 0) {
             console.warn('⚠️ Audio duration is invalid, using default');
@@ -1344,28 +1331,116 @@
             return;
           }
           
-          const audioClip = {
-            id: `audio-${itemId}-${Date.now()}`,
-            url: audioUrl,
-            name: itemTitle ? `Audio: ${itemTitle}` : `Audio ${Date.now()}`,
-            type: 'audio',
-            duration: duration,
-            speed: 1.0,
-            trimStart: 0,
-            trimEnd: duration,
-            startTime: 0, // Start at beginning of timeline
-            volume: 1.0,
-          };
-          
-          resolve(audioClip);
+          // If audio is already ready to play, resolve immediately
+          if (audioReady) {
+            const audioClip = {
+              id: `audio-${itemId}-${Date.now()}`,
+              url: audioUrl,
+              name: itemTitle ? `Audio: ${itemTitle}` : `Audio ${Date.now()}`,
+              type: 'audio',
+              duration: duration,
+              speed: 1.0,
+              trimStart: 0,
+              trimEnd: duration,
+              startTime: 0, // Start at beginning of timeline
+              volume: 1.0,
+            };
+            
+            console.log(`✅ Audio preloaded and ready: ${itemTitle || itemId}`, { duration, url: audioUrl });
+            resolve(audioClip);
+          }
         };
         
+        // Wait for audio to be ready to play (canplaythrough = fully loaded)
+        const handleCanPlayThrough = () => {
+          audioReady = true;
+          if (metadataLoaded) {
+            const duration = audioElement.duration;
+            const audioClip = {
+              id: `audio-${itemId}-${Date.now()}`,
+              url: audioUrl,
+              name: itemTitle ? `Audio: ${itemTitle}` : `Audio ${Date.now()}`,
+              type: 'audio',
+              duration: duration,
+              speed: 1.0,
+              trimStart: 0,
+              trimEnd: duration,
+              startTime: 0, // Start at beginning of timeline
+              volume: 1.0,
+            };
+            
+            console.log(`✅ Audio preloaded and ready: ${itemTitle || itemId}`, { duration, url: audioUrl });
+            resolve(audioClip);
+          }
+        };
+        
+        // Fallback: If canplaythrough doesn't fire, use loadeddata as backup
+        const handleLoadedData = () => {
+          if (!audioReady && metadataLoaded) {
+            // Give it a small delay to ensure audio is ready
+            setTimeout(() => {
+              if (!audioReady) {
+                audioReady = true;
+                const duration = audioElement.duration;
+                const audioClip = {
+                  id: `audio-${itemId}-${Date.now()}`,
+                  url: audioUrl,
+                  name: itemTitle ? `Audio: ${itemTitle}` : `Audio ${Date.now()}`,
+                  type: 'audio',
+                  duration: duration,
+                  speed: 1.0,
+                  trimStart: 0,
+                  trimEnd: duration,
+                  startTime: 0,
+                  volume: 1.0,
+                };
+                
+                console.log(`✅ Audio loaded (fallback): ${itemTitle || itemId}`, { duration, url: audioUrl });
+                resolve(audioClip);
+              }
+            }, 100);
+          }
+        };
+        
+        audioElement.addEventListener('loadedmetadata', handleLoadedMetadata);
+        audioElement.addEventListener('canplaythrough', handleCanPlayThrough);
+        audioElement.addEventListener('loadeddata', handleLoadedData);
+        
         audioElement.onerror = (error) => {
-          console.error('Error loading audio:', error);
+          console.error('❌ Error loading audio:', error, { url: audioUrl, itemId, itemTitle });
+          audioElement.removeEventListener('loadedmetadata', handleLoadedMetadata);
+          audioElement.removeEventListener('canplaythrough', handleCanPlayThrough);
+          audioElement.removeEventListener('loadeddata', handleLoadedData);
           reject(error);
         };
         
+        // Start loading the audio
         audioElement.load();
+        
+        // Timeout fallback (10 seconds)
+        setTimeout(() => {
+          if (!metadataLoaded || !audioReady) {
+            console.warn(`⚠️ Audio loading timeout for ${itemTitle || itemId}, using metadata only`);
+            if (metadataLoaded) {
+              const duration = audioElement.duration;
+              const audioClip = {
+                id: `audio-${itemId}-${Date.now()}`,
+                url: audioUrl,
+                name: itemTitle ? `Audio: ${itemTitle}` : `Audio ${Date.now()}`,
+                type: 'audio',
+                duration: duration,
+                speed: 1.0,
+                trimStart: 0,
+                trimEnd: duration,
+                startTime: 0,
+                volume: 1.0,
+              };
+              resolve(audioClip);
+            } else {
+              reject(new Error('Audio loading timeout'));
+            }
+          }
+        }, 10000);
       });
     }, []);
 
@@ -1395,7 +1470,6 @@
         // If onOverlaysChange hasn't been called after a delay, mark them manually
         const timeoutId = setTimeout(() => {
           if (!initialOverlaysLoadedRef.current && defaultOverlays.length > 0) {
-            console.log('[VideosList] Manually marking initial overlays as saved (onOverlaysChange not called)');
             initialOverlaysLoadedRef.current = true;
             defaultOverlays.forEach(overlay => {
               if (overlay?.id !== undefined) {
@@ -1428,12 +1502,6 @@
         const countIncreased = currentOverlayCount > previousOverlayCount;
         
         if (unsavedIds.length > 0 || countIncreased) {
-          console.log('[VideosList] Fallback check detected unsaved overlays:', {
-            unsavedIds: unsavedIds,
-            countIncreased: countIncreased,
-            previousCount: previousOverlayCount,
-            currentCount: currentOverlayCount
-          });
           setHasUnsavedLayers(true);
         }
         
@@ -1525,7 +1593,6 @@
                         
                       }
                     } catch (error) {
-                      console.error(`Failed to convert chart_video_url for ${item.id}:`, error);
                     }
                   }
                   
@@ -1534,7 +1601,6 @@
                   primaryClipAccumulatedTime += trimmedDuration;
                 }
               } catch (error) {
-                console.error(`Failed to convert video ${item.id}:`, error);
               }
             }
           }
@@ -1686,7 +1752,6 @@
           // Force a re-render by logging state update
           
         } catch (error) {
-          console.error('Error converting videos/audio to clips:', error);
         } finally {
           setIsConvertingVideos(false);
         }
@@ -1817,7 +1882,6 @@
         setIsGenerating(false);
 
       } catch (e) {
-        console.error('❌ Error generating final reel:', e);
         setError(e?.message || 'Failed to generate final reel');
         setIsGenerating(false);
       }
@@ -1841,15 +1905,6 @@
       
       editorOverlaysRef.current = currentOverlays;
       
-      console.log('[VideosList] handleOverlaysChange called', {
-        overlayCount: currentOverlays.length,
-        previousCount: previousOverlays.length,
-        initialLoaded: initialOverlaysLoadedRef.current,
-        savedIds: Array.from(savedOverlayIdsRef.current),
-        currentIds: Array.from(currentOverlayIds),
-        previousIds: Array.from(previousOverlayIds)
-      });
-      
       // If initial overlays haven't been marked as loaded yet
       if (!initialOverlaysLoadedRef.current) {
         if (currentOverlays.length > 0) {
@@ -1859,9 +1914,6 @@
             if (overlay?.id !== undefined) {
               savedOverlayIdsRef.current.add(overlay.id);
             }
-          });
-          console.log('[VideosList] Marked initial overlays as saved', {
-            savedIds: Array.from(savedOverlayIdsRef.current)
           });
           setHasUnsavedLayers(false);
           return;
@@ -1887,33 +1939,12 @@
       // This is a backup check in case IDs aren't being tracked properly
       const overlayCountIncreased = previousOverlays.length > 0 && currentOverlays.length > previousOverlays.length;
       
-      console.log('[VideosList] Checking for unsaved overlays', {
-        currentIds: Array.from(currentOverlayIds),
-        previousIds: Array.from(previousOverlayIds),
-        savedIds: Array.from(savedIds),
-        unsavedIds: unsavedIds,
-        newOverlayIds: newOverlayIds,
-        hasNewOverlays: hasNewOverlays,
-        overlayCountIncreased: overlayCountIncreased,
-        hasNewOverlayIds: hasNewOverlayIds,
-        willShowButton: hasNewOverlays || hasNewOverlayIds || overlayCountIncreased
-      });
-      
       // Show save button if:
       // 1. There are unsaved overlays (not in saved set), OR
       // 2. New overlay IDs appeared (user added a layer), OR
       // 3. Overlay count increased (backup check)
       const shouldShowButton = hasNewOverlays || hasNewOverlayIds || overlayCountIncreased;
       setHasUnsavedLayers(shouldShowButton);
-      
-      // If we detect new overlays, log them for debugging
-      if (shouldShowButton) {
-        console.log('[VideosList] ✅ Save button should be visible!', {
-          unsavedIds: unsavedIds,
-          newOverlayIds: newOverlayIds,
-          countIncreased: overlayCountIncreased
-        });
-      }
     }, []);
 
     // Convert frames to HH:MM:SS format
@@ -2047,7 +2078,6 @@
                 const blob = await response.blob();
                 formData.append('file', blob, overlay.src.split('/').pop() || 'file');
               } catch (err) {
-                console.warn('Failed to fetch file for overlay:', overlay.src, err);
                 // Continue without file if fetch fails
               }
             }
@@ -2080,9 +2110,7 @@
 
         // Update state
         setHasUnsavedLayers(false);
-        console.log('✅ Successfully saved all layers');
       } catch (e) {
-        console.error('❌ Error saving layers:', e);
         setError(e?.message || 'Failed to save layers');
       } finally {
         setIsSavingLayers(false);
@@ -2231,6 +2259,75 @@
         return null;
       };
 
+      // Get audio URL from entry (comprehensive search) - local version for buildOverlaysFromUploadSection
+      const getAudioUrlFromEntryLocal = (entry = {}) => {
+        // Check videos.v1.audio_only_url (for SORA/PLOTLY scenes)
+        if (entry?.videos?.v1?.audio_only_url) {
+          return entry.videos.v1.audio_only_url;
+        }
+        // Check videos.v1.audio_url as fallback
+        if (entry?.videos?.v1?.audio_url) {
+          return entry.videos.v1.audio_url;
+        }
+        // Check other nested structures
+        if (entry?.videos?.audio_only_url) {
+          return entry.videos.audio_only_url;
+        }
+        if (entry?.videos?.audio_url) {
+          return entry.videos.audio_url;
+        }
+        // Check video (singular) structure
+        if (entry?.video?.v1?.audio_only_url) {
+          return entry.video.v1.audio_only_url;
+        }
+        if (entry?.video?.v1?.audio_url) {
+          return entry.video.v1.audio_url;
+        }
+        if (entry?.video?.audio_only_url) {
+          return entry.video.audio_only_url;
+        }
+        if (entry?.video?.audio_url) {
+          return entry.video.audio_url;
+        }
+        // Check top-level fields
+        if (entry?.audio_only_url) {
+          return entry.audio_only_url;
+        }
+        if (entry?.audio_only?.url) {
+          return entry.audio_only.url;
+        }
+        if (entry?.audio_url) {
+          return entry.audio_url;
+        }
+        if (entry?.audio?.url) {
+          return entry.audio.url;
+        }
+        // Check other audio-related fields
+        if (entry?.voice_link) {
+          return entry.voice_link;
+        }
+        if (entry?.voiceover_url) {
+          return entry.voiceover_url;
+        }
+        if (entry?.narration_url) {
+          return entry.narration_url;
+        }
+        if (entry?.narration?.url) {
+          return entry.narration.url;
+        }
+        if (entry?.audio?.audio_url) {
+          return entry.audio.audio_url;
+        }
+        if (entry?.blobLink?.audio_link) {
+          return entry.blobLink.audio_link;
+        }
+        // Check if narration is a URL string
+        if (typeof entry?.narration === 'string' && entry.narration.startsWith('http')) {
+          return entry.narration;
+        }
+        return null;
+      };
+
       // Get chart layer data helper function (for buildOverlaysFromUploadSection)
       const getChartLayerDataForBuild = (entry = {}) => {
         if (Array.isArray(entry?.videos?.v1?.layers)) {
@@ -2362,17 +2459,13 @@
       // Helper function to parse SRT file, extract text, and generate captions
       const parseSRTToCaption = async (srtUrl, fps = 30, sceneIndex = null) => {
         try {
-          console.log(`[VideosList] Fetching SRT file for Scene ${sceneIndex !== null ? sceneIndex + 1 : 'Unknown'}:`, srtUrl);
-          
           // Fetch SRT file content
           const response = await fetch(srtUrl);
           if (!response.ok) {
-            console.error(`[VideosList] Failed to fetch SRT file: ${response.status} ${response.statusText}`);
             return { captions: null, extractedText: null };
           }
           
           const srtContent = await response.text();
-          console.log(`[VideosList] SRT file fetched, length: ${srtContent.length} characters`);
           
           // Extract all text from SRT file
           const allTexts = [];
@@ -2393,27 +2486,11 @@
           const extractedText = allTexts.join(' ').trim();
           
           if (!extractedText) {
-            console.warn(`[VideosList] No text extracted from SRT file for Scene ${sceneIndex !== null ? sceneIndex + 1 : 'Unknown'}`);
             return { captions: null, extractedText: null };
           }
           
-          console.log(`[VideosList] ✅ Text extracted from SRT for Scene ${sceneIndex !== null ? sceneIndex + 1 : 'Unknown'}:`, {
-            textLength: extractedText.length,
-            textPreview: extractedText.substring(0, 200),
-            totalBlocks: blocks.length,
-            extractedBlocks: allTexts.length
-          });
-          
           // Generate captions from extracted text using generateFromText logic
-          console.log(`[VideosList] Generating captions from extracted text...`);
           const generatedCaptions = generateCaptionsFromText(extractedText);
-          
-          console.log(`[VideosList] ✅ Captions generated from text:`, {
-            captionCount: generatedCaptions.length,
-            totalDuration: generatedCaptions.length > 0 ? generatedCaptions[generatedCaptions.length - 1].endMs : 0,
-            firstCaption: generatedCaptions[0],
-            lastCaption: generatedCaptions[generatedCaptions.length - 1]
-          });
           
           // Dispatch event for captions panel (optional, for UI updates)
           const event = new CustomEvent('srtTextExtracted', {
@@ -2428,7 +2505,6 @@
           return { captions: generatedCaptions, extractedText };
           
         } catch (error) {
-          console.error(`[VideosList] ❌ Error parsing SRT file:`, error);
           return { captions: null, extractedText: null };
         }
       };
@@ -2635,13 +2711,11 @@
             
             let rawPath = baseVideoUrl;
             if (!rawPath) {
-              console.warn(`[VideosList] Skipping video ${i + 1}: No base_video_url or path found`);
               continue;
             }
             
             // Check if rawPath is already double-prefixed
             if (rawPath.includes('/api/latest/local-media/serve/http') || rawPath.includes('/api/latest/local-media/serve/https')) {
-              console.warn('[VideosList] WARNING: Double-prefixed URL detected!', rawPath);
               const match = rawPath.match(/\/api\/latest\/local-media\/serve\/(https?:\/\/.+)/);
               if (match && match[1]) {
                 rawPath = match[1];
@@ -2664,7 +2738,6 @@
               video.preload = 'metadata';
               await new Promise((resolve) => {
                 const timeout = setTimeout(() => {
-                  console.warn(`[VideosList] Video ${i + 1} metadata timeout, using file duration:`, durationSeconds);
                   resolve();
                 }, 5000);
                 video.onloadedmetadata = () => {
@@ -2677,13 +2750,11 @@
                 };
                 video.onerror = () => {
                   clearTimeout(timeout);
-                  console.warn(`[VideosList] Video ${i + 1} load error, using file duration:`, durationSeconds);
                   resolve();
                 };
                 video.src = mediaSrc;
               });
             } catch (error) {
-              console.warn(`[VideosList] Error loading video ${i + 1} metadata:`, error);
             }
             
             const durationInFrames = Math.max(1, Math.round(durationSeconds * fps));
@@ -2827,79 +2898,15 @@
                 
                 // Log warning if overlay was clamped
                 if (wasClamped) {
-                  console.warn(`[VideosList] Text overlay ${finalOverlayId} dimensions clamped to fit canvas:`, {
-                    original: { left: originalTextLeft, top: originalTextTop, width: originalTextWidth, height: originalTextHeight },
-                    adjusted: { left: textLeft, top: textTop, width: textWidth, height: textHeight },
-                    canvas: { width: canvasWidth, height: canvasHeight }
-                  });
                 }
                 
                 // Verify final position is within bounds
                 if (!isWithinBounds) {
-                  console.error(`[VideosList] CRITICAL: Text overlay ${finalOverlayId} still outside canvas bounds!`, {
-                    position: { left: textLeft, top: textTop, width: textWidth, height: textHeight },
-                    canvas: { width: canvasWidth, height: canvasHeight },
-                    bounds: {
-                      leftValid: textLeft >= 0,
-                      topValid: textTop >= 0,
-                      rightValid: textLeft + textWidth <= canvasWidth,
-                      bottomValid: textTop + textHeight <= canvasHeight
-                    }
-                  });
                 }
                 
                 // Debug logging for text overlay creation with comprehensive position info
-                console.log('[VideosList] Creating text overlay:', {
-                  overlayId: finalOverlayId,
-                  pixelPosition: { 
-                    left: textLeft, 
-                    top: textTop, 
-                    width: textWidth, 
-                    height: textHeight,
-                    right: textLeft + textWidth,
-                    bottom: textTop + textHeight
-                  },
-                  normalizedPosition: normalizedPosition,
-                  normalizedBoundingBox: normalizedBoundingBox,
-                  canvas: { 
-                    width: canvasWidth, 
-                    height: canvasHeight,
-                    aspectRatio: currentAspectRatio
-                  },
-                  boundsCheck: {
-                    withinBounds: isWithinBounds,
-                    leftValid: textLeft >= 0,
-                    topValid: textTop >= 0,
-                    rightValid: (textLeft + textWidth) <= canvasWidth,
-                    bottomValid: (textTop + textHeight) <= canvasHeight
-                  },
-                  styles: {
-                    fontSizeScale: textStyles.fontSizeScale,
-                    fontSize: textStyles.fontSize,
-                    fontFamily: textStyles.fontFamily,
-                    fontWeight: textStyles.fontWeight,
-                    color: textStyles.color,
-                    letterSpacing: textStyles.letterSpacing,
-                    textAlign: textStyles.textAlign,
-                    opacity: textStyles.opacity,
-                    zIndex: textStyles.zIndex,
-                    display: 'block',
-                    visibility: 'visible'
-                  },
-                  content: textLayerData.text || '',
-                  contentLength: (textLayerData.text || '').length,
-                  hasSrc: !!textOverlaySrc,
-                  originalUrl: textLayerData.url || null,
-                  processedSrc: textOverlaySrc,
-                  type: OverlayType.TEXT,
-                  row: currentTextRow
-                });
                 
                 if (!isWithinBounds) {
-                  console.error(`[VideosList] WARNING: Text overlay ${finalOverlayId} position is outside canvas bounds!`, {
-                    position: { left: textLeft, top: textTop, width: textWidth, height: textHeight },
-                    canvas: { width: canvasWidth, height: canvasHeight }
-                  });
                 }
                 
                 // Create overlay object with complete styles
@@ -3070,7 +3077,6 @@
 
             // Ensure mediaSrc is valid
             if (!mediaSrc || !mediaSrc.trim()) {
-              console.error(`[VideosList] Video ${i + 1} has no valid source URL, skipping`);
               continue;
             }
 
@@ -3082,7 +3088,6 @@
               // Check if chart video URL is already double-prefixed
               if (rawChartPath.includes('/api/latest/local-media/serve/http') || 
                   rawChartPath.includes('/api/latest/local-media/serve/https')) {
-                console.warn('[VideosList] WARNING: Double-prefixed chart video URL detected!', rawChartPath);
                 const match = rawChartPath.match(/\/api\/latest\/local-media\/serve\/(https?:\/\/.+)/);
                 if (match && match[1]) {
                   rawChartPath = match[1];
@@ -3108,7 +3113,6 @@
                 
                 await new Promise((resolve) => {
                   const timeout = setTimeout(() => {
-                    console.warn(`[VideosList] Chart video ${i + 1} metadata timeout, using base video duration:`, chartDurationSeconds);
                     resolve();
                   }, 5000);
                   
@@ -3123,14 +3127,12 @@
                   
                   chartVideo.onerror = (error) => {
                     clearTimeout(timeout);
-                    console.warn(`[VideosList] Chart video ${i + 1} load error, using base video duration:`, chartDurationSeconds);
                     resolve();
                   };
                   
                   chartVideo.src = chartMediaSrc;
                 });
               } catch (error) {
-                console.warn(`[VideosList] Error loading chart video ${i + 1} metadata:`, error);
               }
               
               const chartDurationInFrames = Math.max(1, Math.round(chartDurationSeconds * fps));
@@ -3306,26 +3308,9 @@
             const baseVideoObjectFit = 'cover'; // CRITICAL: Use 'cover' to fill entire canvas with no gaps
             
             // Debug logging to verify dimensions match canvas
-            console.log(`[VideosList] Creating base video overlay ${cleanBaseVideoId}:`, {
-              aspectRatio: currentAspectRatio,
-              canvas: { width: canvasWidth, height: canvasHeight },
-              baseVideo: { 
-                left: baseVideoLeft, 
-                top: baseVideoTop, 
-                width: baseVideoWidth, 
-                height: baseVideoHeight,
-                objectFit: baseVideoObjectFit
-              },
-              matches: baseVideoWidth === canvasWidth && baseVideoHeight === canvasHeight
-            });
             
             // Verify base video exactly matches canvas dimensions
             if (baseVideoWidth !== canvasWidth || baseVideoHeight !== canvasHeight) {
-              console.error(`[VideosList] CRITICAL: Base video dimensions do not match canvas!`, {
-                canvas: { width: canvasWidth, height: canvasHeight },
-                baseVideo: { width: baseVideoWidth, height: baseVideoHeight },
-                aspectRatio: currentAspectRatio
-              });
             }
             
             newOverlays.push({
@@ -3367,9 +3352,59 @@
             if (audioLayerData) {
               audioUrl = audioLayerData.url;
               audioVolume = audioLayerData.volume;
+              console.log(`[VideosList] Scene ${i + 1} - Audio found in layers:`, {
+                url: audioUrl,
+                volume: audioVolume,
+                enabled: audioLayerData.enabled
+              });
             } else {
-              // PRIORITY 2: Fallback to existing audio extraction
+              // PRIORITY 2: Check file-level audio properties
               audioUrl = file.audioUrl || file.audio_url || '';
+              if (audioUrl) {
+                console.log(`[VideosList] Scene ${i + 1} - Audio found in file properties:`, {
+                  url: audioUrl,
+                  source: file.audioUrl ? 'audioUrl' : 'audio_url'
+                });
+              } else {
+                // PRIORITY 3: Check scenes array - especially for first scene (index 0)
+                // Some video entries have audio stored in their scenes array
+                if (file.scenes && Array.isArray(file.scenes) && file.scenes.length > 0) {
+                  // For first scene, check first scene's audioUrl
+                  const targetSceneIndex = i === 0 ? 0 : Math.min(i, file.scenes.length - 1);
+                  const targetScene = file.scenes[targetSceneIndex];
+                  if (targetScene && targetScene.audioUrl) {
+                    audioUrl = targetScene.audioUrl;
+                    console.log(`[VideosList] Scene ${i + 1} - Audio found in scenes array (scene ${targetSceneIndex}):`, {
+                      url: audioUrl,
+                      sceneIndex: targetSceneIndex
+                    });
+                  }
+                }
+                
+                // PRIORITY 4: Try getAudioUrlFromEntryLocal as last resort (comprehensive search)
+                if (!audioUrl) {
+                  const entryAudioUrl = getAudioUrlFromEntryLocal(file);
+                  if (entryAudioUrl) {
+                    audioUrl = entryAudioUrl;
+                    console.log(`[VideosList] Scene ${i + 1} - Audio found via getAudioUrlFromEntryLocal:`, {
+                      url: audioUrl
+                    });
+                  }
+                }
+                
+                if (!audioUrl) {
+                  console.warn(`[VideosList] Scene ${i + 1} - ⚠️ NO AUDIO URL FOUND!`, {
+                    hasAudioLayerData: !!audioLayerData,
+                    fileKeys: Object.keys(file),
+                    fileAudioUrl: file.audioUrl,
+                    fileAudio_url: file.audio_url,
+                    fileScenes: file.scenes ? file.scenes.map((s, idx) => ({ index: idx, hasAudioUrl: !!s.audioUrl, audioUrl: s.audioUrl })) : null,
+                    fileVideos: file.videos ? Object.keys(file.videos) : null,
+                    fileVideosV1: file.videos?.v1 ? Object.keys(file.videos.v1) : null,
+                    fileVideosV1Layers: file.videos?.v1?.layers ? file.videos.v1.layers.map(l => l?.name) : null
+                  });
+                }
+              }
             }
             
             if (audioUrl && audioUrl.trim()) {
@@ -3394,39 +3429,91 @@
                 audioMediaSrc = `/api/latest/local-media/serve/${cleanAudioPath}`;
               }
               
-              // Get audio duration (try to load metadata, fallback to video duration)
+              // Get audio duration and preload audio for smooth playback
+              // CRITICAL: Preload ALL audio files fully for smooth playback
               let audioDurationSeconds = durationSeconds; // Default to video duration
+              const isFirstScene = i === 0; // First video/scene
+              const startsAtFrameZero = fromFrame === 0;
               
               try {
                 const audio = document.createElement('audio');
                 audio.crossOrigin = 'anonymous';
-                audio.preload = 'metadata';
+                // CRITICAL: Preload entire audio file for ALL scenes to ensure smooth playback
+                audio.preload = 'auto';
                 
                 await new Promise((resolve) => {
-                  const timeout = setTimeout(() => {
-                    console.warn(`[VideosList] Audio ${i + 1} metadata timeout, using video duration:`, audioDurationSeconds);
-                    resolve();
-                  }, 5000);
+                  let metadataLoaded = false;
+                  let audioReady = false;
                   
-                  audio.onloadedmetadata = () => {
-                    clearTimeout(timeout);
-                    const dur = audio.duration;
-                      if (isFinite(dur) && dur > 0) {
-                        audioDurationSeconds = dur;
+                  const timeout = setTimeout(() => {
+                    if (metadataLoaded) {
+                      if (audioReady) {
+                        console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded (timeout, but ready)`);
+                      } else {
+                        console.warn(`[VideosList] Audio ${i + 1} preload timeout (metadata loaded), continuing...`);
                       }
-                    resolve();
+                      resolve();
+                    } else {
+                      console.warn(`[VideosList] Audio ${i + 1} metadata timeout, using video duration:`, audioDurationSeconds);
+                      resolve();
+                    }
+                  }, 10000); // 10 second timeout for all audio files
+                  
+                  const handleLoadedMetadata = () => {
+                    metadataLoaded = true;
+                    const dur = audio.duration;
+                    if (isFinite(dur) && dur > 0) {
+                      audioDurationSeconds = dur;
+                    }
+                    // Wait for audio to be ready to play (for all scenes)
+                    if (audioReady) {
+                      clearTimeout(timeout);
+                      resolve();
+                    }
                   };
+                  
+                  // Wait for audio to be ready to play (for ALL scenes)
+                  const handleCanPlayThrough = () => {
+                    audioReady = true;
+                    if (metadataLoaded) {
+                      console.log(`[VideosList] ✅ Audio ${i + 1} fully preloaded and ready to play`);
+                      clearTimeout(timeout);
+                      resolve();
+                    }
+                  };
+                  
+                  // Fallback: If canplaythrough doesn't fire, use loadeddata
+                  const handleLoadedData = () => {
+                    if (!audioReady) {
+                      setTimeout(() => {
+                        if (!audioReady && metadataLoaded) {
+                          audioReady = true;
+                          console.log(`[VideosList] ✅ Audio ${i + 1} loaded (fallback)`);
+                          clearTimeout(timeout);
+                          resolve();
+                        }
+                      }, 200);
+                    }
+                  };
+                  
+                  audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+                  audio.addEventListener('canplaythrough', handleCanPlayThrough);
+                  audio.addEventListener('loadeddata', handleLoadedData);
                   
                   audio.onerror = (error) => {
                     clearTimeout(timeout);
-                    console.warn(`[VideosList] Audio ${i + 1} load error, using video duration:`, audioDurationSeconds);
+                    console.warn(`[VideosList] Audio ${i + 1} load error, using video duration:`, audioDurationSeconds, error);
+                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    audio.removeEventListener('canplaythrough', handleCanPlayThrough);
+                    audio.removeEventListener('loadeddata', handleLoadedData);
                     resolve();
                   };
                   
                   audio.src = audioMediaSrc;
+                  audio.load(); // Explicitly start loading
                 });
               } catch (error) {
-                console.warn(`[VideosList] Error loading audio ${i + 1} metadata:`, error);
+                console.warn(`[VideosList] Error loading audio ${i + 1}:`, error);
               }
               
               const audioDurationInFrames = Math.max(1, Math.round(audioDurationSeconds * fps));
@@ -3439,14 +3526,30 @@
                 .replace(/^-|-$/g, '')
                 .toLowerCase();
               
-              newOverlays.push({
+              // CRITICAL: Ensure first scene audio starts at frame 0
+              const audioStartFrame = i === 0 ? 0 : fromFrame;
+              
+              // Log audio overlay creation for all scenes
+              console.log(`[VideosList] ✅ Creating audio overlay for SCENE ${i + 1}:`, {
+                id: `audio-${cleanAudioId}`,
+                from: audioStartFrame,
+                durationInFrames: audioDurationInFrames,
+                src: audioMediaSrc,
+                originalUrl: audioUrl,
+                volume: audioVolume,
+                startsAtZero: audioStartFrame === 0,
+                row: audioRow,
+                sceneIndex: i + 1
+              });
+              
+              const audioOverlay = {
                 id: `audio-${cleanAudioId}`, // Use file name as ID for uniqueness
                 left: 0,
                 top: 0,
                 width: 0, // Audio has no visual dimensions
                 height: 0,
                 durationInFrames: audioDurationInFrames,
-                from: fromFrame, // Same start time as video (or from audio layer timing if available)
+                from: audioStartFrame, // CRITICAL: First scene must start at frame 0
                 rotation: 0,
                 row: audioRow, // CRITICAL: Use calculated row (after subtitles, bottom track)
                 isDragging: false,
@@ -3458,6 +3561,17 @@
                 styles: {
                   volume: audioVolume, // Use volume from layer or default to 1
                 },
+              };
+              
+              newOverlays.push(audioOverlay);
+              
+              // Log the complete audio overlay object for all scenes
+              console.log(`[VideosList] ✅ Audio overlay object created for scene ${i + 1}:`, {
+                id: audioOverlay.id,
+                from: audioOverlay.from,
+                durationInFrames: audioOverlay.durationInFrames,
+                src: audioOverlay.src,
+                volume: audioOverlay.styles.volume
               });
             }
 
@@ -3552,28 +3666,15 @@
               if (subtitleLayerData.url) {
                 // Use SRT URL directly (no upload)
                 srtUrl = subtitleLayerData.url;
-                console.log('[VideosList] Processing subtitle - Extracting text from SRT and generating captions...', {
-                  sceneIndex: i + 1,
-                  srtUrl: srtUrl
-                });
                 
                 const result = await parseSRTToCaption(srtUrl, fps, i);
                 captions = result.captions;
                 const extractedText = result.extractedText;
                 
                 if (captions && captions.length > 0) {
-                  console.log('[VideosList] ✅ Captions generated successfully from extracted text:', {
-                    captionCount: captions.length,
-                    extractedTextLength: extractedText ? extractedText.length : 0,
-                    firstCaption: captions[0],
-                    lastCaption: captions[captions.length - 1]
-                  });
-                } else {
-                  console.warn('[VideosList] No captions generated from SRT file');
                 }
               } else if (subtitleLayerData.text) {
                 // Use inline text (no SRT file to upload)
-                console.log('[VideosList] Processing subtitle - Using inline text (no SRT file)');
                 captions = convertTextToCaption(
                   subtitleLayerData.text, 
                   subtitleStartFrame, 
@@ -3600,25 +3701,10 @@
                 
                 // Log warning if overlay was clamped
                 if (subtitleWasClamped) {
-                  console.warn(`[VideosList] Subtitle overlay ${captionOverlayId} dimensions clamped to fit canvas:`, {
-                    original: { left: originalSubtitleLeft, top: originalSubtitleTop, width: originalSubtitleWidth, height: originalSubtitleHeight },
-                    adjusted: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight },
-                    canvas: { width: canvasWidth, height: canvasHeight }
-                  });
                 }
                 
                 // Verify final position is within bounds
                 if (!isWithinBounds) {
-                  console.error(`[VideosList] CRITICAL: Subtitle overlay ${captionOverlayId} still outside canvas bounds!`, {
-                    position: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight },
-                    canvas: { width: canvasWidth, height: canvasHeight },
-                    bounds: {
-                      leftValid: subtitleLeft >= 0,
-                      topValid: subtitleTop >= 0,
-                      rightValid: subtitleLeft + subtitleWidth <= canvasWidth,
-                      bottomValid: subtitleTop + subtitleHeight <= canvasHeight
-                    }
-                  });
                 }
                 
                 // Verify captions array is properly formatted
@@ -3632,69 +3718,14 @@
                 );
                 
                 if (validCaptions.length === 0) {
-                  console.warn(`[VideosList] No valid captions found for subtitle overlay ${captionOverlayId}`, {
-                    originalCaptions: captions,
-                    captionCount: captions.length
-                  });
                 }
                 
                 // Debug logging for subtitle overlay creation with comprehensive visibility info
-                console.log('[VideosList] Creating subtitle/caption overlay:', {
-                  overlayId: captionOverlayId,
-                  pixelPosition: { 
-                    left: subtitleLeft, 
-                    top: subtitleTop, 
-                    width: subtitleWidth, 
-                    height: subtitleHeight,
-                    right: subtitleLeft + subtitleWidth,
-                    bottom: subtitleTop + subtitleHeight
-                  },
-                  normalizedPosition: normalizedPosition,
-                  normalizedBoundingBox: normalizedBoundingBox,
-                  canvas: { 
-                    width: canvasWidth, 
-                    height: canvasHeight,
-                    aspectRatio: currentAspectRatio
-                  },
-                  boundsCheck: {
-                    withinBounds: isWithinBounds,
-                    leftValid: subtitleLeft >= 0,
-                    topValid: subtitleTop >= 0,
-                    rightValid: (subtitleLeft + subtitleWidth) <= canvasWidth,
-                    bottomValid: (subtitleTop + subtitleHeight) <= canvasHeight
-                  },
-                  visibility: {
-                    display: 'block',
-                    visibility: 'visible',
-                    opacity: 1,
-                    zIndex: 350,
-                    backgroundColor: subtitleLayerData.style.backgroundColor || 'rgba(0, 0, 0, 0.7)'
-                  },
-                  captions: {
-                    totalCount: captions.length,
-                    validCount: validCaptions.length,
-                    sampleCaption: validCaptions[0] || null
-                  },
-                  content: subtitleLayerData.text || 'Subtitles',
-                  contentLength: (subtitleLayerData.text || '').length,
-                  hasSrc: !!srtUrl || !!subtitleLayerData.url,
-                  originalUrl: subtitleLayerData.url,
-                  srtUrl: srtUrl,
-                  type: OverlayType.CAPTION,
-                  row: subtitleRow
-                });
                 
                 if (!isWithinBounds) {
-                  console.error(`[VideosList] WARNING: Subtitle overlay ${captionOverlayId} position is outside canvas bounds!`, {
-                    position: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight },
-                    canvas: { width: canvasWidth, height: canvasHeight }
-                  });
                 }
                 
                 if (validCaptions.length === 0) {
-                  console.error(`[VideosList] ERROR: Subtitle overlay ${captionOverlayId} has no valid captions!`, {
-                    originalCaptions: captions
-                  });
                 }
                 
                 newOverlays.push({
@@ -3741,28 +3772,12 @@
                 });
                 
                 // Subtitle added to timeline
-                console.log('[VideosList] Processing subtitle - Added to timeline successfully!', {
-                  overlayId: captionOverlayId,
-                  row: subtitleRow,
-                  srtUrl: srtUrl,
-                  captionCount: validCaptions.length > 0 ? validCaptions.length : captions.length,
-                  position: { left: subtitleLeft, top: subtitleTop, width: subtitleWidth, height: subtitleHeight }
-                });
               } else {
-                console.warn(`[VideosList] Skipping subtitle overlay creation - no valid captions found`, {
-                  subtitleLayerData: {
-                    text: subtitleLayerData.text,
-                    url: subtitleLayerData.url,
-                    enabled: subtitleLayerData.enabled
-                  },
-                  captions: captions
-                });
               }
             }
 
             fromFrame += durationInFrames;
           } catch (error) {
-            console.error(`[VideosList] Failed to build overlay for video ${i + 1}:`, error);
           }
         }
 
@@ -3777,6 +3792,7 @@
             // Log detailed overlay summary
             const overlaysByRow = {};
             const overlaysByType = {};
+            const audioOverlays = [];
             
             newOverlays.forEach(overlay => {
               // Count by row
@@ -3787,7 +3803,56 @@
               
               // Count by type
               overlaysByType[overlay.type] = (overlaysByType[overlay.type] || 0) + 1;
+              
+              // Track audio overlays specifically
+              if (overlay.type === OverlayType.SOUND) {
+                audioOverlays.push({
+                  id: overlay.id,
+                  from: overlay.from,
+                  durationInFrames: overlay.durationInFrames,
+                  src: overlay.src,
+                  startsAtZero: overlay.from === 0
+                });
+              }
             });
+            
+            // Log audio overlays summary, especially first scene
+            if (audioOverlays.length > 0) {
+              console.log(`[VideosList] ✅ Audio overlays created:`, {
+                totalAudioOverlays: audioOverlays.length,
+                audioOverlays: audioOverlays,
+                firstSceneAudio: audioOverlays.find(a => a.startsAtZero) || null,
+                allOverlaysByType: overlaysByType
+              });
+            } else {
+              console.warn(`[VideosList] ⚠️ No audio overlays found in newOverlays!`, {
+                totalOverlays: newOverlays.length,
+                overlayTypes: Object.keys(overlaysByType),
+                firstOverlay: newOverlays[0]
+              });
+            }
+            
+            // CRITICAL: Verify first scene audio overlay is present
+            const firstSceneAudioOverlay = newOverlays.find(overlay => 
+              overlay.type === OverlayType.SOUND && (overlay.from || 0) === 0
+            );
+            if (!firstSceneAudioOverlay) {
+              console.error(`[VideosList] ❌ CRITICAL: First scene audio overlay NOT FOUND!`, {
+                audioOverlaysCount: audioOverlays.length,
+                allOverlays: newOverlays.filter(o => o.type === OverlayType.SOUND).map(o => ({
+                  id: o.id,
+                  from: o.from,
+                  src: o.src
+                }))
+              });
+            } else {
+              console.log(`[VideosList] ✅ First scene audio overlay verified:`, {
+                id: firstSceneAudioOverlay.id,
+                from: firstSceneAudioOverlay.from,
+                src: firstSceneAudioOverlay.src,
+                durationInFrames: firstSceneAudioOverlay.durationInFrames
+              });
+            }
             
             // Count text overlays for summary
             const textOverlayCount = newOverlays.filter(o => o.type === OverlayType.TEXT).length;
@@ -3807,7 +3872,6 @@
               }
             } else {
               // Overlays unchanged, skip update to prevent unnecessary re-renders
-              console.log('📋 Overlays unchanged, skipping update');
             }
           } else {
             const emptyOverlays = [];
@@ -4558,7 +4622,7 @@
                         className="w-full h-full object-contain bg-black"
                         playsInline
                         preload="metadata"
-                        onError={(e) => console.error('Video error:', e.target.error)}
+                        onError={(e) => {}}
                       />
                     ) : (
                       <div className="text-white">No video available</div>
