@@ -28,11 +28,12 @@ export const PositionSettings = ({ overlayWidth, overlayHeight, overlayLeft, ove
         const hasPosition = typeof overlayLeft === 'number' && typeof overlayTop === 'number';
         if (!hasDimensions || !hasPosition) {
             const canvasDimensions = getAspectRatioDimensions();
+            // CRITICAL: Use rounded dimensions to ensure integer pixels (prevents overflow for both 16:9 and 9:16)
             onPositionChange({
                 left: 0,
                 top: 0,
-                width: canvasDimensions.width,
-                height: canvasDimensions.height,
+                width: Math.round(canvasDimensions.width),
+                height: Math.round(canvasDimensions.height),
             });
         }
     }, [overlayWidth, overlayHeight, overlayLeft, overlayTop, getAspectRatioDimensions, onPositionChange]);
@@ -46,16 +47,21 @@ export const PositionSettings = ({ overlayWidth, overlayHeight, overlayLeft, ove
         }
         const canvasDimensions = getAspectRatioDimensions();
         const tolerance = 5; // Allow 5px tolerance for floating point calculations
-        const centerLeft = (canvasDimensions.width - overlayWidth) / 2;
-        const centerTop = (canvasDimensions.height - overlayHeight) / 2;
+        const canvasWidth = Math.round(canvasDimensions.width);
+        const canvasHeight = Math.round(canvasDimensions.height);
+        const centerLeft = (canvasWidth - overlayWidth) / 2;
+        const centerTop = (canvasHeight - overlayHeight) / 2;
         const isCenteredHorizontally = Math.abs(overlayLeft - centerLeft) < tolerance;
         const isCenteredVertically = Math.abs(overlayTop - centerTop) < tolerance;
         const isAtTop = overlayTop < tolerance;
-        const isAtBottom = Math.abs(overlayTop - (canvasDimensions.height - overlayHeight)) < tolerance;
+        const isAtBottom = Math.abs(overlayTop - (canvasHeight - overlayHeight)) < tolerance;
         const isAtLeft = overlayLeft < tolerance;
-        const isAtRight = Math.abs(overlayLeft - (canvasDimensions.width - overlayWidth)) < tolerance;
-        // Check for fullscreen (fills entire canvas)
-        if (overlayLeft === 0 && overlayTop === 0 && overlayWidth === canvasDimensions.width && overlayHeight === canvasDimensions.height) {
+        const isAtRight = Math.abs(overlayLeft - (canvasWidth - overlayWidth)) < tolerance;
+        // Check for fullscreen (fills entire canvas) - works for both 16:9 and 9:16
+        // Use tolerance to handle floating point precision issues
+        const isFullscreenWidth = Math.abs(overlayWidth - canvasWidth) < tolerance;
+        const isFullscreenHeight = Math.abs(overlayHeight - canvasHeight) < tolerance;
+        if (overlayLeft < tolerance && overlayTop < tolerance && isFullscreenWidth && isFullscreenHeight) {
             return "fullscreen";
         }
         // Check center position
@@ -80,22 +86,26 @@ export const PositionSettings = ({ overlayWidth, overlayHeight, overlayLeft, ove
      */
     const handlePositionPreset = (preset) => {
         const canvasDimensions = getAspectRatioDimensions();
+        // CRITICAL: Use rounded dimensions to ensure integer pixels (prevents overflow for both 16:9 and 9:16)
+        const canvasWidth = Math.round(canvasDimensions.width);
+        const canvasHeight = Math.round(canvasDimensions.height);
         let updates = {};
         switch (preset) {
             case "fullscreen":
-                // Scale to fill entire canvas
+                // Scale to fill entire canvas - works for both 16:9 and 9:16
+                // CRITICAL: Use rounded dimensions to ensure integer pixels and prevent overflow
                 updates = {
                     left: 0,
                     top: 0,
-                    width: canvasDimensions.width,
-                    height: canvasDimensions.height,
+                    width: canvasWidth, // Integer pixels for 16:9 (1920) or 9:16 (1080)
+                    height: canvasHeight, // Integer pixels for 16:9 (1080) or 9:16 (1920)
                 };
                 break;
             case "center":
                 // Center in canvas
                 updates = {
-                    left: (canvasDimensions.width - overlayWidth) / 2,
-                    top: (canvasDimensions.height - overlayHeight) / 2,
+                    left: Math.round((canvasWidth - overlayWidth) / 2),
+                    top: Math.round((canvasHeight - overlayHeight) / 2),
                 };
                 break;
             case "top-left":
@@ -106,44 +116,44 @@ export const PositionSettings = ({ overlayWidth, overlayHeight, overlayLeft, ove
                 break;
             case "top-center":
                 updates = {
-                    left: (canvasDimensions.width - overlayWidth) / 2,
+                    left: Math.round((canvasWidth - overlayWidth) / 2),
                     top: 0,
                 };
                 break;
             case "top-right":
                 updates = {
-                    left: canvasDimensions.width - overlayWidth,
+                    left: Math.round(canvasWidth - overlayWidth),
                     top: 0,
                 };
                 break;
             case "center-left":
                 updates = {
                     left: 0,
-                    top: (canvasDimensions.height - overlayHeight) / 2,
+                    top: Math.round((canvasHeight - overlayHeight) / 2),
                 };
                 break;
             case "center-right":
                 updates = {
-                    left: canvasDimensions.width - overlayWidth,
-                    top: (canvasDimensions.height - overlayHeight) / 2,
+                    left: Math.round(canvasWidth - overlayWidth),
+                    top: Math.round((canvasHeight - overlayHeight) / 2),
                 };
                 break;
             case "bottom-left":
                 updates = {
                     left: 0,
-                    top: canvasDimensions.height - overlayHeight,
+                    top: Math.round(canvasHeight - overlayHeight),
                 };
                 break;
             case "bottom-center":
                 updates = {
-                    left: (canvasDimensions.width - overlayWidth) / 2,
-                    top: canvasDimensions.height - overlayHeight,
+                    left: Math.round((canvasWidth - overlayWidth) / 2),
+                    top: Math.round(canvasHeight - overlayHeight),
                 };
                 break;
             case "bottom-right":
                 updates = {
-                    left: canvasDimensions.width - overlayWidth,
-                    top: canvasDimensions.height - overlayHeight,
+                    left: Math.round(canvasWidth - overlayWidth),
+                    top: Math.round(canvasHeight - overlayHeight),
                 };
                 break;
         }
