@@ -1005,7 +1005,7 @@ if (videoElement.readyState >= 2) {
 
             // Check if percent is 100% - start session data polling
             const isPercentComplete = percent >= 100;
-            
+
             // Check if status is "succeeded" or "failed" - only then stop polling
             // Also check if progress indicates completion
             const isCompleted = finalStatus === 'succeeded' || 
@@ -1287,8 +1287,8 @@ if (videoElement.readyState >= 2) {
                 // Only start session polling if percent is 100% and job API didn't provide video_result
                 if (isPercentComplete) {
                   // Keep loader visible during session data polling
-                  setIsLoading(true);
-                  setShowVideoLoader(true);
+                setIsLoading(true);
+                setShowVideoLoader(true);
                   setJobProgress({ percent: 100, phase: 'fetching videos...' });
                   
                   // Start polling session data when percent is 100%
@@ -1319,8 +1319,8 @@ if (videoElement.readyState >= 2) {
                       // Increment poll attempts
                       sessionPollAttempts++;
                       
-                      const session_id = localStorage.getItem('session_id');
-                      const user_id = localStorage.getItem('token');
+                  const session_id = localStorage.getItem('session_id');
+                  const user_id = localStorage.getItem('token');
                       
                       if (!session_id || !user_id) {
                         if (!cancelled) {
@@ -1330,22 +1330,22 @@ if (videoElement.readyState >= 2) {
                         return;
                       }
                       
-                      const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id, session_id })
-                      });
+                    const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ user_id, session_id })
+                    });
                       
-                      const refreshText = await refreshResp.text();
-                      let refreshData;
-                      try {
-                        refreshData = JSON.parse(refreshText);
-                      } catch (_) {
-                        refreshData = refreshText;
-                      }
+                    const refreshText = await refreshResp.text();
+                    let refreshData;
+                    try {
+                      refreshData = JSON.parse(refreshText);
+                    } catch (_) {
+                      refreshData = refreshText;
+                    }
                       
-                      if (refreshResp.ok && refreshData?.session_data) {
-                        const refreshedVideos = parseVideosPayload(refreshData.session_data);
+                    if (refreshResp.ok && refreshData?.session_data) {
+                      const refreshedVideos = parseVideosPayload(refreshData.session_data);
                         
                         // Check if we have videos with all required data
                         const hasVideos = refreshedVideos.length > 0;
@@ -1357,11 +1357,11 @@ if (videoElement.readyState >= 2) {
                         
                         if (!cancelled && hasVideos && hasAllLayers) {
                           // All videos and layers are available
-                          setItems(refreshedVideos);
-                          setStatus('succeeded');
-                          setSelectedIndex(0);
-                          setIsLoading(false);
-                          setShowVideoLoader(false);
+                        setItems(refreshedVideos);
+                        setStatus('succeeded');
+                        setSelectedIndex(0);
+                        setIsLoading(false);
+                        setShowVideoLoader(false);
                           return; // Stop polling
                         } else if (!cancelled && sessionPollAttempts < maxSessionPollAttempts) {
                           // Videos or layers not ready yet, continue polling (up to max attempts)
@@ -1369,7 +1369,7 @@ if (videoElement.readyState >= 2) {
                           setShowVideoLoader(true);
                           setJobProgress({ percent: 100, phase: `fetching videos... (attempt ${sessionPollAttempts}/${maxSessionPollAttempts})` });
                           timeoutId = setTimeout(pollSessionData, sessionPollInterval);
-                          return;
+                        return;
                         } else if (!cancelled) {
                           // Max attempts reached - hide loader and show current state
                           setIsLoading(false);
@@ -1380,9 +1380,9 @@ if (videoElement.readyState >= 2) {
                             setStatus('succeeded');
                             setSelectedIndex(0);
                           }
-                          return;
-                        }
-                      } else {
+                      return;
+                    }
+                  } else {
                         // API error, continue polling if attempts remaining
                         if (!cancelled && sessionPollAttempts < maxSessionPollAttempts) {
                           setIsLoading(true);
@@ -1391,8 +1391,8 @@ if (videoElement.readyState >= 2) {
                           timeoutId = setTimeout(pollSessionData, sessionPollInterval);
                         }
                         return;
-                      }
-                    } catch (refreshError) {
+                  }
+                } catch (refreshError) {
                       // Error occurred, continue polling if attempts remaining
                       if (!cancelled && sessionPollAttempts < maxSessionPollAttempts) {
                         setIsLoading(true);
@@ -1401,7 +1401,7 @@ if (videoElement.readyState >= 2) {
                         setJobProgress({ percent: 100, phase: 'retrying...' });
                         timeoutId = setTimeout(pollSessionData, sessionPollInterval);
                       }
-                      return;
+                  return;
                     }
                   };
                   

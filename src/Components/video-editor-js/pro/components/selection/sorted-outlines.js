@@ -23,9 +23,20 @@ const sortOverlaysByRow = (overlays) => {
  * @param props.setSelectedOverlayId - State setter for selected overlay ID
  */
 export const SortedOutlines = ({ overlays, selectedOverlayId, changeOverlay, alignmentGuides }) => {
-    const overlaysToDisplay = React.useMemo(() => sortOverlaysByRow(overlays), [overlays]);
-    const isDragging = React.useMemo(() => overlays.some((overlay) => overlay.isDragging), [overlays]);
-    const selectedOverlay = React.useMemo(() => overlays.find((o) => o.id === selectedOverlayId), [overlays, selectedOverlayId]);
+    // Filter out overlays without valid IDs - they can't be selected or manipulated
+    const validOverlays = React.useMemo(() => {
+        return overlays.filter((overlay) => {
+            const hasValidId = overlay.id != null && overlay.id !== undefined && overlay.id !== '';
+            if (!hasValidId) {
+                console.warn('[SortedOutlines] Overlay missing ID, skipping:', overlay);
+            }
+            return hasValidId;
+        });
+    }, [overlays]);
+    
+    const overlaysToDisplay = React.useMemo(() => sortOverlaysByRow(validOverlays), [validOverlays]);
+    const isDragging = React.useMemo(() => validOverlays.some((overlay) => overlay.isDragging), [validOverlays]);
+    const selectedOverlay = React.useMemo(() => validOverlays.find((o) => o.id === selectedOverlayId), [validOverlays, selectedOverlayId]);
     return (_jsxs(_Fragment, { children: [overlaysToDisplay.map((overlay) => {
                 return (_jsx(Sequence, { from: overlay.from, durationInFrames: overlay.durationInFrames, layout: "none", children: _jsx(SelectionOutline, { changeOverlay: changeOverlay, overlay: overlay, selectedOverlayId: selectedOverlayId, isDragging: isDragging, alignmentGuides: alignmentGuides, allOverlays: overlays }) }, overlay.id));
             }), selectedOverlay && (_jsx(Sequence, { from: selectedOverlay.from, durationInFrames: selectedOverlay.durationInFrames, layout: "none", children: _jsx(SelectionHandles, { overlay: selectedOverlay, changeOverlay: changeOverlay, alignmentGuides: alignmentGuides, allOverlays: overlays }) }, `handles-${selectedOverlay.id}`))] }));

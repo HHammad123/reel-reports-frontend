@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useCurrentScale } from "remotion";
 import { OverlayType } from "../../types";
 import { getEffectiveCropDimensions } from "../../utils/crop-utils";
-const HANDLE_SIZE = 12;
+const HANDLE_SIZE = 14; // Increased from 12 to 14 for better visibility and easier clicking
 /**
  * ResizeHandle component renders a draggable handle for resizing overlays in the editor.
  * It appears as a small white square with a blue border at the corners of a selected overlay.
@@ -28,16 +28,21 @@ export const ResizeHandle = ({ type, setOverlay, overlay, alignmentGuides, allOv
     const borderSize = 1 / scale;
     const sizeStyle = useMemo(() => {
         const zIndex = 999999;
+        // Ensure minimum size for visibility and clickability
+        const minSize = Math.max(size, 12); // At least 12px even when scaled
         return {
             position: "absolute",
-            height: Number.isFinite(size) ? size : HANDLE_SIZE,
-            width: Number.isFinite(size) ? size : HANDLE_SIZE,
+            height: Number.isFinite(minSize) ? minSize : HANDLE_SIZE,
+            width: Number.isFinite(minSize) ? minSize : HANDLE_SIZE,
             backgroundColor: "white",
-            border: `${borderSize}px solid #3B8BF2`,
+            border: `${Math.max(borderSize, 2)}px solid #3b82f6`, // Thicker border for visibility
+            borderRadius: '2px', // Slightly rounded for better appearance
             zIndex,
             pointerEvents: "all",
+            cursor: type === "top-left" || type === "bottom-right" ? "nwse-resize" : "nesw-resize",
+            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)', // Add shadow for better visibility
         };
-    }, [borderSize, size]);
+    }, [borderSize, size, type]);
     const margin = -size / 2 - borderSize;
     const style = useMemo(() => {
         if (type === "top-left") {

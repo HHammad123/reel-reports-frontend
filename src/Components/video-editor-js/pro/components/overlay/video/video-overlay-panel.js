@@ -187,11 +187,28 @@ export const VideoOverlayPanel = () => {
                     },
                 };
                 // Update overlays with both the shifted overlays and the new overlay in a single operation
-                const newId = updatedOverlays.length > 0 ? Math.max(...updatedOverlays.map((o) => o.id)) + 1 : 0;
-                const overlayWithId = { ...newOverlay, id: newId };
+                // Generate ID - ensure we always get a valid numeric ID
+                const validIds = updatedOverlays
+                    .map((o) => o?.id)
+                    .filter((id) => id != null && !isNaN(id) && typeof id === 'number');
+                const newId = validIds.length > 0 
+                    ? Math.max(...validIds) + 1 
+                    : (overlays.length > 0 
+                        ? Math.max(...overlays.map((o) => o?.id || 0).filter(id => !isNaN(id))) + 1 
+                        : 0);
+                const finalId = (isNaN(newId) || newId < 0) ? Date.now() : newId;
+                const overlayWithId = { ...newOverlay, id: finalId };
+                
+                // Ensure the overlay has a valid ID
+                if (!overlayWithId.id || isNaN(overlayWithId.id)) {
+                    overlayWithId.id = finalId;
+                }
+                
                 const finalOverlays = [...updatedOverlays, overlayWithId];
                 setOverlays(finalOverlays);
-                setSelectedOverlayId(newId);
+                setSelectedOverlayId(overlayWithId.id);
+                
+                console.log('[VideoOverlayPanel] Added overlay with ID:', overlayWithId.id, 'Type:', overlayWithId.type);
             }
         }
         finally {

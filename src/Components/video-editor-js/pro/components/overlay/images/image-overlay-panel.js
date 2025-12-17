@@ -136,9 +136,12 @@ export const ImageOverlayPanel = () => {
             const smartDuration = overlays.length > 0
                 ? Math.round(durationInFrames * IMAGE_DURATION_PERCENTAGE)
                 : DEFAULT_IMAGE_DURATION_FRAMES;
+            // Default position: CENTER (same as videos for consistency and better UX)
+            const left = Math.round((canvasDimensions.width - width) / 2);
+            const top = Math.round((canvasDimensions.height - height) / 2);
             const newOverlay = {
-                left: 0,
-                top: 0,
+                left: left, // Default: CENTERED horizontally
+                top: top, // Default: CENTERED vertically
                 width,
                 height,
                 durationInFrames: smartDuration,
@@ -156,12 +159,34 @@ export const ImageOverlayPanel = () => {
                     },
                 },
             };
+            // Generate ID - ensure we always get a valid numeric ID
+            // Filter out undefined/null IDs and ensure we have valid numbers
+            const validIds = updatedOverlays
+                .map((o) => o?.id)
+                .filter((id) => id != null && !isNaN(id) && typeof id === 'number');
+            const newId = validIds.length > 0 
+                ? Math.max(...validIds) + 1 
+                : (overlays.length > 0 
+                    ? Math.max(...overlays.map((o) => o?.id || 0).filter(id => !isNaN(id))) + 1 
+                    : 0);
+            
+            // Ensure newId is a valid number
+            const finalId = (isNaN(newId) || newId < 0) ? Date.now() : newId;
+            
             // Update overlays with both the shifted overlays and the new overlay in a single operation
-            const newId = updatedOverlays.length > 0 ? Math.max(...updatedOverlays.map((o) => o.id)) + 1 : 0;
-            const overlayWithId = { ...newOverlay, id: newId };
+            const overlayWithId = { ...newOverlay, id: finalId };
+            
+            // Ensure the overlay has a valid ID before adding
+            if (!overlayWithId.id || isNaN(overlayWithId.id)) {
+                console.error('[ImageOverlayPanel] Overlay missing valid ID:', overlayWithId);
+                overlayWithId.id = finalId; // Force set the ID
+            }
+            
             const finalOverlays = [...updatedOverlays, overlayWithId];
             setOverlays(finalOverlays);
-            setSelectedOverlayId(newId);
+            setSelectedOverlayId(overlayWithId.id);
+            
+            console.log('[ImageOverlayPanel] Added overlay with ID:', overlayWithId.id, 'Type:', overlayWithId.type);
         }
     };
     /**

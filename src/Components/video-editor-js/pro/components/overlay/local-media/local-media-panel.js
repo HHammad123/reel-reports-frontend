@@ -29,18 +29,66 @@ export const LocalMediaPanel = () => {
   }, []);
   const sessionMediaAddedRef = useRef(false);
     /**
+     * Load image to get its natural dimensions
+     */
+    const getImageDimensions = useCallback((imageSrc) => {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                resolve({
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                });
+            };
+            img.onerror = () => {
+                resolve(null);
+            };
+            img.src = imageSrc;
+        });
+    }, []);
+
+    /**
      * Add a media file to the timeline
      * Memoized to prevent recreation on every frame update
      */
-    const handleAddToTimeline = useCallback((file) => {
+    const handleAddToTimeline = useCallback(async (file) => {
         const canvasDimensions = getAspectRatioDimensions();
-        // Note: Local media files don't currently store dimension information
-        // For intelligent sizing, we would need to extract dimensions during upload
-        // For now, we fall back to canvas dimensions
-        const assetDimensions = getAssetDimensions(file);
-        const { width, height } = assetDimensions
-            ? calculateIntelligentAssetSize(assetDimensions, canvasDimensions)
-            : canvasDimensions;
+        
+        // For images, try to get dimensions from file or load the image
+        let assetDimensions = getAssetDimensions(file);
+        
+        // If no dimensions in file object and it's an image, load the image to get dimensions
+        if (!assetDimensions && file.type === "image") {
+            const imageSrc = file.path || file.url || file.src || "";
+            if (imageSrc) {
+                // Determine the correct image source URL
+                let mediaSrc = imageSrc;
+                if (!imageSrc.startsWith("http://") && !imageSrc.startsWith("https://") && !imageSrc.startsWith("blob:")) {
+                    const cleanPath = imageSrc.startsWith("/") ? imageSrc.slice(1) : imageSrc;
+                    mediaSrc = `/api/latest/local-media/serve/${cleanPath}`;
+                }
+                assetDimensions = await getImageDimensions(mediaSrc);
+            }
+        }
+        
+        // Calculate size: use intelligent sizing if we have dimensions, otherwise use a reasonable default
+        let width, height;
+        if (assetDimensions) {
+            const sized = calculateIntelligentAssetSize(assetDimensions, canvasDimensions);
+            width = sized.width;
+            height = sized.height;
+        } else if (file.type === "image") {
+            // For images without dimensions: Default to 50% of canvas size (maintains reasonable size without taking full canvas)
+            // Use a 4:3 aspect ratio as a reasonable default
+            const defaultWidth = Math.round(canvasDimensions.width * 0.5);
+            const defaultHeight = Math.round(defaultWidth * 0.75); // 4:3 aspect ratio
+            width = defaultWidth;
+            height = defaultHeight;
+        } else {
+            // For videos without dimensions, use canvas dimensions (videos typically fill the canvas)
+            width = canvasDimensions.width;
+            height = canvasDimensions.height;
+        }
         const { from, row, updatedOverlays } = addAtPlayhead(currentFrame, overlays, 'top');
         // Get raw path from file - check all possible locations
         let rawPath = file.path || file.url || file.src || "";
@@ -86,16 +134,32 @@ export const LocalMediaPanel = () => {
             console.warn('[LocalMediaPanel] Skipping add: empty mediaSrc');
             return;
         }
-        // Generate ID first
-        const newId = updatedOverlays.length > 0 ? Math.max(...updatedOverlays.map((o) => o.id)) + 1 : 0;
-        // Default position: CENTER (always center videos by default)
-        // canvasDimensions is already declared above, reuse it
+        // Generate ID first - ensure we always get a valid numeric ID
+        // Filter out undefined/null IDs and ensure we have valid numbers
+        const validIds = updatedOverlays
+            .map((o) => o?.id)
+            .filter((id) => id != null && !isNaN(id) && typeof id === 'number');
+        const newId = validIds.length > 0 
+            ? Math.max(...validIds) + 1 
+            : (overlays.length > 0 
+                ? Math.max(...overlays.map((o) => o?.id || 0).filter(id => !isNaN(id))) + 1 
+                : 0);
+        
+        // Ensure newId is a valid number
+        if (isNaN(newId) || newId < 0) {
+            console.error('[LocalMediaPanel] Invalid ID generated, using fallback');
+            const fallbackId = Date.now(); // Use timestamp as fallback
+            console.log('[LocalMediaPanel] Using fallback ID:', fallbackId);
+        }
+        
+        const finalId = isNaN(newId) || newId < 0 ? Date.now() : newId;
+        // Default position: CENTER (for both videos and images)
         const left = Math.round((canvasDimensions.width - width) / 2);
         const top = Math.round((canvasDimensions.height - height) / 2);
         let newOverlay;
         if (file.type === "video") {
             newOverlay = {
-                id: newId,
+                id: finalId,
                 left: left, // Default: CENTERED horizontally
                 top: top, // Default: CENTERED vertically
                 width,
@@ -124,12 +188,13 @@ export const LocalMediaPanel = () => {
             const smartDuration = overlays.length > 0
                 ? Math.round(durationInFrames * IMAGE_DURATION_PERCENTAGE)
                 : DEFAULT_IMAGE_DURATION_FRAMES;
+            // Use the calculated width and height from above (already centered via left/top calculated earlier)
             newOverlay = {
-                id: newId,
-                left: 0,
-                top: 0,
-                width,
-                height,
+                id: finalId,
+                left: left, // Default: CENTERED horizontally
+                top: top, // Default: CENTERED vertically
+                width, // Use calculated width (maintains image aspect ratio)
+                height, // Use calculated height (maintains image aspect ratio)
                 durationInFrames: smartDuration,
                 from,
                 rotation: 0,
@@ -139,7 +204,7 @@ export const LocalMediaPanel = () => {
                 src: mediaSrc, // Use the API route instead of direct path
                 content: mediaSrc,
                 styles: {
-                    objectFit: "fill",
+                    objectFit: "contain", // Maintain aspect ratio, don't stretch
                     animation: {
                         enter: "fadeIn",
                         exit: "fadeOut",
@@ -149,7 +214,7 @@ export const LocalMediaPanel = () => {
         }
         else if (file.type === "audio") {
             newOverlay = {
-                id: newId,
+                id: finalId,
                 left: 0,
                 top: 0,
                 width: 0,
@@ -171,11 +236,19 @@ export const LocalMediaPanel = () => {
         else {
             return; // Unsupported file type
         }
+        // Ensure the overlay has a valid ID before adding
+        if (!newOverlay.id || isNaN(newOverlay.id)) {
+            console.error('[LocalMediaPanel] Overlay missing valid ID:', newOverlay);
+            newOverlay.id = finalId; // Force set the ID
+        }
+        
         // Update overlays with both the shifted overlays and the new overlay in a single operation
         const finalOverlays = [...updatedOverlays, newOverlay];
         setOverlays(finalOverlays);
-        setSelectedOverlayId(newId);
-    }, [currentFrame, overlays, addAtPlayhead, getAspectRatioDimensions, setOverlays, setSelectedOverlayId]);
+        setSelectedOverlayId(newOverlay.id);
+        
+        console.log('[LocalMediaPanel] Added overlay with ID:', newOverlay.id, 'Type:', newOverlay.type);
+    }, [currentFrame, overlays, addAtPlayhead, getAspectRatioDimensions, setOverlays, setSelectedOverlayId, durationInFrames, getImageDimensions]);
 
     // REMOVED: Auto-loading from LocalMediaPanel
     // Videos are now automatically added to timeline in VideosList.js after session data API succeeds
@@ -204,6 +277,6 @@ export const LocalMediaPanel = () => {
         }
     }, [setOverlays, setSelectedOverlayId, clearMediaFiles]);
 
-    return (_jsx("div", { className: "flex flex-col gap-4 p-2 bg-background h-full", children: _jsx(LocalMediaGallery, { onSelectMedia: handleAddToTimeline, sessionMedia: sessionMedia, onClearAll: handleClearAll }) }));
+    return (_jsx("div", { className: "flex flex-col gap-4 p-2 bg-white h-full", children: _jsx(LocalMediaGallery, { onSelectMedia: handleAddToTimeline, sessionMedia: sessionMedia, onClearAll: handleClearAll }) }));
 };
 export default LocalMediaPanel;
