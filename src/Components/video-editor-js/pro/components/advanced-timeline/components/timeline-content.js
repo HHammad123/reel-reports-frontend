@@ -308,6 +308,7 @@ export const TimelineContent = ({ tracks, viewportDuration, currentFrame, fps, z
                 }, children: _jsxs("div", { ref: timelineRef, className: "timeline-zoomable-content relative", style: {
                         ...getTimelineContentStyles(zoomScale),
                         minHeight: 'fit-content',
+                        paddingBottom: '60px' /* Add padding to ensure bottom track is fully visible */
                     }, onMouseDown: handleMouseDown, onMouseMove: enhancedMouseMove, onMouseUp: handleMouseUp, onMouseLeave: onMouseLeave, onDragOver: handleNewItemDragOver, onDragEnd: handleNewItemDragEnd, onDragLeave: handleNewItemDragLeave, onDrop: handleTimelineDrop, onTouchStart: handleTouchStart, onTouchMove: enhancedTouchMove, onTouchEnd: handleTouchEnd, children: [_jsx("div", { className: "timeline-tracks-container", children: tracks.map((track, index) => {
                                 // Find all ghost elements that belong to this track
                                 const trackGhostElements = (ghostElement === null || ghostElement === void 0 ? void 0 : ghostElement.filter(ghost => {

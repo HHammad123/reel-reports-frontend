@@ -46,7 +46,7 @@ export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true
     return (_jsx(ReactVideoEditorProvider, { ...providerProps, onSaving: handleSaving, onSaved: handleSaved, playerRef: playerRef, children: isPlayerOnly ? (
         // Player-only mode: Simple fullscreen video player
         _jsx("div", { className: "w-full bg-black flex items-center justify-center", style: {
-                height: "calc(var(--vh, 1vh) * 100)",
+                height: "100vh",
                 maxHeight: "-webkit-fill-available" /* Safari fix */,
             }, children: _jsx(VideoPlayer, { playerRef: playerRef, isPlayerOnly: true }) })) : (
         // Editor mode: Full editor interface with sidebar

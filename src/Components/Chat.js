@@ -1267,7 +1267,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     })();
     return () => { cancelled = true; setIsAssetsLoading(false); };
   }, [showAssetsModal]);
-
+  
   useEffect(() => {
     if (!showAssetsModal || !['preset_templates', 'uploaded_templates'].includes(assetsTab)) {
       setIsLoadingTemplates(false);
@@ -3739,18 +3739,18 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       
       // First check background_image array (primary source for background images)
       if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
-        // Extract URLs from array of objects or strings
-        backgroundImages = scene.background_image
-          .map(item => {
-            if (typeof item === 'string' && item.trim()) return item.trim();
-            if (item && typeof item === 'object') {
-              return item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
-            }
-            return '';
-          })
-          .filter(url => url && typeof url === 'string');
-      } else if (typeof scene?.background_image === 'string' && scene.background_image.trim()) {
-        backgroundImages = [scene.background_image.trim()];
+          // Extract URLs from array of objects or strings
+          backgroundImages = scene.background_image
+            .map(item => {
+              if (typeof item === 'string' && item.trim()) return item.trim();
+              if (item && typeof item === 'object') {
+                return item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || '';
+              }
+              return '';
+            })
+            .filter(url => url && typeof url === 'string');
+        } else if (typeof scene?.background_image === 'string' && scene.background_image.trim()) {
+          backgroundImages = [scene.background_image.trim()];
       } else if (typeof scene?.background === 'string' && scene.background.trim()) {
         backgroundImages = [scene.background.trim()];
       }
@@ -3789,33 +3789,57 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       
       // Only check localStorage if NOT in scenesMode (for regular chat flow)
       if (!scenesMode) {
-        try {
-          const latest = localStorage.getItem(scopedKey('updated_script_structure'));
-          if (latest) {
-            const stored = JSON.parse(latest);
-            const normalizedStored = normalizeScriptToRows(stored);
-            const countImgs = (rows) => {
-              try {
-                return (Array.isArray(rows) ? rows : []).reduce((acc, r) => acc + (Array.isArray(r?.ref_image) ? r.ref_image.length : 0), 0);
-              } catch (_) { return 0; }
-            };
-            const storedImgs = countImgs(normalizedStored?.rows);
-            const incomingImgs = countImgs(normalizedIncoming?.rows);
-            // If stored has no images but incoming has, use incoming; otherwise use stored
-            if (storedImgs === 0 && incomingImgs > 0) {
-              scriptToShow = script;
-            } else {
-              scriptToShow = stored;
-              normalizedIncoming = normalizedStored; // keep in sync for header auto-select below
-            }
+      try {
+        const latest = localStorage.getItem(scopedKey('updated_script_structure'));
+        if (latest) {
+          const stored = JSON.parse(latest);
+          const normalizedStored = normalizeScriptToRows(stored);
+          const countImgs = (rows) => {
+            try {
+              return (Array.isArray(rows) ? rows : []).reduce((acc, r) => acc + (Array.isArray(r?.ref_image) ? r.ref_image.length : 0), 0);
+            } catch (_) { return 0; }
+          };
+          const storedImgs = countImgs(normalizedStored?.rows);
+          const incomingImgs = countImgs(normalizedIncoming?.rows);
+          // If stored has no images but incoming has, use incoming; otherwise use stored
+          if (storedImgs === 0 && incomingImgs > 0) {
+            scriptToShow = script;
+          } else {
+            scriptToShow = stored;
+            normalizedIncoming = normalizedStored; // keep in sync for header auto-select below
           }
-        } catch (_) { /* noop */ }
+        }
+      } catch (_) { /* noop */ }
       }
 
       const currentScriptHash = JSON.stringify(scriptToShow);
       const normalizedRows = normalizeScriptToRows(scriptToShow);
       const rowsWithPersistedRefs = applyPersistedRefsToRows(normalizedRows.rows || []);
+      
+      // Preserve current scene index by finding the scene with the same scene_number
+      const currentScene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
+      const currentSceneNumber = currentScene?.scene_number;
+      
       setScriptRows(rowsWithPersistedRefs);
+      
+      // Restore scene index by finding the scene with the same scene_number
+      if (currentSceneNumber) {
+        const newIndex = rowsWithPersistedRefs.findIndex(r => r?.scene_number === currentSceneNumber);
+        if (newIndex >= 0) {
+          setCurrentSceneIndex(newIndex);
+          console.log(`[Chat] Preserved scene index: scene ${currentSceneNumber} at index ${newIndex}`);
+        } else {
+          // If scene not found, keep current index if valid, otherwise use 0
+          const validIndex = currentSceneIndex < rowsWithPersistedRefs.length ? currentSceneIndex : 0;
+          setCurrentSceneIndex(validIndex);
+          console.log(`[Chat] Scene ${currentSceneNumber} not found, using index ${validIndex}`);
+        }
+      } else {
+        // If no current scene, keep current index if valid, otherwise use 0
+        const validIndex = currentSceneIndex < rowsWithPersistedRefs.length ? currentSceneIndex : 0;
+        setCurrentSceneIndex(validIndex);
+      }
+      
       // Track original script structure for resets
       localStorage.setItem(scopedKey('original_script_hash'), currentScriptHash);
       setHasOrderChanged(false);
@@ -3843,7 +3867,6 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     }
     
     setShowScriptModal(true);
-    setCurrentSceneIndex(0);
     setShowReorderTable(false);
   };
 
@@ -3858,7 +3881,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         console.log('[Chat] Opening script modal with initialScenes:', {
           type: Array.isArray(initialScenes) ? 'array' : typeof initialScenes,
           length: Array.isArray(initialScenes) ? initialScenes.length : 'N/A',
-          initialScenes: initialScenes
+          currentSceneIndex: currentSceneIndex,
+          currentSceneNumber: Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex]?.scene_number : null
         });
         try { 
           openScriptModal(initialScenes); 
@@ -4711,7 +4735,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const addText = await addResp.text();
       let addData; try { addData = JSON.parse(addText); } catch(_) { addData = addText; }
       if (!addResp.ok) throw new Error(`scripts/add-scene failed: ${addResp.status} ${addText}`);
-      // Update UI
+      // Update UI with returned script (temporary update)
       const container = addData?.reordered_script ?? addData;
       try {
         localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
@@ -4719,15 +4743,170 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         const normalized = normalizeScriptToRows(container);
         const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
         setScriptRows(newRows);
-        const selIndex = Math.min(Math.max(0, idx), Math.max(0, newRows.length - 1));
-        setCurrentSceneIndex(selIndex);
+        // Store the expected scene number for the newly added scene (should be at position idx)
+        const expectedNewSceneNumber = idx + 1; // Scene numbers are 1-based
         setHasOrderChanged(false);
         setCanUndo(true); setCanRedo(false);
       } catch(_) {}
       setShowAddSceneModal(false);
-      // Trigger script refresh callback if provided
-      if (onScriptChange) {
-        onScriptChange();
+      
+      // Call user session data API directly and update script without full reload
+      try {
+        const sessionId = localStorage.getItem('session_id');
+        const userId = localStorage.getItem('token');
+        if (sessionId && userId) {
+          console.log('[Chat] Add scene: Calling user session data API to get updated script...');
+          // Wait a bit for backend to process
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, session_id: sessionId })
+          });
+          const sessionText = await sessionResp.text();
+          let sessionData;
+          try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+          
+          if (sessionResp.ok && sessionData) {
+            // Extract script from session data (same logic as model switch)
+            const sessionDataObj = sessionData?.session_data || sessionData?.session || {};
+            const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0 
+              ? sessionDataObj.scripts 
+              : [];
+            
+            let scriptData = null;
+            
+            // Check for reordered_script or changed_script first
+            if (sessionDataObj?.reordered_script) {
+              const reordered = sessionDataObj.reordered_script;
+              if (Array.isArray(reordered?.airesponse)) {
+                scriptData = reordered.airesponse;
+              } else if (Array.isArray(reordered)) {
+                scriptData = reordered;
+              } else if (reordered && typeof reordered === 'object') {
+                scriptData = reordered;
+              }
+            }
+            
+            if (!scriptData && sessionDataObj?.changed_script) {
+              const changed = sessionDataObj.changed_script;
+              if (Array.isArray(changed?.airesponse)) {
+                scriptData = changed.airesponse;
+              } else if (Array.isArray(changed)) {
+                scriptData = changed;
+              } else if (changed && typeof changed === 'object') {
+                scriptData = changed;
+              }
+            }
+            
+            // Check scripts array
+            if (!scriptData && scripts.length > 0) {
+              for (let i = 0; i < Math.min(scripts.length, 3); i++) {
+                const currentScript = scripts[i];
+                if (currentScript?.reordered_script) {
+                  const reordered = currentScript.reordered_script;
+                  if (Array.isArray(reordered?.airesponse)) {
+                    scriptData = reordered.airesponse;
+                    break;
+                  } else if (Array.isArray(reordered)) {
+                    scriptData = reordered;
+                    break;
+                  } else if (reordered && typeof reordered === 'object') {
+                    scriptData = reordered;
+                    break;
+                  }
+                }
+                if (currentScript?.changed_script) {
+                  const changed = currentScript.changed_script;
+                  if (Array.isArray(changed?.airesponse)) {
+                    scriptData = changed.airesponse;
+                    break;
+                  } else if (Array.isArray(changed)) {
+                    scriptData = changed;
+                    break;
+                  } else if (changed && typeof changed === 'object') {
+                    scriptData = changed;
+                    break;
+                  }
+                }
+                if (Array.isArray(currentScript?.airesponse)) {
+                  scriptData = currentScript.airesponse;
+                  break;
+                } else if (Array.isArray(currentScript)) {
+                  scriptData = currentScript;
+                  break;
+                } else if (currentScript && typeof currentScript === 'object') {
+                  if (Array.isArray(currentScript?.rows)) {
+                    scriptData = currentScript;
+                    break;
+                  } else if (Array.isArray(currentScript?.script)) {
+                    scriptData = currentScript.script;
+                    break;
+                  } else if (Object.keys(currentScript).length > 0) {
+                    scriptData = currentScript;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Check sessionData directly
+            if (!scriptData && Array.isArray(sessionDataObj?.airesponse)) {
+              scriptData = sessionDataObj.airesponse;
+            }
+            
+            // Check root level
+            if (!scriptData && Array.isArray(sessionData?.airesponse)) {
+              scriptData = sessionData.airesponse;
+            }
+            
+            if (scriptData) {
+              // Normalize script data
+              let normalizedScript = scriptData;
+              if (scriptData && typeof scriptData === 'object' && !Array.isArray(scriptData)) {
+                if (Array.isArray(scriptData.airesponse) && scriptData.airesponse.length > 0) {
+                  normalizedScript = scriptData.airesponse;
+                } else if (Array.isArray(scriptData.script) && scriptData.script.length > 0) {
+                  normalizedScript = scriptData.script;
+                } else if (Array.isArray(scriptData.rows) && scriptData.rows.length > 0) {
+                  normalizedScript = scriptData;
+                }
+              }
+              
+              // Update script rows without full reload
+              if (normalizedScript !== null && normalizedScript !== undefined) {
+                const normalized = normalizeScriptToRows(normalizedScript);
+                const updatedRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+                
+                // Find and open the newly added scene (should be the last scene or at expected position)
+                let newSceneIndex = -1;
+                // First try to find by expected scene number (idx + 1)
+                const expectedSceneNumber = idx + 1;
+                newSceneIndex = updatedRows.findIndex(r => r?.scene_number === expectedSceneNumber);
+                
+                // If not found, use the last scene (newly added scene is typically at the end)
+                if (newSceneIndex < 0 && updatedRows.length > 0) {
+                  newSceneIndex = updatedRows.length - 1;
+                }
+                
+                if (newSceneIndex >= 0) {
+                  setCurrentSceneIndex(newSceneIndex);
+                  console.log(`[Chat] Add scene: Updated script and opened newly added scene at index ${newSceneIndex} (scene_number: ${updatedRows[newSceneIndex]?.scene_number || 'N/A'})`);
+                }
+                
+                setScriptRows(updatedRows);
+                console.log('[Chat] Add scene: Script updated from user session data API');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Chat] Add scene: Failed to update script from user session data:', err);
+        // Fallback: trigger refresh if direct update fails
+        if (onScriptChange) {
+          onScriptChange();
+        }
       }
     } catch (e) {
       console.error('Add scene failed:', e);
@@ -6128,30 +6307,6 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       if (!switchResp.ok) throw new Error(`scripts/switch-model failed: ${switchResp.status} ${switchText}`);
       console.log('scripts/switch-model response:', switchData);
 
-      // 4) Update UI with returned script
-      const container = switchData?.reordered_script ?? switchData?.changed_script ?? switchData;
-      try {
-        localStorage.setItem('updated_script_structure', JSON.stringify(container));
-        localStorage.setItem('original_script_hash', JSON.stringify(container));
-        const normalized = normalizeScriptToRows(container);
-        const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
-        setScriptRows(newRows);
-        // Keep current scene by scene_number if possible
-        const idx = newRows.findIndex(r => (r?.scene_number === scene.scene_number));
-        if (idx >= 0) setCurrentSceneIndex(idx);
-        // Update last script in chat history and localStorage
-        try {
-          setChatHistory(prev => {
-            const copy = [...prev];
-            for (let i = copy.length - 1; i >= 0; i--) {
-              if (copy[i]?.script) { copy[i] = { ...copy[i], script: container }; break; }
-            }
-            try { localStorage.setItem('last_generated_script', JSON.stringify(container)); } catch (_) { /* noop */ }
-            return copy;
-          });
-        } catch (_) { /* noop */ }
-      } catch (_) { /* noop */ }
-
       // Reflect new selection in UI and close confirm
       setSelectedVideoType(videoType);
       setShowModelConfirm(false);
@@ -6174,9 +6329,201 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         }
       }
 
-      // Trigger script refresh after successful model switch
-      if (onScriptChange) {
-        onScriptChange();
+      // In scenesMode (Script Editor), skip immediate update and only use user session data API
+      // For non-scenesMode, update from switch-model response immediately
+      if (!scenesMode) {
+        // 4) Update UI with returned script (only for non-scenesMode)
+      const container = switchData?.reordered_script ?? switchData?.changed_script ?? switchData;
+      try {
+        localStorage.setItem('updated_script_structure', JSON.stringify(container));
+        localStorage.setItem('original_script_hash', JSON.stringify(container));
+        const normalized = normalizeScriptToRows(container);
+        const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+        setScriptRows(newRows);
+          // Keep current scene by scene_number if possible - preserve the scene where model was switched
+          const targetSceneNumber = scene?.scene_number;
+          if (targetSceneNumber) {
+            const idx = newRows.findIndex(r => (r?.scene_number === targetSceneNumber));
+            if (idx >= 0) {
+              setCurrentSceneIndex(idx);
+              console.log(`[Chat] Model switch: Preserved scene index ${idx} for scene ${targetSceneNumber}`);
+            } else {
+              // If scene not found, try to keep current index if valid
+              const validIndex = currentSceneIndex < newRows.length ? currentSceneIndex : 0;
+              setCurrentSceneIndex(validIndex);
+              console.log(`[Chat] Model switch: Scene ${targetSceneNumber} not found, using index ${validIndex}`);
+            }
+          } else {
+            // Fallback: keep current index if valid
+            const validIndex = currentSceneIndex < newRows.length ? currentSceneIndex : 0;
+            setCurrentSceneIndex(validIndex);
+          }
+        // Update last script in chat history and localStorage
+        try {
+          setChatHistory(prev => {
+            const copy = [...prev];
+            for (let i = copy.length - 1; i >= 0; i--) {
+              if (copy[i]?.script) { copy[i] = { ...copy[i], script: container }; break; }
+            }
+            try { localStorage.setItem('last_generated_script', JSON.stringify(container)); } catch (_) { /* noop */ }
+            return copy;
+          });
+        } catch (_) { /* noop */ }
+      } catch (_) { /* noop */ }
+      }
+
+      // Wait a bit for backend to process the switch-model request
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Call user session data API directly and update script without full reload
+      try {
+        const sessionId = localStorage.getItem('session_id');
+        const userId = localStorage.getItem('token');
+        if (sessionId && userId) {
+          console.log('[Chat] Model switch: Calling user session data API to get updated script...');
+          const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, session_id: sessionId })
+          });
+          const sessionText = await sessionResp.text();
+          let sessionData;
+          try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+          
+          if (sessionResp.ok && sessionData) {
+            // Extract script from session data (same logic as ScriptEditor)
+            const sessionDataObj = sessionData?.session_data || sessionData?.session || {};
+            const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0 
+              ? sessionDataObj.scripts 
+              : [];
+            
+            let scriptData = null;
+            
+            // Check for reordered_script or changed_script first
+            if (sessionDataObj?.reordered_script) {
+              const reordered = sessionDataObj.reordered_script;
+              if (Array.isArray(reordered?.airesponse)) {
+                scriptData = reordered.airesponse;
+              } else if (Array.isArray(reordered)) {
+                scriptData = reordered;
+              } else if (reordered && typeof reordered === 'object') {
+                scriptData = reordered;
+              }
+            }
+            
+            if (!scriptData && sessionDataObj?.changed_script) {
+              const changed = sessionDataObj.changed_script;
+              if (Array.isArray(changed?.airesponse)) {
+                scriptData = changed.airesponse;
+              } else if (Array.isArray(changed)) {
+                scriptData = changed;
+              } else if (changed && typeof changed === 'object') {
+                scriptData = changed;
+              }
+            }
+            
+            // Check scripts array
+            if (!scriptData && scripts.length > 0) {
+              for (let i = 0; i < Math.min(scripts.length, 3); i++) {
+                const currentScript = scripts[i];
+                if (currentScript?.reordered_script) {
+                  const reordered = currentScript.reordered_script;
+                  if (Array.isArray(reordered?.airesponse)) {
+                    scriptData = reordered.airesponse;
+                    break;
+                  } else if (Array.isArray(reordered)) {
+                    scriptData = reordered;
+                    break;
+                  } else if (reordered && typeof reordered === 'object') {
+                    scriptData = reordered;
+                    break;
+                  }
+                }
+                if (currentScript?.changed_script) {
+                  const changed = currentScript.changed_script;
+                  if (Array.isArray(changed?.airesponse)) {
+                    scriptData = changed.airesponse;
+                    break;
+                  } else if (Array.isArray(changed)) {
+                    scriptData = changed;
+                    break;
+                  } else if (changed && typeof changed === 'object') {
+                    scriptData = changed;
+                    break;
+                  }
+                }
+                if (Array.isArray(currentScript?.airesponse)) {
+                  scriptData = currentScript.airesponse;
+                  break;
+                } else if (Array.isArray(currentScript)) {
+                  scriptData = currentScript;
+                  break;
+                } else if (currentScript && typeof currentScript === 'object') {
+                  if (Array.isArray(currentScript?.rows)) {
+                    scriptData = currentScript;
+                    break;
+                  } else if (Array.isArray(currentScript?.script)) {
+                    scriptData = currentScript.script;
+                    break;
+                  } else if (Object.keys(currentScript).length > 0) {
+                    scriptData = currentScript;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Check sessionData directly
+            if (!scriptData && Array.isArray(sessionDataObj?.airesponse)) {
+              scriptData = sessionDataObj.airesponse;
+            }
+            
+            // Check root level
+            if (!scriptData && Array.isArray(sessionData?.airesponse)) {
+              scriptData = sessionData.airesponse;
+            }
+            
+            if (scriptData) {
+              // Normalize script data
+              let normalizedScript = scriptData;
+              if (scriptData && typeof scriptData === 'object' && !Array.isArray(scriptData)) {
+                if (Array.isArray(scriptData.airesponse) && scriptData.airesponse.length > 0) {
+                  normalizedScript = scriptData.airesponse;
+                } else if (Array.isArray(scriptData.script) && scriptData.script.length > 0) {
+                  normalizedScript = scriptData.script;
+                } else if (Array.isArray(scriptData.rows) && scriptData.rows.length > 0) {
+                  normalizedScript = scriptData;
+                }
+              }
+              
+              // Update script rows without full reload
+              if (normalizedScript !== null && normalizedScript !== undefined) {
+                const normalized = normalizeScriptToRows(normalizedScript);
+                const updatedRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+                
+                // Preserve current scene index
+                const targetSceneNumber = scene?.scene_number;
+                if (targetSceneNumber) {
+                  const newIdx = updatedRows.findIndex(r => r?.scene_number === targetSceneNumber);
+                  if (newIdx >= 0) {
+                    setCurrentSceneIndex(newIdx);
+                    console.log(`[Chat] Model switch: Updated script and preserved scene index ${newIdx} for scene ${targetSceneNumber}`);
+                  }
+                }
+                
+                setScriptRows(updatedRows);
+                console.log('[Chat] Model switch: Script updated from user session data API');
+              }
+            }
+          }
+        }
+        } catch (err) {
+        console.error('[Chat] Model switch: Failed to update script from user session data:', err);
+        // In scenesMode, don't trigger onScriptChange to avoid reload
+        // Only fallback to onScriptChange if not in scenesMode
+        if (!scenesMode && onScriptChange) {
+          onScriptChange();
+        }
       }
     } catch (e) {
       console.error('Video type switch failed:', e);
@@ -6608,7 +6955,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         if (Array.isArray(backgroundImageArrayOverride) && backgroundImageArrayOverride.length > 0) {
           clone.ref_image = [];
         } else {
-          clone.ref_image = Array.isArray(refImages) && refImages.length > 0 ? refImages : [];
+        clone.ref_image = Array.isArray(refImages) && refImages.length > 0 ? refImages : [];
         }
         // Remove avatar field - we'll use avatar_urls instead
         if ('avatar' in clone) {
@@ -8155,7 +8502,7 @@ const saveAnchorPromptTemplate = async () => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
           <div className="bg-white w-[95%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]">
             <div className="px-6 pt-6 pb-4 flex-shrink-0">
-              <h3 className="text-lg font-semibold text-[#13008B]">Add New Scene</h3>
+            <h3 className="text-lg font-semibold text-[#13008B]">Add New Scene</h3>
             </div>
             <div className="px-6 overflow-y-auto flex-1 min-h-0">
               <div className="space-y-4 pb-4">
@@ -8621,7 +8968,7 @@ const saveAnchorPromptTemplate = async () => {
                   )}
                 </div>
               )}
-              </div>
+            </div>
             </div>
             <div className="px-6 pt-4 pb-6 flex justify-end gap-2 flex-shrink-0 border-t border-gray-200">
               <button
@@ -12106,18 +12453,18 @@ const saveAnchorPromptTemplate = async () => {
                           
                           // Fallback to ref_image (only if background_image is empty)
                           if (urls.length === 0) {
-                            const r = scene?.ref_image;
-                            if (Array.isArray(r) && r.length > 0) {
-                              r.forEach(url => {
-                                const trimmed = typeof url === 'string' ? url.trim() : url;
-                                if (trimmed && !urls.includes(trimmed)) {
-                                  urls.push(trimmed);
-                                }
-                              });
-                            } else if (typeof r === 'string' && r.trim()) {
-                              const trimmed = r.trim();
-                              if (!urls.includes(trimmed)) urls.push(trimmed);
-                            }
+                          const r = scene?.ref_image;
+                          if (Array.isArray(r) && r.length > 0) {
+                            r.forEach(url => {
+                              const trimmed = typeof url === 'string' ? url.trim() : url;
+                              if (trimmed && !urls.includes(trimmed)) {
+                                urls.push(trimmed);
+                              }
+                            });
+                          } else if (typeof r === 'string' && r.trim()) {
+                            const trimmed = r.trim();
+                            if (!urls.includes(trimmed)) urls.push(trimmed);
+                          }
                           }
                           
                           // Fallback to background field (only if still empty)
@@ -13804,7 +14151,7 @@ const saveAnchorPromptTemplate = async () => {
                         // For all models, store in background_image, not ref_image
                         scene.ref_image = [];
                         scene.background_image = imagesToUse[0] || '';
-                      }
+                        }
                         rows[currentSceneIndex] = scene;
                         setScriptRows(rows);
                       setSelectedRefImages([]); // Clear ref images since we're using background_image
@@ -13817,13 +14164,13 @@ const saveAnchorPromptTemplate = async () => {
                         // Build background_image array for ALL tabs when selecting background images
                         // Format: [{template_id: "", image_url: "<url>"}]
                         const backgroundImageArray = imagesToUse.filter(Boolean).map((url) => {
-                          const trimmedUrl = typeof url === 'string' ? url.trim() : '';
-                          if (!trimmedUrl) return null;
-                          return {
-                            template_id: '',
-                            image_url: trimmedUrl
-                          };
-                        }).filter(item => item !== null);
+                            const trimmedUrl = typeof url === 'string' ? url.trim() : '';
+                            if (!trimmedUrl) return null;
+                            return {
+                              template_id: '',
+                              image_url: trimmedUrl
+                            };
+                          }).filter(item => item !== null);
 
                           // Get avatar_url from selected avatar or scene
                           const currentAvatarUrl = scene?.avatar || selectedAvatar || '';
