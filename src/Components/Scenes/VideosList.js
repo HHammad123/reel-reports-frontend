@@ -744,6 +744,30 @@ if (videoElement.readyState >= 2) {
           
           // Expose session media to sidebar uploads - with RAW URLs (no prefix)
           if (typeof window !== 'undefined') {
+            // Helper function to get logo layer data (defined outside map for reuse)
+            const getLogoLayerDataForSession = (entry) => {
+              if (Array.isArray(entry?.videos?.v1?.layers)) {
+                const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+                if (logoLayer) {
+                  return {
+                    url: logoLayer.url,
+                    timing: logoLayer.timing || { start: "00:00:00", end: null },
+                    position: logoLayer.position || { x: 0.9, y: 0.1 },
+                    bounding_box: logoLayer.bounding_box || null,
+                    size: logoLayer.size || null,
+                    scale: logoLayer.scale !== undefined ? logoLayer.scale : 1,
+                    opacity: logoLayer.opacity !== undefined ? logoLayer.opacity : 1,
+                    rotation: logoLayer.rotation || 0,
+                    style: logoLayer.style || {},
+                    blend_mode: logoLayer.blend_mode || 'normal',
+                    enabled: logoLayer.enabled !== undefined ? logoLayer.enabled : true,
+                    animation: logoLayer.animation || { type: 'none', duration: 0.5 },
+                  };
+                }
+              }
+              return null;
+            };
+            
             window.__SESSION_MEDIA_FILES = parsedSessionVideos.map((it, idx) => {
               // Get the raw base video URL - prioritize base_video_url from new schema
               const rawBaseUrl = it.videos?.v1?.base_video_url || 
@@ -816,6 +840,10 @@ if (videoElement.readyState >= 2) {
                 it.video?.chart_video_url ||
                 '';
               
+              // Get logo layer data from layers
+              const logoLayerDataForSession = getLogoLayerDataForSession(it);
+              const rawLogoUrl = logoLayerDataForSession?.url || '';
+              
               // Get subtitle layer data from layers
               const getSubtitleLayerDataForSession = (entry) => {
                 if (Array.isArray(entry?.videos?.v1?.layers)) {
@@ -857,6 +885,9 @@ if (videoElement.readyState >= 2) {
                 chartVideoUrl: rawChartVideoUrl, // Store raw chart video URL from layers or fallback - NEVER add prefix
                 chart_video_url: rawChartVideoUrl, // Alias for compatibility
                 chartLayerData: chartLayerDataForSession, // Include full layer data for reference
+                logoUrl: rawLogoUrl, // Store raw logo URL from layers - NEVER add prefix
+                logo_url: rawLogoUrl, // Alias for compatibility
+                logoLayerData: logoLayerDataForSession, // Include full logo layer data for reference
                 subtitleLayerData: subtitleLayerDataForSession, // Include full subtitle layer data
                 subtitleUrl: subtitleLayerDataForSession?.url || null, // SRT file URL
                 subtitleText: subtitleLayerDataForSession?.text || '', // Inline text
@@ -870,6 +901,37 @@ if (videoElement.readyState >= 2) {
                 videos: it.videos || {},
               };
             });
+            
+            // Add logo images as separate entries to upload section (same as base video)
+            const logoImages = [];
+            parsedSessionVideos.forEach((it, idx) => {
+              const logoLayerDataForSession = getLogoLayerDataForSession(it);
+              if (logoLayerDataForSession && logoLayerDataForSession.enabled && logoLayerDataForSession.url) {
+                const rawLogoUrl = logoLayerDataForSession.url;
+                logoImages.push({
+                  id: `logo-${it.id || `session-${idx}`}`,
+                  name: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+                  title: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+                  path: rawLogoUrl,  // Store raw logo URL - NEVER add prefix
+                  url: rawLogoUrl,   // Store raw logo URL - NEVER add prefix
+                  src: rawLogoUrl,    // Store raw logo URL - NEVER add prefix
+                  logoUrl: rawLogoUrl,
+                  logo_url: rawLogoUrl,
+                  logoLayerData: logoLayerDataForSession,
+                  type: 'image',
+                  duration: 0,
+                  mediaSrcDuration: 0,
+                  thumbnail: rawLogoUrl,
+                  size: 0,
+                  _session: true,
+                  _isLogo: true, // Flag to indicate this is a logo image
+                  _parentVideoId: it.id || `session-${idx}`, // Reference to parent video
+                });
+              }
+            });
+            
+            // Combine video entries with logo image entries
+            window.__SESSION_MEDIA_FILES = [...window.__SESSION_MEDIA_FILES, ...logoImages];
             
             // Trigger timeline rebuild by updating sessionMediaVersion
             setSessionMediaVersion(prev => prev + 1);
@@ -1013,6 +1075,30 @@ if (videoElement.readyState >= 2) {
                           
                           // Expose job media to sidebar uploads - with RAW URLs (no prefix)
                           if (typeof window !== 'undefined') {
+                            // Helper function to get logo layer data (defined outside map for reuse)
+                            const getLogoLayerDataForJob = (entry) => {
+                              if (Array.isArray(entry?.videos?.v1?.layers)) {
+                                const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+                                if (logoLayer) {
+                                  return {
+                                    url: logoLayer.url,
+                                    timing: logoLayer.timing || { start: "00:00:00", end: null },
+                                    position: logoLayer.position || { x: 0.9, y: 0.1 },
+                                    bounding_box: logoLayer.bounding_box || null,
+                                    size: logoLayer.size || null,
+                                    scale: logoLayer.scale !== undefined ? logoLayer.scale : 1,
+                                    opacity: logoLayer.opacity !== undefined ? logoLayer.opacity : 1,
+                                    rotation: logoLayer.rotation || 0,
+                                    style: logoLayer.style || {},
+                                    blend_mode: logoLayer.blend_mode || 'normal',
+                                    enabled: logoLayer.enabled !== undefined ? logoLayer.enabled : true,
+                                    animation: logoLayer.animation || { type: 'none', duration: 0.5 },
+                                  };
+                                }
+                              }
+                              return null;
+                            };
+                            
                             window.__SESSION_MEDIA_FILES = jobVideos.map((it, idx) => {
                               // Get the raw base video URL - prioritize base_video_url from new schema
                               const rawBaseUrl = it.videos?.v1?.base_video_url || 
@@ -1085,6 +1171,10 @@ if (videoElement.readyState >= 2) {
                                 it.video?.chart_video_url ||
                                 '';
                               
+                              // Get logo layer data from layers
+                              const logoLayerDataForJob = getLogoLayerDataForJob(it);
+                              const rawLogoUrl = logoLayerDataForJob?.url || '';
+                              
                               // Get subtitle layer data from layers
                               const getSubtitleLayerDataForJob = (entry) => {
                                 if (Array.isArray(entry?.videos?.v1?.layers)) {
@@ -1126,6 +1216,9 @@ if (videoElement.readyState >= 2) {
                                 chartVideoUrl: rawChartVideoUrl, // Store raw chart video URL from layers or fallback - NEVER add prefix
                                 chart_video_url: rawChartVideoUrl, // Alias for compatibility
                                 chartLayerData: chartLayerDataForJob, // Include full layer data for reference
+                                logoUrl: rawLogoUrl, // Store raw logo URL from layers - NEVER add prefix
+                                logo_url: rawLogoUrl, // Alias for compatibility
+                                logoLayerData: logoLayerDataForJob, // Include full logo layer data for reference
                                 subtitleLayerData: subtitleLayerDataForJob, // Include full subtitle layer data
                                 subtitleUrl: subtitleLayerDataForJob?.url || null, // SRT file URL
                                 subtitleText: subtitleLayerDataForJob?.text || '', // Inline text
@@ -1139,6 +1232,37 @@ if (videoElement.readyState >= 2) {
                                 videos: it.videos || {},
                               };
                             });
+                            
+                            // Add logo images as separate entries to upload section (same as base video)
+                            const logoImages = [];
+                            jobVideos.forEach((it, idx) => {
+                              const logoLayerDataForJob = getLogoLayerDataForJob(it);
+                              if (logoLayerDataForJob && logoLayerDataForJob.enabled && logoLayerDataForJob.url) {
+                                const rawLogoUrl = logoLayerDataForJob.url;
+                                logoImages.push({
+                                  id: `logo-${it.id || `job-${idx}`}`,
+                                  name: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+                                  title: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+                                  path: rawLogoUrl,  // Store raw logo URL - NEVER add prefix
+                                  url: rawLogoUrl,   // Store raw logo URL - NEVER add prefix
+                                  src: rawLogoUrl,    // Store raw logo URL - NEVER add prefix
+                                  logoUrl: rawLogoUrl,
+                                  logo_url: rawLogoUrl,
+                                  logoLayerData: logoLayerDataForJob,
+                                  type: 'image',
+                                  duration: 0,
+                                  mediaSrcDuration: 0,
+                                  thumbnail: rawLogoUrl,
+                                  size: 0,
+                                  _session: true,
+                                  _isLogo: true, // Flag to indicate this is a logo image
+                                  _parentVideoId: it.id || `job-${idx}`, // Reference to parent video
+                                });
+                              }
+                            });
+                            
+                            // Combine video entries with logo image entries
+                            window.__SESSION_MEDIA_FILES = [...window.__SESSION_MEDIA_FILES, ...logoImages];
                             
                             // Trigger timeline rebuild by updating sessionMediaVersion
                             setSessionMediaVersion(prev => prev + 1);
@@ -3146,11 +3270,22 @@ if (videoElement.readyState >= 2) {
             logoWidth = Math.min(logoWidth, canvasWidth - logoLeft);
             logoHeight = Math.min(logoHeight, canvasHeight - logoTop);
             
-            // Process logo URL
-            let logoMediaSrc = logoLayerData.url;
-            if (!logoMediaSrc.startsWith('http://') && !logoMediaSrc.startsWith('https://') && !logoMediaSrc.startsWith('blob:')) {
-              const cleanPath = logoMediaSrc.startsWith("/") ? logoMediaSrc.slice(1) : logoMediaSrc;
-              logoMediaSrc = `/api/latest/local-media/serve/${cleanPath}`;
+            // Process logo URL - use raw URL directly (same as base video)
+            // Get logo URL from file object first (from upload section), then fallback to layer data
+            let logoMediaSrc = file.logoUrl || file.logo_url || logoLayerData.url || '';
+            
+            // Check if logoMediaSrc is already double-prefixed
+            if (logoMediaSrc.includes('/api/latest/local-media/serve/http') || logoMediaSrc.includes('/api/latest/local-media/serve/https')) {
+              const match = logoMediaSrc.match(/\/api\/latest\/local-media\/serve\/(https?:\/\/.+)/);
+              if (match && match[1]) {
+                logoMediaSrc = match[1];
+              }
+            }
+            
+            // Use raw URL directly - NEVER add prefix (same as base video)
+            // The URL from API response should be used as-is
+            if (!logoMediaSrc) {
+              continue; // Skip if no logo URL
             }
             
             // Map animation type
@@ -3175,17 +3310,17 @@ if (videoElement.readyState >= 2) {
               height: logoHeight,
               durationInFrames: logoDurationInFrames,
               from: logoStartFrame,
-              rotation: logoLayerData.rotation,
+              rotation: logoLayerData.rotation || 0,
               row: logoRow, // CRITICAL: Use calculated row (after all text overlays)
               isDragging: false,
               type: OverlayType.IMAGE, // CRITICAL: Use IMAGE type for image panel
-              content: 'Logo',
-              src: logoMediaSrc,
+              content: logoMediaSrc, // Set content to image URL (same as normal image overlays)
+              src: logoMediaSrc, // Image source URL
               styles: {
-                opacity: logoLayerData.opacity,
+                opacity: logoLayerData.opacity !== undefined ? logoLayerData.opacity : 1,
                 zIndex: 400, // CRITICAL: Highest z-index (above all other layers)
-                transform: `scale(${logoLayerData.scale})`,
-                objectFit: 'contain',
+                transform: logoLayerData.scale !== undefined && logoLayerData.scale !== 1 ? `scale(${logoLayerData.scale})` : 'none',
+                objectFit: 'contain', // Default objectFit for logo
                 mixBlendMode: logoLayerData.blend_mode || 'normal',
                 animation: {
                   enter: animationType,

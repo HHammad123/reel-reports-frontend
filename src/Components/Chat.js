@@ -2053,7 +2053,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
                         !hasScenes || isSwitching ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'
                       }`}
                     >
-                      <span>Anchor</span>
+                      <span>Anchor (Beta)</span>
                     </button>
                   )}
                   {showSwitchAvatar && (
@@ -3226,7 +3226,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
                                 if (modelUpper === 'VEO3') {
                                   return <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">Avatar</span>;
                                 } else if (modelUpper === 'ANCHOR') {
-                                  return <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded">Anchor</span>;
+                                  return <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded">Anchor (Beta)</span>;
                                 }
                                 return null;
                               })()}
@@ -3628,9 +3628,15 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const currentScene = scriptRows[currentSceneIndex];
       if (currentScene && currentScene.mode) {
         const modeLower = currentScene.mode.toLowerCase();
-        if (modeLower.includes('veo3') || modeLower.includes('veo')) {
+        if (modeLower.includes('anchor')) {
+          setSelectedVideoType('Anchor (Beta)');
+          console.log(`Scene ${currentSceneIndex + 1}: Mode "${currentScene.mode}" → Video Type: Anchor (Beta)`);
+        } else if (modeLower.includes('veo3') || modeLower.includes('veo')) {
           setSelectedVideoType('Avatar Based');
           console.log(`Scene ${currentSceneIndex + 1}: Mode "${currentScene.mode}" → Video Type: Avatar Based`);
+        } else if (modeLower.includes('plotly') || modeLower.includes('financial')) {
+          setSelectedVideoType('Financial');
+          console.log(`Scene ${currentSceneIndex + 1}: Mode "${currentScene.mode}" → Video Type: Financial`);
         } else {
           setSelectedVideoType('Infographic');
           console.log(`Scene ${currentSceneIndex + 1}: Mode "${currentScene.mode}" → Video Type: Infographic`);
@@ -6180,12 +6186,14 @@ const [textEditorFormat, setTextEditorFormat] = useState({
         return;
       }
       const scene = scriptRows[currentSceneIndex];
+      // Map display text back to internal value for logic
+      const internalVideoType = videoType === 'Anchor (Beta)' ? 'Anchor' : videoType;
       const desiredModel =
-        videoType === 'Avatar Based'
+        internalVideoType === 'Avatar Based'
           ? 'VEO3'
-          : videoType === 'Financial'
+          : internalVideoType === 'Financial'
             ? 'PLOTLY'
-            : videoType === 'Anchor'
+            : internalVideoType === 'Anchor'
               ? 'ANCHOR'
               : 'SORA';
       const currentModel = scene?.mode || scene?.model || '';
@@ -8371,7 +8379,7 @@ const saveAnchorPromptTemplate = async () => {
     );
     if (!firstValid) return '';
     const upper = firstValid.trim().toUpperCase();
-    if (['ANCHOR', 'ANCHOR BASED', 'ANCHOR-BASED'].includes(upper)) return 'Anchor';
+    if (['ANCHOR', 'ANCHOR BASED', 'ANCHOR-BASED'].includes(upper)) return 'Anchor (Beta)';
     if (['VEO3', 'AVATAR', 'AVATAR BASED', 'AVATAR-BASED'].includes(upper)) return 'Avatar Based';
     if (['PLOTLY', 'FINANCIAL', 'FINANCE'].includes(upper)) return 'Financial';
     if (['SORA', 'INFOGRAPHIC', 'INFOGRAPHICS'].includes(upper)) return 'Infographic';
@@ -8544,11 +8552,13 @@ const saveAnchorPromptTemplate = async () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Avatar Type</label>
                   <div className="flex gap-3 flex-wrap">
-                    {['Presenter', 'Anchor'].map((atype) => (
+                    {['Presenter', 'Anchor (Beta)'].map((atype) => (
                       <button
                         key={atype}
                         onClick={async () => {
-                          setNewSceneAvatarType(atype);
+                          // Map display text back to internal value
+                          const internalType = atype === 'Anchor (Beta)' ? 'Anchor' : atype;
+                          setNewSceneAvatarType(internalType);
                           // Reset presenter selection when avatar type changes
                           setNewScenePresenterPresetId('');
                           setNewScenePresenterPresetLabel('');
@@ -8556,7 +8566,7 @@ const saveAnchorPromptTemplate = async () => {
                           if (enablePresenterOptions) {
                             try {
                               setIsLoadingNewScenePresenter(true);
-                              const modelUpper = atype === 'Anchor' ? 'ANCHOR' : 'VEO3';
+                              const modelUpper = internalType === 'Anchor' ? 'ANCHOR' : 'VEO3';
                               await fetchPresenterPresetsForModel(modelUpper);
                             } catch (_) {
                               // errors will already be handled inside fetchPresenterPresetsForModel
@@ -8566,7 +8576,7 @@ const saveAnchorPromptTemplate = async () => {
                           }
                         }}
                         className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                          newSceneAvatarType === atype
+                          (atype === 'Anchor (Beta)' && newSceneAvatarType === 'Anchor') || (atype === 'Presenter' && newSceneAvatarType === 'Presenter')
                             ? 'bg-[#13008B] text-white'
                             : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                         }`}
@@ -9259,7 +9269,9 @@ const saveAnchorPromptTemplate = async () => {
       {showModelConfirm && (() => {
         const scene = Array.isArray(scriptRows) ? scriptRows[currentSceneIndex] : null;
         const currentModel = (scene?.mode || scene?.model || '').toUpperCase();
-        const targetModel = (pendingModelType === 'Avatar Based') ? 'VEO3' : (pendingModelType === 'Anchor') ? 'ANCHOR' : (pendingModelType === 'Financial' ? 'PLOTLY' : 'SORA');
+        // Map display text back to internal value for logic
+        const internalPendingType = pendingModelType === 'Anchor (Beta)' ? 'Anchor' : pendingModelType;
+        const targetModel = (internalPendingType === 'Avatar Based') ? 'VEO3' : (internalPendingType === 'Anchor') ? 'ANCHOR' : (internalPendingType === 'Financial' ? 'PLOTLY' : 'SORA');
         const isAvatarModel = targetModel === 'VEO3' || targetModel === 'ANCHOR';
         const modalWidth = isAvatarModel && enablePresenterOptions ? 'max-w-2xl' : 'max-w-md';
         return (
@@ -9275,9 +9287,12 @@ const saveAnchorPromptTemplate = async () => {
                   if (u === 'VEO3') return 'AVATAR';
                   if (u === 'SORA') return 'INFOGRAPHICS';
                   if (u === 'PLOTLY') return 'FINANCIAL';
+                  if (u === 'ANCHOR') return 'ANCHOR (BETA)';
                   return u || 'UNKNOWN';
                 };
-                const targetModel = (pendingModelType === 'Avatar Based') ? 'VEO3' : (pendingModelType === 'Anchor') ? 'ANCHOR' : (pendingModelType === 'Financial' ? 'PLOTLY' : 'SORA');
+                // Map display text back to internal value for logic
+                const internalPendingType = pendingModelType === 'Anchor (Beta)' ? 'Anchor' : pendingModelType;
+                const targetModel = (internalPendingType === 'Avatar Based') ? 'VEO3' : (internalPendingType === 'Anchor') ? 'ANCHOR' : (internalPendingType === 'Financial' ? 'PLOTLY' : 'SORA');
                 const isAvatarModel = targetModel === 'VEO3' || targetModel === 'ANCHOR';
                 const switchPresenterOptions = isAvatarModel && enablePresenterOptions ? (presenterPresets[targetModel] || []) : [];
                 return (
@@ -9664,7 +9679,7 @@ const saveAnchorPromptTemplate = async () => {
                     onRegenerate={openRegenerateWithSuggestions}
                     onEdit={() => setIsEditingScene(true)}
                     onGenerateSummary={openGenerateSummaryPrompt}
-                    onSwitchAnchor={() => openModelChangeConfirm('Anchor')}
+                    onSwitchAnchor={() => openModelChangeConfirm('Anchor (Beta)')}
                     onSwitchAvatar={() => openModelChangeConfirm('Avatar Based')}
                     onSwitchInfographic={() => openModelChangeConfirm('Infographic')}
                     onSwitchFinancial={() => openModelChangeConfirm('Financial')}
@@ -9941,7 +9956,7 @@ const saveAnchorPromptTemplate = async () => {
                                  const mu = String(r?.model || r?.mode || '').toUpperCase();
                                  const vt =
                                    mu === 'ANCHOR'
-                                     ? 'Anchor'
+                                     ? 'Anchor (Beta)'
                                      : (mu === 'VEO3'
                                        ? 'Avatar'
                                        : (mu === 'SORA'
@@ -9960,7 +9975,7 @@ const saveAnchorPromptTemplate = async () => {
                                  const mu = String(r?.model || r?.mode || '').toUpperCase();
                                  const vt =
                                    mu === 'ANCHOR'
-                                     ? 'Anchor'
+                                     ? 'Anchor (Beta)'
                                      : (mu === 'VEO3'
                                        ? 'Avatar'
                                        : (mu === 'SORA'

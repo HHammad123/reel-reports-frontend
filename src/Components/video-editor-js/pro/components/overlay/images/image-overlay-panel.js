@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
 import { useAspectRatio } from "../../../hooks/use-aspect-ratio";
@@ -64,7 +64,18 @@ export const ImageOverlayPanel = () => {
         // Use ref to get latest overlays without adding it as a dependency
         const selectedOverlay = overlaysRef.current.find((overlay) => overlay.id === selectedOverlayId);
         if (selectedOverlay && selectedOverlay.type === OverlayType.IMAGE) {
-            setLocalOverlay(selectedOverlay);
+            // Only update if the overlay actually changed (prevent unnecessary updates)
+            setLocalOverlay((prevLocalOverlay) => {
+                // If we already have this overlay and it hasn't changed, don't update
+                if (prevLocalOverlay && prevLocalOverlay.id === selectedOverlay.id) {
+                    const prevStr = JSON.stringify(prevLocalOverlay);
+                    const newStr = JSON.stringify(selectedOverlay);
+                    if (prevStr === newStr) {
+                        return prevLocalOverlay; // No change, return previous
+                    }
+                }
+                return selectedOverlay;
+            });
             prevOverlayIdRef.current = selectedOverlay.id;
         } else {
             setLocalOverlay(null);
@@ -158,10 +169,29 @@ export const ImageOverlayPanel = () => {
      * @param updatedOverlay - The modified overlay object
      * Updates both local state and global editor context
      */
-    const handleUpdateOverlay = (updatedOverlay) => {
-        setLocalOverlay(updatedOverlay);
+    const handleUpdateOverlay = useCallback((updatedOverlay) => {
+        // Prevent infinite loops by checking if overlay actually changed
+        if (!updatedOverlay || !updatedOverlay.id) {
+            return;
+        }
+        
+        // Use functional update to prevent unnecessary re-renders
+        setLocalOverlay((prevOverlay) => {
+            // Only update if the overlay actually changed
+            if (prevOverlay && prevOverlay.id === updatedOverlay.id) {
+                // Deep compare to avoid unnecessary updates
+                const prevStr = JSON.stringify(prevOverlay);
+                const newStr = JSON.stringify(updatedOverlay);
+                if (prevStr === newStr) {
+                    return prevOverlay; // No change, return previous to prevent update
+                }
+            }
+            return updatedOverlay;
+        });
+        
+        // Update global overlay state (debounced to prevent excessive updates)
         changeOverlay(updatedOverlay.id, () => updatedOverlay);
-    };
+    }, [changeOverlay]);
     const handleCancelReplace = () => {
         cancelReplaceMode();
         setSearchQuery("");
