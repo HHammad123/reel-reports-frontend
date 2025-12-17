@@ -21,11 +21,11 @@ export const TimelineGhostMarker = ({ isDragging = false, isScrubbing = false, i
     // Different styling for scrubbing vs normal ghost marker
     const isScrubbingMarker = isScrubbing && !isDragging;
     const lineColor = isScrubbingMarker
-        ? "bg-(--primary)"
-        : "bg-(--primary)";
+        ? "bg-blue-500"
+        : "bg-blue-400";
     const headColor = isScrubbingMarker
-        ? "bg-(--primary)"
-        : "bg-(--primary)";
+        ? "bg-blue-500"
+        : "bg-blue-400";
     return (_jsxs("div", { className: "absolute top-0 pointer-events-none z-40", style: {
             // Position controlled by CSS custom properties - NO REACT RE-RENDERS!
             left: 'var(--ghost-marker-position, 0%)',

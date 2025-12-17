@@ -51,6 +51,7 @@ const PROJECT_ID = 'demo-project';
 const DEFAULT_PROJECT_OVERLAYS = [];
 const APP_CONFIG = { fps: 30 };
 const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
+const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
 
 const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
@@ -1002,22 +1003,23 @@ if (videoElement.readyState >= 2) {
               setShowVideoLoader(true);
             }
 
+            // Check if percent is 100% - start session data polling
+            const isPercentComplete = percent >= 100;
+            
             // Check if status is "succeeded" or "failed" - only then stop polling
             // Also check if progress indicates completion
             const isCompleted = finalStatus === 'succeeded' || 
                               finalStatus === 'failed' || 
                               finalStatus === 'error' ||
-                              finalStatus === 'completed' ||
-                              isProgressComplete;
+                              finalStatus === 'completed';
             
-            if (!cancelled && !isCompleted) {
-              // Continue polling if not succeeded or failed - keep loader visible
-              
+            if (!cancelled && !isCompleted && !isPercentComplete) {
+              // Continue polling if not succeeded, failed, or 100% - keep loader visible
               setIsLoading(true);
               setShowVideoLoader(true);
               timeoutId = setTimeout(poll, 3000);
             } else {
-              // Job is complete (succeeded or failed) - fetch video results and layers from job API first time
+              // Job is complete (succeeded, failed, or 100%) - fetch video results and layers
               if (!cancelled) {
                 
                 if (finalStatus === 'failed' || finalStatus === 'error') {
@@ -1281,57 +1283,130 @@ if (videoElement.readyState >= 2) {
                   }
                 }
                 
-                // FALLBACK: Reload session data to get the new videos (if job API didn't provide video_result)
-                // Keep loader visible during refresh
-                setIsLoading(true);
-                setShowVideoLoader(true);
-                setJobProgress({ percent: 100, phase: 'loading' });
-                try {
-                  const session_id = localStorage.getItem('session_id');
-                  const user_id = localStorage.getItem('token');
-                  if (session_id && user_id) {
-                    const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ user_id, session_id })
-                    });
-                    const refreshText = await refreshResp.text();
-                    let refreshData;
-                    try {
-                      refreshData = JSON.parse(refreshText);
-                    } catch (_) {
-                      refreshData = refreshText;
+                // FALLBACK: When percent is 100%, poll session data 2-3 times to fetch all videos and layers
+                // Only start session polling if percent is 100% and job API didn't provide video_result
+                if (isPercentComplete) {
+                  // Keep loader visible during session data polling
+                  setIsLoading(true);
+                  setShowVideoLoader(true);
+                  setJobProgress({ percent: 100, phase: 'fetching videos...' });
+                  
+                  // Start polling session data when percent is 100%
+                  const sessionPollStartTime = Date.now();
+                  const sessionPollMaxDuration = 5 * 60 * 1000; // 5 minutes max
+                  const sessionPollInterval = 3000; // Poll every 3 seconds
+                  const maxSessionPollAttempts = 3; // Poll 2-3 times as requested
+                  let sessionPollAttempts = 0;
+                  
+                  const pollSessionData = async () => {
+                    // Ensure loader is active at the start of each polling iteration
+                    if (!cancelled) {
+                      setIsLoading(true);
+                      setShowVideoLoader(true);
                     }
-                    if (refreshResp.ok && refreshData?.session_data) {
-                      const refreshedVideos = parseVideosPayload(refreshData.session_data);
-                      if (!cancelled && refreshedVideos.length > 0) {
-                        
-                        setItems(refreshedVideos);
-                        setStatus('succeeded');
-                        setSelectedIndex(0);
-                        // Hide loader after successful load
-                        setIsLoading(false);
-                        setShowVideoLoader(false);
-                      } else if (!cancelled) {
-                        
-                        // If no videos yet, continue polling for a bit more
-                        timeoutId = setTimeout(poll, 3000);
+                    
+                    try {
+                      // Check timeout
+                      if (Date.now() - sessionPollStartTime > sessionPollMaxDuration) {
+                        if (!cancelled) {
+                          setError('Timeout waiting for videos and layers. Please refresh the page.');
+                          setIsLoading(false);
+                          setShowVideoLoader(false);
+                        }
                         return;
                       }
-                    } else {
-                      // Continue polling if refresh failed
-                      timeoutId = setTimeout(poll, 3000);
+                      
+                      // Increment poll attempts
+                      sessionPollAttempts++;
+                      
+                      const session_id = localStorage.getItem('session_id');
+                      const user_id = localStorage.getItem('token');
+                      
+                      if (!session_id || !user_id) {
+                        if (!cancelled) {
+                          setIsLoading(false);
+                          setShowVideoLoader(false);
+                        }
+                        return;
+                      }
+                      
+                      const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id, session_id })
+                      });
+                      
+                      const refreshText = await refreshResp.text();
+                      let refreshData;
+                      try {
+                        refreshData = JSON.parse(refreshText);
+                      } catch (_) {
+                        refreshData = refreshText;
+                      }
+                      
+                      if (refreshResp.ok && refreshData?.session_data) {
+                        const refreshedVideos = parseVideosPayload(refreshData.session_data);
+                        
+                        // Check if we have videos with all required data
+                        const hasVideos = refreshedVideos.length > 0;
+                        const hasAllLayers = refreshedVideos.every(video => {
+                          // Check if video has base video URL
+                          const hasBaseVideo = video.url || video.video_url || video.videos?.v1?.base_video_url;
+                          return hasBaseVideo;
+                        });
+                        
+                        if (!cancelled && hasVideos && hasAllLayers) {
+                          // All videos and layers are available
+                          setItems(refreshedVideos);
+                          setStatus('succeeded');
+                          setSelectedIndex(0);
+                          setIsLoading(false);
+                          setShowVideoLoader(false);
+                          return; // Stop polling
+                        } else if (!cancelled && sessionPollAttempts < maxSessionPollAttempts) {
+                          // Videos or layers not ready yet, continue polling (up to max attempts)
+                          setIsLoading(true);
+                          setShowVideoLoader(true);
+                          setJobProgress({ percent: 100, phase: `fetching videos... (attempt ${sessionPollAttempts}/${maxSessionPollAttempts})` });
+                          timeoutId = setTimeout(pollSessionData, sessionPollInterval);
+                          return;
+                        } else if (!cancelled) {
+                          // Max attempts reached - hide loader and show current state
+                          setIsLoading(false);
+                          setShowVideoLoader(false);
+                          if (refreshedVideos.length > 0) {
+                            // At least we have some videos, show them
+                            setItems(refreshedVideos);
+                            setStatus('succeeded');
+                            setSelectedIndex(0);
+                          }
+                          return;
+                        }
+                      } else {
+                        // API error, continue polling if attempts remaining
+                        if (!cancelled && sessionPollAttempts < maxSessionPollAttempts) {
+                          setIsLoading(true);
+                          setShowVideoLoader(true);
+                          setJobProgress({ percent: 100, phase: 'retrying...' });
+                          timeoutId = setTimeout(pollSessionData, sessionPollInterval);
+                        }
+                        return;
+                      }
+                    } catch (refreshError) {
+                      // Error occurred, continue polling if attempts remaining
+                      if (!cancelled && sessionPollAttempts < maxSessionPollAttempts) {
+                        setIsLoading(true);
+                        setShowVideoLoader(true);
+                        console.warn('Session data poll error:', refreshError);
+                        setJobProgress({ percent: 100, phase: 'retrying...' });
+                        timeoutId = setTimeout(pollSessionData, sessionPollInterval);
+                      }
                       return;
                     }
-                  } else {
-                    // Missing session/user, hide loader
-                    setIsLoading(false);
-                    setShowVideoLoader(false);
-                  }
-                } catch (refreshError) {
-                  // Continue polling if refresh failed
-                  timeoutId = setTimeout(poll, 3000);
-                  return;
+                  };
+                  
+                  // Start polling session data
+                  pollSessionData();
                 }
               }
             }
@@ -2178,6 +2253,40 @@ if (videoElement.readyState >= 2) {
       }),
     []
   );
+
+  const ssrRenderer = useMemo(
+    () =>
+      new HttpRenderer(SSR_RENDER_ENDPOINT, {
+        type: 'ssr',
+        entryPoint: SSR_RENDER_ENDPOINT,
+      }),
+    []
+  );
+
+  // Feature flag to toggle between SSR and Lambda rendering
+  const USE_SSR_RENDERING = true; // Set to false to use Lambda rendering
+
+  // Select renderer based on feature flag with error handling
+  const selectedRenderer = useMemo(() => {
+    try {
+      if (USE_SSR_RENDERING) {
+        console.log('Using SSR renderer');
+        return ssrRenderer;
+      } else {
+        console.log('Using Lambda renderer');
+        return lambdaRenderer;
+      }
+    } catch (error) {
+      console.error('Renderer initialization error:', error);
+      // Fallback to Lambda if SSR fails
+      return lambdaRenderer;
+    }
+  }, [USE_SSR_RENDERING, ssrRenderer, lambdaRenderer]);
+
+  useEffect(() => {
+    console.log('Current renderer type:', USE_SSR_RENDERING ? 'SSR' : 'Lambda');
+    console.log('Renderer endpoint:', USE_SSR_RENDERING ? SSR_RENDER_ENDPOINT : LAMBDA_RENDER_ENDPOINT);
+  }, [USE_SSR_RENDERING]);
 
   // Handle overlay changes from ReactVideoEditor
   const handleOverlaysChange = useCallback((overlays) => {
@@ -4466,7 +4575,7 @@ return () => {
               defaultOverlays={memoizedDefaultOverlays}
               defaultAspectRatio={aspectRatio}
               fps={APP_CONFIG.fps}
-              renderer={lambdaRenderer}
+              renderer={selectedRenderer}
               showDefaultThemes={true}
               showSidebar={sidebarVisible}
               sidebarLogo={null}

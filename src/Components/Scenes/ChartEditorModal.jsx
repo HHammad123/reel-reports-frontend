@@ -105,8 +105,8 @@ const formatNumber = (value, format, prefix = '', suffix = '') => {
 }
 
 const resolveBrandFont = (fontValue) => {
-  if (fontValue === 'var(--brand-font)') return 'Arial'
-  return fontValue || 'Arial'
+  if (fontValue === 'var(--brand-font)') return 'Verdana'
+  return fontValue || 'Verdana'
 }
 
 const setConfigValue = (section = [], name, value, series = null) => {
@@ -334,7 +334,7 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
     const labelSuffix = getValue('segment_values', 'suffix', seriesName, '')
     const labelFontSize = getValue('segment_values', 'font_size', seriesName, 16)
     const labelFontColor = getValue('segment_values', 'font_color', seriesName, '#FFFFFF')
-    const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Arial'))
+    const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Verdana'))
     const labelFontWeight = getValue('segment_values', 'font_weight', seriesName, 'bold')
     
     const textValues = showLabels ? paddedYValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
@@ -452,7 +452,7 @@ const createLineChart = (data, presetData, chartData, chartType, sections) => {
     const labelPosition = getValue('segment_values', 'position', seriesName, 'top center')
     const labelFontSize = getValue('segment_values', 'font_size', seriesName, 14)
     const labelFontColor = getValue('segment_values', 'font_color', seriesName, color)
-    const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Arial'))
+    const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Verdana'))
     
     const textValues = showLabels ? yValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
     
@@ -687,7 +687,7 @@ const applyLegend = (fig, sections) => {
     xanchor: getConfig(sections, 'legend', 'xanchor') || pos.xanchor,
     yanchor: getConfig(sections, 'legend', 'yanchor') || pos.yanchor,
     font: {
-      family: resolveBrandFont(getConfig(sections, 'legend', 'font_family')) || 'Arial',
+      family: resolveBrandFont(getConfig(sections, 'legend', 'font_family')) || 'Verdana',
       size: getConfig(sections, 'legend', 'font_size') || 20,
       color: getConfig(sections, 'legend', 'font_color') || '#000000'
     },
@@ -1198,9 +1198,9 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [layoutOverrides, setLayoutOverrides] = useState({
-    title: { text: '', font: { size: 20, color: '#000000', family: 'Arial' }, x: 0.5, xanchor: 'center' },
+    title: { text: '', font: { size: 20, color: '#000000', family: 'Verdana' }, x: 0.5, xanchor: 'center' },
     showlegend: true,
-    legend: { orientation: 'v', x: 1.02, y: 0.5, font: { size: 12, color: '#000000', family: 'Arial' } },
+    legend: { orientation: 'v', x: 1.02, y: 0.5, font: { size: 12, color: '#000000', family: 'Verdana' } },
     paper_bgcolor: '#FFFFFF',
     plot_bgcolor: '#FFFFFF'
   })
@@ -1371,7 +1371,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       font: {
         size: titleConfig.font_size || 20,
         color: titleConfig.font_color || '#000000',
-        family: titleConfig.font_family || 'Arial'
+        family: titleConfig.font_family || 'Verdana'
       },
       x: titleConfig.x_align === 'left' ? 0 : 0.5,
       xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
@@ -1384,7 +1384,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
       font: {
         size: legendConfig.font_size || 12,
         color: legendConfig.font_color || '#000000',
-        family: legendConfig.font_family || 'Arial'
+        family: legendConfig.font_family || 'Verdana'
       }
     },
     paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
@@ -1402,7 +1402,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         font: {
           size: titleConfig.font_size || 20,
           color: titleConfig.font_color || '#000000',
-          family: titleConfig.font_family || 'Arial'
+          family: titleConfig.font_family || 'Verdana'
         },
         x: titleConfig.x_align === 'left' ? 0 : 0.5,
         xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
@@ -1415,7 +1415,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         font: {
           size: legendConfig.font_size || 12,
           color: legendConfig.font_color || '#000000',
-          family: legendConfig.font_family || 'Arial'
+          family: legendConfig.font_family || 'Verdana'
         }
       },
       paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
@@ -2753,7 +2753,7 @@ if (yLineVisible === true) {
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Font</label>
                     <select
-                      value={resolveBrandFont(getConfig(sectionsState, 'subtitle', 'font_family')) || 'Arial'}
+                      value={resolveBrandFont(getConfig(sectionsState, 'subtitle', 'font_family')) || 'Verdana'}
                       onChange={(e) => updateSection('subtitle', 'font_family', e.target.value)}
                       className="w-full text-sm border rounded px-2 py-1"
                     >
@@ -3555,7 +3555,7 @@ if (yLineVisible === true) {
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Font ({selectedSeriesForSection.dataLabels})</label>
                     <select
-                      value={resolveBrandFont(getConfig(sectionsState, 'segment_values', 'font_family', selectedSeriesForSection.dataLabels)) || 'Arial'}
+                      value={resolveBrandFont(getConfig(sectionsState, 'segment_values', 'font_family', selectedSeriesForSection.dataLabels)) || 'Verdana'}
                       onChange={(e) => updateSection('segment_values', 'font_family', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full text-sm border rounded px-2 py-1"
                     >
