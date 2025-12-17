@@ -11,7 +11,7 @@ import ErrorBoundary from '../Components/ErrorBoundary'
 import ScriptEditor from '../Components/ScriptEditor'
 import Guidlines from '../Components/VideoGuidlines/Guidlines'
 import DynamicQuestion from '../Components/DynamicQuestion'
-import { selectToken, selectIsAuthenticated } from '../redux/slices/userSlice'
+import { selectToken, selectIsAuthenticated, selectUser } from '../redux/slices/userSlice'
 import { useNavigate, useParams } from 'react-router-dom'
 
 const wrapAdditional = (value) => {
@@ -116,9 +116,17 @@ const Home = () => {
   // Redux selectors
   const token = useSelector(selectToken);
   const isAuthenticated = useSelector(selectIsAuthenticated);
+  const user = useSelector(selectUser);
 
   const navigate = useNavigate();
   const { sessionId } = useParams();
+
+  // Check user validation status
+  const userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+  const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
+  const rawRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase();
+  const isAdmin = rawRole === 'admin';
+  const isNonValidated = normalizedStatus === 'not_validated' || normalizedStatus === 'non_validated';
 
   // Map API session messages to chat UI format
   // Each message item represents a conversation turn with:
@@ -1173,12 +1181,29 @@ const Home = () => {
           </div>
         </div>
       )}
-       <Sidebar/>
-      <div className={`flex-1 mx-[2rem] mt-[1rem] overflow-x-hidden min-w-0`}>
-        <Topbar/>
-        {currentStep !== 5 && <Typetabs onChangeVideoType={handleVideoTypeTabChange} />}
-        {/* Step-based component rendering */}
-        <div className={`overflow-y-auto overflow-x-hidden h-[100vh] mt-2 scrollbar-hide`}>
+      <Sidebar/>
+      <div className="flex-1 mx-[2rem] mt-[1rem] overflow-x-hidden min-w-0">
+        {isNonValidated && !isAdmin ? (
+          // Show trial ended message for non-validated users
+          <div className="flex items-center justify-center h-[85vh]">
+            <div className="text-center">
+              <div className="mx-auto w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-6">
+                <svg className="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-3xl font-semibold text-gray-900 mb-3">Your Free Trial is Ended</h2>
+              <p className="text-lg text-gray-600">
+                Please contact support to continue using the service.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <Topbar/>
+            <Typetabs onChangeVideoType={handleVideoTypeTabChange} />
+            {/* Step-based component rendering */}
+            <div className='overflow-y-auto overflow-x-hidden  mt-2 scrollbar-hide'>
           {/* Debug info - remove this later */}
           {/* <div className="mb-2 text-sm text-gray-500">Current Step: {currentStep} | Chat Messages: {chatHistory.length}</div> */}
          {/* <Typetabs /> */}
@@ -1358,7 +1383,7 @@ const Home = () => {
             </div>
           )}
           {currentStep === 5 && (
-            <div className='bg-white rounded-lg h-full w-full'>
+            <div className='bg-white rounded-lg my-2'>
               <VideosList 
                 jobId={videosJobId} 
                 onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}
@@ -1378,8 +1403,10 @@ const Home = () => {
               />
             </div>
           )}
+            </div>
+          </>
+        )}
       </div>
-    </div>
       {showVideoPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">

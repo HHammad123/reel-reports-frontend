@@ -6,7 +6,9 @@ import { useExtendedThemeSwitcher } from "../../hooks/use-extended-theme-switche
 import { useThemeConfig } from "../../contexts/theme-context";
 import RenderControls from "../rendering/render-controls";
 import { useEditorContext } from "../../contexts/editor-context";
-import { useEffect } from "react";
+import { useEffect, useCallback, useState } from "react";
+import { Button } from "../ui/button";
+import { Save } from "lucide-react";
 /**
  * EditorHeader component renders the top navigation bar of the editor interface.
  *
@@ -48,8 +50,47 @@ export function EditorHeader({ availableThemes, selectedTheme, onThemeChange, sh
      * Destructure required values from the editor context:
      * - renderMedia: Function to handle media rendering/export
      * - renderState: Current render state (separate from editor state)
+     * - saveProject: Function to save the current project
+     * - overlays: Current overlays in the project
+     * - projectId: Current project ID
+     * - aspectRatio: Current aspect ratio
+     * - backgroundColor: Current background color
+     * - fps: Current FPS setting
      */
-    const { renderMedia, renderState, saveProject } = useEditorContext();
+    const { renderMedia, renderState, saveProject, overlays, projectId, aspectRatio, backgroundColor, fps } = useEditorContext();
+    const [isSaving, setIsSaving] = useState(false);
+    
+    // Handle save button click
+    const handleSave = useCallback(async () => {
+        try {
+            setIsSaving(true);
+            
+            // Prepare project data with all current state
+            const projectData = {
+                overlays: overlays || [],
+                projectId: projectId || 'video-editor-project',
+                aspectRatio: aspectRatio,
+                backgroundColor: backgroundColor,
+                fps: fps,
+                timestamp: new Date().toISOString(),
+            };
+            
+            // Call saveProject function from context
+            if (saveProject) {
+                await saveProject(projectData);
+                console.log('[EditorHeader] Project saved successfully');
+            } else {
+                // Fallback: save directly to localStorage
+                const storageKey = `video-editor-project-${projectData.projectId}`;
+                localStorage.setItem(storageKey, JSON.stringify(projectData));
+                console.log('[EditorHeader] Project saved to localStorage (fallback):', storageKey);
+            }
+        } catch (error) {
+            console.error('[EditorHeader] Error saving project:', error);
+        } finally {
+            setIsSaving(false);
+        }
+    }, [saveProject, overlays, projectId, aspectRatio, backgroundColor, fps]);
     // Get theme configuration from context if available
     const themeConfig = useThemeConfig();
     // Use direct props if provided, otherwise fall back to context values
@@ -71,5 +112,5 @@ export function EditorHeader({ availableThemes, selectedTheme, onThemeChange, sh
             setTheme(resolvedDefaultTheme);
         }
     }, [resolvedHideThemeToggle, resolvedDefaultTheme, setTheme]);
-    return (_jsxs("header", { className: "sticky top-0 flex shrink-0 items-center gap-2.5 \n      bg-background\n      border-l\n      p-2.5 px-4.5", children: [_jsx("div", { className: "grow" }), _jsx(SidebarTrigger, { className: "hidden sm:block text-foreground" }), _jsx(RenderControls, { handleRender: renderMedia, state: renderState })] }));
+    return (_jsxs("header", { className: "sticky top-0 flex shrink-0 items-center gap-2.5 \n      bg-background\n      border-l\n      p-2.5 px-4.5", children: [_jsx("div", { className: "grow" }), _jsx(SidebarTrigger, { className: "hidden sm:block text-foreground" }), (_jsx(Button, { variant: "default", size: "sm", onClick: handleSave, disabled: isSaving, className: "gap-2", children: [_jsx(Save, { className: "w-4 h-4" }), isSaving ? "Saving..." : "Save"] })), _jsx(RenderControls, { handleRender: renderMedia, state: renderState })] }));
 }

@@ -24,6 +24,11 @@ const AdminUsers = () => {
   const [error, setError] = useState('')
   const [currentStatus, setCurrentStatus] = useState(STATUS_TABS[0].value)
   const [updatingId, setUpdatingId] = useState('')
+  const [editingRoleId, setEditingRoleId] = useState(null)
+  const [editingRoleValue, setEditingRoleValue] = useState('')
+  const [isUpdatingRole, setIsUpdatingRole] = useState(false)
+  const [showRoleEditModal, setShowRoleEditModal] = useState(false)
+  const [editingUser, setEditingUser] = useState(null)
 
   const resolveUserKey = (candidate, fallback) =>
     candidate?.id || candidate?._id || candidate?.user_id || candidate?.email || candidate?.username || fallback
@@ -45,7 +50,6 @@ const AdminUsers = () => {
             ...(token ? { Authorization: `Bearer ${token}` } : {})
           },
           body: JSON.stringify({
-            role: 'user',
             status: statusValue || 'validated'
           }),
           signal: abortSignal
@@ -57,7 +61,12 @@ const AdminUsers = () => {
         }
 
         const data = await response.json()
-        const list = Array.isArray(data?.users) ? data.users : (Array.isArray(data) ? data : [])
+        const allUsers = Array.isArray(data?.users) ? data.users : (Array.isArray(data) ? data : [])
+        // Filter to only show users where role is 'user' or null/undefined
+        const list = allUsers.filter(user => {
+          const userRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase()
+          return userRole === 'user' || userRole === '' || !userRole
+        })
         setUsers(list)
       } catch (err) {
         if (err.name === 'AbortError') return
@@ -83,6 +92,60 @@ const AdminUsers = () => {
 
   const handleRefresh = () => {
     fetchUsers(currentStatus, undefined)
+  }
+
+  const handleUpdateRole = async (userItem, newRole) => {
+    if (!userItem) return
+    const recordId = userItem?.id || userItem?._id || userItem?.user_id
+    if (!recordId) {
+      console.warn('AdminUsers: missing user_id for role update', userItem)
+      return
+    }
+    try {
+      setIsUpdatingRole(true)
+      const token = localStorage.getItem('token') || ''
+      const response = await fetch(`${ADMIN_BASE}/v1/admin/users/${encodeURIComponent(recordId)}/role`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          role: newRole
+        })
+      })
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || `Unable to update role (${response.status})`)
+      }
+      // Update local state
+      setUsers(prev =>
+        prev.map(existing => {
+          const existingId = existing?.id || existing?._id || existing?.user_id
+          if (existingId === recordId) {
+            return {
+              ...existing,
+              role: newRole,
+              user_role: newRole,
+              type: newRole,
+              userType: newRole
+            }
+          }
+          return existing
+        })
+      )
+      // Refresh the list
+      fetchUsers(currentStatus, undefined)
+      setEditingRoleId(null)
+      setEditingRoleValue('')
+      setShowRoleEditModal(false)
+      setEditingUser(null)
+    } catch (err) {
+      console.error('Failed to update user role:', err)
+      alert(err.message || 'Failed to update role. Please try again.')
+    } finally {
+      setIsUpdatingRole(false)
+    }
   }
 
   const handleToggleStatus = async (userItem, actionKeyOverride, explicitStatus) => {
@@ -225,7 +288,26 @@ const AdminUsers = () => {
                         <tr key={item?.id || item?._id || idx} className="hover:bg-[#F8F6FF]">
                           <td className="px-4 py-3 font-medium text-gray-900">{name}</td>
                           <td className="px-4 py-3">{email}</td>
-                          <td className="px-4 py-3 capitalize">{role || 'user'}</td>
+                          <td className="px-4 py-3 capitalize relative group">
+                            <div className="flex items-center gap-2">
+                              <span>{role || 'user'}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentRole = (item?.role || item?.user_role || item?.type || item?.userType || 'user').toString().toLowerCase()
+                                  setEditingUser(item)
+                                  setEditingRoleValue(currentRole === 'admin' ? 'admin' : 'user')
+                                  setShowRoleEditModal(true)
+                                }}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-[#13008B] hover:text-[#0f0068] hover:bg-[#13008B]/10 rounded"
+                                title="Edit role"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
                           <td className="px-4 py-3 capitalize">{status}</td>
                           <td className="px-4 py-3 text-sm text-gray-500">{createdLabel}</td>
                           <td className="px-4 py-3 text-right">
@@ -267,6 +349,84 @@ const AdminUsers = () => {
         </div>
         </div>
       </div>
+
+      {/* Role Edit Modal */}
+      {showRoleEditModal && editingUser && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4 relative">
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                setShowRoleEditModal(false)
+                setEditingUser(null)
+                setEditingRoleValue('')
+              }}
+              disabled={isUpdatingRole}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Close"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+
+            {/* Modal Content */}
+            <div className="p-6 pt-8">
+              <h3 className="text-xl font-semibold text-gray-900 mb-2 pr-10">Edit User Role</h3>
+              <p className="text-sm text-gray-600 mb-6">
+                {editingUser?.display_name || editingUser?.name || editingUser?.email || 'User'}: {editingUser?.email || '—'}
+              </p>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Role
+                </label>
+                <select
+                  value={editingRoleValue}
+                  onChange={(e) => setEditingRoleValue(e.target.value)}
+                  disabled={isUpdatingRole}
+                  className="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent bg-white"
+                >
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRoleEditModal(false)
+                    setEditingUser(null)
+                    setEditingRoleValue('')
+                  }}
+                  disabled={isUpdatingRole}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleUpdateRole(editingUser, editingRoleValue)}
+                  disabled={isUpdatingRole}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#13008B] rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isUpdatingRole ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      Saving...
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -27,9 +27,7 @@ export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true
         if (!isPlayerOnly)
             return;
         const handleResize = () => {
-            // Set CSS custom property for viewport height to use instead of h-screen
-            const vh = window.innerHeight * 0.01;
-            document.documentElement.style.setProperty("--vh", `${vh}px`);
+           
         };
         // Initial call
         handleResize();
@@ -46,7 +44,7 @@ export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true
     return (_jsx(ReactVideoEditorProvider, { ...providerProps, onSaving: handleSaving, onSaved: handleSaved, playerRef: playerRef, children: isPlayerOnly ? (
         // Player-only mode: Simple fullscreen video player
         _jsx("div", { className: "w-full bg-black flex items-center justify-center", style: {
-                height: "100vh",
+                height: "100%",
                 maxHeight: "-webkit-fill-available" /* Safari fix */,
             }, children: _jsx(VideoPlayer, { playerRef: playerRef, isPlayerOnly: true }) })) : (
         // Editor mode: Full editor interface with sidebar

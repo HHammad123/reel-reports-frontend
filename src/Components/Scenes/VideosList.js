@@ -669,6 +669,67 @@ if (videoElement.readyState >= 2) {
         });
     };
 
+    /**
+     * PRIORITY 1: Parse video_results from job API response
+     * Transforms job API video_results format into the format expected by parseVideosPayload
+     * @param {Array} videoResults - Array of video results from job API
+     * @returns {Array} Transformed video entries ready for parseVideosPayload
+     */
+    const parseJobVideoResults = (videoResults = []) => {
+      if (!Array.isArray(videoResults) || videoResults.length === 0) {
+        return [];
+      }
+
+      return videoResults.map((result) => {
+        // Determine which version to use (current_version or default to v1)
+        const currentVersion = result.videos?.current_version || 'v1';
+        const videoData = result.videos?.[currentVersion] || result.videos?.v1 || {};
+
+        // Extract aspect ratio from video data or prompts
+        const aspectRatio = videoData.aspect_ratio || 
+                          videoData.prompts?.aspect_ratio ||
+                          '16:9';
+
+        // Build the transformed entry structure
+        const transformedEntry = {
+          scene_number: result.scene_number,
+          sceneNumber: result.scene_number,
+          model: result.model || result.mode || '',
+          processing_status: result.processing_status || 'completed',
+          id: result.id || `scene-${result.scene_number}`,
+          title: result.title || `Scene ${result.scene_number}`,
+          description: result.description || '',
+          narration: result.narration || '',
+          
+          // Map videos structure with layers
+          videos: {
+            [currentVersion]: {
+              base_video_url: videoData.base_video_url || '',
+              duration: videoData.duration || '00:00:10',
+              layers: Array.isArray(videoData.layers) ? videoData.layers : [],
+              aspect_ratio: aspectRatio,
+              prompts: videoData.prompts || {},
+              has_background: videoData.prompts?.has_background !== undefined 
+                            ? videoData.prompts.has_background 
+                            : true,
+            },
+            current_version: currentVersion,
+          },
+        };
+
+        // Also add v1, v2, v3, v4 if they exist in the original structure
+        if (result.videos) {
+          Object.keys(result.videos).forEach(key => {
+            if (key !== 'current_version' && result.videos[key]) {
+              transformedEntry.videos[key] = result.videos[key];
+            }
+          });
+        }
+
+        return transformedEntry;
+      });
+    };
+
     const load = async () => {
       try {
         setIsLoading(true); setError('');
@@ -1006,6 +1067,14 @@ if (videoElement.readyState >= 2) {
             // Check if percent is 100% - start session data polling
             const isPercentComplete = percent >= 100;
 
+            // Check if job is complete: percent >= 100 AND (phase === "done" OR status === "succeeded")
+            const isJobComplete = isPercentComplete && (
+              phase === 'done' || 
+              phase === 'completed' || 
+              responseStatus === 'succeeded' ||
+              responseStatus === 'completed'
+            );
+
             // Check if status is "succeeded" or "failed" - only then stop polling
             // Also check if progress indicates completion
             const isCompleted = finalStatus === 'succeeded' || 
@@ -1030,15 +1099,300 @@ if (videoElement.readyState >= 2) {
                   return;
                 }
                 
-                // FIRST TIME: Fetch video results and layers from job API response
-                if (!jobVideoResultsFetchedRef.current && jdata) {
+                // PRIORITY 1: Fetch video_results from job API response when job is complete
+                if (!jobVideoResultsFetchedRef.current && jdata && isJobComplete) {
                   jobVideoResultsFetchedRef.current = true; // Mark as fetched to prevent duplicate calls
                   
-                  // Check for video_result in job response
+                  // Debug logging for job API response
+                  console.log('🎬 JOB API Response:', {
+                    hasVideoResults: !!jdata?.video_results,
+                    videoResultsCount: jdata?.video_results?.length || 0,
+                    firstScene: jdata?.video_results?.[0] || null,
+                    status: jdata?.status,
+                    progress: jdata?.progress,
+                    percent: percent,
+                    phase: phase,
+                    isJobComplete: isJobComplete,
+                  });
+                  
+                  // PRIORITY 1: Check for video_results (plural) in job response
+                  const videoResults = jdata?.video_results || jdata?.videoResults;
+                  
+                  // FALLBACK: Also check for legacy video_result (singular) for backward compatibility
                   const videoResult = jdata?.video_result || jdata?.videoResult || jdata?.result || jdata?.result_data;
                   
-                  if (videoResult) {
+                  // PRIORITY 1: Process video_results (new format) if available
+                  if (videoResults && Array.isArray(videoResults) && videoResults.length > 0) {
                     try {
+                      console.log('✅ JOB API: Found video_results, using job data');
+                      
+                      // Keep loader visible during processing
+                      setIsLoading(true);
+                      setShowVideoLoader(true);
+                      setJobProgress({ percent: 100, phase: 'processing' });
+                      
+                      // Transform job API video_results format
+                      const jobVideosRaw = parseJobVideoResults(videoResults);
+                      
+                      console.log('📦 Parsed Job Videos:', {
+                        count: jobVideosRaw.length,
+                        scenes: jobVideosRaw.map(v => ({
+                          sceneNumber: v.sceneNumber,
+                          model: v.model,
+                          hasBaseVideo: !!v.videos?.v1?.base_video_url,
+                          layerCount: v.videos?.v1?.layers?.length || 0,
+                          currentVersion: v.videos?.current_version || 'v1',
+                        }))
+                      });
+                      
+                      if (jobVideosRaw.length > 0) {
+                        // Create a payload structure for parseVideosPayload
+                        const jobPayload = {
+                          videos: jobVideosRaw
+                        };
+                        
+                        // Parse videos from job API response
+                        const jobVideos = parseVideosPayload(jobPayload);
+                        
+                        if (!cancelled && jobVideos.length > 0) {
+                          console.log('✅ JOB API: Successfully loaded videos from job API', {
+                            videoCount: jobVideos.length,
+                            source: 'JOB API (video_results)',
+                          });
+                          
+                          // Set items from job API results
+                          setItems(jobVideos);
+                          setSelectedIndex(0);
+                          
+                          // Extract aspect ratio from first video if available
+                          const firstVideoAspectRatio = jobVideos[0]?.videos?.v1?.aspect_ratio || 
+                                                      jobVideos[0]?.videos?.v1?.prompts?.aspect_ratio;
+                          if (firstVideoAspectRatio && !cancelled) {
+                            // Normalize aspect ratio: convert underscores to colons
+                            const normalizeAspectRatio = (value) => {
+                              if (!value || typeof value !== 'string') return value;
+                              return value.replace(/_/g, ':').trim();
+                            };
+                            setAspectRatio(normalizeAspectRatio(firstVideoAspectRatio));
+                          }
+                          
+                          // Expose job media to sidebar uploads - with RAW URLs (no prefix)
+                          if (typeof window !== 'undefined') {
+                            // Helper function to get logo layer data (defined outside map for reuse)
+                            const getLogoLayerDataForJob = (entry) => {
+                              if (Array.isArray(entry?.videos?.v1?.layers)) {
+                                const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+                                if (logoLayer) {
+                                  return {
+                                    url: logoLayer.url,
+                                    timing: logoLayer.timing || { start: "00:00:00", end: null },
+                                    position: logoLayer.position || { x: 0.9, y: 0.1 },
+                                    bounding_box: logoLayer.bounding_box || null,
+                                    size: logoLayer.size || null,
+                                    scale: logoLayer.scale !== undefined ? logoLayer.scale : 1,
+                                    opacity: logoLayer.opacity !== undefined ? logoLayer.opacity : 1,
+                                    rotation: logoLayer.rotation || 0,
+                                    style: logoLayer.style || {},
+                                    blend_mode: logoLayer.blend_mode || 'normal',
+                                    enabled: logoLayer.enabled !== undefined ? logoLayer.enabled : true,
+                                    animation: logoLayer.animation || { type: 'none', duration: 0.5 },
+                                  };
+                                }
+                              }
+                              return null;
+                            };
+                            
+                            window.__SESSION_MEDIA_FILES = jobVideos.map((it, idx) => {
+                              // Get the raw base video URL - prioritize base_video_url from new schema
+                              const rawBaseUrl = it.videos?.v1?.base_video_url || 
+                                                it.videos?.base_video_url ||
+                                                it.video?.v1?.base_video_url ||
+                                                it.video?.base_video_url ||
+                                                it.url || 
+                                                it.video_url || 
+                                                it.videos?.v1?.video_url || 
+                                                it.videos?.video_url ||
+                                                it.video?.v1?.video_url ||
+                                                it.video?.video_url ||
+                                                '';
+                              
+                              // Get audio URL from layers first (NEW SCHEMA - Priority 1), then fallback
+                              const getAudioLayerDataForJob = (entry) => {
+                                if (Array.isArray(entry?.videos?.v1?.layers)) {
+                                  const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+                                  if (audioLayer) {
+                                    return {
+                                      url: audioLayer.url,
+                                      volume: audioLayer.volume !== undefined ? audioLayer.volume : 1,
+                                    };
+                                  }
+                                }
+                                return null;
+                              };
+                              
+                              const audioLayerData = getAudioLayerDataForJob(it);
+                              const rawAudioUrl = audioLayerData?.url || 
+                                it.audioUrl || 
+                                it.audio_url ||
+                                it.audio_only_url ||
+                                it.videos?.v1?.audio_url ||
+                                it.videos?.v1?.audio_only_url ||
+                                it.videos?.audio_url ||
+                                it.videos?.audio_only_url ||
+                                it.video?.v1?.audio_url ||
+                                it.video?.v1?.audio_only_url ||
+                                it.video?.audio_url ||
+                                it.video?.audio_only_url ||
+                                '';
+                              
+                              // Get chart URL from layers first (NEW SCHEMA - Priority 1), then fallback
+                              const getChartLayerDataForJob = (entry) => {
+                                if (Array.isArray(entry?.videos?.v1?.layers)) {
+                                  const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+                                  if (chartLayer) {
+                                    return {
+                                      url: chartLayer.url,
+                                      position: chartLayer.position || { x: 0.5, y: 0.5 },
+                                      bounding_box: chartLayer.bounding_box || null,
+                                      scaling: chartLayer.scaling || { scale_x: 1, scale_y: 1, fit_mode: 'contain' },
+                                      animation: chartLayer.animation || { type: 'none', duration: 0.5 },
+                                      layout: chartLayer.layout || { align: 'center', verticalAlign: 'middle' },
+                                      opacity: chartLayer.opacity !== undefined ? chartLayer.opacity : 1,
+                                    };
+                                  }
+                                }
+                                return null;
+                              };
+                              
+                              const chartLayerDataForJob = getChartLayerDataForJob(it);
+                              const rawChartVideoUrl = chartLayerDataForJob?.url || 
+                                it.chartVideoUrl || 
+                                it.chart_video_url ||
+                                it.videos?.v1?.chart_video_url ||
+                                it.videos?.chart_video_url ||
+                                it.video?.v1?.chart_video_url ||
+                                it.video?.chart_video_url ||
+                                '';
+                              
+                              // Get logo layer data from layers
+                              const logoLayerDataForJob = getLogoLayerDataForJob(it);
+                              const rawLogoUrl = logoLayerDataForJob?.url || '';
+                              
+                              // Get subtitle layer data from layers
+                              const getSubtitleLayerDataForJob = (entry) => {
+                                if (Array.isArray(entry?.videos?.v1?.layers)) {
+                                  const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+                                  if (subtitleLayer) {
+                                    return {
+                                      url: subtitleLayer.url || null,
+                                      text: subtitleLayer.text || '',
+                                      timing: subtitleLayer.timing || { start: "00:00:00", end: null },
+                                      position: subtitleLayer.position || { x: 0.5, y: 0.85 },
+                                      bounding_box: subtitleLayer.bounding_box || null,
+                                      style: {
+                                        fontSize: subtitleLayer.fontSize || subtitleLayer.style?.fontSize || 24,
+                                        fontFamily: subtitleLayer.fontFamily || subtitleLayer.style?.fontFamily || 'Inter',
+                                        fontWeight: subtitleLayer.fontWeight || subtitleLayer.style?.fontWeight || '600',
+                                        color: subtitleLayer.fill || subtitleLayer.style?.color || subtitleLayer.style?.fill || '#FFFFFF',
+                                      },
+                                      enabled: subtitleLayer.enabled !== undefined ? subtitleLayer.enabled : true,
+                                    };
+                                  }
+                                }
+                                return null;
+                              };
+                              
+                              const subtitleLayerDataForJob = getSubtitleLayerDataForJob(it);
+                              
+                              return {
+                                id: it.id || `job-${idx}`,
+                                name: it.title || it.name || `Video ${idx + 1}`,
+                                title: it.title || it.name || `Video ${idx + 1}`,
+                                path: rawBaseUrl,  // Store raw base video URL - NEVER add prefix
+                                url: rawBaseUrl,   // Store raw base video URL - NEVER add prefix
+                                src: rawBaseUrl,   // Store raw base video URL - NEVER add prefix
+                                baseVideoUrl: rawBaseUrl, // Store raw base video URL from new schema
+                                base_video_url: rawBaseUrl, // Alias for compatibility
+                                audioUrl: rawAudioUrl, // Store raw audio URL from layers or fallback - NEVER add prefix
+                                audio_url: rawAudioUrl, // Alias for compatibility
+                                audioVolume: audioLayerData?.volume || 1, // Include volume from layer if available
+                                chartVideoUrl: rawChartVideoUrl, // Store raw chart video URL from layers or fallback - NEVER add prefix
+                                chart_video_url: rawChartVideoUrl, // Alias for compatibility
+                                chartLayerData: chartLayerDataForJob, // Include full layer data for reference
+                                logoUrl: rawLogoUrl, // Store raw logo URL from layers - NEVER add prefix
+                                logo_url: rawLogoUrl, // Alias for compatibility
+                                logoLayerData: logoLayerDataForJob, // Include full logo layer data for reference
+                                subtitleLayerData: subtitleLayerDataForJob, // Include full subtitle layer data
+                                subtitleUrl: subtitleLayerDataForJob?.url || null, // SRT file URL
+                                subtitleText: subtitleLayerDataForJob?.text || '', // Inline text
+                                type: 'video',
+                                duration: it.mediaSrcDuration || it.duration || 10,
+                                mediaSrcDuration: it.mediaSrcDuration || it.duration || 10,
+                                thumbnail: it.thumbnail || rawBaseUrl || '',
+                                size: it.size || 0,
+                                _session: true, // Flag to indicate this is session media
+                                // Include full videos.v1 structure for layer processing
+                                videos: it.videos || {},
+                              };
+                            });
+                            
+                            // Add logo images as separate entries to upload section (same as base video)
+                            const logoImages = [];
+                            jobVideos.forEach((it, idx) => {
+                              const logoLayerDataForJob = getLogoLayerDataForJob(it);
+                              if (logoLayerDataForJob && logoLayerDataForJob.enabled && logoLayerDataForJob.url) {
+                                const rawLogoUrl = logoLayerDataForJob.url;
+                                logoImages.push({
+                                  id: `logo-${it.id || `job-${idx}`}`,
+                                  name: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+                                  title: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+                                  path: rawLogoUrl,  // Store raw logo URL - NEVER add prefix
+                                  url: rawLogoUrl,   // Store raw logo URL - NEVER add prefix
+                                  src: rawLogoUrl,    // Store raw logo URL - NEVER add prefix
+                                  logoUrl: rawLogoUrl,
+                                  logo_url: rawLogoUrl,
+                                  logoLayerData: logoLayerDataForJob,
+                                  type: 'image',
+                                  duration: 0,
+                                  mediaSrcDuration: 0,
+                                  thumbnail: rawLogoUrl,
+                                  size: 0,
+                                  _session: true,
+                                  _isLogo: true, // Flag to indicate this is a logo image
+                                  _parentVideoId: it.id || `job-${idx}`, // Reference to parent video
+                                });
+                              }
+                            });
+                            
+                            // Combine video entries with logo image entries
+                            window.__SESSION_MEDIA_FILES = [...window.__SESSION_MEDIA_FILES, ...logoImages];
+                            
+                            // Trigger timeline rebuild by updating sessionMediaVersion
+                            setSessionMediaVersion(prev => prev + 1);
+                          }
+                          
+                          setStatus('succeeded');
+                          // Hide loader after successful load
+                          setIsLoading(false);
+                          setShowVideoLoader(false);
+                          return; // Exit early since we got videos from job API
+                        } else {
+                          console.log('⚠️ JOB API: Parsed job videos but result is empty, falling back to session data');
+                        }
+                      } else {
+                        console.log('⚠️ JOB API: No valid video_results found, falling back to session data');
+                      }
+                    } catch (jobResultError) {
+                      console.error('❌ JOB API: Error processing video_results:', jobResultError);
+                      // Continue to fallback session data refresh
+                    }
+                  }
+                  
+                  // FALLBACK: Process legacy video_result (singular) for backward compatibility
+                  if (videoResult && !videoResults) {
+                    try {
+                      console.log('⚠️ JOB API: Using legacy video_result format (fallback)');
+                      
                       // Keep loader visible during processing
                       setIsLoading(true);
                       setShowVideoLoader(true);
@@ -1071,6 +1425,11 @@ if (videoElement.readyState >= 2) {
                         const jobVideos = parseVideosPayload(jobPayload);
                         
                         if (!cancelled && jobVideos.length > 0) {
+                          console.log('✅ JOB API: Successfully loaded videos from legacy video_result format', {
+                            videoCount: jobVideos.length,
+                            source: 'JOB API (video_result - legacy)',
+                          });
+                          
                           // Set items from job API results
                           setItems(jobVideos);
                           setSelectedIndex(0);
@@ -1278,14 +1637,16 @@ if (videoElement.readyState >= 2) {
                         }
                       }
                     } catch (jobResultError) {
+                      console.error('❌ JOB API: Error processing legacy video_result:', jobResultError);
                       // Continue to fallback session data refresh
                     }
                   }
                 }
                 
                 // FALLBACK: When percent is 100%, poll session data 2-3 times to fetch all videos and layers
-                // Only start session polling if percent is 100% and job API didn't provide video_result
+                // Only start session polling if percent is 100% and job API didn't provide video_results or video_result
                 if (isPercentComplete) {
+                  console.log('⚠️ FALLBACK: No video_results in job API, falling back to session data');
                   // Keep loader visible during session data polling
                 setIsLoading(true);
                 setShowVideoLoader(true);
@@ -4398,7 +4759,7 @@ return () => {
 }, [applyChromaKey, defaultOverlays]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white rounded-lg relative h-[100%] w-full">
+    <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden bg-white rounded-lg relative w-full">
       {(showVideoLoader || isLoading) && (
         <>
           <div className="absolute inset-0 z-30 bg-white" />
@@ -4568,7 +4929,7 @@ return () => {
           className="flex-1 flex flex-col bg-white rve-host"
           // style={{ paddingLeft: '16rem' }}
         >
-          <div className="flex-1 min-h-[640px] rounded-lg border border-gray-200 shadow-sm relative overflow-hidden">
+          <div className="flex-1 rounded-lg border border-gray-200 shadow-sm relative ">
             <ReactVideoEditor
               key={editorKey}
               projectId={PROJECT_ID}
@@ -5029,6 +5390,14 @@ return () => {
             .rve-host [class*="timeline-header"] {
               z-index: 1 !important;
               position: relative !important;
+            }
+            /* Remove all bottom spacing from timeline section */
+            .rve-host [class*="timeline-section"],
+            .rve-host [class*="TimelineSection"],
+            .rve-host [class*="timeline-zoomable-content"],
+            .rve-host [class*="timeline-tracks-scroll-container"] {
+              margin-bottom: 0 !important;
+              padding-bottom: 0 !important;
             }
             /* Style tabs at bottom (stickers panel) */
             .rve-host [class*="TabsList"] {

@@ -77,56 +77,157 @@ export const initDatabase = () => {
 };
 /**
  * Save editor state to autosave store
- * DISABLED: IndexedDB saving is disabled - returns immediately without saving
  * @param projectId Unique identifier for the project
  * @param editorState Current state of the editor
  * @returns Promise that resolves when the save is complete
  */
 export const saveEditorState = async (projectId, editorState) => {
-    // IndexedDB saving is disabled - return immediately without saving
-    console.log("[IndexedDB] Saving disabled - skipping saveEditorState for projectId:", projectId);
-    return Promise.resolve();
+    try {
+        const db = await initDatabase();
+        const transaction = db.transaction([AUTOSAVE_STORE], "readwrite");
+        const store = transaction.objectStore(AUTOSAVE_STORE);
+        
+        const autosaveRecord = {
+            id: projectId,
+            timestamp: new Date().toISOString(),
+            editorState: editorState
+        };
+        
+        await new Promise((resolve, reject) => {
+            const request = store.put(autosaveRecord);
+            request.onsuccess = () => {
+                console.log("[IndexedDB] Saved editor state for projectId:", projectId);
+                resolve();
+            };
+            request.onerror = (event) => {
+                console.error("[IndexedDB] Error saving editor state:", event.target.error);
+                reject(event.target.error);
+            };
+        });
+    } catch (error) {
+        console.error("[IndexedDB] Failed to save editor state:", error);
+        throw error;
+    }
 };
 /**
  * Load editor state from autosave store
- * DISABLED: IndexedDB loading is disabled - always returns null
  * @param projectId Unique identifier for the project
  * @returns Promise that resolves with the editor state or null if not found
  */
 export const loadEditorState = async (projectId) => {
-    // IndexedDB loading is disabled - always return null
-    console.log("[IndexedDB] Loading disabled - loadEditorState returning null for projectId:", projectId);
-    return Promise.resolve(null);
+    try {
+        const db = await initDatabase();
+        const transaction = db.transaction([AUTOSAVE_STORE], "readonly");
+        const store = transaction.objectStore(AUTOSAVE_STORE);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.get(projectId);
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result && result.editorState) {
+                    console.log("[IndexedDB] Loaded editor state for projectId:", projectId);
+                    resolve(result.editorState);
+                } else {
+                    console.log("[IndexedDB] No saved state found for projectId:", projectId);
+                    resolve(null);
+                }
+            };
+            request.onerror = (event) => {
+                console.error("[IndexedDB] Error loading editor state:", event.target.error);
+                reject(event.target.error);
+            };
+        });
+    } catch (error) {
+        console.error("[IndexedDB] Failed to load editor state:", error);
+        return null;
+    }
 };
 /**
  * Clear autosave data for a project
- * DISABLED: IndexedDB clearing is disabled - returns immediately
  * @param projectId Unique identifier for the project
  * @returns Promise that resolves when the delete is complete
  */
 export const clearAutosave = async (projectId) => {
-    // IndexedDB clearing is disabled - return immediately
-    console.log("[IndexedDB] Clearing disabled - skipping clearAutosave for projectId:", projectId);
-    return Promise.resolve();
+    try {
+        const db = await initDatabase();
+        const transaction = db.transaction([AUTOSAVE_STORE], "readwrite");
+        const store = transaction.objectStore(AUTOSAVE_STORE);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.delete(projectId);
+            request.onsuccess = () => {
+                console.log("[IndexedDB] Cleared autosave for projectId:", projectId);
+                resolve();
+            };
+            request.onerror = (event) => {
+                console.error("[IndexedDB] Error clearing autosave:", event.target.error);
+                reject(event.target.error);
+            };
+        });
+    } catch (error) {
+        console.error("[IndexedDB] Failed to clear autosave:", error);
+        throw error;
+    }
 };
 /**
  * Check if there's an autosave for a project
- * DISABLED: IndexedDB checking is disabled - always returns null
  * @param projectId Unique identifier for the project
  * @returns Promise that resolves with the timestamp of the autosave or null if not found
  */
 export const hasAutosave = async (projectId) => {
-    // IndexedDB checking is disabled - always return null
-    console.log("[IndexedDB] Checking disabled - hasAutosave returning null for projectId:", projectId);
-    return Promise.resolve(null);
+    try {
+        const db = await initDatabase();
+        const transaction = db.transaction([AUTOSAVE_STORE], "readonly");
+        const store = transaction.objectStore(AUTOSAVE_STORE);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.get(projectId);
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result && result.timestamp) {
+                    console.log("[IndexedDB] Found autosave for projectId:", projectId, "timestamp:", result.timestamp);
+                    resolve(result.timestamp);
+                } else {
+                    console.log("[IndexedDB] No autosave found for projectId:", projectId);
+                    resolve(null);
+                }
+            };
+            request.onerror = (event) => {
+                console.error("[IndexedDB] Error checking autosave:", event.target.error);
+                reject(event.target.error);
+            };
+        });
+    } catch (error) {
+        console.error("[IndexedDB] Failed to check autosave:", error);
+        return null;
+    }
 };
 /**
  * Get all autosave records
- * DISABLED: IndexedDB loading is disabled - always returns empty array
  * @returns Promise that resolves with an array of all autosave records
  */
 export const getAllAutosaves = async () => {
-    // IndexedDB loading is disabled - always return empty array
-    console.log("[IndexedDB] Loading disabled - getAllAutosaves returning empty array");
-    return Promise.resolve([]);
+    try {
+        const db = await initDatabase();
+        const transaction = db.transaction([AUTOSAVE_STORE], "readonly");
+        const store = transaction.objectStore(AUTOSAVE_STORE);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => {
+                const records = request.result || [];
+                // Sort by timestamp descending (most recent first)
+                records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                console.log("[IndexedDB] Loaded", records.length, "autosave records");
+                resolve(records);
+            };
+            request.onerror = (event) => {
+                console.error("[IndexedDB] Error loading all autosaves:", event.target.error);
+                reject(event.target.error);
+            };
+        });
+    } catch (error) {
+        console.error("[IndexedDB] Failed to load all autosaves:", error);
+        return [];
+    }
 };

@@ -11,6 +11,7 @@ import { useRendering } from "../../hooks/use-rendering";
 import { useRenderer } from "../../contexts/renderer-context";
 import { TIMELINE_CONSTANTS } from "../advanced-timeline/constants";
 import { transformOverlaysForAspectRatio, shouldTransformOverlays, getDimensionsForAspectRatio } from "../../utils/aspect-ratio-transform";
+import { saveEditorState } from "../../utils/general/indexdb-helper";
 export const EditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, onSaving, onSaved, onOverlaysChange, 
 // Loading State
 isLoadingProject = false, 
@@ -527,21 +528,103 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
             onOverlaysChange(overlays);
         }
     }, [overlays, onOverlaysChange]);
-    // Autosave functionality removed
-    // Manual save function (if needed in future, implement without autosave)
-    const saveProject = useCallback(async () => {
+    // Manual save function - saves current project state
+    const saveProject = useCallback(async (projectData) => {
         if (onSaving)
             onSaving(true);
         try {
-            // Manual save implementation can be added here if needed
+            // Prepare project data with current state
+            const dataToSave = projectData || {
+                overlays: overlays || [],
+                projectId: projectId || 'default-project',
+                aspectRatio: aspectRatio || defaultAspectRatio,
+                backgroundColor: backgroundColor || defaultBackgroundColor,
+                fps: fps || 30,
+                timestamp: new Date().toISOString(),
+            };
+            
+            // Save to localStorage as primary storage
+            if (typeof window !== 'undefined') {
+                const storageKey = `video-editor-project-${dataToSave.projectId}`;
+                localStorage.setItem(storageKey, JSON.stringify(dataToSave));
+                console.log('[EditorProvider] Project saved to localStorage:', storageKey);
+            }
+            
+            // Call onSaved callback if provided
             if (onSaved)
                 onSaved(Date.now());
+            
+            return dataToSave;
+        }
+        catch (error) {
+            console.error('[EditorProvider] Error saving project:', error);
+            throw error;
         }
         finally {
             if (onSaving)
                 onSaving(false);
         }
-    }, [onSaving, onSaved]);
+    }, [onSaving, onSaved, overlays, projectId, aspectRatio, defaultAspectRatio, backgroundColor, defaultBackgroundColor, fps]);
+    
+    // Autosave functionality - save every 2 minutes (120000ms)
+    useEffect(() => {
+        if (!projectId) return;
+        
+        const autosaveInterval = 120000; // 2 minutes in milliseconds
+        
+        const autosaveTimer = setInterval(async () => {
+            try {
+                // Auto-save current project state to IndexedDB
+                const editorState = {
+                    overlays: overlays || [],
+                    aspectRatio: aspectRatio || defaultAspectRatio,
+                    playbackRate: playbackRate || 1,
+                    backgroundColor: backgroundColor || defaultBackgroundColor,
+                    fps: fps || 30,
+                };
+                
+                await saveEditorState(projectId, editorState);
+                console.log('[EditorProvider] Autosave completed for projectId:', projectId);
+            } catch (error) {
+                console.error('[EditorProvider] Autosave error:', error);
+            }
+        }, autosaveInterval);
+        
+        return () => {
+            clearInterval(autosaveTimer);
+        };
+    }, [overlays, projectId, aspectRatio, defaultAspectRatio, backgroundColor, defaultBackgroundColor, fps, playbackRate]);
+    
+    // Load saved project on mount (only once when projectId is available and not loading)
+    const hasLoadedSavedProjectRef = useRef(false);
+    useEffect(() => {
+        if (!projectId || isLoadingProject || hasLoadedSavedProjectRef.current) return;
+        
+        const storageKey = `video-editor-project-${projectId}`;
+        try {
+            const savedData = localStorage.getItem(storageKey);
+            if (savedData) {
+                const parsedData = JSON.parse(savedData);
+                if (parsedData.overlays && Array.isArray(parsedData.overlays) && parsedData.overlays.length > 0) {
+                    // Only load if we don't have overlays yet (initial load)
+                    if (overlays.length === 0 && defaultOverlays.length === 0) {
+                        console.log('[EditorProvider] Loading saved project from localStorage:', storageKey);
+                        setOverlays(parsedData.overlays);
+                        if (parsedData.aspectRatio) {
+                            setAspectRatio(parsedData.aspectRatio);
+                        }
+                        if (parsedData.backgroundColor) {
+                            setBackgroundColor(parsedData.backgroundColor);
+                        }
+                        hasLoadedSavedProjectRef.current = true;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[EditorProvider] Error loading saved project:', error);
+        }
+    }, [projectId, isLoadingProject, overlays.length, defaultOverlays.length, setOverlays, setAspectRatio, setBackgroundColor]);
+    
     // Timeline click handler
     const handleTimelineClick = useCallback((e) => {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -640,6 +723,8 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
         renderType,
         // FPS
         fps,
+        // Project ID
+        projectId,
         // Configuration
         initialRows,
         maxRows,

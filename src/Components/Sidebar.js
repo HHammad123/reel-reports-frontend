@@ -1,7 +1,7 @@
 import React from 'react'
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { FaImage, FaPlay, FaThLarge, FaDollarSign, FaUsers, FaUserPlus, FaBars } from "react-icons/fa";
+import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
@@ -39,6 +39,7 @@ const Sidebar = () => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteSessionId, setDeleteSessionId] = useState(null);
+  const [showTrialOverModal, setShowTrialOverModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const menuRef = useRef(null);
 
@@ -238,6 +239,16 @@ const Sidebar = () => {
         navigate('/login');
         return;
       }
+      
+      // Check user validation status
+      const userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+      const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
+      
+      // If user is not validated and not admin, show trial over modal
+      if (normalizedStatus !== 'validated' && !isAdmin) {
+        setShowTrialOverModal(true);
+        return;
+      }
       // Proactively clear any per-session image caches and script artifacts before creating a new session
       try {
         const prefixes = [
@@ -360,11 +371,11 @@ const Sidebar = () => {
                   <span>Generate Reel</span>
                 </button>
                 <button
-                  onClick={createSessionAndGoBuildReel}
-                  className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
+                  disabled
+                  className="w-full mb-3 rounded-xl p-4 flex items-center gap-3 text-left text-sm font-medium text-white/50 transition-colors cursor-not-allowed opacity-60"
                 >
                   <FaThLarge className="h-5 w-5" />
-                  <span>Build Reel</span>
+                  <span>Build Reel (Coming Soon)</span>
                 </button>
                 <button
                   onClick={() => navigate('/media')}
@@ -372,13 +383,6 @@ const Sidebar = () => {
                 >
                   <FaImage className="h-5 w-5" />
                   <span>My Media</span>
-                </button>
-                <button
-                  onClick={() => navigate('/price-guidelines')}
-                  className={splitLocation[1] === 'price-guidelines' ? activeClass : inactiveClass}
-                >
-                  <FaDollarSign className="h-5 w-5" />
-                  <span>Price Guidelines</span>
                 </button>
 
                 {isAdmin && (
@@ -615,6 +619,50 @@ const Sidebar = () => {
                   ) : (
                     'Delete'
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Trial Over Modal */}
+      {showTrialOverModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4 relative">
+            {/* Close Button */}
+            <button
+              onClick={() => setShowTrialOverModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors"
+              title="Close"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+
+            {/* Modal Content */}
+            <div className="p-6 pt-8">
+              <div className="text-center mb-6">
+                <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+                  <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">Free Trial Expired</h3>
+                <p className="text-sm text-gray-600">
+                  Your free trial is over. Please contact support to continue using the service.
+                </p>
+              </div>
+
+              {/* Action Button */}
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setShowTrialOverModal(false)}
+                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors font-medium"
+                >
+                  Close
                 </button>
               </div>
             </div>
