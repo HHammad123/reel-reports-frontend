@@ -1,5 +1,5 @@
 import { jsxs as _jsxs, jsx as _jsx } from "react/jsx-runtime";
-import { useMemo, useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import { PaintBucket, Settings } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger, } from "../../ui/tabs";
 
@@ -52,7 +52,7 @@ function isSourceProps(props) {
  * />
  * ```
  */
-export const UnifiedTabs = (props) => {
+const UnifiedTabsComponent = (props) => {
     var _a;
     
     // ============================================================================
@@ -202,3 +202,7 @@ export const UnifiedTabs = (props) => {
     // Default layout: tabs at top
     return (_jsxs(Tabs, { ...tabsProps, className: `w-full ${className}`, children: [_jsx(TabsList, { children: tabsData.map((tab) => (_jsx(TabsTrigger, { value: tab.value, disabled: tab.disabled, className: getTabTriggerClassName(tab), children: _jsxs("span", { className: "flex items-center gap-2 text-xs", children: [tab.icon, tab.label, tab.count !== undefined && (_jsxs("span", { className: "text-[10px] opacity-70", children: ["(", tab.count, ")"] })), tab.badge && (_jsx("span", { className: "text-[9px] ml-2 text-sidebar-accent-foreground font-extralight bg-sidebar-accent/60 rounded-sm", children: tab.badge })), tab.error && _jsx("span", { className: "text-[10px]", children: "\u26A0\uFE0F" })] }) }, tab.value))) }), tabsData.some(tab => tab.content) && tabsData.map((tab) => (_jsx(TabsContent, { value: tab.value, className: "space-y-4 mt-2 h-auto focus-visible:outline-none", children: tab.content }, tab.value)))] }));
 };
+
+// CRITICAL: Wrap with React.memo to prevent unnecessary re-renders
+// This ensures the component only re-renders when props actually change
+export const UnifiedTabs = React.memo(UnifiedTabsComponent);

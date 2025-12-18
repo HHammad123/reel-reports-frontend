@@ -62,8 +62,65 @@ export const SelectionOutline = ({ overlay, changeOverlay, selectedOverlayId, is
         if (!isValidOverlay) {
             return { display: 'none' };
         }
-        // Get effective dimensions based on crop settings when crop is enabled
-        const effectiveDimensions = getEffectiveCropDimensions(safeOverlay);
+        
+        // For text overlays, use actual dimensions directly (no crop calculations)
+        // Text overlays don't support cropping, so we should use the overlay's actual dimensions
+        const isTextOverlay = safeOverlay.type === OverlayType.TEXT;
+        
+        let outlineWidth, outlineHeight, outlineLeft, outlineTop;
+        
+        if (isTextOverlay) {
+            // For text overlays, use the exact dimensions and position from the overlay
+            // No transformations, no crop calculations, just use what's stored
+            outlineWidth = safeOverlay.width;
+            outlineHeight = safeOverlay.height;
+            outlineLeft = safeOverlay.left;
+            outlineTop = safeOverlay.top;
+            
+            // Only validate that values are finite numbers, don't constrain them
+            if (!Number.isFinite(outlineWidth) || outlineWidth <= 0) {
+                outlineWidth = safeOverlay.width || 500;
+            }
+            if (!Number.isFinite(outlineHeight) || outlineHeight <= 0) {
+                outlineHeight = safeOverlay.height || 180;
+            }
+            if (!Number.isFinite(outlineLeft)) {
+                outlineLeft = safeOverlay.left || 100;
+            }
+            if (!Number.isFinite(outlineTop)) {
+                outlineTop = safeOverlay.top || 100;
+            }
+        } else {
+            // For other overlay types (video, image), use crop calculations
+            const effectiveDimensions = getEffectiveCropDimensions(safeOverlay);
+            const MIN_DIMENSION = 20;
+            const MAX_DIMENSION = 3000;
+            
+            outlineWidth = effectiveDimensions.width || safeOverlay.width || 0;
+            if (!Number.isFinite(outlineWidth) || outlineWidth <= 0) {
+                outlineWidth = safeOverlay.width || MIN_DIMENSION;
+            }
+            outlineWidth = Math.max(MIN_DIMENSION, Math.min(outlineWidth, MAX_DIMENSION));
+            
+            outlineHeight = effectiveDimensions.height || safeOverlay.height || 0;
+            if (!Number.isFinite(outlineHeight) || outlineHeight <= 0) {
+                outlineHeight = safeOverlay.height || MIN_DIMENSION;
+            }
+            outlineHeight = Math.max(MIN_DIMENSION, Math.min(outlineHeight, MAX_DIMENSION));
+            
+            outlineLeft = effectiveDimensions.left !== undefined ? effectiveDimensions.left : safeOverlay.left;
+            if (!Number.isFinite(outlineLeft)) {
+                outlineLeft = safeOverlay.left || 0;
+            }
+            outlineLeft = Math.max(-outlineWidth * 0.5, Math.min(outlineLeft, MAX_DIMENSION));
+            
+            outlineTop = effectiveDimensions.top !== undefined ? effectiveDimensions.top : safeOverlay.top;
+            if (!Number.isFinite(outlineTop)) {
+                outlineTop = safeOverlay.top || 0;
+            }
+            outlineTop = Math.max(-outlineHeight * 0.5, Math.min(outlineTop, MAX_DIMENSION));
+        }
+        
         // Selection outlines should match layer stacking
         // But start at 1000 to be above content
         // e.g. row 4 = z-index 960, row 0 = z-index 1000
@@ -76,16 +133,12 @@ export const SelectionOutline = ({ overlay, changeOverlay, selectedOverlayId, is
         const shouldShowBorder = isSelected || (hovered && !isDragging);
         // Ensure minimum border width for visibility (at least 3px for better visibility)
         const borderWidth = Math.max(scaledBorder, isSelected ? 3 : 2);
-        // Ensure minimum dimensions for clickability
-        const minDimension = 20; // Minimum 20px for clickability
-        const outlineWidth = Math.max(effectiveDimensions.width || 0, minDimension);
-        const outlineHeight = Math.max(effectiveDimensions.height || 0, minDimension);
         
         return {
-            width: Number.isFinite(outlineWidth) ? outlineWidth : minDimension,
-            height: Number.isFinite(outlineHeight) ? outlineHeight : minDimension,
-            left: effectiveDimensions.left,
-            top: effectiveDimensions.top,
+            width: outlineWidth,
+            height: outlineHeight,
+            left: outlineLeft,
+            top: outlineTop,
             position: "absolute",
             // Use border for all 4 sides - always show when selected, thicker for selected items
             border: shouldShowBorder
@@ -111,7 +164,22 @@ export const SelectionOutline = ({ overlay, changeOverlay, selectedOverlayId, is
             minWidth: outlineWidth,
             minHeight: outlineHeight,
         };
-    }, [isValidOverlay, safeOverlay, hovered, isDragging, isSelected, scaledBorder]);
+    }, [
+        isValidOverlay, 
+        // Depend on specific properties that affect the selection outline
+        // For text overlays, we use exact dimensions, so only these properties matter
+        safeOverlay.width,
+        safeOverlay.height,
+        safeOverlay.left,
+        safeOverlay.top,
+        safeOverlay.rotation,
+        safeOverlay.row,
+        safeOverlay.type,
+        hovered, 
+        isDragging, 
+        isSelected, 
+        scaledBorder
+    ]);
     const startDragging = useCallback((e) => {
         if (!isValidOverlay) return;
         const initialX = e.clientX;

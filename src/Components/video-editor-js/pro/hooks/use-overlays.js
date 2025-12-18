@@ -50,14 +50,65 @@ export const useOverlays = (initialOverlays, waitForAutosave) => {
      * changeOverlay(1, (overlay) => ({ ...overlay, width: overlay.width + 10 }))
      */
     const changeOverlay = useCallback((overlayId, updater) => {
-        setOverlays((prevOverlays) => prevOverlays.map((overlay) => {
-            if (overlay.id !== overlayId)
-                return overlay;
-            return typeof updater === "function"
-                ? updater(overlay)
-                : { ...overlay, ...updater };
-        }));
-    }, []);
+        console.log('[EditorContext] changeOverlay CALLED:', {
+            id: overlayId,
+            updates: typeof updater === 'function' ? 'function' : updater,
+            timestamp: Date.now()
+        });
+        
+        setOverlays((prevOverlays) => {
+            const updatedOverlays = prevOverlays.map((overlay) => {
+                if (overlay.id !== overlayId)
+                    return overlay;
+                
+                const newOverlay = typeof updater === "function"
+                    ? updater(overlay)
+                    : { ...overlay, ...updater };
+                
+                // ADD LOGGING HERE
+                console.log('⚠️ [changeOverlay]', {
+                    id: overlayId,
+                    oldDimensions: { 
+                        width: overlay.width, 
+                        height: overlay.height, 
+                        left: overlay.left, 
+                        top: overlay.top 
+                    },
+                    newDimensions: { 
+                        width: newOverlay.width, 
+                        height: newOverlay.height, 
+                        left: newOverlay.left, 
+                        top: newOverlay.top 
+                    },
+                    dimensionsChanged: 
+                        overlay.width !== newOverlay.width || 
+                        overlay.height !== newOverlay.height || 
+                        overlay.left !== newOverlay.left || 
+                        overlay.top !== newOverlay.top
+                });
+                
+                // CRITICAL FIX: Only create new object if something actually changed
+                // This prevents unnecessary re-renders and position jumps
+                const hasChanged = 
+                    overlay.width !== newOverlay.width ||
+                    overlay.height !== newOverlay.height ||
+                    overlay.left !== newOverlay.left ||
+                    overlay.top !== newOverlay.top ||
+                    overlay.rotation !== newOverlay.rotation ||
+                    JSON.stringify(overlay.styles) !== JSON.stringify(newOverlay.styles) ||
+                    overlay.content !== newOverlay.content;
+                
+                if (!hasChanged) {
+                    console.log('[EditorContext] changeOverlay: No changes detected, returning same overlay reference');
+                    return overlay; // Return same reference if nothing changed
+                }
+                
+                return newOverlay;
+            });
+            
+            return updatedOverlays;
+        });
+    }, []); // Empty deps - function is stable and uses functional setState
     /**
      * Adds a new overlay to the editor
      * Automatically generates a new unique ID and appends it to the overlays array

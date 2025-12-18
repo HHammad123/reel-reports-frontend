@@ -1,5 +1,5 @@
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import "./App.css"
@@ -29,17 +29,78 @@ import AdminUsers from './pages/AdminUsers';
 import AdminCreateUser from './pages/AdminCreateUser';
 import VideoEditor from './pages/VideoEditor';
 import VideoEditorPage from './pages/VideoEditorPage';
-import VideoBackgroundRemover from './pages/VideoBackgroundRemover';
+import FreeTrialOver from './pages/FreeTrialOver';
 
 
 function App() {
   const isAuthenticated = useSelector(selectIsAuthenticated);
   const user = useSelector(selectUser);
 
+  // Check user validation status - check both Redux state and localStorage
+  const userStatus = useMemo(() => {
+    // First check Redux user object
+    let status = user?.status || user?.validation_status || '';
+    
+    // Fallback to localStorage if not in Redux
+    if (!status && isAuthenticated) {
+      try {
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const parsedUser = JSON.parse(storedUser);
+          status = parsedUser?.status || parsedUser?.validation_status || '';
+        }
+      } catch (e) {
+        console.warn('Error reading user from localStorage:', e);
+      }
+    }
+    
+    return status ? status.toString().toLowerCase() : '';
+  }, [user, isAuthenticated]);
+
+  const normalizedStatus = useMemo(() => {
+    if (!userStatus) return '';
+    return userStatus === 'non_validated' ? 'not_validated' : userStatus;
+  }, [userStatus]);
+
+  const rawRole = useMemo(() => {
+    if (!user) {
+      // Fallback to localStorage
+      try {
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const parsedUser = JSON.parse(storedUser);
+          return (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase();
+        }
+      } catch (e) {
+        // ignore
+      }
+      return '';
+    }
+    return (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase();
+  }, [user]);
+
+  // Check if user is validated - only show chat if status is explicitly 'validated'
+  // If status is 'not_validated' or 'non_validated', show FreeTrialOver
+  // Role doesn't matter - only status matters
+  const isValidated = useMemo(() => {
+    if (!isAuthenticated) return false;
+    if (!normalizedStatus) return false; // If no status, treat as not validated for safety
+    const statusLower = normalizedStatus.toLowerCase();
+    return statusLower === 'validated';
+  }, [isAuthenticated, normalizedStatus]);
+
   // Debug authentication state
   useEffect(() => {
-    console.log('App - Authentication state changed:', { isAuthenticated, user });
-  }, [isAuthenticated, user]);
+    console.log('App - Authentication state changed:', { 
+      isAuthenticated, 
+      user, 
+      userStatus,
+      normalizedStatus,
+      isValidated,
+      userStatusValue: user?.status,
+      userValidationStatus: user?.validation_status
+    });
+  }, [isAuthenticated, user, userStatus, normalizedStatus, isValidated]);
 
   return (
     <div className="App">
@@ -48,7 +109,7 @@ function App() {
          {/* Public routes */}
          <Route path="/login" element={<Login/>} />
          <Route path="/onboarding" element={<Onboarding/>}/>
-         <Route path="/video-background-remover" element={<VideoBackgroundRemover/>}/>
+   
        
     <Route path="/v1/auth/callback/:provider" element={<OAuthCallback />} />
          {/* test route */  }
@@ -61,7 +122,15 @@ function App() {
          } />
          <Route path="/chat/:sessionId" element={
            <ProtectedRoute>
-             <Home/>
+             {(() => {
+               // Only check validation status - role doesn't matter
+               // If status is 'validated', show chat; otherwise show FreeTrialOver
+               if (isAuthenticated && isValidated) {
+                 return <Home/>;
+               }
+               // If not validated (or status is missing), show FreeTrialOver
+               return <FreeTrialOver />;
+             })()}
            </ProtectedRoute>
          } />
          <Route path="/main" element={

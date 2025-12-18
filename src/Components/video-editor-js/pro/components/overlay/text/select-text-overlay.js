@@ -31,10 +31,10 @@ export const SelectTextOverlay = () => {
         var _a;
         const { from, row, updatedOverlays } = addAtPlayhead(currentFrame, overlays);
         const newOverlay = {
-            left: 100,
-            top: 100,
-            width: 500,
-            height: 180,
+            left: 64,    // Your desired default
+            top: 72,     // Your desired default
+            width: 512,  // Your desired default
+            height: 72,  // Your desired default
             durationInFrames: 90,
             from,
             row,
