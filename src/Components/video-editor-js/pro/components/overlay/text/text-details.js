@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { TextSettingsPanel } from "./text-settings-panel";
 import { TextStylePanel } from "./text-style-panel";
@@ -13,29 +13,130 @@ import { Separator } from "../../ui/separator";
  * Only handlePositionChange can modify dimensions
  */
 export const TextDetails = ({ localOverlay, setLocalOverlay }) => {
-    const { changeOverlay, getAspectRatioDimensions } = useEditorContext();
+    const { changeOverlay, getAspectRatioDimensions, overlays } = useEditorContext();
     
     // CRITICAL: Lock dimensions in a ref when overlay is first loaded
     // These dimensions will NEVER change except through handlePositionChange
     const lockedDimensionsRef = useRef(null);
     
     // Lock dimensions when localOverlay is first set
+    // CRITICAL FIX: Check if dimensions are canvas size (likely wrong) and use global state instead
     useEffect(() => {
         if (localOverlay && (!lockedDimensionsRef.current || lockedDimensionsRef.current.id !== localOverlay.id)) {
+            const canvasDimensions = getAspectRatioDimensions();
+            const canvasWidth = canvasDimensions.width;
+            const canvasHeight = canvasDimensions.height;
+            
+            // Check if localOverlay dimensions match canvas size (likely wrong defaults)
+            const isCanvasSize = 
+                (localOverlay.width === canvasWidth && localOverlay.height === canvasHeight) ||
+                (localOverlay.width === 1080 && localOverlay.height === 1080); // Common default
+            
+            // If dimensions are canvas size, try to get correct dimensions from global state
+            let finalWidth = localOverlay.width;
+            let finalHeight = localOverlay.height;
+            let finalLeft = localOverlay.left;
+            let finalTop = localOverlay.top;
+            
+            if (isCanvasSize) {
+                // Try to get correct dimensions from global overlays array
+                const globalOverlay = overlays.find(o => o.id === localOverlay.id);
+                if (globalOverlay && 
+                    globalOverlay.width !== canvasWidth && 
+                    globalOverlay.height !== canvasHeight &&
+                    globalOverlay.width > 0 && 
+                    globalOverlay.height > 0) {
+                    // Use dimensions from global state (they're likely correct)
+                    finalWidth = globalOverlay.width;
+                    finalHeight = globalOverlay.height;
+                    finalLeft = globalOverlay.left;
+                    finalTop = globalOverlay.top;
+                    console.log('✅ [TextDetails] Using dimensions from global state (canvas size detected):', {
+                        width: finalWidth,
+                        height: finalHeight,
+                        left: finalLeft,
+                        top: finalTop,
+                        localWidth: localOverlay.width,
+                        localHeight: localOverlay.height,
+                    });
+                } else {
+                    // Still canvas size in global state, use fallbacks
+                    finalWidth = 512;
+                    finalHeight = 72;
+                    finalLeft = localOverlay.left || 64;
+                    finalTop = localOverlay.top || 72;
+                    console.warn('⚠️ [TextDetails] Canvas size detected, using fallbacks:', {
+                        width: finalWidth,
+                        height: finalHeight,
+                        left: finalLeft,
+                        top: finalTop,
+                    });
+                }
+            } else {
+                // Dimensions look reasonable, use them as-is
+                finalWidth = (Number.isFinite(localOverlay.width) && localOverlay.width > 0) 
+                    ? localOverlay.width 
+                    : 512;
+                finalHeight = (Number.isFinite(localOverlay.height) && localOverlay.height > 0) 
+                    ? localOverlay.height 
+                    : 72;
+                finalLeft = Number.isFinite(localOverlay.left) 
+                    ? localOverlay.left 
+                    : 64;
+                finalTop = Number.isFinite(localOverlay.top) 
+                    ? localOverlay.top 
+                    : 72;
+            }
+            
+            // Lock the dimensions
             lockedDimensionsRef.current = {
                 id: localOverlay.id,
-                width: localOverlay.width,
-                height: localOverlay.height,
-                left: localOverlay.left,
-                top: localOverlay.top,
-                rotation: localOverlay.rotation,
+                width: finalWidth,
+                height: finalHeight,
+                left: finalLeft,
+                top: finalTop,
+                rotation: localOverlay.rotation || 0,
             };
-            console.log('🔒 [TextDetails] Locked dimensions:', lockedDimensionsRef.current);
+            
+            console.log('🔒 [TextDetails] Locked dimensions:', {
+                id: lockedDimensionsRef.current.id,
+                width: lockedDimensionsRef.current.width,
+                height: lockedDimensionsRef.current.height,
+                left: lockedDimensionsRef.current.left,
+                top: lockedDimensionsRef.current.top,
+                originalWidth: localOverlay.width,
+                originalHeight: localOverlay.height,
+                wasCanvasSize: isCanvasSize,
+            });
+            
+            // If we corrected dimensions, update local and global state
+            if (isCanvasSize && (finalWidth !== localOverlay.width || finalHeight !== localOverlay.height)) {
+                setLocalOverlay((prev) => {
+                    if (!prev || prev.id !== localOverlay.id) return prev;
+                    return {
+                        ...prev,
+                        width: finalWidth,
+                        height: finalHeight,
+                        left: finalLeft,
+                        top: finalTop,
+                    };
+                });
+                
+                setTimeout(() => {
+                    changeOverlay(localOverlay.id, (current) => ({
+                        ...current,
+                        width: finalWidth,
+                        height: finalHeight,
+                        left: finalLeft,
+                        top: finalTop,
+                    }));
+                }, 0);
+            }
         }
-    }, [localOverlay?.id]);
+    }, [localOverlay?.id, getAspectRatioDimensions, overlays, changeOverlay]);
     
     // CRITICAL: Enforce locked dimensions on every render to prevent dimension changes
-    // This ensures dimensions NEVER change after the initial lock, even if something tries to modify them
+    // BUT: If locked dimensions are canvas size and current dimensions are reasonable, update the lock
     const prevDimsRef = useRef(null);
     useEffect(() => {
         if (!localOverlay || !lockedDimensionsRef.current || lockedDimensionsRef.current.id !== localOverlay.id) {
@@ -51,6 +152,45 @@ export const TextDetails = ({ localOverlay, setLocalOverlay }) => {
             top: localOverlay.top,
             rotation: localOverlay.rotation,
         };
+        
+        const canvasDimensions = getAspectRatioDimensions();
+        const canvasWidth = canvasDimensions.width;
+        const canvasHeight = canvasDimensions.height;
+        
+        // Check if locked dimensions are canvas size (likely wrong)
+        const lockedIsCanvasSize = 
+            (lockedDims.width === canvasWidth && lockedDims.height === canvasHeight) ||
+            (lockedDims.width === 1080 && lockedDims.height === 1080);
+        
+        // Check if current dimensions are reasonable (not canvas size)
+        const currentIsReasonable = 
+            currentDims.width > 0 && 
+            currentDims.height > 0 &&
+            currentDims.width < canvasWidth * 0.9 && 
+            currentDims.height < canvasHeight * 0.9 &&
+            Number.isFinite(currentDims.width) &&
+            Number.isFinite(currentDims.height);
+        
+        // If locked dimensions are canvas size but current dimensions are reasonable, update the lock
+        if (lockedIsCanvasSize && currentIsReasonable) {
+            console.log('✅ [TextDetails] Updating lock from canvas size to reasonable dimensions:', {
+                oldLock: lockedDims,
+                newLock: currentDims,
+            });
+            
+            // Update the lock to the current reasonable dimensions
+            lockedDimensionsRef.current = {
+                id: localOverlay.id,
+                width: currentDims.width,
+                height: currentDims.height,
+                left: currentDims.left,
+                top: currentDims.top,
+                rotation: currentDims.rotation,
+            };
+            
+            prevDimsRef.current = { ...currentDims };
+            return; // Don't enforce, dimensions are now correct
+        }
         
         // Check if dimensions changed from what we expect
         const dimensionsChanged = 
@@ -104,21 +244,34 @@ export const TextDetails = ({ localOverlay, setLocalOverlay }) => {
             // Dimensions are correct, update prevDimsRef
             prevDimsRef.current = { ...currentDims };
         }
-    }, [localOverlay?.width, localOverlay?.height, localOverlay?.left, localOverlay?.top, localOverlay?.rotation, localOverlay?.id, changeOverlay]);
+    }, [localOverlay?.width, localOverlay?.height, localOverlay?.left, localOverlay?.top, localOverlay?.rotation, localOverlay?.id, changeOverlay, getAspectRatioDimensions]);
     
     // CRITICAL: Create a memoized overlay that ALWAYS uses locked dimensions
     // This ensures dimensions never change, even if localOverlay has wrong values
+    // We use a state to track when lock is set, so useMemo can react to it
+    const [lockVersion, setLockVersion] = useState(0);
+    
+    // Update lockVersion when dimensions are locked (triggers enforcedOverlay recalculation)
+    useEffect(() => {
+        if (lockedDimensionsRef.current && localOverlay && lockedDimensionsRef.current.id === localOverlay.id) {
+            setLockVersion(v => v + 1);
+        }
+    }, [localOverlay?.id]);
+    
     const enforcedOverlay = useMemo(() => {
         if (!localOverlay) return null;
         
+        // CRITICAL: Always use locked dimensions if they exist
+        // The lock is set by the useEffect above, which calculates correct dimensions
         const lockedDims = lockedDimensionsRef.current && lockedDimensionsRef.current.id === localOverlay.id
             ? lockedDimensionsRef.current
             : {
+                // If no lock yet, use current dimensions (lock will be set by useEffect)
                 width: localOverlay.width,
                 height: localOverlay.height,
                 left: localOverlay.left,
                 top: localOverlay.top,
-                rotation: localOverlay.rotation,
+                rotation: localOverlay.rotation || 0,
             };
         
         // Always use locked dimensions, never use localOverlay dimensions directly
@@ -134,8 +287,7 @@ export const TextDetails = ({ localOverlay, setLocalOverlay }) => {
         localOverlay?.id,
         localOverlay?.content,
         localOverlay?.styles,
-        // Note: We intentionally don't include localOverlay.width/height/etc in deps
-        // because we always use locked dimensions instead
+        lockVersion, // Trigger recalculation when lock is set
     ]);
     
     // Use enforcedOverlay instead of localOverlay throughout the component

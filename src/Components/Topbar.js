@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { FaBars, FaPlus, FaSignOutAlt } from "react-icons/fa";
 import { selectUser, selectIsAuthenticated, logoutUser } from '../redux/slices/userSlice';
@@ -11,11 +11,32 @@ import useBrandAssets from '../hooks/useBrandAssets';
 const Topbar = () => {
      const dispatch = useDispatch();
      const navigate = useNavigate();
+     const location = useLocation();
      const videoJob = useSelector(selectVideoJob);
      const { sidebarOpen, toggleSidebar } = useSidebar();
      // Redux selectors
      const user = useSelector(selectUser);
      const isAuthenticated = useSelector(selectIsAuthenticated);
+     
+     // Fallback to localStorage if Redux state isn't ready yet (for reload scenarios)
+     const [localAuthState, setLocalAuthState] = useState(() => {
+       try {
+         const storedUser = localStorage.getItem('user');
+         const storedToken = localStorage.getItem('token');
+         const storedAuth = localStorage.getItem('isAuthenticated');
+         return {
+           user: storedUser ? JSON.parse(storedUser) : null,
+           token: storedToken,
+           isAuthenticated: storedAuth === 'true' && storedUser && storedToken
+         };
+       } catch (e) {
+         return { user: null, token: null, isAuthenticated: false };
+       }
+     });
+     
+     // Use Redux state if available, otherwise fallback to localStorage
+     const effectiveUser = user || localAuthState.user;
+     const effectiveIsAuthenticated = isAuthenticated || localAuthState.isAuthenticated;
      
      // Brand profile state
      const { getBrandProfiles, activateBrandProfile } = useBrandAssets();
@@ -24,11 +45,18 @@ const Topbar = () => {
      const [selectedIsActive, setSelectedIsActive] = useState(false);
      const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
      
+     // Update local auth state when Redux state changes
+     useEffect(() => {
+       if (user && isAuthenticated) {
+         setLocalAuthState({ user, token: localStorage.getItem('token'), isAuthenticated: true });
+       }
+     }, [user, isAuthenticated]);
+     
      // Fetch profiles on mount
      useEffect(() => {
        const fetchProfiles = async () => {
          const userId = localStorage.getItem('token') || '';
-         if (!userId || !isAuthenticated) return;
+         if (!userId || !effectiveIsAuthenticated) return;
          
          setIsLoadingProfiles(true);
          try {
@@ -48,10 +76,10 @@ const Topbar = () => {
          }
        };
        
-       if (isAuthenticated) {
+       if (effectiveIsAuthenticated) {
          fetchProfiles();
        }
-     }, [isAuthenticated, getBrandProfiles]);
+     }, [effectiveIsAuthenticated, getBrandProfiles]);
      
      const handleSelectProfile = async (profileId) => {
        if (!profileId) return;
@@ -91,6 +119,11 @@ const Topbar = () => {
        }
      };
      
+     // Don't show Topbar on login or onboarding pages
+     if (location.pathname === '/login' || location.pathname === '/onboarding') {
+       return null;
+     }
+     
      return (
        <header className="sticky  z-20 mb-2 flex items-center justify-between rounded-3xl border border-white/60 bg-white/90 px-4 py-4 shadow-[0_18px_45px_rgba(19,0,139,0.12)] backdrop-blur-lg transition-all lg:px-8">
          <div className="flex items-center gap-4">
@@ -116,7 +149,7 @@ const Topbar = () => {
            )}
 
            {/* Brand Profile List and Set Active */}
-           {isAuthenticated && user && profiles.length > 0 && (
+           {effectiveIsAuthenticated && effectiveUser && profiles.length > 0 && (
              <div className="hidden md:flex items-center gap-3 rounded-full border border-[#E4E1FF] bg-white px-3 py-1.5 shadow-sm">
                <div className="flex items-center gap-2">
                  <span className="text-xs text-gray-600">Set as Active:</span>
@@ -158,14 +191,14 @@ const Topbar = () => {
              </div>
            )}
 
-           {isAuthenticated && user ? (
+           {effectiveIsAuthenticated && effectiveUser ? (
              <div className="flex items-center gap-3">
                <Link to="/profile" className="group inline-flex items-center gap-2">
                  <div className="h-11 w-11 rounded-full bg-gradient-to-br from-[#FFB347] via-[#FFA13D] to-[#FF8A3D] p-[2px] transition group-hover:from-[#FFA13D] group-hover:to-[#FF6A3D]">
                    <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-white">
-                     {user.picture ? (
+                     {effectiveUser.picture ? (
                        <img
-                         src={user.picture}
+                         src={effectiveUser.picture}
                          alt="Profile"
                          className="h-full w-full object-cover"
                        />

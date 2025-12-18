@@ -1,9 +1,9 @@
 
 import React, { useEffect, useMemo } from 'react';
 import { Routes, Route } from 'react-router-dom';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
 import "./App.css"
-import { selectIsAuthenticated, selectUser } from './redux/slices/userSlice';
+import { selectIsAuthenticated, selectUser, restoreAuthState } from './redux/slices/userSlice';
 import { SidebarProvider } from './Contexts/SidebarContext';
 import Home from './pages/Home';
 import Login from './pages/Login';
@@ -33,8 +33,16 @@ import FreeTrialOver from './pages/FreeTrialOver';
 
 
 function App() {
+  const dispatch = useDispatch();
   const isAuthenticated = useSelector(selectIsAuthenticated);
   const user = useSelector(selectUser);
+
+  // Restore authentication state from localStorage on app mount
+  useEffect(() => {
+    if (!isAuthenticated) {
+      dispatch(restoreAuthState());
+    }
+  }, [dispatch, isAuthenticated]);
 
   // Check user validation status - check both Redux state and localStorage
   const userStatus = useMemo(() => {
@@ -84,9 +92,29 @@ function App() {
   // Role doesn't matter - only status matters
   const isValidated = useMemo(() => {
     if (!isAuthenticated) return false;
-    if (!normalizedStatus) return false; // If no status, treat as not validated for safety
-    const statusLower = normalizedStatus.toLowerCase();
-    return statusLower === 'validated';
+    
+    // If no status, default to validated (for backward compatibility with existing users)
+    if (!normalizedStatus || normalizedStatus.trim() === '') {
+      console.log('No status found, defaulting to validated');
+      return true;
+    }
+    
+    const statusLower = normalizedStatus.toLowerCase().trim();
+    console.log('Checking validation status:', { normalizedStatus, statusLower });
+    
+    // Explicitly check for non-validated statuses
+    if (statusLower === 'not_validated' || statusLower === 'non_validated') {
+      return false;
+    }
+    
+    // Check for validated status (case-insensitive)
+    if (statusLower === 'validated') {
+      return true;
+    }
+    
+    // If status exists but is neither validated nor not_validated, default to validated
+    console.log('Status is neither validated nor not_validated, defaulting to validated');
+    return true;
   }, [isAuthenticated, normalizedStatus]);
 
   // Debug authentication state
@@ -120,17 +148,14 @@ function App() {
              <Dashboard />
            </ProtectedRoute>
          } />
+         <Route path="/free-trial" element={
+           <ProtectedRoute>
+             <FreeTrialOver />
+           </ProtectedRoute>
+         } />
          <Route path="/chat/:sessionId" element={
            <ProtectedRoute>
-             {(() => {
-               // Only check validation status - role doesn't matter
-               // If status is 'validated', show chat; otherwise show FreeTrialOver
-               if (isAuthenticated && isValidated) {
-                 return <Home/>;
-               }
-               // If not validated (or status is missing), show FreeTrialOver
-               return <FreeTrialOver />;
-             })()}
+             <Home/>
            </ProtectedRoute>
          } />
          <Route path="/main" element={

@@ -19,12 +19,42 @@ const Sidebar = () => {
    const user = useSelector(selectUser);
    const isAuthenticated = useSelector(selectIsAuthenticated);
    
+   // Fallback to localStorage for role detection (for reload scenarios)
+   const [localUser, setLocalUser] = useState(() => {
+     try {
+       const storedUser = localStorage.getItem('user');
+       return storedUser ? JSON.parse(storedUser) : null;
+     } catch (e) {
+       return null;
+     }
+   });
+   
+   // Update local user when Redux user changes
+   useEffect(() => {
+     if (user) {
+       setLocalUser(user);
+     } else if (isAuthenticated) {
+       // If authenticated but no user in Redux, try localStorage
+       try {
+         const storedUser = localStorage.getItem('user');
+         if (storedUser) {
+           setLocalUser(JSON.parse(storedUser));
+         }
+       } catch (e) {
+         // ignore
+       }
+     }
+   }, [user, isAuthenticated]);
+   
+   // Use Redux user if available, otherwise fallback to localStorage
+   const effectiveUser = user || localUser;
+   
    const { pathname } = location;
    const splitLocation = pathname.split("/");
    const baseNavClass = "w-full mb-3 rounded-xl p-4 flex items-center gap-3 text-left text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50";
    const activeClass = `${baseNavClass}  bg-white/25 shadow-lg shadow-black/10`;
    const inactiveClass = `${baseNavClass}  hover:bg-white/20`;
-   const rawRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase();
+   const rawRole = (effectiveUser?.role || effectiveUser?.user_role || effectiveUser?.type || effectiveUser?.userType || '').toString().toLowerCase();
    const isAdmin = rawRole === 'admin'; 
   // Sessions state for chat history
   const [sessions, setSessions] = useState([]);
@@ -240,12 +270,42 @@ const Sidebar = () => {
         return;
       }
       
-      // Check user validation status
-      const userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+      // Check user validation status - check both Redux and localStorage
+      let userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+      
+      // Fallback to localStorage if not in Redux
+      if (!userStatus || userStatus === '') {
+        try {
+          const storedUser = localStorage.getItem('user');
+          if (storedUser) {
+            const parsedUser = JSON.parse(storedUser);
+            userStatus = (parsedUser?.status || parsedUser?.validation_status || '').toString().toLowerCase();
+          }
+        } catch (e) {
+          console.warn('Error reading user from localStorage:', e);
+        }
+      }
+      
       const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
       
-      // If user is not validated and not admin, show trial over modal
-      if (normalizedStatus !== 'validated' && !isAdmin) {
+      // Check if user is admin (also check localStorage)
+      let checkIsAdmin = isAdmin;
+      if (!checkIsAdmin) {
+        try {
+          const storedUser = localStorage.getItem('user');
+          if (storedUser) {
+            const parsedUser = JSON.parse(storedUser);
+            const localRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase();
+            checkIsAdmin = localRole === 'admin';
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+      
+      // Only allow if status is 'validated' OR user is admin, otherwise show trial over modal
+      if (normalizedStatus !== 'validated' && !checkIsAdmin) {
+        console.log('Blocking access - Status:', normalizedStatus, 'IsAdmin:', checkIsAdmin);
         setShowTrialOverModal(true);
         return;
       }
@@ -447,6 +507,47 @@ const Sidebar = () => {
                               className="flex-1 truncate text-left"
                               onClick={() => {
                                 if (!id) return;
+                                
+                                // Check user validation status before navigating
+                                let userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+                                
+                                // Fallback to localStorage if not in Redux
+                                if (!userStatus || userStatus === '') {
+                                  try {
+                                    const storedUser = localStorage.getItem('user');
+                                    if (storedUser) {
+                                      const parsedUser = JSON.parse(storedUser);
+                                      userStatus = (parsedUser?.status || parsedUser?.validation_status || '').toString().toLowerCase();
+                                    }
+                                  } catch (e) {
+                                    // ignore
+                                  }
+                                }
+                                
+                                const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
+                                
+                                // Check if user is admin (also check localStorage)
+                                let checkIsAdmin = isAdmin;
+                                if (!checkIsAdmin) {
+                                  try {
+                                    const storedUser = localStorage.getItem('user');
+                                    if (storedUser) {
+                                      const parsedUser = JSON.parse(storedUser);
+                                      const localRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase();
+                                      checkIsAdmin = localRole === 'admin';
+                                    }
+                                  } catch (e) {
+                                    // ignore
+                                  }
+                                }
+                                
+                                // Only allow if status is 'validated' OR user is admin, otherwise show trial over modal
+                                if (normalizedStatus !== 'validated' && !checkIsAdmin) {
+                                  console.log('Blocking session access - Status:', normalizedStatus, 'IsAdmin:', checkIsAdmin);
+                                  setShowTrialOverModal(true);
+                                  return;
+                                }
+                                
                                 try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
                                 navigate(`/chat/${id}`);
                               }}

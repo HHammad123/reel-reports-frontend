@@ -6,18 +6,41 @@ import Topbar from '../Components/Topbar'
 import { selectUser } from '../redux/slices/userSlice'
 
 const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
+const STATUS_TABS = [
+  { label: 'Validated', value: 'validated' },
+  { label: 'Non-validated', value: 'not_validated' }
+]
 
 const AdminUsers = () => {
   const user = useSelector(selectUser)
 
+  // Check role from Redux and localStorage (for reload scenarios)
   const isAdmin = useMemo(() => {
-    const rawRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase()
-    return rawRole === 'admin'
+    // First check Redux user
+    let rawRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase()
+    
+    // Fallback to localStorage if not in Redux
+    if (!rawRole || rawRole === '') {
+      try {
+        const storedUser = localStorage.getItem('user')
+        if (storedUser) {
+          const parsedUser = JSON.parse(storedUser)
+          rawRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase()
+        }
+      } catch (e) {
+        console.warn('Error reading user from localStorage:', e)
+      }
+    }
+    
+    const adminStatus = rawRole === 'admin'
+    console.log('AdminUsers - Role check:', { rawRole, adminStatus, user, hasLocalStorage: !!localStorage.getItem('user') })
+    return adminStatus
   }, [user])
 
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [currentStatus, setCurrentStatus] = useState(STATUS_TABS[0].value)
   const [updatingId, setUpdatingId] = useState('')
 
   const resolveUserKey = (candidate, fallback) =>
@@ -33,7 +56,6 @@ const AdminUsers = () => {
       setError('')
       try {
         const token = localStorage.getItem('token') || ''
-        // Fetch all users without status filter
         const response = await fetch(`${ADMIN_BASE}/v1/admin/users/list`, {
           method: 'POST',
           headers: {
@@ -75,8 +97,56 @@ const AdminUsers = () => {
     return () => controller.abort()
   }, [fetchUsers, isAdmin])
 
+  // Don't redirect immediately - wait a bit for Redux state to load
+  // Check both Redux and localStorage before redirecting
+  const [checkingAdmin, setCheckingAdmin] = useState(true)
+  
+  useEffect(() => {
+    // Give Redux a moment to load, then check
+    const timer = setTimeout(() => {
+      setCheckingAdmin(false)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Show loading while checking admin status
+  if (checkingAdmin) {
+    return (
+      <div className="flex h-screen bg-[#E5E2FF] overflow-hidden">
+        <Sidebar />
+        <div className="flex-1 mx-[2rem] mt-[1rem] flex flex-col overflow-hidden min-h-0 min-w-0">
+          <Topbar />
+          <div className="flex-1 my-2 overflow-hidden min-h-0 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#13008B]/30 border-t-[#13008B]"></div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Only redirect if we've checked and user is definitely not admin
   if (!isAdmin) {
-    return <Navigate to="/" replace />
+    // Double-check localStorage before redirecting
+    try {
+      const storedUser = localStorage.getItem('user')
+      if (storedUser) {
+        const parsedUser = JSON.parse(storedUser)
+        const localRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase()
+        if (localRole === 'admin') {
+          // User is admin in localStorage, allow access (isAdmin will update when Redux loads)
+          // Continue rendering
+        } else {
+          // Not admin, redirect
+          return <Navigate to="/" replace />
+        }
+      } else {
+        // No user data at all, redirect
+        return <Navigate to="/" replace />
+      }
+    } catch (e) {
+      // Error checking localStorage, redirect to be safe
+      return <Navigate to="/" replace />
+    }
   }
 
   const handleRefresh = () => {
@@ -92,7 +162,7 @@ const AdminUsers = () => {
       console.warn('AdminUsers: missing user_id for status toggle', userItem)
       return
     }
-    const cleanedCurrent = (userItem?.status || userItem?.validation_status || '').toString().toLowerCase()
+    const cleanedCurrent = (userItem?.status || userItem?.validation_status || currentStatus || '').toString().toLowerCase()
     const normalizedCurrent = cleanedCurrent === 'non_validated' ? 'not_validated' : cleanedCurrent
     const normalizedExplicit = (explicitStatus || '').toString().toLowerCase()
     const nextStatus =
@@ -164,6 +234,25 @@ const AdminUsers = () => {
             </div>
 
           <div className="mt-6 flex-1 overflow-scroll">
+            <div className="mb-5 flex flex-wrap items-center gap-3">
+              {STATUS_TABS.map(tab => {
+                const isActive = tab.value === currentStatus
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    onClick={() => setCurrentStatus(tab.value)}
+                    className={`rounded-full outline-none border px-4 py-2 text-sm font-medium transition ${
+                      isActive
+                        ? 'border-[#13008B] bg-[#13008B]/10 text-[#13008B]'
+                        : 'border-[#D8D3FF] text-[#4B3CC4] hover:border-[#13008B]/50'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                )
+              })}
+            </div>
 
             {loading ? (
               <div className="flex h-full items-center justify-center">
@@ -196,7 +285,7 @@ const AdminUsers = () => {
                       const name = item?.display_name || item?.name || item?.full_name || '—'
                       const email = item?.email || item?.username || '—'
                       const role = (item?.role || item?.user_role || item?.type || '').toString() || '—'
-                      const statusRaw = item?.status || item?.validation_status || '—'
+                      const statusRaw = item?.status || item?.validation_status || currentStatus || '—'
                       const status = typeof statusRaw === 'string' ? statusRaw.replace(/_/g, ' ') : statusRaw
                       const created = item?.created_at || item?.createdAt || item?.created || ''
                       const createdLabel = created ? new Date(created).toLocaleString() : '—'

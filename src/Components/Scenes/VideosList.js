@@ -4942,7 +4942,7 @@ return () => {
               sidebarLogo={null}
               sidebarFooterText=""
               onOverlaysChange={handleOverlaysChange}
-              // isLoadingProject={true}
+              isLoadingProject={true}
               className="bg-white text-gray-900"
               style={{
                 // Apply custom color scheme: white background with #13008B accents

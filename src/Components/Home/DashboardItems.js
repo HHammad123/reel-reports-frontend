@@ -3,15 +3,17 @@ import bg from "../../asset/bg-home.png"
 import { FaChevronLeft, FaChevronRight, FaImages, FaPlay, FaPlayCircle, FaRegEdit, FaThLarge, FaUserFriends, FaVideo } from 'react-icons/fa'
 import { useNavigate } from 'react-router-dom'
 import { useSelector } from 'react-redux'
-import { selectToken } from '../../redux/slices/userSlice'
+import { selectToken, selectUser } from '../../redux/slices/userSlice'
 
 const DashboardItems = () => {
 	const navigate = useNavigate();
 	const token = useSelector(selectToken) || (typeof window !== 'undefined' ? localStorage.getItem('token') : '');
+	const user = useSelector(selectUser);
   const [recentVideos, setRecentVideos] = useState([]);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
   const [recentError, setRecentError] = useState('');
   const [carouselIndex, setCarouselIndex] = useState(0);
+  const [showTrialOverModal, setShowTrialOverModal] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(
     typeof window !== 'undefined' ? window.innerWidth : 1280
   );
@@ -22,10 +24,49 @@ const DashboardItems = () => {
 
   const handleStartGenerating = useCallback(async () => {
     try {
-      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
       const userToken = token || localStorage.getItem('token') || '';
       if (!userToken) { navigate('/login'); return; }
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+      
+      // Check user validation status - check both Redux and localStorage
+      let userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+      
+      // Fallback to localStorage if not in Redux
+      if (!userStatus || userStatus === '') {
+        try {
+          const storedUser = localStorage.getItem('user');
+          if (storedUser) {
+            const parsedUser = JSON.parse(storedUser);
+            userStatus = (parsedUser?.status || parsedUser?.validation_status || '').toString().toLowerCase();
+          }
+        } catch (e) {
+          console.warn('Error reading user from localStorage:', e);
+        }
+      }
+      
+      const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
+      
+      // Check if user is admin (also check localStorage)
+      let checkIsAdmin = false;
+      try {
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          const parsedUser = JSON.parse(storedUser);
+          const localRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase();
+          checkIsAdmin = localRole === 'admin';
+        }
+      } catch (e) {
+        // ignore
+      }
+      
+      // Only allow if status is 'validated' OR user is admin, otherwise show trial over modal
+      if (normalizedStatus !== 'validated' && !checkIsAdmin) {
+        console.log('Blocking dashboard access - Status:', normalizedStatus, 'IsAdmin:', checkIsAdmin);
+        setShowTrialOverModal(true);
+        return;
+      }
+      
+      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userToken })
       });
       const text = await resp.text();
@@ -39,7 +80,7 @@ const DashboardItems = () => {
       console.error('Failed to create new session:', e);
       alert('Unable to start a new chat. Please try again.');
     }
-  }, [navigate, token]);
+  }, [navigate, token, user]);
 
 	useEffect(() => {
 		if (typeof window === 'undefined') return;
@@ -85,8 +126,9 @@ const DashboardItems = () => {
 		{
 			id: 1,
 			icon: <FaThLarge className="text-[#13008B] w-12 h-12" />,
-			label: "Build Reel",
-			onClick: handleStartBuildReel,
+			label: "Build Reel (Coming Soon)",
+			onClick: null,
+			disabled: true,
 		},
 		{
 			id: 2,
@@ -137,6 +179,7 @@ const DashboardItems = () => {
     fetchRecent();
   }, [token]);
 	return (
+		<>
 		<div className='bg-white w-full h-full rounded-lg overflow-y-scroll p-[30px] scrollbar-hide '>
 			<div className="flex flex-col md:flex-row items-end justify-between">
 				{/* Left Section */}
@@ -180,11 +223,23 @@ const DashboardItems = () => {
 					{cards.map((card) => (
 						<div
 							key={card.id}
-							className="w-48 h-48  bg-gray-100 rounded-lg shadow-sm flex flex-col items-center justify-center hover:shadow-md cursor-pointer transition"
-							onClick={() => { if (card.onClick) { card.onClick(); return; } if (card.link) navigate(card.link); }}
+							className={`w-48 h-48 bg-gray-100 rounded-lg shadow-sm flex flex-col items-center justify-center transition ${
+								card.disabled 
+									? 'opacity-60 cursor-not-allowed' 
+									: 'hover:shadow-md cursor-pointer'
+							}`}
+							onClick={() => { 
+								if (card.disabled) return;
+								if (card.onClick) { card.onClick(); return; } 
+								if (card.link) navigate(card.link); 
+							}}
 						>
 							{card.icon}
-							<p className="mt-4 text-[#13008B] font-semibold text-center text-lg">
+							<p className={`mt-4 font-semibold text-center text-lg ${
+								card.disabled 
+									? 'text-gray-500' 
+									: 'text-[#13008B]'
+							}`}>
 								{card.label}
 							</p>
 						</div>
@@ -215,8 +270,46 @@ const DashboardItems = () => {
 				</div>
 			</div>
 
-
 		</div>
+		{/* Trial Over Modal */}
+		{showTrialOverModal && (
+			<div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+				<div className="bg-white rounded-lg shadow-2xl w-full max-w-md mx-4 relative">
+					<button
+						onClick={() => setShowTrialOverModal(false)}
+						className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors"
+						title="Close"
+					>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+							<line x1="18" y1="6" x2="6" y2="18"></line>
+							<line x1="6" y1="6" x2="18" y2="18"></line>
+						</svg>
+					</button>
+					<div className="p-6 pt-8">
+						<div className="text-center mb-6">
+							<div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+								<svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+								</svg>
+							</div>
+							<h3 className="text-xl font-semibold text-gray-900 mb-2">Free Trial Expired</h3>
+							<p className="text-sm text-gray-600">
+								Your free trial is over. Please contact support to continue using the service.
+							</p>
+						</div>
+						<div className="flex justify-center">
+							<button
+								onClick={() => setShowTrialOverModal(false)}
+								className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors font-medium"
+							>
+								Close
+							</button>
+						</div>
+					</div>
+				</div>
+			</div>
+		)}
+		</>
 	)
 }
 

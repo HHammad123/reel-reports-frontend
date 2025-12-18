@@ -7,20 +7,40 @@ const ProfileContent = ({userProfile}) => {
   const user = useSelector(selectUser);
   const isAuthenticated = useSelector(selectIsAuthenticated);
 
-  // Use user data from Redux if available, otherwise fall back to userProfile prop
-  let parsedProfile = userProfile
+  // Check localStorage as fallback for authentication
+  const [localAuthState, setLocalAuthState] = React.useState(() => {
+    try {
+      const storedAuth = localStorage.getItem('isAuthenticated');
+      const storedUser = localStorage.getItem('user');
+      return {
+        isAuthenticated: storedAuth === 'true',
+        user: storedUser ? JSON.parse(storedUser) : null
+      };
+    } catch (e) {
+      return { isAuthenticated: false, user: null };
+    }
+  });
+
+  // Use user data from Redux if available, otherwise fall back to userProfile prop or localStorage
+  let parsedProfile = userProfile;
   if (!user && userProfile && typeof userProfile === 'string') {
     try {
-      parsedProfile = JSON.parse(userProfile)
+      parsedProfile = JSON.parse(userProfile);
     } catch (_) {
-      parsedProfile = {}
+      parsedProfile = {};
     }
   }
 
-  const displayUser = user || parsedProfile || {};
+  // Check if we have any user data (Redux, prop, or localStorage)
+  const displayUser = user || parsedProfile || localAuthState.user || {};
   const roleLabel = (displayUser.role || displayUser.user_role || displayUser.type || displayUser.account_type || 'User').toString();
 
-  if (!isAuthenticated || !user) {
+  // Check authentication - use Redux if available, otherwise check localStorage
+  const effectiveIsAuthenticated = isAuthenticated || localAuthState.isAuthenticated;
+  const hasUserData = user || parsedProfile || localAuthState.user;
+
+  // Only show login message if truly not authenticated AND no user data
+  if (!effectiveIsAuthenticated && !hasUserData) {
     return (
       <div className='w-full h-full flex items-center justify-center'>
         <div className="text-center">
