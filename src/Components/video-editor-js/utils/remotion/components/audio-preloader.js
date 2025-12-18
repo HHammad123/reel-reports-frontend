@@ -133,11 +133,21 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             });
             
             // METHOD 2: Also create audio element for browser caching (backup method)
+            // CRITICAL: Check if audio element already exists to prevent duplicates
+            const existingAudio = audioElementsRef.current.get(finalAudioSrc)?.audio;
+            if (existingAudio && existingAudio.parentNode) {
+                // Audio element already exists and is in DOM, skip creating duplicate
+                return;
+            }
+            
             // CRITICAL: This ensures audio is preloaded and cached by browser
             const audio = document.createElement('audio');
             audio.preload = 'auto'; // Preload entire file - CRITICAL for Scene 1
             audio.crossOrigin = 'anonymous';
             audio.src = finalAudioSrc;
+            
+            // Set buffering properties for better playback performance
+            audio.setAttribute('preload', 'auto');
             
             // Add audio element to DOM temporarily to ensure it's loaded (some browsers need this)
             audio.style.display = 'none';
@@ -158,22 +168,36 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                 // Silently handle errors
             };
             
+            const handleCanPlay = () => {
+                // Ensure audio is buffered enough for smooth playback
+                if (audio.buffered.length > 0) {
+                    const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+                    // Log buffering status for debugging
+                    if (bufferedEnd > 0) {
+                        console.log(`[AudioPreloader] Audio buffered: ${bufferedEnd.toFixed(2)}s / ${audio.duration.toFixed(2)}s`, finalAudioSrc.substring(0, 60));
+                    }
+                }
+            };
+            
             audio.addEventListener('error', handleError);
+            audio.addEventListener('canplay', handleCanPlay);
+            audio.addEventListener('progress', handleCanPlay); // Track buffering progress
             
             // Explicitly call load() to trigger network request immediately
             // This triggers the network request that appears in the network tab
             audio.load();
             
             // Remove from DOM after loading starts (keep in memory for cache)
+            // Increased timeout to allow more buffering time
             setTimeout(() => {
                 try {
-                    if (audio.parentNode) {
+                    if (audio.parentNode && !audioElementsRef.current.get(finalAudioSrc)?.persistent) {
                         audio.parentNode.removeChild(audio);
                     }
                 } catch (e) {
                     // Ignore errors removing from DOM
                 }
-            }, 1000);
+            }, 2000); // Increased from 1000ms to allow more buffering
         };
         
         // CRITICAL: Load Scene 1 audio FIRST with guaranteed playback readiness
@@ -219,11 +243,21 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                     // Silently handle errors
                 });
                 
+                // CRITICAL: Check if Scene 1 audio element already exists to prevent duplicates
+                const existingScene1Audio = audioElementsRef.current.get(finalAudioSrc)?.audio;
+                if (existingScene1Audio && existingScene1Audio.hasAttribute('data-scene-1-audio')) {
+                    // Scene 1 audio already exists, skip creating duplicate
+                    return;
+                }
+                
                 // Create PERSISTENT audio element for Scene 1 (never remove from DOM)
                 const audio = document.createElement('audio');
                 audio.preload = 'auto';
                 audio.crossOrigin = 'anonymous';
                 audio.src = finalAudioSrc;
+                
+                // Set buffering properties for better playback performance
+                audio.setAttribute('preload', 'auto');
                 
                 // CRITICAL: Mark as Scene 1 audio so it persists in DOM
                 audio.setAttribute('data-scene-1-audio', 'true');

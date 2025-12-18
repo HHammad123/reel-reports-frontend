@@ -60,21 +60,79 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     }
     useEffect(() => {
         const handle = delayRender("Loading video");
+        let isMounted = true;
+        let timeoutId = null;
+        
         // Create a video element to preload the video
         const video = document.createElement("video");
+        video.preload = "auto";
+        video.crossOrigin = "anonymous";
         video.src = videoSrc;
+        
+        // Set up multiple loading handlers for better reliability
         const handleLoadedMetadata = () => {
-            continueRender(handle);
+            if (isMounted) {
+                console.log(`[VideoLayerContent] Video metadata loaded:`, videoSrc.substring(0, 60));
+                // Continue render once metadata is loaded (enough to start rendering)
+                continueRender(handle);
+            }
         };
+        
+        const handleCanPlay = () => {
+            if (isMounted) {
+                console.log(`[VideoLayerContent] Video can play:`, videoSrc.substring(0, 60));
+                continueRender(handle);
+            }
+        };
+        
+        const handleCanPlayThrough = () => {
+            if (isMounted) {
+                console.log(`[VideoLayerContent] Video can play through:`, videoSrc.substring(0, 60));
+                continueRender(handle);
+            }
+        };
+        
+        const handleLoadedData = () => {
+            if (isMounted) {
+                continueRender(handle);
+            }
+        };
+        
         const handleError = (error) => {
-            console.error(`Error loading video ${overlay.src}:`, error);
-            continueRender(handle);
+            console.error(`[VideoLayerContent] Error loading video ${overlay.src}:`, error);
+            if (isMounted) {
+                continueRender(handle);
+            }
         };
-        video.addEventListener("loadedmetadata", handleLoadedMetadata);
+        
+        // Add multiple event listeners for better loading detection
+        video.addEventListener("loadedmetadata", handleLoadedMetadata, { once: true });
+        video.addEventListener("canplay", handleCanPlay, { once: true });
+        video.addEventListener("canplaythrough", handleCanPlayThrough, { once: true });
+        video.addEventListener("loadeddata", handleLoadedData, { once: true });
         video.addEventListener("error", handleError);
+        
+        // Explicitly trigger load
+        video.load();
+        
+        // Timeout fallback - continue render after 5 seconds even if events don't fire
+        timeoutId = setTimeout(() => {
+            if (isMounted) {
+                console.warn(`[VideoLayerContent] Video loading timeout, continuing anyway:`, videoSrc.substring(0, 60));
+                continueRender(handle);
+            }
+        }, 5000);
+        
         return () => {
+            isMounted = false;
             video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+            video.removeEventListener("canplay", handleCanPlay);
+            video.removeEventListener("canplaythrough", handleCanPlayThrough);
+            video.removeEventListener("loadeddata", handleLoadedData);
             video.removeEventListener("error", handleError);
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
             // Ensure we don't leave hanging render delays
             continueRender(handle);
         };
