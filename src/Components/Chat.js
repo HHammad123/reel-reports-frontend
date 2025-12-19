@@ -15165,10 +15165,7 @@ const saveAnchorPromptTemplate = async () => {
                             return (
 
                               <button 
-                                onClick={() => {
-                                  if (imagesAvailable && typeof onGoToScenes === 'function') { onGoToScenes(); return; }
-                                  triggerGenerateScenes();
-                                }}
+                               onClick={() => { if (typeof onGoToScenes === 'function') { try { onGoToScenes(message.script); } catch(_){} } else { openScriptModal(message.script); } }} 
                                 className={`flex items-center justify-center gap-2 px-3 py-2 border rounded-lg transition-colors shadow-sm bg-white border-gray-200 hover:bg-gray-50 text-gray-900`}>
                                 <div className="w-5 h-5 rounded-full bg-blue-700 flex items-center justify-center text-white text-[10px] font-bold">S</div>
                                 <span className={`text-sm font-medium`}>{imagesAvailable ? 'Go to Storyboard' : 'Generate Storyboard'}</span>

@@ -6,6 +6,7 @@ import { Layer } from "./layer";
 import { AlignmentGuides } from "../../components/selection/alignment-guides";
 import { useAlignmentGuides } from "../../hooks/use-alignment-guides";
 import { AudioPreloader } from "./components/audio-preloader";
+import { VideoPreloader } from "./components/video-preloader";
 const outer = {
     backgroundColor: "black",
 };
@@ -38,7 +39,7 @@ export const Main = ({ overlays, setSelectedOverlayId, selectedOverlayId, change
     return (_jsxs(AbsoluteFill, { style: {
             ...outer,
             backgroundColor,
-        }, onPointerDown: onPointerDown, children: [_jsx(AudioPreloader, { overlays: overlays, ...(baseUrl && { baseUrl }) }), _jsx(AbsoluteFill, { style: layerContainer, children: overlays.map((overlay) => {
+        }, onPointerDown: onPointerDown, children: [_jsx(AudioPreloader, { overlays: overlays, ...(baseUrl && { baseUrl }) }), _jsx(VideoPreloader, { overlays: overlays, ...(baseUrl && { baseUrl }) }), _jsx(AbsoluteFill, { style: layerContainer, children: overlays.map((overlay) => {
                     return (_jsx(Layer, { overlay: overlay, ...(baseUrl && { baseUrl }), ...(fontInfos && { fontInfos }) }, overlay.id));
                 }) }), _jsx(SortedOutlines, { selectedOverlayId: selectedOverlayId, overlays: overlays, changeOverlay: changeOverlay, alignmentGuides: alignmentGuides }), showAlignmentGuides && (_jsx(AlignmentGuides, { guideState: alignmentGuides.guideState, canvasWidth: width, canvasHeight: height }))] }));
 };

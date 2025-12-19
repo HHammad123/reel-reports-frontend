@@ -90,7 +90,9 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
         };
     }, [containerDimensions, playerDimensions, compositionWidth, compositionHeight]);
     const handleAutoPlayError = useCallback((err) => {
-        console.error('[VideoPlayer] onAutoPlayError', err);
+        if (process.env.NODE_ENV === 'development') {
+            console.error('[VideoPlayer] onAutoPlayError', err);
+        }
     }, []);
     const editorInputProps = useMemo(() => ({
         overlays,

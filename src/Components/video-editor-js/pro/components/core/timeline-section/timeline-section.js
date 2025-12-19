@@ -217,9 +217,16 @@ export const TimelineSection = () => {
                         }
                     }
                     // Check video/image/sticker overlay styles (for padding, filters, etc.)
+                    // OPTIMIZED: Only check key style properties instead of full JSON.stringify
                     if ('styles' in overlay && 'styles' in lastOverlay) {
-                        if (JSON.stringify(overlay.styles || {}) !== JSON.stringify(lastOverlay.styles || {})) {
-                            return true;
+                        const currentStyles = overlay.styles || {};
+                        const lastStyles = lastOverlay.styles || {};
+                        // Only check important properties that affect rendering
+                        const importantProps = ['opacity', 'filter', 'transform', 'objectFit', 'padding', 'borderRadius'];
+                        for (const prop of importantProps) {
+                            if (currentStyles[prop] !== lastStyles[prop]) {
+                                return true;
+                            }
                         }
                     }
                     return false;

@@ -8,16 +8,6 @@ import { useLoadFontFromTextItem } from "../../text/load-font-from-text-item";
 export const TextLayerContent = ({ overlay, fontInfos, }) => {
     var _a, _b, _c, _d, _e;
     
-    // ADD DIAGNOSTIC LOGGING
-    console.log('🎨 [TextLayerContent RENDER]', {
-        id: overlay?.id,
-        width: overlay?.width,
-        height: overlay?.height,
-        left: overlay?.left,
-        top: overlay?.top,
-        timestamp: new Date().toISOString()
-    });
-    
     const frame = useCurrentFrame();
     
     // ============================================================================
@@ -188,11 +178,14 @@ export const TextLayerContent = ({ overlay, fontInfos, }) => {
     
     const { fontSize: _templateFontSize, ...restStyles } = overlay.styles;
     
+    // Ensure font family is properly quoted if it contains spaces
+    const quotedFontFamily = fontFamily && fontFamily.includes(' ') ? `"${fontFamily}"` : fontFamily;
+    
     const textStyle = {
         ...restStyles,
         animation: undefined,
         fontSize: `${fontSize}px`,
-        fontFamily: fontFamily,
+        fontFamily: quotedFontFamily,
         maxWidth: "100%",
         maxHeight: "100%",
         wordWrap: "break-word",

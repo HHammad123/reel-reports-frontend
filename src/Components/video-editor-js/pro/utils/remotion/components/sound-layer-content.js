@@ -21,7 +21,9 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     const resolvedBaseUrl = baseUrl || contextBaseUrl;
     // Safety check - don't render Audio if src is missing
     if (!overlay.src || overlay.src.trim() === '') {
-        console.warn('SoundLayerContent: No src provided for sound overlay', overlay);
+        if (process.env.NODE_ENV === 'development') {
+            console.warn('SoundLayerContent: No src provided for sound overlay', overlay);
+        }
         return null;
     }
     // Determine the audio source URL

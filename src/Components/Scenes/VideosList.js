@@ -4729,15 +4729,19 @@ const applyChromaKeyToCharts = () => {
 // Process IMMEDIATELY (no delay)
 applyChromaKeyToCharts();
 
-// Then process again with small delays to catch late additions
-const timer1 = setTimeout(applyChromaKeyToCharts, 50);
-const timer2 = setTimeout(applyChromaKeyToCharts, 150);
-const timer3 = setTimeout(applyChromaKeyToCharts, 300);
+// Reduced timers to minimize lag - only one delayed check
+const timer1 = setTimeout(applyChromaKeyToCharts, 200);
 
-// Aggressive mutation observer
+// Throttled mutation observer to reduce performance impact
+let mutationTimeout = null;
 const observer = new MutationObserver(() => {
-  // Process immediately on any DOM change
-  applyChromaKeyToCharts();
+  // Throttle mutations - only process every 200ms to reduce lag
+  if (mutationTimeout) {
+    clearTimeout(mutationTimeout);
+  }
+  mutationTimeout = setTimeout(() => {
+    applyChromaKeyToCharts();
+  }, 200);
 });
 
 const editorContainer = document.querySelector('.rve-host');
@@ -4752,8 +4756,9 @@ if (editorContainer) {
 
 return () => {
   clearTimeout(timer1);
-  clearTimeout(timer2);
-  clearTimeout(timer3);
+  if (mutationTimeout) {
+    clearTimeout(mutationTimeout);
+  }
   observer.disconnect();
 };
 }, [applyChromaKey, defaultOverlays]);

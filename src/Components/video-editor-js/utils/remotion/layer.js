@@ -55,16 +55,6 @@ export const Layer = ({ overlay, baseUrl, fontInfos }) => {
         const startFrame = overlay.from || 0;
         const durationFrames = overlay.durationInFrames || 300;
         
-        // CRITICAL DEBUG: Log every audio sequence being rendered
-        console.log('[Remotion] Rendering audio Sequence:', {
-            id: overlay.id,
-            from: startFrame,
-            durationInFrames: durationFrames,
-            src: overlay.src?.substring(0, 60),
-            isScene1: startFrame === 0,
-            volume: overlay.styles?.volume || 1
-        });
-        
         return (_jsx(Sequence, { from: startFrame, durationInFrames: durationFrames, children: _jsx(LayerContent, { overlay: overlay, ...(baseUrl && { baseUrl }), ...(fontInfos && { fontInfos }) }) }, overlay.id));
     }
     /**
