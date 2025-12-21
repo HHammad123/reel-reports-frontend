@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useCurrentFrame, interpolate, Html5Audio, delayRender, continueRender } from "remotion";
+import { useCurrentFrame, interpolate, Html5Audio, delayRender, continueRender, useVideoConfig } from "remotion";
 import { useEffect, useState } from "react";
 import { toAbsoluteUrl } from "../../general/url-helper";
 import { useEditorContext } from "../../../contexts/editor-context";
@@ -18,6 +18,7 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     var _a, _b, _c, _d, _e, _f;
     const { baseUrl: contextBaseUrl } = useSafeEditorContext();
     const frame = useCurrentFrame();
+    const { fps } = useVideoConfig(); // CRITICAL: Must be called before any early returns
     const [isAudioReady, setIsAudioReady] = useState(false);
     // Use prop baseUrl first, then context baseUrl
     const resolvedBaseUrl = baseUrl || contextBaseUrl;
@@ -145,7 +146,7 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
         
         const handleError = (error) => {
             if (process.env.NODE_ENV === 'development') {
-                console.error(`[SoundLayerContent] Error loading audio ${overlay.src}:`, error);
+            console.error(`[SoundLayerContent] Error loading audio ${overlay.src}:`, error);
             }
             if (isMounted) {
                 setIsAudioReady(true); // Continue even on error
@@ -194,8 +195,7 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     const fadeIn = Math.max(0, (_d = (_c = overlay.styles) === null || _c === void 0 ? void 0 : _c.fadeIn) !== null && _d !== void 0 ? _d : 0); // Ensure non-negative
     const fadeOut = Math.max(0, (_f = (_e = overlay.styles) === null || _e === void 0 ? void 0 : _e.fadeOut) !== null && _f !== void 0 ? _f : 0); // Ensure non-negative
     // Calculate fade multiplier based on current frame
-    // Assuming 30fps for fade calculation
-    const fps = 30;
+    // Use actual fps from Remotion config for accurate timing (already retrieved at top of component)
     const fadeInFrames = fadeIn * fps;
     const fadeOutFrames = fadeOut * fps;
     const totalFrames = overlay.durationInFrames || 0;

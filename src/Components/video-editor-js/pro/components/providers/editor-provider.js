@@ -12,7 +12,7 @@ import { useRenderer } from "../../contexts/renderer-context";
 import { TIMELINE_CONSTANTS } from "../advanced-timeline/constants";
 import { transformOverlaysForAspectRatio, shouldTransformOverlays, getDimensionsForAspectRatio } from "../../utils/aspect-ratio-transform";
 import { saveEditorState } from "../../utils/general/indexdb-helper";
-export const EditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, onSaving, onSaved, onOverlaysChange, 
+export const EditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, onSaving, onSaved, onOverlaysChange, onSelectedOverlayChange, 
 // Loading State
 isLoadingProject = false, 
 // Player Configuration
@@ -79,11 +79,11 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                     audio.pause();
                 }
                 // Reset to beginning to prevent echo
-                audio.currentTime = 0;
+                    audio.currentTime = 0;
                 // Clear any pending play promises
                 audioPlayPromisesRef.current.clear();
-            });
-        }
+                });
+            }
     }, [currentFrame, isPlaying]);
     
     // CRITICAL: Ensure Remotion uses preloaded Scene 1 audio - intercept audio element creation
@@ -221,6 +221,41 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
     const audioPlayPromisesRef = useRef(new Map()); // Track pending play promises to prevent race conditions
     
     useEffect(() => {
+        // AGGRESSIVE FIX: Force pause all duplicate Scene 1 audio elements immediately
+        // This ensures that even if something creates duplicate elements, they're immediately paused
+        // Only run when playing or when dealing with Scene 1 audio to avoid performance overhead
+        if (isPlaying || currentFrame === 0) {
+            const allAudioElements = Array.from(document.querySelectorAll('audio'));
+            const audioBySource = new Map();
+            
+            allAudioElements.forEach(audio => {
+                const src = audio.src;
+                if (src) { // Only process audio elements with a src
+                    if (!audioBySource.has(src)) {
+                        audioBySource.set(src, []);
+                    }
+                    audioBySource.get(src).push(audio);
+                }
+            });
+            
+            // For each unique audio source, keep only ONE playing element (prioritize Scene 1 preloaded)
+            audioBySource.forEach((elements, src) => {
+                if (elements.length > 1) {
+                    // Find Scene 1 preloaded element if it exists
+                    const scene1Element = elements.find(el => el.hasAttribute('data-scene-1-audio'));
+                    const keepElement = scene1Element || elements[0];
+                    
+                    // Pause all others immediately
+                    elements.forEach(el => {
+                        if (el !== keepElement && !el.paused) {
+                            el.pause();
+                            el.currentTime = 0;
+                        }
+                    });
+                }
+            });
+        }
+        
         // CRITICAL: Remotion's Html5Audio handles sync automatically, so we should minimize manual intervention
         // Only sync when there's a significant drift or when starting/stopping
         
@@ -275,124 +310,147 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                     }
                 }
             
-            // CRITICAL: Only use the FIRST audio element to prevent echo from duplicates
-            // Remotion's Html5Audio creates one element, but preloader might create another
-            // We should only play ONE audio element per overlay
-            const audio = audioElements[0]; // Use only the first element
+            // CRITICAL: Prioritize Scene 1 preloaded audio element to prevent echo
+            // For Scene 1 audio (from === 0), ALWAYS use the preloaded element marked with data-scene-1-audio
+            // For other audio, use the first element found
+            let audio;
+            const isScene1Audio = audioStartFrame === 0;
+            
+            if (isScene1Audio) {
+                // CRITICAL: For Scene 1 audio, find the preloaded element with data-scene-1-audio attribute
+                audio = audioElements.find(el => el.hasAttribute('data-scene-1-audio'));
+                
+                // If not found, fall back to first element
+                if (!audio) {
+                    audio = audioElements[0];
+                }
+                
+                // CRITICAL: Pause and reset ALL other audio elements with same src (especially Remotion-created ones)
+                audioElements.forEach((otherAudio) => {
+                    if (otherAudio !== audio) {
+                        if (!otherAudio.paused) {
+                            otherAudio.pause();
+                            otherAudio.currentTime = 0;
+                        }
+                    }
+                });
+            } else {
+                // For non-Scene-1 audio, use the first element
+                audio = audioElements[0];
+                
+                // Pause other duplicates
+                audioElements.slice(1).forEach((otherAudio) => {
+                    if (!otherAudio.paused) {
+                        otherAudio.pause();
+                        otherAudio.currentTime = 0;
+                    }
+                });
+            }
             
             if (!audio) {
                 return; // No audio element found
             }
             
-            // Process the single audio element
-            // CRITICAL: Pause ALL other audio elements with the same src to prevent echo
-            audioElements.slice(1).forEach((otherAudio) => {
-                if (!otherAudio.paused) {
-                    otherAudio.pause();
-                    otherAudio.currentTime = 0; // Reset to prevent echo
-                }
-            });
-            
-            // CRITICAL: If timeline is paused, ALWAYS pause audio (no exceptions)
-            if (!isPlaying) {
-                if (!audio.paused) {
-                    // CRITICAL: Cancel any pending play promises before pausing
-                    const audioKey = `${overlay.src}-${audio.src}`;
-                    const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
-                    if (pendingPromise) {
-                        // Pause will automatically reject the play promise (AbortError)
-                        // Remove from tracking to prevent error logs
-                        audioPlayPromisesRef.current.delete(audioKey);
-                    }
-                    audio.pause();
-                }
-                return; // Don't do anything else if paused
-            }
-            
-            // Only proceed if timeline is playing
-            if (isPlaying && isWithinAudioRange) {
-                // Timeline is playing and we're within this audio's time range
-                if (audio.paused && audio.readyState >= 2) {
-                    // CRITICAL: Cancel any pending play promise to prevent race conditions
-                    const audioKey = `${overlay.src}-${audio.src}`;
-                    const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
-                    if (pendingPromise) {
-                        // Don't cancel the promise, just track it
-                        audioPlayPromisesRef.current.delete(audioKey);
-                    }
-                    
-                    audio.volume = overlay.styles?.volume || 1;
-                    audio.muted = false;
-                    
-                    // Calculate the correct currentTime based on frame position
-                    const framesIntoAudio = currentFrame - audioStartFrame;
-                    const secondsIntoAudio = framesIntoAudio / fps;
-                    const targetTime = Math.max(0, secondsIntoAudio);
-                    
-                    // Set currentTime when starting playback
-                    audio.currentTime = targetTime;
-                    
-                    // CRITICAL: Handle play() promise properly to avoid AbortError
-                    const playPromise = audio.play();
-                    if (playPromise !== undefined) {
-                        audioPlayPromisesRef.current.set(audioKey, playPromise);
-                        playPromise
-                            .then(() => {
-                                // Play succeeded, remove from tracking
+                // CRITICAL: If timeline is paused, ALWAYS pause audio (no exceptions)
+                if (!isPlaying) {
+                    if (!audio.paused) {
+                            // CRITICAL: Cancel any pending play promises before pausing
+                            const audioKey = `${overlay.src}-${audio.src}`;
+                            const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
+                            if (pendingPromise) {
+                                // Pause will automatically reject the play promise (AbortError)
+                                // Remove from tracking to prevent error logs
                                 audioPlayPromisesRef.current.delete(audioKey);
-                            })
+                            }
+                        audio.pause();
+                    }
+                    return; // Don't do anything else if paused
+                }
+                
+                // Only proceed if timeline is playing
+                if (isPlaying && isWithinAudioRange) {
+                    // Timeline is playing and we're within this audio's time range
+                    if (audio.paused && audio.readyState >= 2) {
+                            // CRITICAL: Cancel any pending play promise to prevent race conditions
+                            const audioKey = `${overlay.src}-${audio.src}`;
+                            const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
+                            if (pendingPromise) {
+                                // Don't cancel the promise, just track it
+                                audioPlayPromisesRef.current.delete(audioKey);
+                            }
+                            
+                        audio.volume = overlay.styles?.volume || 1;
+                        audio.muted = false;
+                        
+                        // Calculate the correct currentTime based on frame position
+                        const framesIntoAudio = currentFrame - audioStartFrame;
+                        const secondsIntoAudio = framesIntoAudio / fps;
+                            const targetTime = Math.max(0, secondsIntoAudio);
+                        
+                            // Set currentTime when starting playback
+                            audio.currentTime = targetTime;
+                            
+                            // CRITICAL: Handle play() promise properly to avoid AbortError
+                            const playPromise = audio.play();
+                            if (playPromise !== undefined) {
+                                audioPlayPromisesRef.current.set(audioKey, playPromise);
+                                playPromise
+                                    .then(() => {
+                                        // Play succeeded, remove from tracking
+                                        audioPlayPromisesRef.current.delete(audioKey);
+                                    })
                             .catch((error) => {
-                                // Remove from tracking on error
-                                audioPlayPromisesRef.current.delete(audioKey);
-                                
-                                // AbortError is expected when pause() interrupts play()
-                                // Don't log it as an error, it's normal behavior
+                                        // Remove from tracking on error
+                                        audioPlayPromisesRef.current.delete(audioKey);
+                                        
+                                        // AbortError is expected when pause() interrupts play()
+                                        // Don't log it as an error, it's normal behavior
                                 if (error.name !== 'AbortError' && error.name !== 'NotAllowedError') {
                                     // Only log unexpected errors in development
                                     if (process.env.NODE_ENV === 'development') {
                                         console.error('[EditorProvider] Failed to play audio:', error);
                                     }
-                                }
+                                        }
                             });
+                            }
+                    } else if (!audio.paused) {
+                            // Audio is already playing - let Remotion's Html5Audio handle sync automatically
+                            // Only check volume/mute state, don't manually sync currentTime unless drift is very large
+                            // This prevents interference with Remotion's built-in sync mechanism
+                            
+                            // Ensure volume and mute are correct
+                            const targetVolume = overlay.styles?.volume || 1;
+                            if (Math.abs(audio.volume - targetVolume) > 0.01) {
+                                audio.volume = targetVolume;
+                            }
+                            if (audio.muted) {
+                                audio.muted = false;
+                            }
+                            
+                            // CRITICAL: Only manually sync if drift is > 0.5 seconds (very large drift)
+                            // Remotion's Html5Audio handles normal sync, we only correct major issues
+                        const framesIntoAudio = currentFrame - audioStartFrame;
+                        const secondsIntoAudio = framesIntoAudio / fps;
+                        const targetTime = Math.max(0, secondsIntoAudio);
+                            const drift = Math.abs(audio.currentTime - targetTime);
+                        
+                            // Only correct if drift is very large (0.5s) - this allows Remotion to handle normal sync
+                            if (drift > 0.5) {
+                            audio.currentTime = targetTime;
+                        }
                     }
-                } else if (!audio.paused) {
-                    // Audio is already playing - let Remotion's Html5Audio handle sync automatically
-                    // Only check volume/mute state, don't manually sync currentTime unless drift is very large
-                    // This prevents interference with Remotion's built-in sync mechanism
-                    
-                    // Ensure volume and mute are correct
-                    const targetVolume = overlay.styles?.volume || 1;
-                    if (Math.abs(audio.volume - targetVolume) > 0.01) {
-                        audio.volume = targetVolume;
+                    } else if (isPlaying && !isWithinAudioRange) {
+                        // Audio is outside its range, pause it
+                        if (!audio.paused) {
+                            // CRITICAL: Cancel any pending play promises before pausing
+                            const audioKey = `${overlay.src}-${audio.src}`;
+                            const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
+                            if (pendingPromise) {
+                                audioPlayPromisesRef.current.delete(audioKey);
+                            }
+                            audio.pause();
+                        }
                     }
-                    if (audio.muted) {
-                        audio.muted = false;
-                    }
-                    
-                    // CRITICAL: Only manually sync if drift is > 0.5 seconds (very large drift)
-                    // Remotion's Html5Audio handles normal sync, we only correct major issues
-                    const framesIntoAudio = currentFrame - audioStartFrame;
-                    const secondsIntoAudio = framesIntoAudio / fps;
-                    const targetTime = Math.max(0, secondsIntoAudio);
-                    const drift = Math.abs(audio.currentTime - targetTime);
-                    
-                    // Only correct if drift is very large (0.5s) - this allows Remotion to handle normal sync
-                    if (drift > 0.5) {
-                        audio.currentTime = targetTime;
-                    }
-                }
-            } else if (isPlaying && !isWithinAudioRange) {
-                // Audio is outside its range, pause it
-                if (!audio.paused) {
-                    // CRITICAL: Cancel any pending play promises before pausing
-                    const audioKey = `${overlay.src}-${audio.src}`;
-                    const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
-                    if (pendingPromise) {
-                        audioPlayPromisesRef.current.delete(audioKey);
-                    }
-                    audio.pause();
-                }
-            }
             });
         });
         
@@ -484,66 +542,93 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                                 }
                             }
                         
-                        // CRITICAL: Only use the FIRST audio element to prevent echo from duplicates
-                        const audio = audioElements[0];
+                        // CRITICAL: Prioritize Scene 1 preloaded audio element to prevent echo
+                        // For Scene 1 audio (from === 0), ALWAYS use the preloaded element marked with data-scene-1-audio
+                        // For other audio, use the first element found
+                        let audio;
+                        const isScene1Audio = audioStartFrame === 0;
+                        
+                        if (isScene1Audio) {
+                            // CRITICAL: For Scene 1 audio, find the preloaded element with data-scene-1-audio attribute
+                            audio = audioElements.find(el => el.hasAttribute('data-scene-1-audio'));
+                            
+                            // If not found, fall back to first element
+                            if (!audio) {
+                                audio = audioElements[0];
+                            }
+                            
+                            // CRITICAL: Pause and reset ALL other audio elements with same src (especially Remotion-created ones)
+                            audioElements.forEach((otherAudio) => {
+                                if (otherAudio !== audio) {
+                                    if (!otherAudio.paused) {
+                                        otherAudio.pause();
+                                        otherAudio.currentTime = 0;
+                                    }
+                                }
+                            });
+                        } else {
+                            // For non-Scene-1 audio, use the first element
+                            audio = audioElements[0];
+                            
+                            // Pause other duplicates
+                            audioElements.slice(1).forEach((otherAudio) => {
+                                if (!otherAudio.paused) {
+                                    otherAudio.pause();
+                                    otherAudio.currentTime = 0;
+                                }
+                            });
+                        }
+                        
                         if (!audio) {
                             return; // No audio element found
                         }
                         
-                        // Pause ALL other audio elements with the same src to prevent echo
-                        audioElements.slice(1).forEach((otherAudio) => {
-                            if (!otherAudio.paused) {
-                                otherAudio.pause();
-                                otherAudio.currentTime = 0; // Reset to prevent echo
-                            }
-                        });
-                        
-                        if (audio.paused && audio.readyState >= 2) {
-                            // CRITICAL: Cancel any pending play promise to prevent race conditions
-                            const audioKey = `${overlay.src}-${audio.src}`;
-                            const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
-                            if (pendingPromise) {
-                                audioPlayPromisesRef.current.delete(audioKey);
-                            }
-                            
-                            audio.volume = overlay.styles?.volume || 1;
-                            audio.muted = false;
-                            
-                            const framesIntoAudio = currentFrame - audioStartFrame;
-                            const secondsIntoAudio = framesIntoAudio / fps;
-                            const targetTime = Math.max(0, secondsIntoAudio);
-                            
-                            // Only set if significantly different
-                            if (Math.abs(audio.currentTime - targetTime) > 0.05) {
-                                audio.currentTime = targetTime;
-                            }
-                            
-                            // CRITICAL: Handle play() promise properly to avoid AbortError
-                            const playPromise = audio.play();
-                            if (playPromise !== undefined) {
-                                audioPlayPromisesRef.current.set(audioKey, playPromise);
-                                playPromise
-                                    .then(() => {
-                                        // Play succeeded, remove from tracking
+                            if (audio.paused && audio.readyState >= 2) {
+                                    // CRITICAL: Cancel any pending play promise to prevent race conditions
+                                    const audioKey = `${overlay.src}-${audio.src}`;
+                                    const pendingPromise = audioPlayPromisesRef.current.get(audioKey);
+                                    if (pendingPromise) {
                                         audioPlayPromisesRef.current.delete(audioKey);
-                                    })
+                                    }
+                                    
+                                audio.volume = overlay.styles?.volume || 1;
+                                audio.muted = false;
+                                
+                                const framesIntoAudio = currentFrame - audioStartFrame;
+                                const secondsIntoAudio = framesIntoAudio / fps;
+                                    const targetTime = Math.max(0, secondsIntoAudio);
+                                
+                                    // Only set if significantly different
+                                    if (Math.abs(audio.currentTime - targetTime) > 0.05) {
+                                        audio.currentTime = targetTime;
+                                    }
+                                    
+                                    // CRITICAL: Handle play() promise properly to avoid AbortError
+                                    const playPromise = audio.play();
+                                    if (playPromise !== undefined) {
+                                        audioPlayPromisesRef.current.set(audioKey, playPromise);
+                                        playPromise
+                                            .then(() => {
+                                                // Play succeeded, remove from tracking
+                                                audioPlayPromisesRef.current.delete(audioKey);
+                                            })
                                     .catch((error) => {
-                                        // Remove from tracking on error
-                                        audioPlayPromisesRef.current.delete(audioKey);
-                                        
-                                        // AbortError is expected when pause() interrupts play()
-                                        // Don't log it as an error, it's normal behavior
-                                        if (error.name === 'AbortError' || error.name === 'NotAllowedError') {
-                                            // These are expected - audio was paused or autoplay blocked
-                                            // Silently ignore
-                                        } else {
+                                                // Remove from tracking on error
+                                                audioPlayPromisesRef.current.delete(audioKey);
+                                                
+                                                // AbortError is expected when pause() interrupts play()
+                                                // Don't log it as an error, it's normal behavior
+                                                if (error.name === 'AbortError' || error.name === 'NotAllowedError') {
+                                                    // These are expected - audio was paused or autoplay blocked
+                                                    // Silently ignore
+                                                } else {
                                             if (process.env.NODE_ENV === 'development') {
-                                                console.error('[EditorProvider] ❌ Failed to resume audio:', error);
+                                        console.error('[EditorProvider] ❌ Failed to resume audio:', error);
                                             }
-                                        }
-                                    });
-                            }
-                        }
+                                                }
+                                            });
+                                    }
+                                }
                             }
                         });
                 });
@@ -736,6 +821,13 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
             onOverlaysChange(overlays);
         }
     }, [overlays, onOverlaysChange]);
+    
+    // Call onSelectedOverlayChange when selectedOverlayId changes
+    useEffect(() => {
+        if (onSelectedOverlayChange) {
+            onSelectedOverlayChange(selectedOverlayId);
+        }
+    }, [selectedOverlayId, onSelectedOverlayChange]);
     // Manual save function - saves current project state
     const saveProject = useCallback(async (projectData) => {
         if (onSaving)

@@ -225,7 +225,7 @@ export const TimelineSection = () => {
                         const importantProps = ['opacity', 'filter', 'transform', 'objectFit', 'padding', 'borderRadius'];
                         for (const prop of importantProps) {
                             if (currentStyles[prop] !== lastStyles[prop]) {
-                                return true;
+                            return true;
                             }
                         }
                     }

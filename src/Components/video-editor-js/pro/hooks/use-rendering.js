@@ -53,63 +53,108 @@ export const useRendering = (id, inputProps) => {
             status: "invoking",
         });
         try {
-            const { renderer, pollingInterval = 1000, initialDelay = 0 } = rendererConfig;
+            const { renderer, onRenderStart, onRenderProgress, onRenderComplete } = rendererConfig;
+            
+            // Show modal if callback provided
+            if (onRenderStart) {
+                onRenderStart();
+            }
+            
             console.log("Calling renderVideo with inputProps", inputProps);
             const response = await renderer.renderVideo({ id, inputProps });
-            const renderId = response.renderId;
-            const bucketName = response.bucketName;
-            // Apply initial delay if configured
-            if (initialDelay > 0) {
-                await wait(initialDelay);
+            const jobId = response.job_id || response.renderId || response._jobId;
+            
+            if (!jobId) {
+                throw new Error('No job_id received from render API');
             }
+            
             setState({
                 status: "rendering",
                 progress: 0,
-                renderId,
-                ...(bucketName && { bucketName }),
+                renderId: jobId,
             });
-            // Wait a short moment before first progress check to allow async render process to initialize
-            await wait(100);
+            
+            // Poll job status until complete
+            const pollInterval = 3000; // 3 seconds
+            const maxDuration = 10 * 60 * 1000; // 10 minutes
+            const startTime = Date.now();
             let pending = true;
+            
             while (pending) {
-                console.log(`Checking progress for renderId=${renderId}`);
-                const result = await renderer.getProgress({
-                    id: renderId,
-                    ...(bucketName && { bucketName }),
-                });
-                console.log("Progress result", result);
-                switch (result.type) {
-                    case "error": {
-                        console.error(`Render error: ${result.message}`);
-                        setState({
-                            status: "error",
-                            renderId: renderId,
-                            error: new Error(result.message),
-                        });
-                        pending = false;
-                        break;
+                // Check timeout
+                if (Date.now() - startTime > maxDuration) {
+                    throw new Error('Render job polling timeout');
+                }
+                
+                try {
+                    // Use getRenderJobStatus if available, otherwise fallback to getProgress
+                    let result;
+                    if (renderer.getRenderJobStatus) {
+                        result = await renderer.getRenderJobStatus(jobId);
+                    } else {
+                        result = await renderer.getProgress({ id: jobId });
                     }
-                    case "done": {
-                        console.log(`Render complete: url=${result.url}, size=${result.size}`);
+                    
+                    const status = result?.status || result?.job_status || 'queued';
+                    const progress = result?.progress || result?.progress_percent || 0;
+                    const phase = result?.phase || result?.message || '';
+                    
+                    // Update progress callback
+                    if (onRenderProgress) {
+                        onRenderProgress({ percent: progress, phase });
+                    }
+                    
+                    // Update state
+                    setState({
+                        status: "rendering",
+                        progress: typeof progress === 'number' ? progress / 100 : 0,
+                        renderId: jobId,
+                    });
+                    
+                    // Check if job is complete
+                    if (status === 'succeeded' || status === 'completed' || status === 'success') {
+                        console.log('Render job completed successfully');
                         setState({
-                            size: result.size,
-                            url: result.url,
                             status: "done",
+                            url: result?.url || result?.video_url || null,
+                            renderId: jobId,
                         });
+                        
+                        // Call completion callback
+                        if (onRenderComplete) {
+                            onRenderComplete();
+                        }
+                        
+                        // Navigate to MyMedia page
+                        if (typeof window !== 'undefined' && window.location) {
+                            setTimeout(() => {
+                                try {
+                                    window.location.href = '/media';
+                                } catch (e) {
+                                    console.error('Failed to navigate to /media:', e);
+                                }
+                            }, 1000);
+                        }
+                        
                         pending = false;
                         break;
                     }
-                    case "progress": {
-                        console.log(`Render progress: ${result.progress}%`);
-                        setState({
-                            status: "rendering",
-                            progress: result.progress,
-                            renderId: renderId,
-                            ...(bucketName && { bucketName }),
-                        });
-                        await wait(pollingInterval);
-                        break;
+                    
+                    // Check if job failed
+                    if (status === 'failed' || status === 'error') {
+                        throw new Error(result?.error || result?.message || 'Render job failed');
                     }
+                    
+                    // Wait before next poll
+                    await wait(pollInterval);
+                } catch (pollError) {
+                    console.error('Error polling render job status:', pollError);
+                    // If it's a timeout or terminal error, stop polling
+                    if (pollError.message.includes('timeout') || pollError.message.includes('failed')) {
+                        throw pollError;
+                    }
+                    // Otherwise, wait and retry
+                    await wait(pollInterval);
                 }
             }
         }

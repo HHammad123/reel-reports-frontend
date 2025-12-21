@@ -62,6 +62,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showVideoLoader, setShowVideoLoader] = useState(false);
   const [jobProgress, setJobProgress] = useState({ percent: 0, phase: '' });
+  // Render video modal state
+  const [showRenderModal, setShowRenderModal] = useState(false);
+  const [renderProgress, setRenderProgress] = useState({ percent: 0, phase: '' });
+  const [renderJobId, setRenderJobId] = useState(null);
   // Transitions state: key is video index (transition between video[index] and video[index+1])
   const [transitions, setTransitions] = useState({}); // { 0: "fade", 1: "slideleft", ... }
   const [transitionDuration, setTransitionDuration] = useState(0.5);
@@ -2649,6 +2653,14 @@ if (videoElement.readyState >= 2) {
     console.log('Renderer endpoint:', USE_SSR_RENDERING ? SSR_RENDER_ENDPOINT : LAMBDA_RENDER_ENDPOINT);
   }, [USE_SSR_RENDERING]);
 
+  // Handle selected overlay changes - open sidebar when any layer is clicked
+  const handleSelectedOverlayChange = useCallback((selectedOverlayId) => {
+    // Open sidebar when an overlay is selected (video, audio, image, subtitle, etc.)
+    if (selectedOverlayId !== null && selectedOverlayId !== undefined) {
+      setSidebarVisible(true);
+    }
+  }, []);
+
   // Handle overlay changes from ReactVideoEditor
   const handleOverlaysChange = useCallback((overlays) => {
     const currentOverlays = overlays || [];
@@ -4740,7 +4752,7 @@ const observer = new MutationObserver(() => {
     clearTimeout(mutationTimeout);
   }
   mutationTimeout = setTimeout(() => {
-    applyChromaKeyToCharts();
+  applyChromaKeyToCharts();
   }, 200);
 });
 
@@ -4791,6 +4803,41 @@ return () => {
                 {jobProgress.phase && jobProgress.percent > 0 && (
                   <p className="text-xs text-gray-500">
                     {jobProgress.phase.toUpperCase()} • {Math.min(100, Math.max(0, Math.round(jobProgress.percent)))}%
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Render Video Modal */}
+      {showRenderModal && (
+        <>
+          <div className="absolute inset-0 z-30 bg-white" />
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
+              <div className="relative w-20 h-20 flex items-center justify-center">
+                <video
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                >
+                  <source src={LoadingAnimationVideo} type="video/mp4" />
+                </video>
+              </div>
+              <div className="space-y-2">
+                <p className="text-lg font-semibold text-[#13008B]">Rendering Video</p>
+                <p className="text-sm text-gray-600">
+                  {renderProgress.phase === 'done' && renderProgress.percent >= 100
+                    ? 'Redirecting to media page...'
+                    : 'This may take a few moments. Please keep this tab open while we finish.'}
+                </p>
+                {renderProgress.phase && renderProgress.percent > 0 && (
+                  <p className="text-xs text-gray-500">
+                    {renderProgress.phase.toUpperCase()} • {Math.min(100, Math.max(0, Math.round(renderProgress.percent)))}%
                   </p>
                 )}
               </div>
@@ -4942,11 +4989,22 @@ return () => {
               defaultAspectRatio={aspectRatio}
               fps={APP_CONFIG.fps}
               renderer={selectedRenderer}
+              onRenderStart={() => {
+                setShowRenderModal(true);
+                setRenderProgress({ percent: 0, phase: '' });
+              }}
+              onRenderProgress={(progress) => {
+                setRenderProgress(progress);
+              }}
+              onRenderComplete={() => {
+                setRenderProgress({ percent: 100, phase: 'done' });
+              }}
               showDefaultThemes={true}
               showSidebar={sidebarVisible}
               sidebarLogo={null}
               sidebarFooterText=""
               onOverlaysChange={handleOverlaysChange}
+              onSelectedOverlayChange={handleSelectedOverlayChange}
               isLoadingProject={true}
               className="bg-white text-gray-900"
               style={{

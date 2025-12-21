@@ -546,6 +546,10 @@ const MyMedia = () => {
   const [showShortPopup, setShowShortPopup] = useState(false);
   const [webmConversionJobId, setWebmConversionJobId] = useState(null);
   const [webmConversionStatus, setWebmConversionStatus] = useState(null);
+  // State for render video job
+  const [renderVideoJobId, setRenderVideoJobId] = useState(null);
+  const [renderVideoStatus, setRenderVideoStatus] = useState(null);
+  const [renderVideoProgress, setRenderVideoProgress] = useState({ percent: 0, phase: '' });
   // State for final videos
   const [finalVideos, setFinalVideos] = useState([]);
 
@@ -566,6 +570,17 @@ const MyMedia = () => {
       if (jobId) {
         setWebmConversionJobId(jobId);
         setWebmConversionStatus('queued');
+      }
+    } catch (_) { /* noop */ }
+  }, []);
+
+  // Initialize render video job from localStorage
+  useEffect(() => {
+    try {
+      const jobId = localStorage.getItem('render_video_job_id');
+      if (jobId) {
+        setRenderVideoJobId(jobId);
+        setRenderVideoStatus('queued');
       }
     } catch (_) { /* noop */ }
   }, []);
@@ -658,6 +673,101 @@ const MyMedia = () => {
     poll();
     return () => { cancelled = true; };
   }, [webmConversionJobId]); // Only depend on jobId, not status
+
+  // Poll render video job status until succeeded
+  useEffect(() => {
+    if (!renderVideoJobId) return;
+    
+    let cancelled = false;
+    let isPolling = false; // Track if polling is in progress
+    const pollInterval = 3000; // 3 seconds
+    const maxDuration = 10 * 60 * 1000; // 10 minutes
+    const startTime = Date.now();
+    
+    const poll = async () => {
+      // Prevent multiple polling loops
+      if (isPolling || cancelled) return;
+      
+      // Check timeout
+      if (Date.now() - startTime > maxDuration) {
+        setRenderVideoStatus('failed');
+        console.error('Render video job polling timeout');
+        return;
+      }
+      
+      isPolling = true;
+      
+      try {
+        const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
+        const url = `${apiBase}/v1/videos/render-job-status/${encodeURIComponent(renderVideoJobId)}`;
+        
+        const resp = await fetch(url);
+        const text = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+        
+        if (!resp.ok) {
+          throw new Error(`Render job status check failed: ${resp.status} ${text}`);
+        }
+        
+        const status = data?.status || data?.job_status || 'queued';
+        const progress = data?.progress || data?.progress_percent || 0;
+        const phase = data?.phase || data?.message || '';
+        
+        if (!cancelled) {
+          setRenderVideoStatus(status);
+          setRenderVideoProgress({ 
+            percent: typeof progress === 'number' ? progress : 0, 
+            phase: phase || '' 
+          });
+          
+          // If succeeded, clear the job ID from localStorage
+          if (status === 'succeeded' || status === 'completed' || status === 'success') {
+            localStorage.removeItem('render_video_job_id');
+            // Refresh the video library to show the new video
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+            isPolling = false;
+            return; // Stop polling
+          }
+          
+          // If failed, keep job ID for debugging but stop polling
+          if (status === 'failed' || status === 'error') {
+            console.error('Render video job failed:', data);
+            isPolling = false;
+            return; // Stop polling
+          }
+        }
+        
+        // Continue polling if not in terminal state
+        if (!cancelled && status !== 'succeeded' && status !== 'completed' && status !== 'success' && status !== 'failed' && status !== 'error') {
+          isPolling = false;
+          setTimeout(poll, pollInterval);
+        } else {
+          isPolling = false;
+        }
+      } catch (e) {
+        console.error('Error polling render video job status:', e);
+        isPolling = false;
+        if (!cancelled) {
+          // On error, retry after interval (but check timeout first)
+          if (Date.now() - startTime < maxDuration) {
+            setTimeout(poll, pollInterval);
+          } else {
+            setRenderVideoStatus('failed');
+          }
+        }
+      }
+    };
+    
+    poll();
+    return () => { cancelled = true; };
+  }, [renderVideoJobId]); // Only depend on jobId, not status
 
   // Poll job status if jobId exists and not terminal (adjust to merge jobs when needed)
   useEffect(() => {
@@ -922,6 +1032,31 @@ const MyMedia = () => {
                   <div className="absolute top-3 left-3 z-10 px-2 py-1 rounded bg-yellow-400 text-black text-xs font-semibold">Converting…</div>
                   <div className="text-white/80 text-sm">{'Your video is being converted. Please wait...'}</div>
                 </div>
+              </div>
+            )}
+
+            {/* Render Video job status card */}
+            {renderVideoJobId && renderVideoStatus && renderVideoStatus !== 'succeeded' && renderVideoStatus !== 'completed' && renderVideoStatus !== 'success' && renderVideoStatus !== 'failed' && renderVideoStatus !== 'error' && (
+              <div className="mb-8 p-4 border border-gray-200 rounded-xl bg-gray-50">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-gray-900 font-medium">Rendering Video</div>
+                  <div className={`text-sm ${renderVideoStatus === 'succeeded' || renderVideoStatus === 'completed' || renderVideoStatus === 'success' ? 'text-green-700' : renderVideoStatus === 'failed' || renderVideoStatus === 'error' ? 'text-red-700' : 'text-blue-700'}`}>
+                    {renderVideoStatus || 'queued'} {typeof renderVideoProgress?.percent === 'number' ? `• ${renderVideoProgress.percent}%` : ''}
+                  </div>
+                </div>
+                <div className="relative w-full aspect-video rounded-lg border overflow-hidden bg-black flex items-center justify-center">
+                  {renderVideoStatus !== 'succeeded' && renderVideoStatus !== 'completed' && renderVideoStatus !== 'success' && (
+                    <div className="absolute top-3 left-3 z-10 px-2 py-1 rounded bg-yellow-400 text-black text-xs font-semibold">Rendering…</div>
+                  )}
+                  {renderVideoStatus === 'succeeded' || renderVideoStatus === 'completed' || renderVideoStatus === 'success' ? (
+                    <div className="text-white/80 text-sm">{'Your video has been rendered successfully!'}</div>
+                  ) : (
+                    <div className="text-white/80 text-sm">{'Generating Your Perfect Video…'}</div>
+                  )}
+                </div>
+                {renderVideoStatus === 'failed' || renderVideoStatus === 'error' ? (
+                  <div className="mt-2 text-sm text-red-700">Video rendering failed. Please try again.</div>
+                ) : null}
               </div>
             )}
 

@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useCurrentFrame } from "remotion";
+import { useCurrentFrame, useVideoConfig } from "remotion";
 import { useRef } from "react";
 import { defaultCaptionStyles } from "../../../components/overlay/captions/caption-settings";
 import { useLoadFontFromTextItem } from "../../text/load-font-from-text-item";
@@ -31,7 +31,8 @@ import { useLoadFontFromTextItem } from "../../text/load-font-from-text-item";
  */
 export const CaptionLayerContent = ({ overlay, fontInfos, }) => {
     const frame = useCurrentFrame();
-    const frameMs = (frame / 30) * 1000;
+    const { fps } = useVideoConfig();
+    const frameMs = (frame / fps) * 1000;
     const styles = overlay.styles || defaultCaptionStyles;
     
     // Cache caption lookup to avoid re-running find() on every frame
@@ -79,9 +80,9 @@ export const CaptionLayerContent = ({ overlay, fontInfos, }) => {
     const highlightBorderRadius = highlightStyle?.borderRadius || "4px";
     
     // Render words - optimize by skipping calculations when not highlighted
-    var _a;
+        var _a;
     const words = (_a = currentCaption === null || currentCaption === void 0 ? void 0 : currentCaption.words) === null || _a === void 0 ? void 0 : _a.map((word, index) => {
-        const isHighlighted = frameMs >= word.startMs && frameMs <= word.endMs;
+            const isHighlighted = frameMs >= word.startMs && frameMs <= word.endMs;
         
         // Skip progress calculation if not highlighted (optimization)
         let scaleValue = 1;
@@ -103,14 +104,14 @@ export const CaptionLayerContent = ({ overlay, fontInfos, }) => {
                 textShadow: isHighlighted ? highlightTextShadow : styles.textShadow,
                 padding: highlightPadding,
                 borderRadius: highlightBorderRadius,
-                margin: "0 2px",
+                    margin: "0 2px",
                 fontFamily: quotedFontFamily,
                 // REMOVED: transition property - causes performance issues
                 willChange: isHighlighted ? "transform, opacity" : "auto", // Only optimize when highlighted
             }, 
             children: word.word 
         }, `${word.word}-${index}`));
-    });
+        });
     return (_jsx("div", { className: "absolute inset-0 flex items-center justify-center p-4", style: {
             ...styles,
             width: "100%",

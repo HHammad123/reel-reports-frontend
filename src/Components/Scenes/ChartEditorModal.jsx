@@ -5,6 +5,30 @@ import { FaTimes, FaUndo, FaRedo } from 'react-icons/fa'
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value))
 
+// Aspect ratio helper functions
+const normalizeAspectRatioValue = (ratio, fallback = '16:9') => {
+  if (!ratio || typeof ratio !== 'string') return fallback;
+  // Normalize common separators: space, underscore, "x", "/", ":"
+  const cleaned = ratio.replace(/\s+/g, '').replace(/_/g, ':');
+  const match = cleaned.match(/(\d+(?:\.\d+)?)[:/xX](\d+(?:\.\d+)?)/);
+  if (match) {
+    const w = Number(match[1]);
+    const h = Number(match[2]);
+    if (w > 0 && h > 0) return `${w}:${h}`;
+  }
+  const lower = cleaned.toLowerCase();
+  if (lower === '9:16' || lower === '9x16') return '9:16';
+  if (lower === '16:9' || lower === '16x9') return '16:9';
+  return fallback;
+};
+
+const aspectRatioToCss = (ratio) => {
+  const normalized = normalizeAspectRatioValue(ratio);
+  const [w, h] = normalized.split(':').map(Number);
+  if (w > 0 && h > 0) return `${w} / ${h}`;
+  return '16 / 9';
+};
+
 // Constants from App.jsx
 const FONTS = ['Arial', 'Open Sans', 'Roboto', 'Helvetica', 'Times New Roman', 'Georgia', 'Courier New', 'Verdana', 'Trebuchet MS']
 const LINE_DASH = ['solid', 'dash', 'dot', 'dashdot', 'longdash', 'longdashdot']
@@ -1245,6 +1269,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   const [availablePresets, setAvailablePresets] = useState([])
   const [selectedPresetIndex, setSelectedPresetIndex] = useState(0)
   const [isLoadingPresets, setIsLoadingPresets] = useState(false)
+  const [aspectRatioCss, setAspectRatioCss] = useState('16 / 9')
+  const [isVertical, setIsVertical] = useState(false) // Track if aspect ratio is 9:16 (vertical)
 
   // Capture current editor state
   const captureEditorState = useCallback(() => {
@@ -1534,6 +1560,107 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     }
   }, [isOpen, sceneData, sceneNumber])
 
+  // Fetch aspect ratio from session data
+  useEffect(() => {
+    const fetchAspectRatio = async () => {
+      try {
+        const session_id = localStorage.getItem('session_id')
+        const user_id = localStorage.getItem('token')
+        if (!session_id || !user_id) {
+          console.log('📐 ChartEditorModal - No session_id or user_id, using default 16:9')
+          setAspectRatioCss('16 / 9')
+          return
+        }
+
+        console.log('📐 ChartEditorModal - Fetching aspect ratio from session data...')
+        const sresp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id, session_id })
+        })
+        
+        if (!sresp.ok) {
+          throw new Error(`Failed to fetch session data: ${sresp.status}`)
+        }
+
+        const stext = await sresp.text()
+        let sdata
+        try {
+          sdata = JSON.parse(stext)
+        } catch (_) {
+          sdata = stext
+        }
+
+        const sessionData = sdata?.session_data || sdata?.session || {}
+        const scripts = Array.isArray(sessionData?.scripts) && sessionData.scripts.length > 0 ? sessionData.scripts : []
+        // scripts[0] has the latest version (e.g., v9) - use index 0 for latest script
+        const currentScript = scripts[0] || null
+
+        const pickString = (val) => (typeof val === 'string' && val.trim() ? val.trim() : '')
+
+        // 1) Prefer aspect_ratio from guidelines
+        let fromGuidelines = ''
+        if (currentScript && typeof currentScript === 'object') {
+          const currentVersionKey = currentScript.current_version || currentScript.currentVersion
+          const currentVersionObj =
+            (typeof currentVersionKey === 'string' && currentScript[currentVersionKey]) ||
+            currentScript
+          const userQueryArr =
+            (Array.isArray(currentVersionObj?.userquery) && currentVersionObj.userquery) ||
+            (Array.isArray(currentVersionObj?.user_query) && currentVersionObj.user_query) ||
+            []
+          const firstUserQuery = userQueryArr[0] || {}
+          const guidelines = firstUserQuery?.guidelines || firstUserQuery?.guideLines || {}
+          const tech = guidelines.technical_and_formal_constraints ||
+            guidelines.technicalAndFormalConstraints ||
+            guidelines.technical_constraints ||
+            guidelines.technicalConstraints ||
+            {}
+          fromGuidelines =
+            pickString(tech.aspect_ratio) ||
+            pickString(tech.aspectRatio)
+        }
+
+        let aspectRatio = '16:9'
+        if (fromGuidelines) {
+          aspectRatio = fromGuidelines
+          console.log('📐 ChartEditorModal - Found aspect ratio from guidelines:', aspectRatio)
+        } else {
+          // 2) Fallback to script-level / session-level aspect_ratio fields
+          aspectRatio =
+            pickString(currentScript?.aspect_ratio) ||
+            pickString(currentScript?.aspectRatio) ||
+            pickString(sessionData?.aspect_ratio) ||
+            pickString(sessionData?.aspectRatio) ||
+            '16:9'
+          console.log('📐 ChartEditorModal - Using fallback aspect ratio:', aspectRatio)
+        }
+
+        // Normalize the aspect ratio first (handles 9_16, 16_9, etc.)
+        const normalizedRatio = normalizeAspectRatioValue(aspectRatio)
+        console.log('📐 ChartEditorModal - Normalized aspect ratio:', normalizedRatio)
+        
+        // Check if it's vertical (9:16)
+        const isVerticalRatio = normalizedRatio === '9:16'
+        setIsVertical(isVerticalRatio)
+        console.log('📐 ChartEditorModal - Is vertical (9:16):', isVerticalRatio)
+        
+        // Convert to CSS format
+        const cssRatio = aspectRatioToCss(normalizedRatio)
+        console.log('📐 ChartEditorModal - Final CSS aspect ratio:', cssRatio)
+        
+        setAspectRatioCss(cssRatio)
+      } catch (err) {
+        console.error('❌ ChartEditorModal - Error fetching aspect ratio:', err)
+        setAspectRatioCss('16 / 9')
+      }
+    }
+
+    if (isOpen) {
+      fetchAspectRatio()
+    }
+  }, [isOpen])
+
   const colorTargets = useMemo(
     () => computeColorTargets(chartTypeState, chartDataState),
     [chartTypeState, chartDataState]
@@ -1625,7 +1752,9 @@ useEffect(() => {
     // Exclude background colors from layoutOverrides to prevent conflicts
     const { paper_bgcolor, plot_bgcolor, ...layoutOverridesWithoutBg } = layoutOverrides || {}
     
-    fig.layout = {
+    // Adjust layout for aspect ratio
+    const shouldUseVerticalLayout = isVertical
+    const adjustedLayout = {
       ...fig.layout,
       ...layoutOverridesWithoutBg,
       dragmode: 'zoom',
@@ -1636,8 +1765,24 @@ useEffect(() => {
           width: 2
         }
       },
-      editrevision: (fig.layout?.editrevision || 0) + 1
+      editrevision: (fig.layout?.editrevision || 0) + 1,
+      // Ensure autosize is true so Plotly respects container dimensions
+      autosize: true,
+      // Remove any fixed width/height to let container control sizing
+      width: undefined,
+      height: undefined,
+      // Adjust margins for vertical layout if needed - increased left margin for Y-axis labels
+      ...(shouldUseVerticalLayout ? {
+        margin: {
+          l: fig.layout.margin?.l || 90,  // Increased from 50 to 90 for Y-axis labels
+          r: fig.layout.margin?.r || 40,
+          t: fig.layout.margin?.t || 90,
+          b: fig.layout.margin?.b || 60
+        }
+      } : {})
     }
+    
+    fig.layout = adjustedLayout
     console.log('🔍 BEFORE NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
 
     // ✅✅✅ NUCLEAR FIX: Force axis settings AFTER everything else
@@ -1820,7 +1965,7 @@ if (yLineVisible === true) {
     setFigure(null)
     setError(err?.message || 'Unable to render chart')
   }
-}, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex, sectionsState])
+}, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex, sectionsState, isVertical])
 
   const datasetSummary = useMemo(() => {
     const extracted = extractChartData(chartDataState, chartTypeState)
@@ -2468,9 +2613,15 @@ if (yLineVisible === true) {
   
   if (!isOpen) return null
 
+  // Calculate modal dimensions based on aspect ratio
+  // For 9:16 (vertical), we need wider modal to accommodate sidebar + tall chart
+  // For 16:9 (horizontal), standard wide modal
+  const modalWidth = isVertical ? 'max-w-[1300px]' : 'max-w-[1400px]'  // Increased for Y-axis labels
+  const modalHeight = isVertical ? 'max-h-[95vh]' : 'max-h-[90vh]'
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[1200px] max-h-[90vh] flex flex-col overflow-hidden">
+      <div className={`bg-white rounded-2xl shadow-2xl w-full ${modalWidth} ${modalHeight} flex flex-col overflow-hidden`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
           <div>
             <p className="text-xs uppercase tracking-wide text-gray-500">Chart Editor</p>
@@ -4248,22 +4399,53 @@ if (yLineVisible === true) {
               the chart data payload.
             </p>
           </aside>
-          <div className="col-span-4 min-h-[320px] p-4">
-            {figure ? (
-              <Plot
-                key={`chart-${sceneNumber}-${figure.layout?.editrevision || 0}-yline-${figure.layout?.yaxis?.showline}-xline-${figure.layout?.xaxis?.showline}`}
-                ref={plotRef}
-                data={figure.data}
-                layout={figure.layout}
-                config={figure.config}
-                style={{ width: '100%', height: '100%' }}
-                useResizeHandler
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm">
-                {error || 'Chart will appear here once ready.'}
+          <div className="col-span-4 bg-gray-50" style={{ overflow: 'auto', padding: isVertical ? '1rem 1.5rem' : '1rem', maxHeight: isVertical ? 'calc(95vh - 120px)' : 'calc(90vh - 120px)' }}>
+            <div className={`w-full flex ${isVertical ? 'justify-center' : 'items-center justify-center'}`} style={{ paddingTop: isVertical ? '1rem' : '0' }}>
+              <div 
+                className="bg-white rounded-lg shadow-sm"
+                style={{ 
+                  aspectRatio: aspectRatioCss,
+                  ...(isVertical ? {
+                    width: '100%',
+                    maxWidth: '650px',  // Increased to accommodate Y-axis labels
+                    minWidth: '500px',  // Increased minimum width
+                    flexShrink: 0
+                  } : {
+                    width: '100%',
+                    maxWidth: '100%'
+                  }),
+                  display: 'block',
+                  position: 'relative',
+                  // Ensure container maintains aspect ratio and doesn't get cut
+                  boxSizing: 'border-box',
+                  overflow: 'visible'
+                }}
+              >
+                {figure ? (
+                  <div style={{ 
+                    width: '100%',
+                    height: '100%',
+                    position: 'relative',
+                    padding: 0,
+                    margin: 0
+                  }}>
+                    <Plot
+                      key={`chart-${sceneNumber}-${figure.layout?.editrevision || 0}-yline-${figure.layout?.yaxis?.showline}-xline-${figure.layout?.xaxis?.showline}-aspect-${aspectRatioCss}`}
+                      ref={plotRef}
+                      data={figure.data}
+                      layout={figure.layout}
+                      config={figure.config}
+                      style={{ width: '100%', height: '100%', display: 'block' }}
+                      useResizeHandler
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-500 text-sm" style={{ minHeight: '300px', aspectRatio: aspectRatioCss }}>
+                    {error || 'Chart will appear here once ready.'}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>

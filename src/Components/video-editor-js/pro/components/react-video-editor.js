@@ -6,7 +6,7 @@ import { Editor } from "./core/editor";
 import { VideoPlayer } from "./core/video-player";
 // AutosaveStatus removed - autosave functionality disabled
 import { ReactVideoEditorProvider } from "./providers/react-video-editor-provider";
-export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true, className, customSidebar, sidebarLogo, sidebarFooterText, disabledPanels, showIconTitles = true, availableThemes = [], selectedTheme, onThemeChange, showDefaultThemes = true, hideThemeToggle = false, defaultTheme = 'dark', onSaving, onSaved, isPlayerOnly = false, ...providerProps }) => {
+export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true, className, customSidebar, sidebarLogo, sidebarFooterText, disabledPanels, showIconTitles = true, availableThemes = [], selectedTheme, onThemeChange, showDefaultThemes = true, hideThemeToggle = false, defaultTheme = 'dark', onSaving, onSaved, onSelectedOverlayChange, isPlayerOnly = false, ...providerProps }) => {
     // Log aspect ratio when received
     if (providerProps.defaultAspectRatio) {
         // console.log('[ReactVideoEditor] Received defaultAspectRatio:', providerProps.defaultAspectRatio);
@@ -41,7 +41,7 @@ export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true
             window.removeEventListener("orientationchange", handleResize);
         };
     }, [isPlayerOnly]);
-    return (_jsx(ReactVideoEditorProvider, { ...providerProps, onSaving: handleSaving, onSaved: handleSaved, playerRef: playerRef, children: isPlayerOnly ? (
+    return (_jsx(ReactVideoEditorProvider, { ...providerProps, onSaving: handleSaving, onSaved: handleSaved, ...(onSelectedOverlayChange && { onSelectedOverlayChange }), playerRef: playerRef, children: isPlayerOnly ? (
         // Player-only mode: Simple fullscreen video player
         _jsx("div", { className: "w-full bg-black flex items-center justify-center", style: {
                 height: "100%",

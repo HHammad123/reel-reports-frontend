@@ -12,10 +12,12 @@ export const AnimationPreview = ({ animation, isSelected, onClick, }) => {
             transition: "all 0.6s ease-out",
         };
     };
-    return (_jsxs("button", { onClick: onClick, onMouseEnter: () => setIsHovering(true), onMouseLeave: () => setIsHovering(false), className: cn("aspect-square w-full rounded-sm border border-border p-2 transition-all duration-200", "flex flex-col items-center justify-center gap-1", isSelected
-            ? "border-primary bg-primary/10"
-            : "border-border hover:border-primary/50 hover:bg-primary/5"), children: [_jsxs("div", { className: "relative h-6 w-6", children: [_jsx("div", { className: cn("h-6 w-6 rounded-full transition-opacity duration-300", isSelected ? "border-primary border-dashed border-2" : "border border-border"), style: { opacity: isHovering ? 0.3 : 0.8 } }), animation.name !== "None" && (_jsx("div", { className: "absolute inset-0 h-6 w-6 rounded-full border-2 border-dashed border-primary", style: {
+    return (_jsxs("button", { onClick: onClick, onMouseEnter: () => setIsHovering(true), onMouseLeave: () => setIsHovering(false), className: cn("aspect-square w-full rounded-sm border-2 p-2 transition-all duration-200", "flex flex-col items-center justify-center gap-1", "relative", isSelected
+            ? "border-primary bg-primary/20 hover:bg-primary/30"
+            : "border-border hover:border-primary/50 hover:bg-primary/10"), style: isSelected ? {
+            boxShadow: "0 0 0 2px hsl(var(--primary) / 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)",
+        } : {}, children: [_jsxs("div", { className: "relative h-6 w-6", children: [_jsx("div", { className: cn("h-6 w-6 rounded-full transition-opacity duration-300", isSelected ? "border-primary border-dashed border-2" : "border border-border"), style: { opacity: isHovering ? 0.3 : 0.8 } }), animation.name !== "None" && (_jsx("div", { className: "absolute inset-0 h-6 w-6 rounded-full border-2 border-dashed border-primary", style: {
                             ...getAnimationStyle(),
                             opacity: isHovering ? 1 : 0,
-                        } }))] }), _jsx("p", { className: cn("text-[10px] font-extralight text-center", isSelected ? "text-primary" : "text-muted-foreground"), children: animation.name })] }));
+                        } }))] }), _jsx("p", { className: cn("text-[10px] font-extralight text-center", isSelected ? "text-primary font-semibold" : "text-muted-foreground"), children: animation.name })] }));
 };

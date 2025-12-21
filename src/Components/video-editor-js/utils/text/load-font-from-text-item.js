@@ -114,10 +114,10 @@ const loadFontInfo = async ({ fontFamily, fontInfosDuringRendering, }) => {
                 };
             } catch (cdnError) {
                 console.warn(`Failed to load font "${fontFamily}" from CDN, falling back to Roboto.`, `Error: ${cdnError.message}`);
-                // Remove from cache on error so it can be retried
-                delete fontInfoPromiseCache[fontFamily];
+            // Remove from cache on error so it can be retried
+            delete fontInfoPromiseCache[fontFamily];
                 // Return Roboto as final fallback
-                return getRobotoFontInfo();
+            return getRobotoFontInfo();
             }
         });
     }
@@ -226,9 +226,9 @@ export const useLoadFontFromTextItem = (fontInfo) => {
                     }
                 }).catch(() => {
                     // Font loading failed, but continue anyway
-                    if (!cancelled) {
-                        setLoaded(true);
-                    }
+                if (!cancelled) {
+                    setLoaded(true);
+                }
                 });
                 
                 // Don't wait for font to be fully loaded - continue render quickly
@@ -237,7 +237,7 @@ export const useLoadFontFromTextItem = (fontInfo) => {
             }
             catch (error) {
                 if (process.env.NODE_ENV === 'development') {
-                    console.error('Font loading error:', error);
+                console.error('Font loading error:', error);
                 }
                 // Continue render even on error to prevent blocking
                 safeContinueRender();
