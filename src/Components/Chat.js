@@ -4351,24 +4351,165 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
       if (!resp.ok) throw new Error(`${deleteEndpointPath} failed: ${resp.status} ${text}`);
 
-      const container = data?.script ? { script: data.script } : data;
+      // Call user session data API directly and update script without full reload
       try {
-        localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
-        localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
-      } catch (_) { /* noop */ }
+        const sessionId = localStorage.getItem('session_id');
+        const userId = localStorage.getItem('token');
+        if (sessionId && userId) {
+          console.log('[Chat] Delete scene: Calling user session data API to get updated script...');
+          // Wait a bit for backend to process
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, session_id: sessionId })
+          });
+          const sessionText = await sessionResp.text();
+          let sessionData;
+          try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+          
+          if (sessionResp.ok && sessionData) {
+            // Extract script from session data (same logic as add scene)
+            const sessionDataObj = sessionData?.session_data || sessionData?.session || {};
+            const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0 
+              ? sessionDataObj.scripts 
+              : [];
+            
+            let scriptData = null;
+            
+            // Check for reordered_script or changed_script first
+            if (sessionDataObj?.reordered_script) {
+              const reordered = sessionDataObj.reordered_script;
+              if (Array.isArray(reordered?.airesponse)) {
+                scriptData = reordered.airesponse;
+              } else if (Array.isArray(reordered)) {
+                scriptData = reordered;
+              } else if (reordered && typeof reordered === 'object') {
+                scriptData = reordered;
+              }
+            }
+            
+            if (!scriptData && sessionDataObj?.changed_script) {
+              const changed = sessionDataObj.changed_script;
+              if (Array.isArray(changed?.airesponse)) {
+                scriptData = changed.airesponse;
+              } else if (Array.isArray(changed)) {
+                scriptData = changed;
+              } else if (changed && typeof changed === 'object') {
+                scriptData = changed;
+              }
+            }
+            
+            // Check scripts array
+            if (!scriptData && scripts.length > 0) {
+              for (let i = 0; i < Math.min(scripts.length, 3); i++) {
+                const currentScript = scripts[i];
+                if (currentScript?.reordered_script) {
+                  const reordered = currentScript.reordered_script;
+                  if (Array.isArray(reordered?.airesponse)) {
+                    scriptData = reordered.airesponse;
+                    break;
+                  } else if (Array.isArray(reordered)) {
+                    scriptData = reordered;
+                    break;
+                  } else if (reordered && typeof reordered === 'object') {
+                    scriptData = reordered;
+                    break;
+                  }
+                }
+                if (currentScript?.changed_script) {
+                  const changed = currentScript.changed_script;
+                  if (Array.isArray(changed?.airesponse)) {
+                    scriptData = changed.airesponse;
+                    break;
+                  } else if (Array.isArray(changed)) {
+                    scriptData = changed;
+                    break;
+                  } else if (changed && typeof changed === 'object') {
+                    scriptData = changed;
+                    break;
+                  }
+                }
+                if (Array.isArray(currentScript?.airesponse)) {
+                  scriptData = currentScript.airesponse;
+                  break;
+                } else if (Array.isArray(currentScript)) {
+                  scriptData = currentScript;
+                  break;
+                } else if (currentScript && typeof currentScript === 'object') {
+                  if (Array.isArray(currentScript?.rows)) {
+                    scriptData = currentScript;
+                    break;
+                  } else if (Array.isArray(currentScript?.script)) {
+                    scriptData = currentScript.script;
+                    break;
+                  } else if (Object.keys(currentScript).length > 0) {
+                    scriptData = currentScript;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            // Check sessionData directly
+            if (!scriptData && Array.isArray(sessionDataObj?.airesponse)) {
+              scriptData = sessionDataObj.airesponse;
+            }
+            
+            // Check root level
+            if (!scriptData && Array.isArray(sessionData?.airesponse)) {
+              scriptData = sessionData.airesponse;
+            }
+            
+            if (scriptData) {
+              // Normalize script data
+              let normalizedScript = scriptData;
+              if (scriptData && typeof scriptData === 'object' && !Array.isArray(scriptData)) {
+                if (Array.isArray(scriptData.airesponse) && scriptData.airesponse.length > 0) {
+                  normalizedScript = scriptData.airesponse;
+                } else if (Array.isArray(scriptData.script) && scriptData.script.length > 0) {
+                  normalizedScript = scriptData.script;
+                } else if (Array.isArray(scriptData.rows) && scriptData.rows.length > 0) {
+                  normalizedScript = scriptData;
+                }
+              }
+              
+              // Update script rows without full reload
+              if (normalizedScript !== null && normalizedScript !== undefined) {
+                const normalized = normalizeScriptToRows(normalizedScript);
+                const updatedRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+                
+                setScriptRows(updatedRows);
+                // Shift active tab to same index (or last if removed last)
+                const nextIndex = Math.min(currentSceneIndex, Math.max(0, updatedRows.length - 1));
+                setCurrentSceneIndex(nextIndex);
+                setHasOrderChanged(false);
+                // After delete, enable undo; redo disabled until an undo occurs
+                setCanUndo(true); setCanRedo(false);
+                console.log('[Chat] Delete scene: Script updated from user session data API');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Chat] Delete scene: Failed to update script from user session data:', err);
+        // Fallback: use the response from delete API if session data fetch fails
+        const container = data?.script ? { script: data.script } : data;
+        try {
+          localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+          localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+        } catch (_) { /* noop */ }
 
-      const normalized = normalizeScriptToRows(container);
-      const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
-      setScriptRows(newRows);
-      // Shift active tab to same index (or last if removed last)
-      const nextIndex = Math.min(currentSceneIndex, Math.max(0, newRows.length - 1));
-      setCurrentSceneIndex(nextIndex);
-      setHasOrderChanged(false);
-      // After delete, enable undo; redo disabled until an undo occurs
-      setCanUndo(true); setCanRedo(false);
-      // Trigger script refresh callback if provided
-      if (onScriptChange) {
-        onScriptChange();
+        const normalized = normalizeScriptToRows(container);
+        const newRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+        setScriptRows(newRows);
+        // Shift active tab to same index (or last if removed last)
+        const nextIndex = Math.min(currentSceneIndex, Math.max(0, newRows.length - 1));
+        setCurrentSceneIndex(nextIndex);
+        setHasOrderChanged(false);
+        // After delete, enable undo; redo disabled until an undo occurs
+        setCanUndo(true); setCanRedo(false);
       }
     } catch (e) {
       console.error('Delete scene failed:', e);

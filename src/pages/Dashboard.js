@@ -9,23 +9,24 @@ import { PixoImage } from './ImageEdit'
 
 const Dashboard = () => {
   const [showTutorial, setShowTutorial] = useState(false);
-  useEffect(() => {
-    try {
-      const val = localStorage.getItem('show_tutorial_video');
-      // default true when not set
-      const shouldShow = (val === null) ? true : (val !== 'false');
-      if (shouldShow) setShowTutorial(true);
-    } catch(_) { setShowTutorial(true); }
-    // expose opener for nested components
-    try {
-      window.openTutorialVideo = () => { try { localStorage.setItem('show_tutorial_video', 'true'); } catch(_) {}; setShowTutorial(true); };
-    } catch(_) {}
-  }, []);
-  const handleDontShowAgain = () => {
-    try { localStorage.setItem('show_tutorial_video', 'false'); } catch(_) {}
-    setShowTutorial(false);
-  };
-  const handleSkipNow = () => { setShowTutorial(false); };
+  // Tutorial video commented out
+  // useEffect(() => {
+  //   try {
+  //     const val = localStorage.getItem('show_tutorial_video');
+  //     // default true when not set
+  //     const shouldShow = (val === null) ? true : (val !== 'false');
+  //     if (shouldShow) setShowTutorial(true);
+  //   } catch(_) { setShowTutorial(true); }
+  //   // expose opener for nested components
+  //   try {
+  //     window.openTutorialVideo = () => { try { localStorage.setItem('show_tutorial_video', 'true'); } catch(_) {}; setShowTutorial(true); };
+  //   } catch(_) {}
+  // }, []);
+  // const handleDontShowAgain = () => {
+  //   try { localStorage.setItem('show_tutorial_video', 'false'); } catch(_) {}
+  //   setShowTutorial(false);
+  // };
+  // const handleSkipNow = () => { setShowTutorial(false); };
   return (
     <div className='flex h-screen bg-[#E5E2FF] overflow-x-hidden'>
       <Sidebar />
@@ -37,7 +38,8 @@ const Dashboard = () => {
           <DashboardItems />
         </div>
       </div>
-      {showTutorial && (
+      {/* Tutorial video commented out */}
+      {/* {showTutorial && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
           <div className="bg-white w-[96%] max-w-3xl rounded-lg shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
@@ -52,12 +54,12 @@ const Dashboard = () => {
               </div>
               <div className="mt-4 flex items-center justify-end gap-2">
                 <button onClick={handleSkipNow} className="px-4 py-2 rounded-lg border bg-white text-gray-900 hover:bg-gray-50">Skip for now</button>
-                <button onClick={handleDontShowAgain} className="px-4 py-2 rounded-lg bg-[#13008B] text-white hover:bg-blue-800">Don’t show again</button>
+                <button onClick={handleDontShowAgain} className="px-4 py-2 rounded-lg bg-[#13008B] text-white hover:bg-blue-800">Don't show again</button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      )} */}
     </div>
   )
 }

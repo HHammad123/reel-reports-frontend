@@ -88,12 +88,13 @@ const DashboardItems = () => {
 		window.addEventListener('resize', handleResize);
 		return () => window.removeEventListener('resize', handleResize);
 	}, []);
-	const openTutorial = () => {
-	  try { localStorage.setItem('show_tutorial_video', 'true'); } catch(_) {}
-	  if (typeof window !== 'undefined' && typeof window.openTutorialVideo === 'function') {
-	    window.openTutorialVideo();
-	  }
-	};
+	// Tutorial video commented out
+	// const openTutorial = () => {
+	//   try { localStorage.setItem('show_tutorial_video', 'true'); } catch(_) {}
+	//   if (typeof window !== 'undefined' && typeof window.openTutorialVideo === 'function') {
+	//     window.openTutorialVideo();
+	//   }
+	// };
 
 	const handleStartBuildReel = useCallback(async () => {
 		try {
@@ -126,9 +127,9 @@ const DashboardItems = () => {
 		{
 			id: 1,
 			icon: <FaThLarge className="text-[#13008B] w-12 h-12" />,
-			label: "Build Reel (Coming Soon)",
-			onClick: null,
-			disabled: true,
+			label: "Build Reel",
+			onClick: handleStartBuildReel,
+			disabled: false,
 		},
 		{
 			id: 2,
@@ -142,13 +143,14 @@ const DashboardItems = () => {
 			icon: <FaUserFriends className="text-[#13008B] w-12 h-12" />,
 			label: "Update Brand Guidelines",
 		},
-		{
-			id: 4,
-			link: "#tutorial",
-			icon: <FaVideo className="text-[#13008B] w-12 h-12" />,
-			label: "Tutorial Video",
-			onClick: openTutorial,
-		},
+		// Tutorial video card commented out
+		// {
+		// 	id: 4,
+		// 	link: "#tutorial",
+		// 	icon: <FaVideo className="text-[#13008B] w-12 h-12" />,
+		// 	label: "Tutorial Video",
+		// 	onClick: openTutorial,
+		// },
 	];
   useEffect(() => {
     const fetchRecent = async () => {

@@ -40,36 +40,49 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     const { baseUrl: contextBaseUrl } = useSafeEditorContext();
     const canvasRef = useRef(null);
     const lastProcessedFrameRef = useRef(null);
+    const frameSkipRef = useRef(0);
+    
     // Use prop baseUrl first, then context baseUrl
     const resolvedBaseUrl = baseUrl || contextBaseUrl;
     // Determine the video source URL first
     let videoSrc = overlay.src;
     // If it's an API route, use toAbsoluteUrl to ensure proper domain
-    if (overlay.src.startsWith("/api/")) {
+    if (overlay.src && overlay.src.startsWith("/api/")) {
         videoSrc = toAbsoluteUrl(overlay.src, resolvedBaseUrl);
     }
     // If it's a relative URL and baseUrl is provided, use baseUrl
-    else if (overlay.src.startsWith("/") && resolvedBaseUrl) {
+    else if (overlay.src && overlay.src.startsWith("/") && resolvedBaseUrl) {
         videoSrc = `${resolvedBaseUrl}${overlay.src}`;
     }
     // Otherwise use the toAbsoluteUrl helper for relative URLs
-    else if (overlay.src.startsWith("/")) {
+    else if (overlay.src && overlay.src.startsWith("/")) {
         videoSrc = toAbsoluteUrl(overlay.src, resolvedBaseUrl);
     }
-    else {
-    }
-    useEffect(() => {
-        // CRITICAL: REMOVE ALL BLOCKING - videos load in background
-        // Don't block rendering for ANY videos to prevent lag with multiple layers
-        // Videos will load and play as they become ready
-        // No blocking - videos load asynchronously
-    }, [overlay.src, videoSrc]);
-    // Process video frame with greenscreen removal - OPTIMIZED: Skip frames to reduce lag
-    const frameSkipRef = useRef(0);
+    
+    // Process video frame with greenscreen/chart background removal - OPTIMIZED: Skip frames to reduce lag
     const processVideoFrame = useCallback((videoFrame) => {
         var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
-        if (!canvasRef.current || !((_a = overlay.greenscreen) === null || _a === void 0 ? void 0 : _a.enabled)) {
+        // Check if chroma key is needed (greenscreen or chart background removal)
+        const needsChromaKey = 
+            ((_a = overlay.greenscreen) === null || _a === void 0 ? void 0 : _a.enabled) || 
+            overlay.needsChromaKey === true || 
+            overlay.removeBackground === true ||
+            overlay.has_background === false;
+        
+        if (!canvasRef.current || !needsChromaKey) {
             return;
+        }
+        
+        // Debug logging for chart videos
+        const isChartVideo = overlay.needsChromaKey === true || overlay.removeBackground === true || overlay.has_background === false;
+        if (isChartVideo && frameSkipRef.current === 0) {
+            console.log('🎨 Processing chart video frame:', {
+                overlayId: overlay.id,
+                needsChromaKey: overlay.needsChromaKey,
+                removeBackground: overlay.removeBackground,
+                has_background: overlay.has_background,
+                src: overlay.src
+            });
         }
         
         // CRITICAL: Skip frames to reduce CPU usage - process every 2nd frame
@@ -99,8 +112,27 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
         // Get image data for pixel manipulation
         const imageData = context.getImageData(0, 0, canvasWidth, canvasHeight);
         const { data } = imageData;
-        // Get greenscreen configuration with defaults
-        const config = overlay.greenscreen;
+        // Get greenscreen configuration with defaults (or use chart defaults)
+        const config = overlay.greenscreen || {};
+        
+        // For chart videos, use white background removal (not green)
+        if (isChartVideo) {
+            // White background removal for charts
+            const WHITE_THRESHOLD = 240; // Pixels with RGB > 240 are considered white
+            const step = 2; // Process every 2nd pixel for performance
+            for (let i = 0; i < data.length; i += step * 4) {
+                const red = data[i];
+                const green = data[i + 1];
+                const blue = data[i + 2];
+                const alpha = data[i + 3];
+                
+                // Remove white pixels (make transparent)
+                if (red > WHITE_THRESHOLD && green > WHITE_THRESHOLD && blue > WHITE_THRESHOLD) {
+                    data[i + 3] = 0; // Make fully transparent
+                }
+            }
+        } else {
+            // Standard greenscreen removal (green background)
         const sensitivity = (_b = config.sensitivity) !== null && _b !== void 0 ? _b : 100;
         const redThreshold = (_d = (_c = config.threshold) === null || _c === void 0 ? void 0 : _c.red) !== null && _d !== void 0 ? _d : 100;
         const greenMin = (_f = (_e = config.threshold) === null || _e === void 0 ? void 0 : _e.green) !== null && _f !== void 0 ? _f : 100;
@@ -128,6 +160,7 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
                 const greenSpill = Math.max(0, green - Math.max(red, blue));
                 if (greenSpill > 0) {
                     data[i + 1] = Math.max(0, green - greenSpill * spill);
+                    }
                 }
             }
         }
@@ -135,18 +168,66 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
         // Skip smoothing for performance - too expensive
         // Put processed image data back to canvas
         context.putImageData(imageData, 0, 0);
-    }, [overlay.greenscreen, overlay.styles.objectFit]);
+    }, [overlay.greenscreen, overlay.needsChromaKey, overlay.removeBackground, overlay.has_background, overlay.styles.objectFit, overlay.id, overlay.src]);
+    
     // Reprocess last frame when dimensions change (handles resize while paused)
     useEffect(() => {
         var _a;
-        if (((_a = overlay.greenscreen) === null || _a === void 0 ? void 0 : _a.enabled) && lastProcessedFrameRef.current) {
+        const needsChromaKey = 
+            ((_a = overlay.greenscreen) === null || _a === void 0 ? void 0 : _a.enabled) || 
+            overlay.needsChromaKey === true || 
+            overlay.removeBackground === true ||
+            overlay.has_background === false;
+        if (needsChromaKey && lastProcessedFrameRef.current) {
             processVideoFrame(lastProcessedFrameRef.current);
         }
-    }, [overlay.width, overlay.height, processVideoFrame, (_a = overlay.greenscreen) === null || _a === void 0 ? void 0 : _a.enabled]);
+    }, [overlay.width, overlay.height, processVideoFrame, overlay.greenscreen, overlay.needsChromaKey, overlay.removeBackground, overlay.has_background]);
+    
+    // Video loading effect
+    useEffect(() => {
+        // CRITICAL: REMOVE ALL BLOCKING - videos load in background
+        // Don't block rendering for ANY videos to prevent lag with multiple layers
+        // Videos will load and play as they become ready
+        // No blocking - videos load asynchronously
+    }, [overlay.src, videoSrc]);
+    
     // Greenscreen removal callback for video frame processing
     const onVideoFrame = useCallback((videoFrame) => {
         processVideoFrame(videoFrame);
     }, [processVideoFrame]);
+    
+    // Debug logging for chart videos
+    const isChartVideo = overlay.id?.includes('chart') || overlay.src?.includes('chart') || overlay.needsChromaKey === true || overlay.has_background === false;
+    if (isChartVideo && frame === 0) {
+        console.log('🎬 VideoLayerContent rendering chart video:', {
+            overlayId: overlay.id,
+            type: overlay.type,
+            src: overlay.src,
+            needsChromaKey: overlay.needsChromaKey,
+            has_background: overlay.has_background,
+            removeBackground: overlay.removeBackground,
+            width: overlay.width,
+            height: overlay.height,
+            from: overlay.from,
+            durationInFrames: overlay.durationInFrames
+        });
+    }
+    
+    // Safety check - don't render Video if src is missing
+    if (!overlay.src || overlay.src.trim() === '') {
+        if (isChartVideo) {
+            console.error('❌ VideoLayerContent: Chart video overlay missing src:', {
+                overlayId: overlay.id,
+                overlay: overlay
+            });
+        }
+        return null;
+    }
+    
+    // Log final video source for chart videos
+    if (isChartVideo && frame === 0) {
+        console.log('🎬 VideoLayerContent final videoSrc:', videoSrc);
+    }
     // Calculate if we're in the exit phase (last 30 frames)
     const isExitPhase = frame >= overlay.durationInFrames - 30;
     // Apply enter animation only during entry phase
@@ -197,8 +278,17 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     };
     // Convert videoStartTime from seconds to frames for OffthreadVideo
     const startFromFrames = Math.round((overlay.videoStartTime || 0) * FPS);
-    // If greenscreen removal is enabled, use canvas-based rendering
-    if ((_f = overlay.greenscreen) === null || _f === void 0 ? void 0 : _f.enabled) {
+    
+    // Check if chroma key/background removal is needed
+    // Support both greenscreen config and chart-specific flags
+    const needsChromaKey = 
+        ((_f = overlay.greenscreen) === null || _f === void 0 ? void 0 : _f.enabled) || 
+        overlay.needsChromaKey === true || 
+        overlay.removeBackground === true ||
+        overlay.has_background === false;
+    
+    // If greenscreen/chroma key removal is enabled, use canvas-based rendering
+    if (needsChromaKey) {
         return (_jsx("div", { style: containerStyle, children: _jsxs("div", { style: { position: 'relative', width: '100%', height: '100%' }, children: [_jsx(Html5Video, { src: videoSrc, trimBefore: startFromFrames, style: {
                             ...videoStyle,
                             position: 'absolute',

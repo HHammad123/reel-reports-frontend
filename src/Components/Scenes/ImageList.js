@@ -526,6 +526,48 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [activeImageTab, setActiveImageTab] = useState(0);
   // Cache-busting state for chart overlays - bump when scene or chart data changes
   const [chartVersion, setChartVersion] = useState(0);
+  
+  // Handle tab switching for VEO3 + 9:16 aspect ratio
+  React.useEffect(() => {
+    if (!selected || !selected.model) return;
+    
+    const selectedModel = String(selected.model || selected.mode || '').toUpperCase();
+    const isVeoScene = selectedModel === 'VEO3';
+    const isVeo3Portrait = isVeoScene && isPortrait9x16;
+    
+    if (!isVeo3Portrait) return;
+    
+    // Get current row to check for avatar and image
+    const currentRow = rows.find(r => 
+      (r?.scene_number || r?.sceneNumber) === (selected?.sceneNumber || selected?.scene_number)
+    ) || rows[selected.index];
+    
+    if (!currentRow) return;
+    
+    // Get avatar URLs
+    const avatarUrls = getAvatarUrlsFromImageVersion(
+      currentRow?.imageVersionData,
+      currentRow?.imageVersionData ? getLatestVersionKey(currentRow.imageVersionData) : 'v1',
+      selectedModel
+    );
+    const hasAvatar = avatarUrls.length > 0 || (Array.isArray(currentRow?.avatar_urls) && currentRow.avatar_urls.length > 0);
+    
+    // Get image refs (non-avatar images)
+    const orderedRefs = getOrderedRefs(currentRow);
+    const avatarSet = getAvatarUrlSet(currentRow);
+    const nonAvatarImages = orderedRefs.filter(url => {
+      const normalized = normalizeSimpleUrl(url);
+      return normalized && !avatarSet.has(normalized);
+    });
+    const hasImage = nonAvatarImages.length > 0;
+    
+    // Set active tab based on what's available
+    if (hasAvatar && activeImageTab !== 1) {
+      setActiveImageTab(1);
+    } else if (!hasAvatar && hasImage && activeImageTab !== 0) {
+      setActiveImageTab(0);
+    }
+  }, [selected, rows, isPortrait9x16, activeImageTab, getOrderedRefs, getAvatarUrlSet, normalizeSimpleUrl, getAvatarUrlsFromImageVersion]);
   const chartCacheBuster = React.useMemo(() => {
     return `${activeSceneNumber}_${chartVersion}_${Date.now()}`;
   }, [activeSceneNumber, chartVersion]);
@@ -913,7 +955,21 @@ const getOrderedRefs = useCallback((row) => {
           }).filter(url => url && typeof url === 'string' && url.trim())
         }
         
-        // Combine images and avatar_urls from current version, removing duplicates
+        // For VEO3 with 9:16 aspect ratio: show only avatar if available, else only one background image
+        if (isPortrait9x16) {
+          // If avatar exists, return only first avatar
+          if (avatarUrls.length > 0) {
+            return [avatarUrls[0]].filter(Boolean)
+          }
+          // Else, return only first background image (from imageRefs)
+          if (imageRefs.length > 0) {
+            return [imageRefs[0]].filter(Boolean)
+          }
+          // Fallback: return empty array
+          return []
+        }
+        
+        // For VEO3 with other aspect ratios: combine images and avatar_urls from current version, removing duplicates
         const combined = [...new Set([...imageRefs, ...avatarUrls])].filter(Boolean)
         return combined // Return all combined images for VEO3
       }
@@ -921,7 +977,7 @@ const getOrderedRefs = useCallback((row) => {
       // For non-VEO3 models, return only images from current version (max 2)
       return imageRefs.slice(0, 2)
     },
-    [getOrderedRefs]
+    [getOrderedRefs, isPortrait9x16]
   )
 
   const normalizeSimpleUrl = useCallback((url) => (typeof url === 'string' ? url.trim() : ''), [])
@@ -6621,44 +6677,76 @@ const getOrderedRefs = useCallback((row) => {
               const currentVersion = selected?.imageVersionData ? getLatestVersionKey(selected.imageVersionData) : (selected?.current_version || 'v1');
               const avatarCacheKey = isVeoScene && secondaryImg ? `${activeSceneNumber}_${currentVersion}_${secondaryImg}` : null;
               
-              // Dual-image models (VEO3/ANCHOR) show tabs only if both images are available
-              // Other models just need a second image
-              const hasSecondImage = isDualImageModel
-                ? (primaryImg && primaryImg.trim() && secondaryImg && secondaryImg.trim())
-                : (secondaryImg && secondaryImg.trim());
+              // For VEO3 with 9:16 aspect ratio: show only one tab (Avatar if available, else Image)
+              const isVeo3Portrait = isVeoScene && isPortrait9x16;
+              const hasAvatar = secondaryImg && secondaryImg.trim();
+              const hasImage = primaryImg && primaryImg.trim();
+              
+              // For VEO3 + 9:16: determine which tab to show
+              let showTabs = false;
+              let showAvatarTab = false;
+              let showImageTab = false;
+              
+              if (isVeo3Portrait) {
+                // For 9:16 VEO3: show Avatar tab if avatar exists, else show Image tab
+                if (hasAvatar) {
+                  showTabs = true;
+                  showAvatarTab = true;
+                  showImageTab = false;
+                } else if (hasImage) {
+                  showTabs = true;
+                  showAvatarTab = false;
+                  showImageTab = true;
+                } else {
+                  showTabs = false;
+                }
+              } else {
+                // For other cases: Dual-image models (VEO3/ANCHOR) show tabs only if both images are available
+                // Other models just need a second image
+                const hasSecondImage = isDualImageModel
+                  ? (primaryImg && primaryImg.trim() && secondaryImg && secondaryImg.trim())
+                  : (secondaryImg && secondaryImg.trim());
+                showTabs = hasSecondImage;
+                showAvatarTab = hasSecondImage;
+                showImageTab = hasSecondImage;
+              }
               
               
               return (
                   <div className="mb-4">
-                    {/* Tabs - only show if there are 2 images */}
-                    {hasSecondImage && (
+                    {/* Tabs - show based on model and aspect ratio */}
+                    {showTabs && (
                       <div className="flex gap-2 mb-4 border-b border-gray-200">
-                        <button
-                          type="button"
-                          onClick={() => setActiveImageTab(0)}
-                        className={`px-4 py-2 text-sm font-medium transition-colors ${activeImageTab === 0
-                              ? 'text-[#13008B] border-b-2 border-[#13008B]'
-                              : 'text-gray-600 hover:text-gray-900'
-                          }`}
-                        >
-                          {primaryLabel}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveImageTab(1)}
-                        className={`px-4 py-2 text-sm font-medium transition-colors ${activeImageTab === 1
-                              ? 'text-[#13008B] border-b-2 border-[#13008B]'
-                              : 'text-gray-600 hover:text-gray-900'
-                          }`}
-                        >
-                          {secondaryLabel}
-                        </button>
+                        {showImageTab && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveImageTab(0)}
+                            className={`px-4 py-2 text-sm font-medium transition-colors ${activeImageTab === 0
+                                ? 'text-[#13008B] border-b-2 border-[#13008B]'
+                                : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            {primaryLabel}
+                          </button>
+                        )}
+                        {showAvatarTab && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveImageTab(1)}
+                            className={`px-4 py-2 text-sm font-medium transition-colors ${activeImageTab === 1
+                                ? 'text-[#13008B] border-b-2 border-[#13008B]'
+                                : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            {secondaryLabel}
+                          </button>
+                        )}
                       </div>
                     )}
                     
                     <div className="grid grid-cols-1 gap-4">
-                  {/* Show Image 1 when: tab 0 is active OR no second image exists */}
-                  {primaryImg && typeof primaryImg === 'string' && primaryImg.trim() && (activeImageTab === 0 || !hasSecondImage) ? (
+                  {/* Show Image 1 when: tab 0 is active OR no tabs are shown */}
+                  {primaryImg && typeof primaryImg === 'string' && primaryImg.trim() && (activeImageTab === 0 || !showTabs) ? (
                     <div
                       key="image-1"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"
@@ -7130,8 +7218,8 @@ const getOrderedRefs = useCallback((row) => {
                     </div>
                   ) : null}
 
-                  {/* Show Image 2 only when: tab 1 is active AND second image exists */}
-                  {hasSecondImage && secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() && activeImageTab === 1 ? (
+                  {/* Show Image 2 (Avatar) only when: tab 1 is active AND avatar exists */}
+                  {showAvatarTab && secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim() && activeImageTab === 1 ? (
                     <div
                       key="image-2"
                       className="w-full bg-black rounded-lg overflow-hidden relative flex items-center justify-center group"

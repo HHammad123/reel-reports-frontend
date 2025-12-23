@@ -569,6 +569,7 @@ const Guidlines = () => {
     { id: "Training materials", label: "Training materials" },
     { id: "Knowledge management", label: "Knowledge management" },
     { id: "Financial summary", label: "Financial summary" },
+    { id: "other", label: "Other" },
   ];
   const handleSelect = (goalId) => {
     setSelectedGoal(goalId);

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRenderer } from "../contexts/renderer-context";
+import { OverlayType } from "../types";
 // Utility function to create a delay
 const wait = async (milliSeconds) => {
     await new Promise((resolve) => {
@@ -61,12 +62,135 @@ export const useRendering = (id, inputProps) => {
             }
             
             console.log("Calling renderVideo with inputProps", inputProps);
+            
+            // Log overlays to check if charts are included
+            const overlays = inputProps?.overlays || [];
+            const chartOverlays = overlays.filter(o => 
+                o.type === 'video' || // OverlayType.VIDEO is "video" (lowercase)
+                o.type === 'VIDEO' || // Also check uppercase for safety
+                o.id?.includes('chart') || 
+                o.src?.includes('chart') ||
+                o.content?.includes('chart') ||
+                o.has_background === false ||
+                o.needsChromaKey === true ||
+                o.removeBackground === true
+            );
+            
+            console.log('📊 CHART OVERLAYS CHECK (BEFORE RENDER):', {
+                totalOverlays: overlays.length,
+                chartOverlaysCount: chartOverlays.length,
+                chartOverlays: chartOverlays.map(c => {
+                    // Create a serializable copy for logging
+                    try {
+                        return JSON.parse(JSON.stringify({
+                            id: c.id,
+                            type: c.type,
+                            src: c.src,
+                            content: c.content,
+                            row: c.row,
+                            from: c.from,
+                            durationInFrames: c.durationInFrames,
+                            has_background: c.has_background,
+                            needsChromaKey: c.needsChromaKey,
+                            removeBackground: c.removeBackground,
+                            width: c.width,
+                            height: c.height,
+                            left: c.left,
+                            top: c.top,
+                            styles: c.styles,
+                            videoStartTime: c.videoStartTime,
+                            mediaSrcDuration: c.mediaSrcDuration
+                        }));
+                    } catch (e) {
+                        return { id: c.id, error: 'Failed to serialize' };
+                    }
+                }),
+                allOverlayTypes: overlays.map(o => ({ 
+                    id: o.id, 
+                    type: o.type, 
+                    row: o.row,
+                    from: o.from,
+                    durationInFrames: o.durationInFrames,
+                    src: o.src?.substring(0, 50)
+                }))
+            });
+            
+            // CRITICAL: Verify chart overlays have required properties
+            chartOverlays.forEach((chart, index) => {
+                const missingProps = [];
+                if (!chart.id) missingProps.push('id');
+                if (!chart.src && !chart.content) missingProps.push('src/content');
+                // OverlayType.VIDEO is "video" (lowercase), not "VIDEO" (uppercase)
+                const isVideoType = chart.type === 'video' || chart.type === 'VIDEO' || chart.type === OverlayType?.VIDEO;
+                if (!isVideoType) {
+                    missingProps.push(`type (current: "${chart.type}", should be "video")`);
+                }
+                if (chart.from === undefined && chart.from !== 0) missingProps.push('from');
+                if (!chart.durationInFrames) missingProps.push('durationInFrames');
+                
+                if (missingProps.length > 0) {
+                    console.error(`❌ Chart overlay ${index} (${chart.id || 'NO ID'}) is missing properties:`, missingProps, chart);
+                } else {
+                    console.log(`✅ Chart overlay ${index} (${chart.id}) has all required properties`, {
+                        id: chart.id,
+                        type: chart.type,
+                        hasSrc: !!chart.src,
+                        hasContent: !!chart.content,
+                        from: chart.from,
+                        durationInFrames: chart.durationInFrames,
+                        has_background: chart.has_background,
+                        needsChromaKey: chart.needsChromaKey
+                    });
+                }
+            });
+            
+            // Test JSON serialization of inputProps to see if anything is lost
+            try {
+                const testStringified = JSON.stringify(inputProps);
+                const testParsed = JSON.parse(testStringified);
+                const testOverlays = testParsed?.overlays || [];
+                const testChartOverlays = testOverlays.filter(o => 
+                    o.type === 'video' || // OverlayType.VIDEO is "video" (lowercase)
+                    o.type === 'VIDEO' || // Also check uppercase for safety
+                    o.id?.includes('chart') || 
+                    o.src?.includes('chart') ||
+                    o.content?.includes('chart') ||
+                    o.has_background === false ||
+                    o.needsChromaKey === true ||
+                    o.removeBackground === true
+                );
+                
+                console.log('🧪 JSON SERIALIZATION TEST:', {
+                    originalChartCount: chartOverlays.length,
+                    afterStringifyChartCount: testChartOverlays.length,
+                    chartsLost: chartOverlays.length - testChartOverlays.length,
+                    originalChartIds: chartOverlays.map(c => c.id),
+                    stringifiedChartIds: testChartOverlays.map(c => c.id),
+                    missingChartIds: chartOverlays
+                        .filter(c => !testChartOverlays.find(t => t.id === c.id))
+                        .map(c => c.id)
+                });
+                
+                if (chartOverlays.length > testChartOverlays.length) {
+                    console.error('❌ CRITICAL: Chart overlays are being LOST during JSON.stringify!', {
+                        lost: chartOverlays.length - testChartOverlays.length,
+                        lostIds: chartOverlays
+                            .filter(c => !testChartOverlays.find(t => t.id === c.id))
+                            .map(c => c.id)
+                    });
+                }
+            } catch (serializeError) {
+                console.error('❌ Error testing JSON serialization:', serializeError);
+            }
+            
             const response = await renderer.renderVideo({ id, inputProps });
             const jobId = response.job_id || response.renderId || response._jobId;
             
             if (!jobId) {
                 throw new Error('No job_id received from render API');
             }
+            
+            console.log('✅ Render API called successfully. Job ID:', jobId);
             
             setState({
                 status: "rendering",
@@ -113,10 +237,16 @@ export const useRendering = (id, inputProps) => {
                     
                     // Check if job is complete
                     if (status === 'succeeded' || status === 'completed' || status === 'success') {
-                        console.log('Render job completed successfully');
+                        const videoUrl = result?.url || result?.video_url || result?.result_url || result?.resultUrl || null;
+                        console.log('✅ Render job completed successfully', {
+                            jobId: jobId,
+                            videoUrl: videoUrl,
+                            result: result
+                        });
+                        
                         setState({
                             status: "done",
-                            url: result?.url || result?.video_url || null,
+                            url: videoUrl,
                             renderId: jobId,
                         });
                         
@@ -125,7 +255,7 @@ export const useRendering = (id, inputProps) => {
                             onRenderComplete();
                         }
                         
-                        // Navigate to MyMedia page
+                        // Navigate to MyMedia page after successful render
                         if (typeof window !== 'undefined' && window.location) {
                             setTimeout(() => {
                                 try {

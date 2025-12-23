@@ -431,11 +431,11 @@ const Sidebar = () => {
                   <span>Generate Reel</span>
                 </button>
                 <button
-                  disabled
-                  className="w-full mb-3 rounded-xl p-4 flex items-center gap-3 text-left text-sm font-medium text-white/50 transition-colors cursor-not-allowed opacity-60"
+                  onClick={createSessionAndGoBuildReel}
+                  className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
                 >
                   <FaThLarge className="h-5 w-5" />
-                  <span>Build Reel (Coming Soon)</span>
+                  <span>Build Reel</span>
                 </button>
                 <button
                   onClick={() => navigate('/media')}
