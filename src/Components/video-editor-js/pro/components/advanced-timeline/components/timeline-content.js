@@ -260,11 +260,21 @@ export const TimelineContent = ({ tracks, viewportDuration, currentFrame, fps, z
     const handleTimelineDrop = useCallback((e) => {
         var _a;
         e.preventDefault();
+        console.log('🎯 [TIMELINE-CONTENT] Drop event triggered');
         // Check if this is a new item drag
         try {
             const dragDataString = e.dataTransfer.getData("application/json");
+            console.log('📦 [TIMELINE-CONTENT] Drag data string:', dragDataString ? 'Present' : 'Missing');
+            
             if (dragDataString) {
                 const dragData = JSON.parse(dragDataString);
+                console.log('📦 [TIMELINE-CONTENT] Parsed drag data:', {
+                    isNewItem: dragData.isNewItem,
+                    type: dragData.type,
+                    hasData: !!dragData.data,
+                    fullData: dragData
+                });
+                
                 if (dragData.isNewItem || dragData.type) {
                     // Calculate drop position
                     const timelineRect = (_a = timelineRef === null || timelineRef === void 0 ? void 0 : timelineRef.current) === null || _a === void 0 ? void 0 : _a.getBoundingClientRect();
@@ -278,8 +288,21 @@ export const TimelineContent = ({ tracks, viewportDuration, currentFrame, fps, z
                         const adjustedY = Math.max(0, relativeY);
                         const trackHeight = TIMELINE_CONSTANTS.TRACK_HEIGHT;
                         const targetTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(adjustedY / trackHeight)));
+                        
+                        console.log('📍 [TIMELINE-CONTENT] Drop position calculated:', {
+                            itemType: dragData.type || 'clip',
+                            dropTime: dropTime,
+                            targetTrackIndex: targetTrackIndex,
+                            insertionIndex: insertionIndex,
+                            relativeX: relativeX,
+                            relativeY: relativeY,
+                            leftPercentage: leftPercentage,
+                            totalTracks: tracks.length
+                        });
+                        
                         // If between tracks, insertionIndex will be set. Prefer inserting a new track
                         if (insertionIndex !== null && onInsertTrackAt) {
+                            console.log('➕ [TIMELINE-CONTENT] Inserting new track at index:', insertionIndex);
                             onInsertTrackAt(insertionIndex);
                             // Drop onto the new track
                             handleNewItemDrop(dragData.type || 'clip', insertionIndex, dropTime, dragData);
@@ -287,13 +310,24 @@ export const TimelineContent = ({ tracks, viewportDuration, currentFrame, fps, z
                             clearNewItemDragState();
                             return;
                         }
+                        console.log('✅ [TIMELINE-CONTENT] Calling handleNewItemDrop with:', {
+                            itemType: dragData.type || 'clip',
+                            trackIndex: targetTrackIndex,
+                            startTime: dropTime
+                        });
                         handleNewItemDrop(dragData.type || 'clip', targetTrackIndex, dropTime, dragData);
+                    } else {
+                        console.warn('⚠️ [TIMELINE-CONTENT] Timeline rect not found');
                     }
+                } else {
+                    console.log('ℹ️ [TIMELINE-CONTENT] Not a new item drop, skipping');
                 }
+            } else {
+                console.log('⚠️ [TIMELINE-CONTENT] No drag data string found');
             }
         }
         catch (error) {
-            console.warn("Failed to parse drag data:", error);
+            console.error("❌ [TIMELINE-CONTENT] Failed to parse drag data:", error);
         }
         // Clear drag state
         clearNewItemDragState();

@@ -312,8 +312,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [regenerateFrames, setRegenerateFrames] = useState(['opening', 'closing']); // For SORA: ['opening'], ['closing'], or both
   const [regenerateSaveAsNewVersion, setRegenerateSaveAsNewVersion] = useState(false);
   // Reference image upload for regenerate
-  const [regenerateReferenceFile, setRegenerateReferenceFile] = useState(null);
-  const [regenerateReferencePreview, setRegenerateReferencePreview] = useState(null);
+  const [regenerateReferenceFile, setRegenerateReferenceFile] = useState([]);
+  const [regenerateReferencePreview, setRegenerateReferencePreview] = useState([]);
   // VEO3 Avatar management
   const [showAvatarManager, setShowAvatarManager] = useState(false);
   const [managingAvatarSceneNumber, setManagingAvatarSceneNumber] = useState(null);
@@ -527,6 +527,228 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   // Cache-busting state for chart overlays - bump when scene or chart data changes
   const [chartVersion, setChartVersion] = useState(0);
   
+  // normalizeImageUrl - moved before getOrderedRefs to fix initialization order
+  const normalizeImageUrl = useCallback((url) => {
+    if (!url || typeof url !== 'string') return ''
+    return url.trim().split('?')[0].replace(/\/$/, '')
+  }, [])
+
+  // getOrderedRefs - moved before useEffect that uses it to fix initialization order
+  const getOrderedRefs = useCallback((row) => {
+    const modelUpper = String(row?.model || '').toUpperCase()
+      
+    // ALWAYS prioritize imageFrames from current version
+        const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
+    
+    // For SORA, VEO3, ANCHOR: Extract from imageFrames (current version)
+    if (modelUpper === 'SORA' || modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+        if (frames.length > 0) {
+        const imageUrls = frames
+          .map((frame) => {
+          const base = frame?.base_image || frame?.baseImage || {}
+            return base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || ''
+          })
+          .filter(Boolean)
+        
+        if (imageUrls.length > 0) {
+          // For ANCHOR: ensure we have two items for two tabs
+          if (modelUpper === 'ANCHOR') {
+            if (imageUrls.length === 1) {
+              return [...imageUrls, imageUrls[0]]
+            }
+            return imageUrls.slice(0, 2)
+          }
+          // For SORA/VEO3: return all images from current version
+          return imageUrls
+        }
+      }
+      // If no frames, return empty (don't fallback to old refs)
+      return []
+    }
+    
+    // For PLOTLY: use frames from current version
+    if (modelUpper === 'PLOTLY') {
+      if (!frames.length) return []
+      const frameEntries = frames
+        .map((frame) => {
+          const base = frame?.base_image || frame?.baseImage || {}
+          const url =
+            base?.image_url ||
+            base?.imageUrl ||
+            base?.imageurl ||
+            base?.url ||
+            base?.src ||
+            frame?.image_url ||
+            frame?.imageUrl ||
+            frame?.url ||
+            ''
+          const normalizedUrl = normalizeImageUrl(url)
+          if (!normalizedUrl) return null
+          const textEls = Array.isArray(frame?.text_elements)
+            ? frame.text_elements
+            : Array.isArray(frame?.textElements)
+            ? frame.textElements
+            : []
+          const hasText = textEls.some((el) => {
+            const txt = typeof el?.text === 'string' ? el.text.trim() : ''
+            return txt.length > 0
+          })
+          return { url, normalizedUrl, hasText }
+        })
+        .filter(Boolean)
+      if (!frameEntries.length) return []
+      const noText = []
+      const withText = []
+      frameEntries.forEach(({ url, hasText }) => {
+        if (hasText) {
+          withText.push(url)
+        } else {
+          noText.push(url)
+        }
+      })
+      // Return only from current version frames (no fallback to old refs)
+      const ordered = [...noText, ...withText]
+      return ordered.length > 0 ? ordered : []
+    }
+    
+    // For any other model, return empty (no fallback to old refs)
+    return []
+    }, [normalizeImageUrl])
+
+  // Helper function to get the latest version key from imageVersionData (e.g., v1, v2, v3 -> returns highest)
+  // Moved before getAvatarUrlsFromImageVersion and getAvatarUrlSet to fix initialization order
+  const getLatestVersionKey = (imageVersionData) => {
+    if (!imageVersionData || typeof imageVersionData !== 'object' || Array.isArray(imageVersionData)) {
+      return 'v1';
+    }
+    
+    // Get all version keys (v1, v2, v3, etc.)
+    const versionKeys = Object.keys(imageVersionData).filter(key => 
+      /^v\d+$/.test(key) && imageVersionData[key] && typeof imageVersionData[key] === 'object'
+    );
+    
+    if (versionKeys.length === 0) {
+      return 'v1';
+    }
+    
+    // Sort by version number (extract number from v1, v2, etc.) and return the highest
+    const sorted = versionKeys.sort((a, b) => {
+      const numA = parseInt(a.replace('v', '')) || 0;
+      const numB = parseInt(b.replace('v', '')) || 0;
+      return numB - numA; // Descending order
+    });
+    
+    return sorted[0] || 'v1';
+  };
+
+  // Helper function to extract avatar URLs from latest version of image object
+  // Moved before useEffect that uses it to fix initialization order
+  const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) => {
+    const modelUpper = String(model || '').toUpperCase();
+    const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
+    
+    if (!isVEO3 || !imageVersionData) {
+      return [];
+    }
+    
+    // Extract avatar URLs from session data images structure (same as list area)
+    // Structure: it.images[current_version].avatar_urls
+    if (typeof imageVersionData === 'object' && !Array.isArray(imageVersionData)) {
+      // Get the latest version key (always use latest version)
+      const versionKey = getLatestVersionKey(imageVersionData);
+      
+      // Get the version object (same as: imagesContainer[versionKey] in list area)
+      const versionObj = imageVersionData[versionKey] || {};
+      
+      // Extract avatar_urls from current version (same as: verObj?.avatar_urls in list area)
+      let avatarUrls = versionObj?.avatar_urls;
+      
+      // If not found in version object, check root level (fallback)
+      if (!avatarUrls || !Array.isArray(avatarUrls) || avatarUrls.length === 0) {
+        avatarUrls = imageVersionData?.avatar_urls;
+      }
+      
+      if (Array.isArray(avatarUrls) && avatarUrls.length > 0) {
+        // Map avatar URLs exactly as done in list area (lines 2117-2129)
+        const extracted = avatarUrls.map((av) => {
+          if (typeof av === 'string') return av.trim();
+          return (
+            av?.imageurl ||
+            av?.imageUrl ||
+            av?.image_url ||
+            av?.url ||
+            av?.src ||
+            av?.link ||
+            av?.avatar_url ||
+            ''
+          );
+        }).filter(url => url && typeof url === 'string' && url.trim());
+        
+        return extracted;
+      }
+    }
+    
+    return [];
+  }
+
+  // normalizeSimpleUrl - moved before getAvatarUrlSet to fix initialization order
+  const normalizeSimpleUrl = useCallback((url) => (typeof url === 'string' ? url.trim() : ''), [])
+
+  // getAvatarUrlSet - moved before useEffect that uses it to fix initialization order
+  const getAvatarUrlSet = useCallback(
+    (row) => {
+      const avatarUrls = [];
+      
+      // Priority 1: Get from row.avatar_urls
+      if (Array.isArray(row?.avatar_urls)) {
+        avatarUrls.push(...row.avatar_urls);
+      }
+      
+      // Priority 2: Extract from versioned structure (imageVersionData[current_version].avatar_urls)
+      if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
+        let imagesContainer = row.imageVersionData;
+        
+        // Check if imageVersionData has the images container structure (it.images)
+        if (row.imageVersionData.images && typeof row.imageVersionData.images === 'object' && !Array.isArray(row.imageVersionData.images)) {
+          imagesContainer = row.imageVersionData.images;
+        }
+        
+        // Get latest version key (always use latest version)
+        const versionKey = getLatestVersionKey(imagesContainer);
+        
+        // Get version object
+        const verObj = imagesContainer[versionKey] || {};
+        
+        // Extract avatar_urls from version object
+        const versionAvatars = verObj?.avatar_urls;
+        
+        if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
+          avatarUrls.push(...versionAvatars);
+        }
+      }
+      
+      // Normalize and deduplicate all avatar URLs
+      const normalizedUrls = avatarUrls
+          .map((entry) => {
+          if (typeof entry === 'string') return normalizeSimpleUrl(entry);
+            return normalizeSimpleUrl(
+              entry?.imageurl ||
+                entry?.imageUrl ||
+                entry?.image_url ||
+                entry?.url ||
+                entry?.src ||
+                entry?.link ||
+                entry?.avatar_url ||
+                ''
+          );
+          })
+        .filter(Boolean);
+      
+      return new Set(normalizedUrls);
+    },
+    [normalizeSimpleUrl]
+  )
+  
   // Handle tab switching for VEO3 + 9:16 aspect ratio
   React.useEffect(() => {
     if (!selected || !selected.model) return;
@@ -692,11 +914,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     setEditingImageIndex(null);
   }, []);
 
-const normalizeImageUrl = useCallback((url) => {
-  if (!url || typeof url !== 'string') return ''
-  return url.trim().split('?')[0].replace(/\/$/, '')
-}, [])
-
 const getImageUrlFromEntry = (entry) => {
   if (!entry) return ''
   if (typeof entry === 'string') return entry.trim()
@@ -744,161 +961,6 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
 
   return ''
 }
-
-// Helper function to get the latest version key from imageVersionData (e.g., v1, v2, v3 -> returns highest)
-const getLatestVersionKey = (imageVersionData) => {
-  if (!imageVersionData || typeof imageVersionData !== 'object' || Array.isArray(imageVersionData)) {
-    return 'v1';
-  }
-  
-  // Get all version keys (v1, v2, v3, etc.)
-  const versionKeys = Object.keys(imageVersionData).filter(key => 
-    /^v\d+$/.test(key) && imageVersionData[key] && typeof imageVersionData[key] === 'object'
-  );
-  
-  if (versionKeys.length === 0) {
-    return 'v1';
-  }
-  
-  // Sort by version number (extract number from v1, v2, etc.) and return the highest
-  const sorted = versionKeys.sort((a, b) => {
-    const numA = parseInt(a.replace('v', '')) || 0;
-    const numB = parseInt(b.replace('v', '')) || 0;
-    return numB - numA; // Descending order
-  });
-  
-  return sorted[0] || 'v1';
-};
-
-// Helper function to extract avatar URLs from latest version of image object
-const getAvatarUrlsFromImageVersion = (imageVersionData, currentVersion, model) => {
-  const modelUpper = String(model || '').toUpperCase();
-  const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
-  
-  if (!isVEO3 || !imageVersionData) {
-    return [];
-  }
-  
-  // Extract avatar URLs from session data images structure (same as list area)
-  // Structure: it.images[current_version].avatar_urls
-  if (typeof imageVersionData === 'object' && !Array.isArray(imageVersionData)) {
-    // Get the latest version key (always use latest version)
-    const versionKey = getLatestVersionKey(imageVersionData);
-    
-    // Get the version object (same as: imagesContainer[versionKey] in list area)
-    const versionObj = imageVersionData[versionKey] || {};
-    
-    // Extract avatar_urls from current version (same as: verObj?.avatar_urls in list area)
-    let avatarUrls = versionObj?.avatar_urls;
-    
-    // If not found in version object, check root level (fallback)
-    if (!avatarUrls || !Array.isArray(avatarUrls) || avatarUrls.length === 0) {
-      avatarUrls = imageVersionData?.avatar_urls;
-    }
-    
-    if (Array.isArray(avatarUrls) && avatarUrls.length > 0) {
-      // Map avatar URLs exactly as done in list area (lines 2117-2129)
-      const extracted = avatarUrls.map((av) => {
-        if (typeof av === 'string') return av.trim();
-        return (
-          av?.imageurl ||
-          av?.imageUrl ||
-          av?.image_url ||
-          av?.url ||
-          av?.src ||
-          av?.link ||
-          av?.avatar_url ||
-          ''
-        );
-      }).filter(url => url && typeof url === 'string' && url.trim());
-      
-      return extracted;
-    }
-  }
-  
-  return [];
-}
-
-const getOrderedRefs = useCallback((row) => {
-  const modelUpper = String(row?.model || '').toUpperCase()
-    
-  // ALWAYS prioritize imageFrames from current version
-      const frames = Array.isArray(row?.imageFrames) ? row.imageFrames : []
-  
-  // For SORA, VEO3, ANCHOR: Extract from imageFrames (current version)
-  if (modelUpper === 'SORA' || modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
-      if (frames.length > 0) {
-      const imageUrls = frames
-        .map((frame) => {
-        const base = frame?.base_image || frame?.baseImage || {}
-          return base?.image_url || base?.imageUrl || base?.imageurl || base?.url || base?.src || ''
-        })
-        .filter(Boolean)
-      
-      if (imageUrls.length > 0) {
-        // For ANCHOR: ensure we have two items for two tabs
-        if (modelUpper === 'ANCHOR') {
-          if (imageUrls.length === 1) {
-            return [...imageUrls, imageUrls[0]]
-          }
-          return imageUrls.slice(0, 2)
-        }
-        // For SORA/VEO3: return all images from current version
-        return imageUrls
-      }
-    }
-    // If no frames, return empty (don't fallback to old refs)
-    return []
-  }
-  
-  // For PLOTLY: use frames from current version
-  if (modelUpper === 'PLOTLY') {
-    if (!frames.length) return []
-    const frameEntries = frames
-      .map((frame) => {
-        const base = frame?.base_image || frame?.baseImage || {}
-        const url =
-          base?.image_url ||
-          base?.imageUrl ||
-          base?.imageurl ||
-          base?.url ||
-          base?.src ||
-          frame?.image_url ||
-          frame?.imageUrl ||
-          frame?.url ||
-          ''
-        const normalizedUrl = normalizeImageUrl(url)
-        if (!normalizedUrl) return null
-        const textEls = Array.isArray(frame?.text_elements)
-          ? frame.text_elements
-          : Array.isArray(frame?.textElements)
-          ? frame.textElements
-          : []
-        const hasText = textEls.some((el) => {
-          const txt = typeof el?.text === 'string' ? el.text.trim() : ''
-          return txt.length > 0
-        })
-        return { url, normalizedUrl, hasText }
-      })
-      .filter(Boolean)
-    if (!frameEntries.length) return []
-    const noText = []
-    const withText = []
-    frameEntries.forEach(({ url, hasText }) => {
-      if (hasText) {
-        withText.push(url)
-      } else {
-        noText.push(url)
-      }
-    })
-    // Return only from current version frames (no fallback to old refs)
-    const ordered = [...noText, ...withText]
-    return ordered.length > 0 ? ordered : []
-  }
-  
-  // For any other model, return empty (no fallback to old refs)
-  return []
-  }, [normalizeImageUrl])
 
   const getSceneImages = useCallback(
     (row) => {
@@ -978,62 +1040,6 @@ const getOrderedRefs = useCallback((row) => {
       return imageRefs.slice(0, 2)
     },
     [getOrderedRefs, isPortrait9x16]
-  )
-
-  const normalizeSimpleUrl = useCallback((url) => (typeof url === 'string' ? url.trim() : ''), [])
-
-  const getAvatarUrlSet = useCallback(
-    (row) => {
-      const avatarUrls = [];
-      
-      // Priority 1: Get from row.avatar_urls
-      if (Array.isArray(row?.avatar_urls)) {
-        avatarUrls.push(...row.avatar_urls);
-      }
-      
-      // Priority 2: Extract from versioned structure (imageVersionData[current_version].avatar_urls)
-      if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
-        let imagesContainer = row.imageVersionData;
-        
-        // Check if imageVersionData has the images container structure (it.images)
-        if (row.imageVersionData.images && typeof row.imageVersionData.images === 'object' && !Array.isArray(row.imageVersionData.images)) {
-          imagesContainer = row.imageVersionData.images;
-        }
-        
-        // Get latest version key (always use latest version)
-        const versionKey = getLatestVersionKey(imagesContainer);
-        
-        // Get version object
-        const verObj = imagesContainer[versionKey] || {};
-        
-        // Extract avatar_urls from version object
-        const versionAvatars = verObj?.avatar_urls;
-        
-        if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
-          avatarUrls.push(...versionAvatars);
-        }
-      }
-      
-      // Normalize and deduplicate all avatar URLs
-      const normalizedUrls = avatarUrls
-          .map((entry) => {
-          if (typeof entry === 'string') return normalizeSimpleUrl(entry);
-            return normalizeSimpleUrl(
-              entry?.imageurl ||
-                entry?.imageUrl ||
-                entry?.image_url ||
-                entry?.url ||
-                entry?.src ||
-                entry?.link ||
-                entry?.avatar_url ||
-                ''
-          );
-          })
-        .filter(Boolean);
-      
-      return new Set(normalizedUrls);
-    },
-    [normalizeSimpleUrl]
   )
 
   const getVeo3ImageTabImages = useCallback(
@@ -3684,8 +3690,8 @@ const getOrderedRefs = useCallback((row) => {
     setRegenerateSaveAsNewVersion(false);
     
     // Reset reference image upload state
-    setRegenerateReferenceFile(null);
-    setRegenerateReferencePreview(null);
+    setRegenerateReferenceFile([]);
+    setRegenerateReferencePreview([]);
     
     setShowRegeneratePopup(true);
   }, [getSceneModel, isSORAModel, isVEO3Model, isANCHORModel, scriptsData]);
@@ -3753,43 +3759,53 @@ const getOrderedRefs = useCallback((row) => {
       // Use user-entered query if available, otherwise fallback to original query
       const finalUserQuery = regenerateUserQuery.trim() || originalUserQuery.trim();
 
-      // Check if reference image is uploaded
-      if (regenerateReferenceFile) {
-        // Flow 1: Generate from reference image
-        // Step 1: Upload the reference image to get a URL
-        const base64Image = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const base64 = reader.result.split(',')[1]; // Remove data:image/...;base64, prefix
-            resolve(base64);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(regenerateReferenceFile);
+      // Check if reference images are uploaded
+      if (regenerateReferenceFile && regenerateReferenceFile.length > 0) {
+        // Flow 1: Generate from reference image(s)
+        // Step 1: Upload all reference images to get URLs
+        const uploadPromises = regenerateReferenceFile.map(async (file) => {
+          const base64Image = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64 = reader.result.split(',')[1]; // Remove data:image/...;base64, prefix
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+
+          // Step 2: Upload to /v1/bf_remove/upload to get blob URL
+          const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/bf_remove/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base64_image: base64Image })
+          });
+
+          const uploadText = await uploadResponse.text();
+          let uploadData;
+          try {
+            uploadData = JSON.parse(uploadText);
+          } catch (_) {
+            uploadData = uploadText;
+          }
+
+          if (!uploadResponse.ok) {
+            throw new Error(`Failed to upload reference image: ${uploadResponse.status} ${uploadText}`);
+          }
+
+          const imageUrl = uploadData?.image_url || uploadData?.imageUrl || uploadData?.url;
+          if (!imageUrl) {
+            throw new Error('No image URL returned from upload');
+          }
+
+          return imageUrl;
         });
 
-        // Step 2: Upload to /v1/bf_remove/upload to get blob URL
-        const uploadResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/bf_remove/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ base64_image: base64Image })
-        });
-
-        const uploadText = await uploadResponse.text();
-        let uploadData;
-        try {
-          uploadData = JSON.parse(uploadText);
-        } catch (_) {
-          uploadData = uploadText;
-        }
-
-        if (!uploadResponse.ok) {
-          throw new Error(`Failed to upload reference image: ${uploadResponse.status} ${uploadText}`);
-        }
-
-        const referenceImageUrl = uploadData?.image_url || uploadData?.imageUrl || uploadData?.url;
-        if (!referenceImageUrl) {
-          throw new Error('No image URL returned from upload');
-        }
+        // Upload all images and get their URLs
+        const referenceImageUrls = await Promise.all(uploadPromises);
+        
+        // Use the first two image URLs for the API call (API accepts reference_image_urls as array)
+        const referenceImageUrlsArray = referenceImageUrls.slice(0, 2);
 
         // Step 3: Call generate-from-reference API
         const payload = {
@@ -3797,7 +3813,7 @@ const getOrderedRefs = useCallback((row) => {
           session_id: session_id,
           scene_number: regeneratingSceneNumber,
           model: model,
-          reference_image_url: referenceImageUrl,
+          reference_image_urls: referenceImageUrlsArray,
           user_query: finalUserQuery,
           frames_to_regenerate: framesToRegenerate,
           aspect_ratio: aspectRatio
@@ -3831,8 +3847,8 @@ const getOrderedRefs = useCallback((row) => {
         setRegeneratingSceneNumber(null);
         setIsRegenerateForDescription(false);
         setIsRegenerating(false);
-        setRegenerateReferenceFile(null);
-        setRegenerateReferencePreview(null);
+        setRegenerateReferenceFile([]);
+        setRegenerateReferencePreview([]);
         
         // Reset regenerate options to defaults
         setRegenerateFrames(['opening', 'closing']);
@@ -10542,8 +10558,8 @@ const getOrderedRefs = useCallback((row) => {
                   setIsRegenerateForDescription(false);
                   setIsRegenerating(false);
                   setError('');
-                  setRegenerateReferenceFile(null);
-                  setRegenerateReferencePreview(null);
+                  setRegenerateReferenceFile([]);
+                  setRegenerateReferencePreview([]);
                 }
               }}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -10578,25 +10594,34 @@ const getOrderedRefs = useCallback((row) => {
               {/* Reference Image Upload (Optional) */}
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Upload Reference Image (Optional)
+                  Upload Reference Images (Optional)
                 </label>
                 <p className="text-xs text-gray-500 mb-3">
-                  If you upload a reference image, the system will generate new images based on your reference image and description.
+                  If you upload reference images, the system will generate new images based on your reference images and description.
                 </p>
-                {!regenerateReferencePreview ? (
+                {regenerateReferencePreview.length === 0 ? (
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-[#13008B] transition-colors">
                     <input
                       type="file"
                       accept="image/*"
+                      multiple
                       onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setRegenerateReferenceFile(file);
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            setRegenerateReferencePreview(event.target?.result);
-                          };
-                          reader.readAsDataURL(file);
+                        const files = Array.from(e.target.files || []);
+                        if (files.length > 0) {
+                          setRegenerateReferenceFile(files);
+                          const previews = [];
+                          let loadedCount = 0;
+                          files.forEach((file) => {
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                              previews.push(event.target?.result);
+                              loadedCount++;
+                              if (loadedCount === files.length) {
+                                setRegenerateReferencePreview(previews);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          });
                         }
                       }}
                       disabled={isRegenerating}
@@ -10614,34 +10639,42 @@ const getOrderedRefs = useCallback((row) => {
                         Click to upload or drag and drop
                       </span>
                       <span className="text-xs text-gray-500">
-                        PNG, JPG, GIF up to 10MB
+                        PNG, JPG, GIF up to 10MB (Multiple images allowed)
                       </span>
                     </label>
                   </div>
                 ) : (
-                  <div className="relative border border-gray-300 rounded-lg p-4">
-                    <img
-                      src={regenerateReferencePreview}
-                      alt="Reference preview"
-                      className="w-full h-48 object-contain rounded"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRegenerateReferenceFile(null);
-                        setRegenerateReferencePreview(null);
-                        const input = document.getElementById('regenerate-reference-upload');
-                        if (input) input.value = '';
-                      }}
-                      disabled={isRegenerating}
-                      className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="Remove reference image"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                      </svg>
-                    </button>
+                  <div className="grid grid-cols-2 gap-4">
+                    {regenerateReferencePreview.map((preview, index) => (
+                      <div key={index} className="relative border border-gray-300 rounded-lg p-4">
+                        <img
+                          src={preview}
+                          alt={`Reference preview ${index + 1}`}
+                          className="w-full h-48 object-contain rounded"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newFiles = regenerateReferenceFile.filter((_, i) => i !== index);
+                            const newPreviews = regenerateReferencePreview.filter((_, i) => i !== index);
+                            setRegenerateReferenceFile(newFiles);
+                            setRegenerateReferencePreview(newPreviews);
+                            if (newFiles.length === 0) {
+                              const input = document.getElementById('regenerate-reference-upload');
+                              if (input) input.value = '';
+                            }
+                          }}
+                          disabled={isRegenerating}
+                          className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Remove reference image"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -10758,7 +10791,7 @@ const getOrderedRefs = useCallback((row) => {
                     if (isRegenerating) return true;
                     // Allow submission if either user query OR reference image is provided
                     const hasQuery = regenerateUserQuery.trim().length > 0;
-                    const hasReferenceImage = !!regenerateReferenceFile;
+                    const hasReferenceImage = regenerateReferenceFile.length > 0;
                     if (!hasQuery && !hasReferenceImage) return true;
                     // For non-VEO3 models, require at least one frame selected
                     // VEO3 uses background, ANCHOR and others use opening/closing frames

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import Plot from 'react-plotly.js'
 import Plotly from 'plotly.js-dist-min'
 import { FaTimes, FaUndo, FaRedo } from 'react-icons/fa'
-
+import ChartDataEditor from '../ChartDataEditor'
 const deepClone = (value) => JSON.parse(JSON.stringify(value))
 
 // Aspect ratio helper functions
@@ -78,10 +78,10 @@ const getConfigDict = (section = []) => {
 // Helper functions from App.jsx
 const getConfig = (sections, sectionName, configName, seriesName = null) => {
   if (!sections || !sections[sectionName]) return null
-  
+
   const section = sections[sectionName]
   if (!Array.isArray(section)) return null
-  
+
   if (seriesName && seriesName !== 'global') {
     // Look for series-specific first (non-global series)
     const seriesConfig = section.find(item => item.name === configName && item.series === seriesName)
@@ -89,15 +89,15 @@ const getConfig = (sections, sectionName, configName, seriesName = null) => {
       return seriesConfig.value
     }
   }
-  
+
   // Fall back to global or direct lookup
-  const globalConfig = section.find(item => 
+  const globalConfig = section.find(item =>
     item.name === configName && (!item.series || item.series === 'global')
   )
   if (globalConfig && globalConfig.value !== null && globalConfig.value !== undefined) {
     return globalConfig.value
   }
-  
+
   return null
 }
 
@@ -111,7 +111,7 @@ const getAxisConfig = (sections, axis, subsection, configName) => {
 
 const formatNumber = (value, format, prefix = '', suffix = '') => {
   if (value == null) return ''
-  
+
   let formatted = value.toString()
   if (format === '.0f') {
     formatted = Math.round(value).toString()
@@ -124,7 +124,7 @@ const formatNumber = (value, format, prefix = '', suffix = '') => {
   } else if (format === '.1%') {
     formatted = (value * 100).toFixed(1) + '%'
   }
-  
+
   return `${prefix}${formatted}${suffix}`
 }
 
@@ -171,18 +171,18 @@ const extractChartData = (chartData, chartType) => {
   if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
     const xValues = Array.isArray(seriesBlock.x) ? seriesBlock.x : []
     const dataEntries = Array.isArray(seriesBlock.data) ? seriesBlock.data : []
-    
+
     if (!xValues.length || !dataEntries.length) return null
-    
+
     const firstEntry = dataEntries[0]
     if (!firstEntry || typeof firstEntry !== 'object') return null
-    
+
     const yValues = Array.isArray(firstEntry.y) ? firstEntry.y : []
     const measure = Array.isArray(firstEntry.measure) ? firstEntry.measure : []
-    
+
     if (!yValues.length || !measure.length) return null
     if (xValues.length !== yValues.length || xValues.length !== measure.length) return null
-    
+
     return {
       categories: xValues,
       values: yValues,
@@ -215,7 +215,7 @@ const extractChartData = (chartData, chartType) => {
       // Always add series to dataset, even if empty (will be handled in rendering)
       dataset[name] = yValues
     })
-    
+
     // Debug logging
     try {
       console.log('[extractChartData] Extracted data:', {
@@ -225,19 +225,19 @@ const extractChartData = (chartData, chartType) => {
         datasetKeys: Object.keys(dataset),
         dataset: dataset
       });
-    } catch(_) {}
-    
+    } catch (_) { }
+
     // If we have both x and dataset, return it (even if some series are empty)
     if (Object.keys(dataset).length && xValues.length) {
       return { categories: xValues, dataset }
     }
-    
+
     // Fallback: Try to convert from pie/donut format (labels/values) to other chart format
     // This handles cases where API returns data in pie format but chart type has changed
     const labels = Array.isArray(seriesBlock.labels) ? seriesBlock.labels : []
     const pieDataEntries = Array.isArray(seriesBlock.data) ? seriesBlock.data : []
     const pieValues = pieDataEntries[0]?.values
-    
+
     if (labels.length && Array.isArray(pieValues) && pieValues.length) {
       // Convert pie format to bar/line format
       // Use labels as categories (x-axis) and values as a single series
@@ -245,12 +245,12 @@ const extractChartData = (chartData, chartType) => {
       const convertedDataset = {
         'Series 1': pieValues.slice(0, minLen)
       }
-      return { 
-        categories: labels.slice(0, minLen), 
-        dataset: convertedDataset 
+      return {
+        categories: labels.slice(0, minLen),
+        dataset: convertedDataset
       }
     }
-    
+
     // If still no data found, return null
     return null
   }
@@ -260,20 +260,20 @@ const extractChartData = (chartData, chartType) => {
 
 const createPieChart = (data, presetData, chartData, chartType, sections) => {
   console.log('🥧 createPieChart called with chartType:', chartType, 'Type:', typeof chartType)
-  
+
   const labels = data.categories ?? []
   const values = data.values ?? []
   const effectiveSections = sections ?? presetData?.preset_definitions?.[0]?.sections ?? {}
-  
+
   // ✅ CRITICAL: Check if labels should be shown - must check explicitly for false
   const showLabelsConfig = getConfig(effectiveSections, 'segment_values', 'show', 'global')
   const showLabels = showLabelsConfig !== false
-  
+
   // ✅ Determine if this should be a donut (check multiple possible values)
-  const isDonut = chartType === 'donut' || 
-                  chartType === 'pie_donut' || 
-                  chartType?.includes('donut')
-  
+  const isDonut = chartType === 'donut' ||
+    chartType === 'pie_donut' ||
+    chartType?.includes('donut')
+
   console.log('🥧 Pie/Donut chart config:', {
     chartType,
     isDonut,
@@ -323,33 +323,33 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
   const getValue = (section, configName, seriesName, defaultValue) => {
     const seriesVal = getConfig(effectiveSections, section, configName, seriesName)
     if (seriesVal !== null && seriesVal !== undefined) return seriesVal
-    
+
     const globalVal = getConfig(effectiveSections, section, configName, 'global')
     if (globalVal !== null && globalVal !== undefined) return globalVal
-    
+
     return defaultValue
   }
 
   const traces = Object.entries(dataset).map(([seriesName, yValues]) => {
     const color = getConfig(effectiveSections, 'colors', 'color', seriesName)
-    
+
     // Ensure yValues is an array and has the same length as categories
     const safeYValues = Array.isArray(yValues) ? yValues : []
     const paddedYValues = categories.map((_, idx) => safeYValues[idx] ?? 0)
-    
+
     // ✅ Bar properties - READ FROM PRESET (no defaults)
     const barOpacity = getValue('bars', 'opacity', seriesName, undefined)
     const cornerRadius = getValue('bars', 'corner_radius', seriesName, undefined)
     const borderWidth = getValue('bars', 'border_width', seriesName, undefined)
     const borderColor = getValue('bars', 'border_color', seriesName, undefined)
     console.log('🎨 Bar styling for series:', seriesName, {
-  barOpacity,
-  cornerRadius,
-  borderWidth,
-  borderColor,
-  sectionsStateBars: effectiveSections?.bars
-})
-    
+      barOpacity,
+      cornerRadius,
+      borderWidth,
+      borderColor,
+      sectionsStateBars: effectiveSections?.bars
+    })
+
     // ✅ Label properties
     const showLabels = getValue('segment_values', 'show', seriesName, true)
     const labelPosition = getValue('segment_values', 'position', seriesName, 'inside')
@@ -360,16 +360,16 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
     const labelFontColor = getValue('segment_values', 'font_color', seriesName, '#FFFFFF')
     const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Verdana'))
     const labelFontWeight = getValue('segment_values', 'font_weight', seriesName, 'bold')
-    
+
     const textValues = showLabels ? paddedYValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
-    
+
     // ✅ Build marker with opacity baked into color
     const marker = {}
-    
+
     // Convert color to rgba with opacity
     if (color) {
       const finalOpacity = barOpacity !== null && barOpacity !== undefined ? barOpacity : 1
-      
+
       // Convert hex to rgba
       if (color.startsWith('#')) {
         const r = parseInt(color.slice(1, 3), 16)
@@ -385,18 +385,18 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
         marker.opacity = finalOpacity
       }
     }
-    
+
     if (cornerRadius !== null && cornerRadius !== undefined) {
       marker.cornerradius = cornerRadius
     }
-    
+
     if (borderWidth !== null && borderWidth !== undefined && borderWidth > 0) {
       marker.line = {
         width: borderWidth,
         color: borderColor || '#FFFFFF'
       }
     }
-    
+
     return {
       type: 'bar',
       name: seriesName,
@@ -437,24 +437,24 @@ const createLineChart = (data, presetData, chartData, chartType, sections) => {
     // Try series-specific first
     const seriesVal = getConfig(effectiveSections, section, configName, seriesName)
     if (seriesVal !== null && seriesVal !== undefined) return seriesVal
-    
+
     // Try global
     const globalVal = getConfig(effectiveSections, section, configName, 'global')
     if (globalVal !== null && globalVal !== undefined) return globalVal
-    
+
     // Use default
     return defaultValue
   }
 
   return Object.entries(dataset).map(([seriesName, yValues]) => {
     const color = getConfig(effectiveSections, 'colors', 'color', seriesName) || '#1470D2'
-    
+
     // Line properties
     const lineWidth = getValue('lines', 'width', seriesName, 3)
     const lineDash = getValue('lines', 'dash', seriesName, 'solid')
     const lineShape = getValue('lines', 'shape', seriesName, 'linear')
     const lineOpacity = getValue('lines', 'opacity', seriesName, 1)
-    
+
     // Marker properties
     const showMarkers = getValue('markers', 'show', seriesName, true)
     const markerSize = getValue('markers', 'size', seriesName, 8)
@@ -462,12 +462,12 @@ const createLineChart = (data, presetData, chartData, chartType, sections) => {
     const markerColor = getValue('markers', 'color', seriesName, color)
     const markerLineWidth = getValue('markers', 'line_width', seriesName, 0)
     const markerLineColor = getValue('markers', 'line_color', seriesName, color)
-    
+
     // Area properties
     const areaFill = getValue('areas', 'fill', seriesName, false)
     const areaOpacity = getValue('areas', 'opacity', seriesName, 0.2)
     const areaColor = getValue('areas', 'color', seriesName, color)
-    
+
     // Label properties
     const showLabels = getValue('segment_values', 'show', seriesName, false)
     const labelFormat = getValue('segment_values', 'format', seriesName, '.0f')
@@ -477,9 +477,9 @@ const createLineChart = (data, presetData, chartData, chartType, sections) => {
     const labelFontSize = getValue('segment_values', 'font_size', seriesName, 14)
     const labelFontColor = getValue('segment_values', 'font_color', seriesName, color)
     const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Verdana'))
-    
+
     const textValues = showLabels ? yValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
-    
+
     return {
       type: 'scatter',
       name: seriesName,
@@ -526,14 +526,14 @@ const createScatterChart = (data, presetData, chartData, sections) => {
     const markerSize = getConfig(effectiveSections, 'markers', 'size', seriesName) || getConfig(effectiveSections, 'markers', 'size', 'global') || 8
     const markerSymbol = getConfig(effectiveSections, 'markers', 'symbol', seriesName) || getConfig(effectiveSections, 'markers', 'symbol', 'global') || 'circle'
     const markerOpacity = getConfig(effectiveSections, 'markers', 'opacity', seriesName) || getConfig(effectiveSections, 'markers', 'opacity', 'global') || 1
-    
+
     const showLabels = getConfig(effectiveSections, 'segment_values', 'show', seriesName) || getConfig(effectiveSections, 'segment_values', 'show', 'global')
     const labelFormat = getConfig(effectiveSections, 'segment_values', 'format', seriesName) || getConfig(effectiveSections, 'segment_values', 'format', 'global') || '.0f'
     const labelPrefix = getConfig(effectiveSections, 'segment_values', 'prefix', seriesName) || getConfig(effectiveSections, 'segment_values', 'prefix', 'global') || ''
     const labelSuffix = getConfig(effectiveSections, 'segment_values', 'suffix', seriesName) || getConfig(effectiveSections, 'segment_values', 'suffix', 'global') || ''
-    
+
     const textValues = showLabels ? yValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
-    
+
     return {
       type: 'scatter',
       name: seriesName,
@@ -565,9 +565,9 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
   const values = data.values ?? []
   const measure = data.measure ?? []
   const effectiveSections = sections ?? presetData?.preset_definitions?.[0]?.sections ?? {}
-  
+
   const isHorizontal = chartType === 'waterfall_bar'
-  
+
   // ✅ Get waterfall colors from colors section (matching backend preset structure)
   // Look for entries with name="increasing", name="decreasing", name="totals"
   const colorsSection = effectiveSections.colors || []
@@ -575,17 +575,17 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
     const entry = colorsSection.find(item => item.name === name || item.name === name.toLowerCase())
     return entry?.value || fallback
   }
-  
+
   const increasingColor = findColor('increasing', '#1976D2')
   const decreasingColor = findColor('decreasing', '#FF375E')
   const totalsColor = findColor('totals', '#4F008C')
-  
+
   // Get connector settings
   const showConnector = getConfig(effectiveSections, 'connector', 'show') !== false
   const connectorColor = getConfig(effectiveSections, 'connector', 'line_color') || '#999999'
   const connectorWidth = getConfig(effectiveSections, 'connector', 'line_width') || 2
   const connectorDash = getConfig(effectiveSections, 'connector', 'line_dash') || 'solid'
-  
+
   // Get text/label settings for waterfall bars
   const showLabels = getConfig(effectiveSections, 'segment_values', 'show', 'global') !== false
   const labelFormat = getConfig(effectiveSections, 'segment_values', 'format', 'global') || '.0f'
@@ -595,9 +595,9 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
   const labelFontSize = getConfig(effectiveSections, 'segment_values', 'font_size', 'global') || 14
   const labelFontColor = getConfig(effectiveSections, 'segment_values', 'font_color', 'global') || '#000000'
   const labelFontFamily = resolveBrandFont(getConfig(effectiveSections, 'segment_values', 'font_family', 'global'))
-  
+
   const textValues = showLabels ? values.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
-  
+
   return [{
     type: 'waterfall',
     name: 'Waterfall',
@@ -615,13 +615,13 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
     increasing: { marker: { color: increasingColor } },
     decreasing: { marker: { color: decreasingColor } },
     totals: { marker: { color: totalsColor } },
-    connector: { 
+    connector: {
       visible: showConnector,
-      line: { 
+      line: {
         color: connectorColor,
         width: connectorWidth,
         dash: connectorDash
-      } 
+      }
     }
   }]
 }
@@ -653,18 +653,18 @@ const applyBackground = (fig, sections) => {
     fig.layout.plot_bgcolor = '#FFFFFF'
     return
   }
-  
+
   // Use getConfig to read from the array format
   const paperColor = getConfig(sections, 'background', 'paper_color')
   const plotColor = getConfig(sections, 'background', 'color')
-  
+
   // Always apply background colors - use configured values or default to white
   if (paperColor !== null && paperColor !== undefined && paperColor !== '') {
     fig.layout.paper_bgcolor = paperColor
   } else {
     fig.layout.paper_bgcolor = '#FFFFFF'
   }
-  
+
   if (plotColor !== null && plotColor !== undefined && plotColor !== '') {
     fig.layout.plot_bgcolor = plotColor
   } else {
@@ -677,7 +677,7 @@ const applyTitle = (fig, sections) => {
   if (titleText !== null) {
     const xAlign = getConfig(sections, 'title', 'x_align') || 'left'
     const fontWeight = getConfig(sections, 'title', 'font_weight') || 'bold'  // ✅ ADD THIS
-    
+
     fig.layout.title = {
       text: titleText || '',
       font: {
@@ -698,12 +698,12 @@ const applyLegend = (fig, sections) => {
     fig.layout.showlegend = false
     return
   }
-  
+
   fig.layout.showlegend = showLegend !== false
   const orientation = getConfig(sections, 'legend', 'orientation') === 'horizontal' ? 'h' : 'v'
   const position = getConfig(sections, 'legend', 'position') || 'right'
   const pos = LEGEND_POSITIONS[position] || LEGEND_POSITIONS['right']
-  
+
   fig.layout.legend = {
     orientation: orientation,
     x: getConfig(sections, 'legend', 'x') ?? pos.x,
@@ -723,9 +723,9 @@ const applyLegend = (fig, sections) => {
 
 const applyPresetFormatting = (fig, sections, chartType, chartData) => {
   if (!sections) return
-  console.log('📝 applyPresetFormatting called with sections.y_axis.line:', 
+  console.log('📝 applyPresetFormatting called with sections.y_axis.line:',
     sections?.y_axis?.line,
-    'Line visible value:', 
+    'Line visible value:',
     getAxisConfig(sections, 'y_axis', 'line', 'visible')
   )
   applyDimensions(fig, sections)
@@ -735,14 +735,14 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
   applyLegend(fig, sections)
 
   const isPieDonut = chartType === 'pie' || chartType === 'donut'
-  
+
   // Only add axis configs if not pie/donut
   if (!isPieDonut) {
     // ✅ X-AXIS - Exactly like Python (lines 777-796)
     const xAxisSection = sections.x_axis
     if (xAxisSection && typeof xAxisSection === 'object') {
       const xAxisDict = {}
-      
+
       // Grid
       const xGridShow = getAxisConfig(sections, 'x_axis', 'grid', 'show')
       if (xGridShow !== null && xGridShow !== undefined) {
@@ -754,7 +754,7 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
           if (gridWidth !== null && gridWidth !== undefined) xAxisDict.gridwidth = gridWidth
         }
       }
-      
+
       // Line
       const xLineVisible = getAxisConfig(sections, 'x_axis', 'line', 'visible')
       if (xLineVisible !== null && xLineVisible !== undefined) {
@@ -766,54 +766,54 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
           if (lineWidth !== null && lineWidth !== undefined) xAxisDict.linewidth = lineWidth
         }
       }
-      
+
       // Ticks
       const xTickSize = getAxisConfig(sections, 'x_axis', 'ticks', 'font_size')
       if (xTickSize !== null && xTickSize !== undefined) {
         xAxisDict.showticklabels = xTickSize !== 0
-        
+
         const tickFont = {}
         const tickFamily = getAxisConfig(sections, 'x_axis', 'ticks', 'font_family')
         const tickColor = getAxisConfig(sections, 'x_axis', 'ticks', 'font_color')
-        
+
         if (tickFamily) tickFont.family = resolveBrandFont(tickFamily)
         tickFont.size = xTickSize === 0 ? 1 : xTickSize
         if (tickColor) tickFont.color = tickColor
-        
+
         xAxisDict.tickfont = tickFont
-        
+
         const tickAngle = getAxisConfig(sections, 'x_axis', 'ticks', 'angle')
         if (tickAngle !== null && tickAngle !== undefined) {
           xAxisDict.tickangle = tickAngle
         }
-        
+
         const tickFormat = getAxisConfig(sections, 'x_axis', 'ticks', 'format')
         const tickPrefix = getAxisConfig(sections, 'x_axis', 'ticks', 'prefix')
         const tickSuffix = getAxisConfig(sections, 'x_axis', 'ticks', 'suffix')
-        
+
         if (tickFormat) xAxisDict.tickformat = tickFormat
         if (tickPrefix) xAxisDict.tickprefix = tickPrefix
         if (tickSuffix) xAxisDict.ticksuffix = tickSuffix
       }
-      
+
       // Title
       const xTitleText = getAxisConfig(sections, 'x_axis', 'title', 'text')
       if (xTitleText) {
         const titleObj = { text: xTitleText }
         const titleFont = {}
-        
+
         const titleFamily = getAxisConfig(sections, 'x_axis', 'title', 'font_family')
         const titleSize = getAxisConfig(sections, 'x_axis', 'title', 'font_size')
         const titleColor = getAxisConfig(sections, 'x_axis', 'title', 'font_color')
-        
+
         if (titleFamily) titleFont.family = resolveBrandFont(titleFamily)
         if (titleSize !== null && titleSize !== undefined) titleFont.size = titleSize
         if (titleColor) titleFont.color = titleColor
-        
+
         titleObj.font = titleFont
         xAxisDict.title = titleObj
       }
-      
+
       // ✅ CRITICAL: Merge with existing, don't replace
       if (Object.keys(xAxisDict).length > 0) {
         fig.layout.xaxis = {
@@ -822,12 +822,12 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
         }
       }
     }
-    
+
     // ✅ Y-AXIS - Exactly like Python (lines 798-821)
     const yAxisSection = sections.y_axis
     if (yAxisSection && typeof yAxisSection === 'object') {
       const yAxisDict = {}
-      
+
       // Grid
       const yGridShow = getAxisConfig(sections, 'y_axis', 'grid', 'show')
       if (yGridShow !== null && yGridShow !== undefined) {
@@ -839,22 +839,22 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
           if (gridWidth !== null && gridWidth !== undefined) yAxisDict.gridwidth = gridWidth
         }
       }
-      
-      // Line
-const yLineVisible = getAxisConfig(sections, 'y_axis', 'line', 'visible')
-console.log('🔍 In applyPresetFormatting - yLineVisible:', yLineVisible)
 
-if (yLineVisible !== null && yLineVisible !== undefined) {
-  yAxisDict.showline = yLineVisible
-  console.log('✅ Setting yAxisDict.showline to:', yLineVisible)
-  if (yLineVisible) {
-    const lineColor = getAxisConfig(sections, 'y_axis', 'line', 'color')
-    const lineWidth = getAxisConfig(sections, 'y_axis', 'line', 'width')
-    if (lineColor) yAxisDict.linecolor = lineColor
-    if (lineWidth !== null && lineWidth !== undefined) yAxisDict.linewidth = lineWidth
-  }
-}
-      
+      // Line
+      const yLineVisible = getAxisConfig(sections, 'y_axis', 'line', 'visible')
+      console.log('🔍 In applyPresetFormatting - yLineVisible:', yLineVisible)
+
+      if (yLineVisible !== null && yLineVisible !== undefined) {
+        yAxisDict.showline = yLineVisible
+        console.log('✅ Setting yAxisDict.showline to:', yLineVisible)
+        if (yLineVisible) {
+          const lineColor = getAxisConfig(sections, 'y_axis', 'line', 'color')
+          const lineWidth = getAxisConfig(sections, 'y_axis', 'line', 'width')
+          if (lineColor) yAxisDict.linecolor = lineColor
+          if (lineWidth !== null && lineWidth !== undefined) yAxisDict.linewidth = lineWidth
+        }
+      }
+
       // Zeroline
       const yZerolineShow = getAxisConfig(sections, 'y_axis', 'zeroline', 'show')
       if (yZerolineShow !== null && yZerolineShow !== undefined) {
@@ -866,49 +866,49 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
           if (zerolineWidth !== null && zerolineWidth !== undefined) yAxisDict.zerolinewidth = zerolineWidth
         }
       }
-      
+
       // Ticks
       const yTickSize = getAxisConfig(sections, 'y_axis', 'ticks', 'font_size')
       if (yTickSize !== null && yTickSize !== undefined) {
         yAxisDict.showticklabels = yTickSize !== 0
-        
+
         const tickFont = {}
         const tickFamily = getAxisConfig(sections, 'y_axis', 'ticks', 'font_family')
         const tickColor = getAxisConfig(sections, 'y_axis', 'ticks', 'font_color')
-        
+
         if (tickFamily) tickFont.family = resolveBrandFont(tickFamily)
         tickFont.size = yTickSize === 0 ? 1 : yTickSize
         if (tickColor) tickFont.color = tickColor
-        
+
         yAxisDict.tickfont = tickFont
-        
+
         const tickFormat = getAxisConfig(sections, 'y_axis', 'ticks', 'format')
         const tickPrefix = getAxisConfig(sections, 'y_axis', 'ticks', 'prefix')
         const tickSuffix = getAxisConfig(sections, 'y_axis', 'ticks', 'suffix')
-        
+
         if (tickFormat) yAxisDict.tickformat = tickFormat
         if (tickPrefix) yAxisDict.tickprefix = tickPrefix
         if (tickSuffix) yAxisDict.ticksuffix = tickSuffix
       }
-      
+
       // Title
       const yTitleText = getAxisConfig(sections, 'y_axis', 'title', 'text')
       if (yTitleText) {
         const titleObj = { text: yTitleText }
         const titleFont = {}
-        
+
         const titleFamily = getAxisConfig(sections, 'y_axis', 'title', 'font_family')
         const titleSize = getAxisConfig(sections, 'y_axis', 'title', 'font_size')
         const titleColor = getAxisConfig(sections, 'y_axis', 'title', 'font_color')
-        
+
         if (titleFamily) titleFont.family = resolveBrandFont(titleFamily)
         if (titleSize !== null && titleSize !== undefined) titleFont.size = titleSize
         if (titleColor) titleFont.color = titleColor
-        
+
         titleObj.font = titleFont
         yAxisDict.title = titleObj
       }
-      
+
       // ✅ CRITICAL: Merge with existing, don't replace
       if (Object.keys(yAxisDict).length > 0) {
         fig.layout.yaxis = {
@@ -917,11 +917,11 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
         }
       }
     }
-    
+
     // ✅✅✅ NUCLEAR OPTION: Force override Plotly defaults if NOT in preset
     // This is what Python does - if no config, Plotly shows defaults
     // We need to EXPLICITLY hide things not in preset
-    
+
     // If x_axis section doesn't exist or line.visible not set, force hide
     if (!xAxisSection || getAxisConfig(sections, 'x_axis', 'line', 'visible') === null) {
       fig.layout.xaxis = {
@@ -930,7 +930,7 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
         linewidth: 0
       }
     }
-    
+
     // Same for grid
     if (!xAxisSection || getAxisConfig(sections, 'x_axis', 'grid', 'show') === null) {
       fig.layout.xaxis = {
@@ -938,7 +938,7 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
         showgrid: false
       }
     }
-    
+
     // Y-axis - only hide if NOT explicitly set
     if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'line', 'visible') === null) {
       fig.layout.yaxis = {
@@ -947,14 +947,14 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
         linewidth: 0
       }
     }
-    
+
     if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'grid', 'show') === null) {
       fig.layout.yaxis = {
         ...(fig.layout.yaxis || {}),
         showgrid: false
       }
     }
-    
+
     if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'zeroline', 'show') === null) {
       fig.layout.yaxis = {
         ...(fig.layout.yaxis || {}),
@@ -962,10 +962,10 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
       }
     }
   }
-  
+
   // Annotations for subtitle and center value
   fig.layout.annotations = []
-  
+
   const subtitleText = getConfig(sections, 'subtitle', 'text')
   if (subtitleText && subtitleText.trim() !== '') {
     fig.layout.annotations.push({
@@ -984,7 +984,7 @@ if (yLineVisible !== null && yLineVisible !== undefined) {
       }
     })
   }
-  
+
   if (chartType === 'donut') {
     const showCenterValue = getConfig(sections, 'center_value', 'show')
     if (showCenterValue) {
@@ -1030,12 +1030,12 @@ const chartTypeOptions = [
 
 const computeColorTargets = (chartType, chartData) => {
   if (!chartData || typeof chartData !== 'object') return []
-  
+
   // ✅ Waterfall charts have fixed series: increasing, decreasing, totals
   if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
     return ['increasing', 'decreasing', 'totals']
   }
-  
+
   const isPie = chartType === 'pie' || chartType === 'donut'
   if (isPie) {
     return Array.isArray(chartData?.series?.labels) ? chartData.series.labels.filter(Boolean) : []
@@ -1049,10 +1049,10 @@ const computeColorTargets = (chartType, chartData) => {
 const extractInitialColorOverrides = (sceneData, targets = [], chartType = '') => {
   if (!sceneData || !targets.length) return {}
   const sections = sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-  
+
   // ✅ For waterfall charts, colors are stored differently
   const isWaterfall = chartType === 'waterfall_bar' || chartType === 'waterfall_column'
-  
+
   if (isWaterfall) {
     // Waterfall: look for {name: "increasing", value: "#color"}
     const colorsSection = sections.colors || []
@@ -1064,7 +1064,7 @@ const extractInitialColorOverrides = (sceneData, targets = [], chartType = '') =
       return acc
     }, {})
   }
-  
+
   // Other charts: use mapSeriesEntries
   const colorMap = mapSeriesEntries(sections.colors ?? [])
   return targets.reduce((acc, target) => {
@@ -1082,7 +1082,7 @@ const extractInitialColorOverrides = (sceneData, targets = [], chartType = '') =
 
 const mergeSectionArray = (base = [], overrides = []) => {
   if (!Array.isArray(overrides) || overrides.length === 0) return base
-  
+
   const makeKey = (item) => {
     // ✅ For waterfall colors: key is just the name (e.g., "increasing")
     // ✅ For other colors: key is series::name (e.g., "Series 1::color")
@@ -1091,7 +1091,7 @@ const mergeSectionArray = (base = [], overrides = []) => {
     }
     return `${item?.series || 'global'}::${item?.name || ''}` // Regular color
   }
-  
+
   const merged = Array.isArray(base) ? [...base] : []
   overrides.forEach((override) => {
     if (!override) return
@@ -1117,10 +1117,10 @@ const mergeSectionsWithOverrides = (baseSections = {}, overrideSections = null) 
 const buildSectionsOverrideFromColors = (colorOverrides = {}, chartType = '') => {
   const entries = Object.entries(colorOverrides || {}).filter(([_, color]) => Boolean(color))
   if (!entries.length) return null
-  
+
   // ✅ For waterfall charts, use 'name' field instead of 'series'
   const isWaterfall = chartType === 'waterfall_bar' || chartType === 'waterfall_column'
-  
+
   const colors = entries.map(([series, color]) => {
     if (isWaterfall) {
       // Waterfall: {name: "increasing", value: "#757575"}
@@ -1182,9 +1182,9 @@ const generateChart = (sceneData, sectionsOverride = null) => {
   }
 
   if (['pie', 'donut'].includes(chartType)) {
-  const pieData = createPieChart(data, presetData, { ...chartData, chart_type: chartType }, chartType, sections)
-  fig.data = pieData
-}else if (
+    const pieData = createPieChart(data, presetData, { ...chartData, chart_type: chartType }, chartType, sections)
+    fig.data = pieData
+  } else if (
     ['bar', 'column', 'stacked_bar', 'stacked_column', 'clustered_column', 'clustered_bar'].includes(
       chartType
     )
@@ -1223,11 +1223,10 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   const [saveError, setSaveError] = useState('')
   const [layoutOverrides, setLayoutOverrides] = useState({
     title: { text: '', font: { size: 20, color: '#000000', family: 'Verdana' }, x: 0.5, xanchor: 'center' },
-    showlegend: true,
-    legend: { orientation: 'v', x: 1.02, y: 0.5, font: { size: 12, color: '#000000', family: 'Verdana' } },
     paper_bgcolor: '#FFFFFF',
     plot_bgcolor: '#FFFFFF'
   })
+  const [isDataEditorOpen, setIsDataEditorOpen] = useState(false)
   const [expandedSections, setExpandedSections] = useState({
     dimensions: false,
     title: false,
@@ -1347,82 +1346,51 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   const canRedo = currentHistoryIndex < history.length - 1 && history.length > 0
 
   const rebuildEditorStateFromScene = useCallback(() => {
-  if (!sceneData) {
-    console.warn('[ChartEditorModal] rebuildEditorStateFromScene called but sceneData is null/undefined')
-    return
-  }
-  
-  const nextType = (sceneData?.chart_type || sceneData?.chartType || '').toLowerCase()
-  if (!nextType) {
-    console.warn('[ChartEditorModal] No chart_type found in sceneData. Available keys:', Object.keys(sceneData || {}))
-    return
-  }
-  const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
-  
-  try {
-    console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
-      chart_type: nextType,
-      has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
-      chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
-      sceneData_keys: Object.keys(sceneData || {})
-    })
-  } catch(_) {}
-  
-  const targets = computeColorTargets(nextType, parsedData)
-  const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-  const presetSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-  
-  const titleConfig = getConfigDict(presetSections.title ?? [])
-  const legendConfig = getConfigDict(presetSections.legend ?? [])
-  const bgConfig = getConfigDict(presetSections.background ?? [])
-  
-  setChartTypeState(nextType)
-  setChartDataState(parsedData)
-  
-  // ✅ CRITICAL FIX: Deep clone the entire preset sections into sectionsState
-  // This ensures all axis configs are available in the UI
-  setSectionsState(JSON.parse(JSON.stringify(presetSections)))
-  
-  const sceneDataWithSelectedPreset = selectedPreset 
-    ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
-    : sceneData
-  setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets, nextType))
-  setRawChartDataInput(JSON.stringify(parsedData, null, 2))
-  setRawChartError('')
-  setIsDirty(false)
-  setSaveError('')
-  setLayoutOverrides({
-    title: {
-      text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
-      font: {
-        size: titleConfig.font_size || 20,
-        color: titleConfig.font_color || '#000000',
-        family: titleConfig.font_family || 'Verdana'
-      },
-      x: titleConfig.x_align === 'left' ? 0 : 0.5,
-      xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
-    },
-    showlegend: legendConfig.show !== false,
-    legend: {
-      orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
-      x: legendConfig.x ?? 1.02,
-      y: legendConfig.y ?? 0.5,
-      font: {
-        size: legendConfig.font_size || 12,
-        color: legendConfig.font_color || '#000000',
-        family: legendConfig.font_family || 'Verdana'
-      }
-    },
-    paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
-    plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF'
-  })
-  
-  // Initialize history with initial state
-  const initialState = {
-    chartTypeState: nextType,
-    chartDataState: deepClone(parsedData),
-    seriesColorOverrides: extractInitialColorOverrides(sceneData, targets),
-    layoutOverrides: {
+    if (!sceneData) {
+      console.warn('[ChartEditorModal] rebuildEditorStateFromScene called but sceneData is null/undefined')
+      return
+    }
+
+    const nextType = (sceneData?.chart_type || sceneData?.chartType || '').toLowerCase()
+    if (!nextType) {
+      console.warn('[ChartEditorModal] No chart_type found in sceneData. Available keys:', Object.keys(sceneData || {}))
+      return
+    }
+    const parsedData = safeParseJSON(sceneData?.chart_data ?? sceneData?.chartData ?? {}, {})
+
+    try {
+      console.log('[ChartEditorModal] rebuildEditorStateFromScene:', {
+        chart_type: nextType,
+        has_chart_data: !!(sceneData?.chart_data || sceneData?.chartData),
+        chart_data_type: typeof (sceneData?.chart_data || sceneData?.chartData),
+        sceneData_keys: Object.keys(sceneData || {})
+      })
+    } catch (_) { }
+
+    const targets = computeColorTargets(nextType, parsedData)
+    const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+    const presetSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+
+    const titleConfig = getConfigDict(presetSections.title ?? [])
+    const legendConfig = getConfigDict(presetSections.legend ?? [])
+    const bgConfig = getConfigDict(presetSections.background ?? [])
+
+    setChartTypeState(nextType)
+    setChartDataState(parsedData)
+
+    // ✅ CRITICAL FIX: Deep clone the entire preset sections into sectionsState
+    // This ensures all axis configs are available in the UI
+    setSectionsState(JSON.parse(JSON.stringify(presetSections)))
+
+    const sceneDataWithSelectedPreset = selectedPreset
+      ? { ...sceneData, preset: { preset_definitions: [selectedPreset] } }
+      : sceneData
+    setSeriesColorOverrides(extractInitialColorOverrides(sceneDataWithSelectedPreset, targets, nextType))
+    setRawChartDataInput(JSON.stringify(parsedData, null, 2))
+    setRawChartError('')
+    setIsDirty(false)
+    setSaveError('')
+    setLayoutOverrides({
       title: {
         text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
         font: {
@@ -1433,29 +1401,49 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         x: titleConfig.x_align === 'left' ? 0 : 0.5,
         xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
       },
-      showlegend: legendConfig.show !== false,
-      legend: {
-        orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
-        x: legendConfig.x ?? 1.02,
-        y: legendConfig.y ?? 0.5,
-        font: {
-          size: legendConfig.font_size || 12,
-          color: legendConfig.font_color || '#000000',
-          family: legendConfig.font_family || 'Verdana'
-        }
-      },
       paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
-      plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF',
-      xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
-      yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
-    },
-    rawChartDataInput: JSON.stringify(parsedData, null, 2)
-  }
-  setHistory([initialState])
-  setCurrentHistoryIndex(0)
-  currentHistoryIndexRef.current = 0
-  historyInitializedRef.current = true
-}, [sceneData, availablePresets, selectedPresetIndex])
+      plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF'
+    })
+
+    // Initialize history with initial state
+    const initialState = {
+      chartTypeState: nextType,
+      chartDataState: deepClone(parsedData),
+      seriesColorOverrides: extractInitialColorOverrides(sceneData, targets),
+      layoutOverrides: {
+        title: {
+          text: titleConfig.text || sceneData?.chart_title || sceneData?.scene_title || '',
+          font: {
+            size: titleConfig.font_size || 20,
+            color: titleConfig.font_color || '#000000',
+            family: titleConfig.font_family || 'Verdana'
+          },
+          x: titleConfig.x_align === 'left' ? 0 : 0.5,
+          xanchor: titleConfig.x_align === 'left' ? 'left' : 'center'
+        },
+        showlegend: legendConfig.show !== false,
+        legend: {
+          orientation: legendConfig.orientation === 'horizontal' ? 'h' : 'v',
+          x: legendConfig.x ?? 1.02,
+          y: legendConfig.y ?? 0.5,
+          font: {
+            size: legendConfig.font_size || 12,
+            color: legendConfig.font_color || '#000000',
+            family: legendConfig.font_family || 'Verdana'
+          }
+        },
+        paper_bgcolor: bgConfig.paper_color || '#FFFFFF',
+        plot_bgcolor: bgConfig.plot_color || bgConfig.color || '#FFFFFF',
+        xaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 },
+        yaxis: { title: { text: '' }, showgrid: true, gridcolor: '#E5E5E5', showline: true, linecolor: '#000000', linewidth: 1 }
+      },
+      rawChartDataInput: JSON.stringify(parsedData, null, 2)
+    }
+    setHistory([initialState])
+    setCurrentHistoryIndex(0)
+    currentHistoryIndexRef.current = 0
+    historyInitializedRef.current = true
+  }, [sceneData, availablePresets, selectedPresetIndex])
 
   useEffect(() => {
     if (isOpen && sceneData) {
@@ -1467,7 +1455,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
   useEffect(() => {
     const fetchChartPresets = async () => {
       if (!sceneData || !sceneNumber) return
-      
+
       setIsLoadingPresets(true)
       try {
         const sessionId = localStorage.getItem('session_id')
@@ -1494,17 +1482,17 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
             sessionId
           )}/${encodeURIComponent(sceneNumber)}?user_id=${encodeURIComponent(userId)}`
         )
-        
+
         if (resp.ok) {
           const payload = await resp.json()
           const presetPayload = payload?.chart_preset || payload
-          
+
           // Check if it's an array of presets or a single preset
           if (Array.isArray(presetPayload) && presetPayload.length > 0) {
             // If it's an array, extract preset_definitions from each
-            const allPresets = presetPayload.flatMap(p => 
-              Array.isArray(p?.preset?.preset_definitions) 
-                ? p.preset.preset_definitions 
+            const allPresets = presetPayload.flatMap(p =>
+              Array.isArray(p?.preset?.preset_definitions)
+                ? p.preset.preset_definitions
                 : (p?.preset_definitions || [])
             )
             if (allPresets.length > 0) {
@@ -1514,10 +1502,10 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
               if (finalIndex >= 0) {
                 setSelectedPresetIndex(finalIndex)
               } else {
-              // Find current preset index
-              const currentPresetName = sceneData?.preset?.preset_definitions?.[0]?.name
-              const foundIndex = allPresets.findIndex(p => p?.name === currentPresetName)
-              setSelectedPresetIndex(foundIndex >= 0 ? foundIndex : 0)
+                // Find current preset index
+                const currentPresetName = sceneData?.preset?.preset_definitions?.[0]?.name
+                const foundIndex = allPresets.findIndex(p => p?.name === currentPresetName)
+                setSelectedPresetIndex(foundIndex >= 0 ? foundIndex : 0)
               }
               setIsLoadingPresets(false)
               return
@@ -1578,7 +1566,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id, session_id })
         })
-        
+
         if (!sresp.ok) {
           throw new Error(`Failed to fetch session data: ${sresp.status}`)
         }
@@ -1639,16 +1627,16 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         // Normalize the aspect ratio first (handles 9_16, 16_9, etc.)
         const normalizedRatio = normalizeAspectRatioValue(aspectRatio)
         console.log('📐 ChartEditorModal - Normalized aspect ratio:', normalizedRatio)
-        
+
         // Check if it's vertical (9:16)
         const isVerticalRatio = normalizedRatio === '9:16'
         setIsVertical(isVerticalRatio)
         console.log('📐 ChartEditorModal - Is vertical (9:16):', isVerticalRatio)
-        
+
         // Convert to CSS format
         const cssRatio = aspectRatioToCss(normalizedRatio)
         console.log('📐 ChartEditorModal - Final CSS aspect ratio:', cssRatio)
-        
+
         setAspectRatioCss(cssRatio)
       } catch (err) {
         console.error('❌ ChartEditorModal - Error fetching aspect ratio:', err)
@@ -1666,36 +1654,36 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
     [chartTypeState, chartDataState]
   )
   // Auto-select first series when colorTargets changes
-useEffect(() => {
-  if (colorTargets.length > 0) {
-    setSelectedSeriesForSection(prev => ({
-      ...prev,
-      bars: colorTargets[0],
-      lines: colorTargets[0],
-      markers: colorTargets[0],
-      areas: colorTargets[0],
-      dataLabels: colorTargets[0]
-    }))
-  }
-}, [colorTargets])
+  useEffect(() => {
+    if (colorTargets.length > 0) {
+      setSelectedSeriesForSection(prev => ({
+        ...prev,
+        bars: colorTargets[0],
+        lines: colorTargets[0],
+        markers: colorTargets[0],
+        areas: colorTargets[0],
+        dataLabels: colorTargets[0]
+      }))
+    }
+  }, [colorTargets])
 
   useEffect(() => {
-  if (!sceneData) return
-  try {
-    // Use selected preset if available, otherwise fall back to sceneData preset
-    const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-    const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-    const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
-    // Merge base sections with user-edited sectionsState
-    const mergedBase = JSON.parse(JSON.stringify(baseSections))
-    Object.keys(sectionsState).forEach(key => {
-      if (sectionsState[key]) {
-        mergedBase[key] = JSON.parse(JSON.stringify(sectionsState[key]))
-      }
-    })
-    const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
-    const preparedPreset = selectedPreset || sceneData?.preset
-      ? {
+    if (!sceneData) return
+    try {
+      // Use selected preset if available, otherwise fall back to sceneData preset
+      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+      const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+      const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
+      // Merge base sections with user-edited sectionsState
+      const mergedBase = JSON.parse(JSON.stringify(baseSections))
+      Object.keys(sectionsState).forEach(key => {
+        if (sectionsState[key]) {
+          mergedBase[key] = JSON.parse(JSON.stringify(sectionsState[key]))
+        }
+      })
+      const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
+      const preparedPreset = selectedPreset || sceneData?.preset
+        ? {
           ...(selectedPreset || sceneData.preset),
           preset_definitions: [
             {
@@ -1704,7 +1692,7 @@ useEffect(() => {
             }
           ]
         }
-      : {
+        : {
           preset_definitions: [
             {
               name: 'Editable',
@@ -1712,260 +1700,265 @@ useEffect(() => {
             }
           ]
         }
-    const prepared = {
-      ...sceneData,
-      chart_type: chartTypeState,
-      chart_data: chartDataState,
-      preset: preparedPreset
-    }
-    const fig = generateChart(prepared, mergedSections)
-    fig.config = {
-      ...fig.config,
-      editable: true,
-      edits: {
-        annotationPosition: true,
-        annotationTail: true,
-        annotationText: true,
-        axisTitleText: true,
-        colorbarPosition: true,
-        colorbarTitleText: true,
-        legendPosition: true,
-        legendText: true,
-        shapePosition: true,
-        titleText: true
-      },
-      displaylogo: false,
-      scrollZoom: true,
-      responsive: true,
-      modeBarButtonsToRemove: ['select2d', 'lasso2d'],
-      modeBarButtonsToAdd: [
-        'drawline',
-        'drawopenpath',
-        'drawrect',
-        'drawcircle',
-        'drawclosedpath',
-        'eraseshape',
-        'toggleSpikelines',
-        'resetScale2d'
-      ]
-    }
-    // Exclude background colors from layoutOverrides to prevent conflicts
-    const { paper_bgcolor, plot_bgcolor, ...layoutOverridesWithoutBg } = layoutOverrides || {}
-    
-    // Adjust layout for aspect ratio
-    const shouldUseVerticalLayout = isVertical
-    const adjustedLayout = {
-      ...fig.layout,
-      ...layoutOverridesWithoutBg,
-      dragmode: 'zoom',
-      hovermode: 'closest',
-      newshape: {
-        line: {
-          color: '#13008B',
-          width: 2
-        }
-      },
-      editrevision: (fig.layout?.editrevision || 0) + 1,
-      // Ensure autosize is true so Plotly respects container dimensions
-      autosize: true,
-      // Remove any fixed width/height to let container control sizing
-      width: undefined,
-      height: undefined,
-      // Adjust margins for vertical layout if needed - increased left margin for Y-axis labels
-      ...(shouldUseVerticalLayout ? {
-        margin: {
-          l: fig.layout.margin?.l || 90,  // Increased from 50 to 90 for Y-axis labels
-          r: fig.layout.margin?.r || 40,
-          t: fig.layout.margin?.t || 90,
-          b: fig.layout.margin?.b || 60
-        }
-      } : {})
-    }
-    
-    fig.layout = adjustedLayout
-    console.log('🔍 BEFORE NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
+      const prepared = {
+        ...sceneData,
+        chart_type: chartTypeState,
+        chart_data: chartDataState,
+        preset: preparedPreset
+      }
+      const fig = generateChart(prepared, mergedSections)
+      fig.config = {
+        ...fig.config,
+        editable: true,
+        edits: {
+          annotationPosition: true,
+          annotationTail: true,
+          annotationText: true,
+          axisTitleText: true,
+          colorbarPosition: true,
+          colorbarTitleText: true,
+          legendPosition: true,
+          legendText: true,
+          shapePosition: true,
+          titleText: true
+        },
+        displaylogo: false,
+        scrollZoom: true,
+        responsive: true,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+        modeBarButtonsToAdd: [
+          'drawline',
+          'drawopenpath',
+          'drawrect',
+          'drawcircle',
+          'drawclosedpath',
+          'eraseshape',
+          'toggleSpikelines',
+          'resetScale2d'
+        ]
+      }
+      // Exclude background colors from layoutOverrides to prevent conflicts
+      const { paper_bgcolor, plot_bgcolor, ...layoutOverridesWithoutBg } = layoutOverrides || {}
+      console.log('🔍 BEFORE adjustedLayout - fig.layout.showlegend:', fig.layout.showlegend)
+      console.log('🔍 mergedSections.legend:', mergedSections.legend)
+      console.log('🔍 Legend show value from mergedSections:', getConfig(mergedSections, 'legend', 'show'))  // ← ADD THIS
+      console.log('🔍 layoutOverrides.showlegend:', layoutOverrides.showlegend)
 
-    // ✅✅✅ NUCLEAR FIX: Force axis settings AFTER everything else
-const isPieDonut = chartTypeState === 'pie' || chartTypeState === 'donut'
-if (!isPieDonut) {
-  // Determine if this is a horizontal bar chart (axes are swapped)
-  const isHorizontalBar = chartTypeState.includes('bar') && !chartTypeState.includes('column')
-  
-  // For horizontal bars: X-axis shows values, Y-axis shows categories
-  // For columns/others: X-axis shows categories, Y-axis shows values
-  const valueAxisKey = isHorizontalBar ? 'x_axis' : 'y_axis'
-  const categoryAxisKey = isHorizontalBar ? 'y_axis' : 'x_axis'
-  
-  // Get config for VALUE axis (the one with numbers)
-  const valueLineVisible = getAxisConfig(mergedSections, valueAxisKey, 'line', 'visible')
-  const valueGridShow = getAxisConfig(mergedSections, valueAxisKey, 'grid', 'show')
-  const valueZerolineShow = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'show')
-  const valueTickSize = getAxisConfig(mergedSections, valueAxisKey, 'ticks', 'font_size')
-  
-  // Get config for CATEGORY axis (the one with labels)
-  const categoryLineVisible = getAxisConfig(mergedSections, categoryAxisKey, 'line', 'visible')
-  const categoryGridShow = getAxisConfig(mergedSections, categoryAxisKey, 'grid', 'show')
-  const categoryTickSize = getAxisConfig(mergedSections, categoryAxisKey, 'ticks', 'font_size')
-  
-  console.log('🎯 NUCLEAR FIX - Axis config:', {
-    chartType: chartTypeState,
-    isHorizontalBar,
-    valueAxisKey,
-    categoryAxisKey,
-    valueLineVisible,
-    categoryLineVisible,
-    valueTickSize,
-    categoryTickSize
-  })
-  
-  // ✅ Apply to Plotly's X-axis
-  fig.layout.xaxis = fig.layout.xaxis || {}
-  const xAxisConfig = isHorizontalBar ? mergedSections[valueAxisKey] : mergedSections[categoryAxisKey]
-  const xLineVisible = isHorizontalBar ? valueLineVisible : categoryLineVisible
-  const xGridShow = isHorizontalBar ? valueGridShow : categoryGridShow
-  const xTickSize = isHorizontalBar ? valueTickSize : categoryTickSize
-  
-  // X-axis line
-if (xLineVisible === true) {
-  console.log('✅ Setting X-axis line VISIBLE')
-  fig.layout.xaxis.showline = true
-  fig.layout.xaxis.linecolor = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'line', 'color') || '#000000'
-  fig.layout.xaxis.linewidth = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'line', 'width') || 1
-  // ✅ Show ticks based on font_size (independent of line visibility)
-  fig.layout.xaxis.showticklabels = xTickSize !== 0
-} else {
-  console.log('✅ Setting X-axis line HIDDEN')
-  fig.layout.xaxis.showline = false
-  fig.layout.xaxis.linewidth = 0
-  fig.layout.xaxis.linecolor = 'rgba(0,0,0,0)'
-  fig.layout.xaxis.mirror = false
-  // ✅ CHANGED: When line is hidden, ticks are INDEPENDENT - controlled by font_size only
-  fig.layout.xaxis.showticklabels = xTickSize !== 0 && xTickSize !== null && xTickSize !== undefined
-}
-  // X-axis grid
-  if (xGridShow === true) {
-    fig.layout.xaxis.showgrid = true
-    fig.layout.xaxis.gridcolor = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'grid', 'color') || '#E5E7EB'
-    fig.layout.xaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'grid', 'width') || 1
-  } else {
-    fig.layout.xaxis.showgrid = false
-  }
-  
-  // X-axis zeroline
-  fig.layout.xaxis.zeroline = false
-  
-  // ✅ Apply to Plotly's Y-axis
-  fig.layout.yaxis = fig.layout.yaxis || {}
-  const yAxisConfig = isHorizontalBar ? mergedSections[categoryAxisKey] : mergedSections[valueAxisKey]
-  const yLineVisible = isHorizontalBar ? categoryLineVisible : valueLineVisible
-  const yGridShow = isHorizontalBar ? categoryGridShow : valueGridShow
-  const yZerolineShow = isHorizontalBar ? null : valueZerolineShow
-  const yTickSize = isHorizontalBar ? categoryTickSize : valueTickSize
-  
- // Y-axis line
-if (yLineVisible === true) {
-  console.log('✅ Setting Y-axis line VISIBLE')
-  fig.layout.yaxis.showline = true
-  fig.layout.yaxis.linecolor = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'line', 'color') || '#000000'
-  fig.layout.yaxis.linewidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'line', 'width') || 1
-  // ✅ Show ticks based on font_size (independent of line visibility)
-  fig.layout.yaxis.showticklabels = yTickSize !== 0
-} else {
-  console.log('✅ Setting Y-axis line HIDDEN')
-  fig.layout.yaxis.showline = false
-  fig.layout.yaxis.linewidth = 0
-  fig.layout.yaxis.linecolor = 'rgba(0,0,0,0)'
-  fig.layout.yaxis.mirror = false
-  // ✅ CHANGED: When line is hidden, ticks are INDEPENDENT - controlled by font_size only
-  fig.layout.yaxis.showticklabels = yTickSize !== 0 && yTickSize !== null && yTickSize !== undefined
-}
-  
-  // Y-axis grid
-  if (yGridShow === true) {
-    fig.layout.yaxis.showgrid = true
-    fig.layout.yaxis.gridcolor = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'color') || '#E5E7EB'
-    fig.layout.yaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'width') || 1
-  } else {
-    fig.layout.yaxis.showgrid = false
-  }
-  
-  // Y-axis zeroline (only for value axis)
-  if (yZerolineShow === true && !isHorizontalBar) {
-    fig.layout.yaxis.zeroline = true
-    fig.layout.yaxis.zerolinecolor = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'color') || '#000000'
-    fig.layout.yaxis.zerolinewidth = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'width') || 1
-  } else {
-    fig.layout.yaxis.zeroline = false
-  }
-  
-  console.log('📊 Final axis config:', {
-    xaxis: {
-      showline: fig.layout.xaxis.showline,
-      showgrid: fig.layout.xaxis.showgrid,
-      showticklabels: fig.layout.xaxis.showticklabels
-    },
-    yaxis: {
-      showline: fig.layout.yaxis.showline,
-      showgrid: fig.layout.yaxis.showgrid,
-      showticklabels: fig.layout.yaxis.showticklabels
-    }
-  })
-}
+      // Adjust layout for aspect ratio
+      const shouldUseVerticalLayout = isVertical
+      const adjustedLayout = {
+        ...fig.layout,
+        ...layoutOverridesWithoutBg,
+        dragmode: 'zoom',
+        hovermode: 'closest',
+        newshape: {
+          line: {
+            color: '#13008B',
+            width: 2
+          }
+        },
+        editrevision: (fig.layout?.editrevision || 0) + 1,
+        // Ensure autosize is true so Plotly respects container dimensions
+        autosize: true,
+        // Remove any fixed width/height to let container control sizing
+        width: undefined,
+        height: undefined,
+        // Adjust margins for vertical layout if needed - increased left margin for Y-axis labels
+        ...(shouldUseVerticalLayout ? {
+          margin: {
+            l: fig.layout.margin?.l || 90,  // Increased from 50 to 90 for Y-axis labels
+            r: fig.layout.margin?.r || 40,
+            t: fig.layout.margin?.t || 90,
+            b: fig.layout.margin?.b || 60
+          }
+        } : {})
+      }
+
+      fig.layout = adjustedLayout
+      //console.log('🔍 BEFORE NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
+      console.log('🔍 AFTER adjustedLayout - fig.layout.showlegend:', fig.layout.showlegend)
+      console.log('🔍 layoutOverrides applied to layout')
+      // ✅✅✅ NUCLEAR FIX: Force axis settings AFTER everything else
+      const isPieDonut = chartTypeState === 'pie' || chartTypeState === 'donut'
+      if (!isPieDonut) {
+        // Determine if this is a horizontal bar chart (axes are swapped)
+        const isHorizontalBar = chartTypeState.includes('bar') && !chartTypeState.includes('column')
+
+        // For horizontal bars: X-axis shows values, Y-axis shows categories
+        // For columns/others: X-axis shows categories, Y-axis shows values
+        const valueAxisKey = isHorizontalBar ? 'x_axis' : 'y_axis'
+        const categoryAxisKey = isHorizontalBar ? 'y_axis' : 'x_axis'
+
+        // Get config for VALUE axis (the one with numbers)
+        const valueLineVisible = getAxisConfig(mergedSections, valueAxisKey, 'line', 'visible')
+        const valueGridShow = getAxisConfig(mergedSections, valueAxisKey, 'grid', 'show')
+        const valueZerolineShow = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'show')
+        const valueTickSize = getAxisConfig(mergedSections, valueAxisKey, 'ticks', 'font_size')
+
+        // Get config for CATEGORY axis (the one with labels)
+        const categoryLineVisible = getAxisConfig(mergedSections, categoryAxisKey, 'line', 'visible')
+        const categoryGridShow = getAxisConfig(mergedSections, categoryAxisKey, 'grid', 'show')
+        const categoryTickSize = getAxisConfig(mergedSections, categoryAxisKey, 'ticks', 'font_size')
+
+        console.log('🎯 NUCLEAR FIX - Axis config:', {
+          chartType: chartTypeState,
+          isHorizontalBar,
+          valueAxisKey,
+          categoryAxisKey,
+          valueLineVisible,
+          categoryLineVisible,
+          valueTickSize,
+          categoryTickSize
+        })
+
+        // ✅ Apply to Plotly's X-axis
+        fig.layout.xaxis = fig.layout.xaxis || {}
+        const xAxisConfig = isHorizontalBar ? mergedSections[valueAxisKey] : mergedSections[categoryAxisKey]
+        const xLineVisible = isHorizontalBar ? valueLineVisible : categoryLineVisible
+        const xGridShow = isHorizontalBar ? valueGridShow : categoryGridShow
+        const xTickSize = isHorizontalBar ? valueTickSize : categoryTickSize
+
+        // X-axis line
+        if (xLineVisible === true) {
+          console.log('✅ Setting X-axis line VISIBLE')
+          fig.layout.xaxis.showline = true
+          fig.layout.xaxis.linecolor = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'line', 'color') || '#000000'
+          fig.layout.xaxis.linewidth = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'line', 'width') || 1
+          // ✅ Show ticks based on font_size (independent of line visibility)
+          fig.layout.xaxis.showticklabels = xTickSize !== 0
+        } else {
+          console.log('✅ Setting X-axis line HIDDEN')
+          fig.layout.xaxis.showline = false
+          fig.layout.xaxis.linewidth = 0
+          fig.layout.xaxis.linecolor = 'rgba(0,0,0,0)'
+          fig.layout.xaxis.mirror = false
+          // ✅ CHANGED: When line is hidden, ticks are INDEPENDENT - controlled by font_size only
+          fig.layout.xaxis.showticklabels = xTickSize !== 0 && xTickSize !== null && xTickSize !== undefined
+        }
+        // X-axis grid
+        if (xGridShow === true) {
+          fig.layout.xaxis.showgrid = true
+          fig.layout.xaxis.gridcolor = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'grid', 'color') || '#E5E7EB'
+          fig.layout.xaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? valueAxisKey : categoryAxisKey, 'grid', 'width') || 1
+        } else {
+          fig.layout.xaxis.showgrid = false
+        }
+
+        // X-axis zeroline
+        fig.layout.xaxis.zeroline = false
+
+        // ✅ Apply to Plotly's Y-axis
+        fig.layout.yaxis = fig.layout.yaxis || {}
+        const yAxisConfig = isHorizontalBar ? mergedSections[categoryAxisKey] : mergedSections[valueAxisKey]
+        const yLineVisible = isHorizontalBar ? categoryLineVisible : valueLineVisible
+        const yGridShow = isHorizontalBar ? categoryGridShow : valueGridShow
+        const yZerolineShow = isHorizontalBar ? null : valueZerolineShow
+        const yTickSize = isHorizontalBar ? categoryTickSize : valueTickSize
+
+        // Y-axis line
+        if (yLineVisible === true) {
+          console.log('✅ Setting Y-axis line VISIBLE')
+          fig.layout.yaxis.showline = true
+          fig.layout.yaxis.linecolor = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'line', 'color') || '#000000'
+          fig.layout.yaxis.linewidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'line', 'width') || 1
+          // ✅ Show ticks based on font_size (independent of line visibility)
+          fig.layout.yaxis.showticklabels = yTickSize !== 0
+        } else {
+          console.log('✅ Setting Y-axis line HIDDEN')
+          fig.layout.yaxis.showline = false
+          fig.layout.yaxis.linewidth = 0
+          fig.layout.yaxis.linecolor = 'rgba(0,0,0,0)'
+          fig.layout.yaxis.mirror = false
+          // ✅ CHANGED: When line is hidden, ticks are INDEPENDENT - controlled by font_size only
+          fig.layout.yaxis.showticklabels = yTickSize !== 0 && yTickSize !== null && yTickSize !== undefined
+        }
+
+        // Y-axis grid
+        if (yGridShow === true) {
+          fig.layout.yaxis.showgrid = true
+          fig.layout.yaxis.gridcolor = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'color') || '#E5E7EB'
+          fig.layout.yaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'width') || 1
+        } else {
+          fig.layout.yaxis.showgrid = false
+        }
+
+        // Y-axis zeroline (only for value axis)
+        if (yZerolineShow === true && !isHorizontalBar) {
+          fig.layout.yaxis.zeroline = true
+          fig.layout.yaxis.zerolinecolor = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'color') || '#000000'
+          fig.layout.yaxis.zerolinewidth = getAxisConfig(mergedSections, valueAxisKey, 'zeroline', 'width') || 1
+        } else {
+          fig.layout.yaxis.zeroline = false
+        }
+
+        console.log('📊 Final axis config:', {
+          xaxis: {
+            showline: fig.layout.xaxis.showline,
+            showgrid: fig.layout.xaxis.showgrid,
+            showticklabels: fig.layout.xaxis.showticklabels
+          },
+          yaxis: {
+            showline: fig.layout.yaxis.showline,
+            showgrid: fig.layout.yaxis.showgrid,
+            showticklabels: fig.layout.yaxis.showticklabels
+          }
+        })
+      }
       console.log('🔍 AFTER NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
 
-    
-    // Apply background colors AFTER layoutOverrides to ensure they take precedence
-    applyBackground(fig, mergedSections)
-    
-    // Re-apply title and subtitle from sectionsState AFTER layoutOverrides to ensure they take precedence
-    applyTitle(fig, mergedSections)
-    
-    // Re-apply subtitle annotation
-    const subtitleText = getConfig(mergedSections, 'subtitle', 'text')
-    if (subtitleText) {
-      if (!fig.layout.annotations) {
-        fig.layout.annotations = []
-      }
-      const subtitleIndex = fig.layout.annotations.findIndex(ann => 
-        ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom'
-      )
-      const subtitleAnnotation = {
-        text: subtitleText,
-        xref: 'paper',
-        yref: 'paper',
-        x: 0.5,
-        y: 1,
-        xanchor: 'center',
-        yanchor: 'bottom',
-        showarrow: false,
-        font: {
-          family: resolveBrandFont(getConfig(mergedSections, 'subtitle', 'font_family')),
-          size: getConfig(mergedSections, 'subtitle', 'font_size') || 14,
-          color: getConfig(mergedSections, 'subtitle', 'font_color') || '#666666'
+
+      // Apply background colors AFTER layoutOverrides to ensure they take precedence
+      applyBackground(fig, mergedSections)
+
+      // Re-apply title and subtitle from sectionsState AFTER layoutOverrides to ensure they take precedence
+      applyTitle(fig, mergedSections)
+
+      // Re-apply subtitle annotation
+      const subtitleText = getConfig(mergedSections, 'subtitle', 'text')
+      if (subtitleText) {
+        if (!fig.layout.annotations) {
+          fig.layout.annotations = []
+        }
+        const subtitleIndex = fig.layout.annotations.findIndex(ann =>
+          ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom'
+        )
+        const subtitleAnnotation = {
+          text: subtitleText,
+          xref: 'paper',
+          yref: 'paper',
+          x: 0.5,
+          y: 1,
+          xanchor: 'center',
+          yanchor: 'bottom',
+          showarrow: false,
+          font: {
+            family: resolveBrandFont(getConfig(mergedSections, 'subtitle', 'font_family')),
+            size: getConfig(mergedSections, 'subtitle', 'font_size') || 14,
+            color: getConfig(mergedSections, 'subtitle', 'font_color') || '#666666'
+          }
+        }
+        if (subtitleIndex >= 0) {
+          fig.layout.annotations[subtitleIndex] = subtitleAnnotation
+        } else {
+          fig.layout.annotations = fig.layout.annotations.filter(ann =>
+            !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
+          )
+          fig.layout.annotations.unshift(subtitleAnnotation)
+        }
+      } else {
+        if (fig.layout.annotations) {
+          fig.layout.annotations = fig.layout.annotations.filter(ann =>
+            !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
+          )
         }
       }
-      if (subtitleIndex >= 0) {
-        fig.layout.annotations[subtitleIndex] = subtitleAnnotation
-      } else {
-        fig.layout.annotations = fig.layout.annotations.filter(ann => 
-          !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
-        )
-        fig.layout.annotations.unshift(subtitleAnnotation)
-      }
-    } else {
-      if (fig.layout.annotations) {
-        fig.layout.annotations = fig.layout.annotations.filter(ann => 
-          !(ann.xref === 'paper' && ann.yref === 'paper' && ann.x === 0.5 && ann.y === 1 && ann.xanchor === 'center' && ann.yanchor === 'bottom')
-        )
-      }
+      setFigure(fig)
+      setError('')
+    } catch (err) {
+      setFigure(null)
+      setError(err?.message || 'Unable to render chart')
     }
-    setFigure(fig)
-    setError('')
-  } catch (err) {
-    setFigure(null)
-    setError(err?.message || 'Unable to render chart')
-  }
-}, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex, sectionsState, isVertical])
+  }, [sceneData, chartTypeState, chartDataState, seriesColorOverrides, layoutOverrides, availablePresets, selectedPresetIndex, sectionsState, isVertical])
 
   const datasetSummary = useMemo(() => {
     const extracted = extractChartData(chartDataState, chartTypeState)
@@ -1979,18 +1972,18 @@ if (yLineVisible === true) {
   }, [])
 
   const handleColorOverrideChange = useCallback((target, color) => {
-  console.log('🎨 Color change:', target, color)
-  if (historyInitializedRef.current) saveToHistory()
-  setSeriesColorOverrides((prev) => {
-    const newOverrides = {
-      ...prev,
-      [target]: color
-    }
-    console.log('🎨 New color overrides:', newOverrides)
-    return newOverrides
-  })
-  markDirty()
-}, [markDirty, saveToHistory])
+    console.log('🎨 Color change:', target, color)
+    if (historyInitializedRef.current) saveToHistory()
+    setSeriesColorOverrides((prev) => {
+      const newOverrides = {
+        ...prev,
+        [target]: color
+      }
+      console.log('🎨 New color overrides:', newOverrides)
+      return newOverrides
+    })
+    markDirty()
+  }, [markDirty, saveToHistory])
 
   const handleChartTypeChange = (event) => {
     if (historyInitializedRef.current) saveToHistory()
@@ -2010,30 +2003,30 @@ if (yLineVisible === true) {
   }
 
   const handleApplyRawChartData = useCallback(() => {
-  try {
-    if (historyInitializedRef.current) saveToHistory()
-    const parsed = JSON.parse(rawChartDataInput || '{}')
-    setChartDataState(parsed)
-    setRawChartError('')
-    setRawChartDataInput(JSON.stringify(parsed, null, 2))
-    const targets = computeColorTargets(chartTypeState, parsed)
-    const baseColors = extractInitialColorOverrides(sceneData, targets, chartTypeState)
-    setSeriesColorOverrides((prev) => {
-      const next = {}
-      targets.forEach((target) => {
-        if (Object.prototype.hasOwnProperty.call(prev, target)) {
-          next[target] = prev[target]
-        } else if (baseColors[target]) {
-          next[target] = baseColors[target]
-        }
+    try {
+      if (historyInitializedRef.current) saveToHistory()
+      const parsed = JSON.parse(rawChartDataInput || '{}')
+      setChartDataState(parsed)
+      setRawChartError('')
+      setRawChartDataInput(JSON.stringify(parsed, null, 2))
+      const targets = computeColorTargets(chartTypeState, parsed)
+      const baseColors = extractInitialColorOverrides(sceneData, targets, chartTypeState)
+      setSeriesColorOverrides((prev) => {
+        const next = {}
+        targets.forEach((target) => {
+          if (Object.prototype.hasOwnProperty.call(prev, target)) {
+            next[target] = prev[target]
+          } else if (baseColors[target]) {
+            next[target] = baseColors[target]
+          }
+        })
+        return next
       })
-      return next
-    })
-    markDirty()
-  } catch (err) {
-    setRawChartError(err?.message || 'Invalid chart_data JSON')
-  }
-}, [chartTypeState, rawChartDataInput, sceneData, markDirty, saveToHistory])
+      markDirty()
+    } catch (err) {
+      setRawChartError(err?.message || 'Invalid chart_data JSON')
+    }
+  }, [chartTypeState, rawChartDataInput, sceneData, markDirty, saveToHistory])
   const handleResetEditor = useCallback(() => {
     rebuildEditorStateFromScene()
     setIsDirty(false)
@@ -2060,50 +2053,50 @@ if (yLineVisible === true) {
     if (historyInitializedRef.current) saveToHistory()
     setSectionsState((prev) => {
       const newSections = prev ? JSON.parse(JSON.stringify(prev)) : {}
-      
+
       if (!newSections[sectionName]) {
         newSections[sectionName] = []
       }
 
       newSections[sectionName] = setConfigValue(newSections[sectionName], configName, value, series)
-      
+
       return newSections
     })
     markDirty()
   }, [markDirty, saveToHistory])
 
   const updateAxisSection = useCallback((axis, subsection, configName, value) => {
-  console.log('🔧 updateAxisSection called:', { axis, subsection, configName, value })
-  
-  if (historyInitializedRef.current) saveToHistory()
-  setSectionsState((prev) => {
-    const newSections = prev ? JSON.parse(JSON.stringify(prev)) : {}
-    const axisKey = axis === 'x' ? 'x_axis' : axis === 'y' ? 'y_axis' : axis
-    
-    if (!newSections[axisKey]) newSections[axisKey] = {}
-    if (!newSections[axisKey][subsection]) newSections[axisKey][subsection] = []
-    
-    newSections[axisKey][subsection] = setConfigValue(newSections[axisKey][subsection], configName, value)
-    
-    // ✅ AUTOMATIC: When line visibility is set to false, also set ticks font_size to 0
-    if (subsection === 'line' && configName === 'visible' && value === false) {
-      console.log('🔧 Line unchecked - setting ticks font_size to 0')
-      if (!newSections[axisKey]['ticks']) newSections[axisKey]['ticks'] = []
-      newSections[axisKey]['ticks'] = setConfigValue(newSections[axisKey]['ticks'], 'font_size', 0)
-    }
-    
-    console.log('✅ Updated sectionsState:', {
-      axis: axisKey,
-      subsection,
-      configName,
-      value,
-      newConfig: newSections[axisKey][subsection]
+    console.log('🔧 updateAxisSection called:', { axis, subsection, configName, value })
+
+    if (historyInitializedRef.current) saveToHistory()
+    setSectionsState((prev) => {
+      const newSections = prev ? JSON.parse(JSON.stringify(prev)) : {}
+      const axisKey = axis === 'x' ? 'x_axis' : axis === 'y' ? 'y_axis' : axis
+
+      if (!newSections[axisKey]) newSections[axisKey] = {}
+      if (!newSections[axisKey][subsection]) newSections[axisKey][subsection] = []
+
+      newSections[axisKey][subsection] = setConfigValue(newSections[axisKey][subsection], configName, value)
+
+      // ✅ AUTOMATIC: When line visibility is set to false, also set ticks font_size to 0
+      if (subsection === 'line' && configName === 'visible' && value === false) {
+        console.log('🔧 Line unchecked - setting ticks font_size to 0')
+        if (!newSections[axisKey]['ticks']) newSections[axisKey]['ticks'] = []
+        newSections[axisKey]['ticks'] = setConfigValue(newSections[axisKey]['ticks'], 'font_size', 0)
+      }
+
+      console.log('✅ Updated sectionsState:', {
+        axis: axisKey,
+        subsection,
+        configName,
+        value,
+        newConfig: newSections[axisKey][subsection]
+      })
+
+      return newSections
     })
-    
-    return newSections
-  })
-  markDirty()
-}, [markDirty, saveToHistory])
+    markDirty()
+  }, [markDirty, saveToHistory])
 
   const toggleSection = useCallback((section) => {
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }))
@@ -2112,505 +2105,512 @@ if (yLineVisible === true) {
   const colorControlsVisible = colorTargets.length > 0
 
   const handleSaveChart = useCallback(async () => {
-  if (!plotRef.current) return
-  const sessionId = localStorage.getItem('session_id')
-  const userId = localStorage.getItem('token')
-  if (!sessionId || !userId || !sceneNumber) {
-    setSaveError('Missing session, user, or scene number.')
-    return
-  }
-  setIsSaving(true)
-  setSaveError('')
-  try {
-    const plotElement = plotRef.current?.el
-    if (!plotElement) {
-      throw new Error('Chart preview is not ready yet.')
+    if (!plotRef.current) return
+    const sessionId = localStorage.getItem('session_id')
+    const userId = localStorage.getItem('token')
+    if (!sessionId || !userId || !sceneNumber) {
+      setSaveError('Missing session, user, or scene number.')
+      return
     }
-    
-    console.log('📸 Exporting chart with Plotly.toImage...')
-    
-    // Wait a moment to ensure plot is fully rendered
-    await new Promise(resolve => setTimeout(resolve, 100))
-    
-    const presetSections = sectionsState || sceneData?.preset?.preset_definitions?.[0]?.sections || {}
-
-    console.log('🔍 Full sceneData keys:', Object.keys(sceneData || {}))
-
-    let plotWidth, plotHeight
-    let existingBoundingBox = null
-
-    // Fetch the complete scene data from API to get base_image dimensions AND bounding_box
+    setIsSaving(true)
+    setSaveError('')
     try {
-      if (sessionId && userId && sceneNumber) {
-        console.log('🔄 Fetching complete scene data from API for scene:', sceneNumber)
-        
-        // Fetch user session data
+      const plotElement = plotRef.current?.el
+      if (!plotElement) {
+        throw new Error('Chart preview is not ready yet.')
+      }
+
+      console.log('📸 Exporting chart with Plotly.toImage...')
+
+      // Wait a moment to ensure plot is fully rendered
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const presetSections = sectionsState || sceneData?.preset?.preset_definitions?.[0]?.sections || {}
+
+      console.log('🔍 Full sceneData keys:', Object.keys(sceneData || {}))
+
+      let plotWidth, plotHeight
+      let existingBoundingBox = null
+
+      // Fetch the complete scene data from API to get base_image dimensions AND bounding_box
+      try {
+        if (sessionId && userId && sceneNumber) {
+          console.log('🔄 Fetching complete scene data from API for scene:', sceneNumber)
+
+          // Fetch user session data
+          const sessionReqBody = { user_id: userId, session_id: sessionId }
+          const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sessionReqBody)
+          })
+
+          if (sessionResp.ok) {
+            const sessionDataResponse = await sessionResp.json()
+            const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
+            const allImages = Array.isArray(sessionData?.images) ? sessionData.images : []
+
+            // Find the current scene
+            const currentScene = allImages.find(img =>
+              (img?.scene_number === sceneNumber) ||
+              (img?.sceneNumber === sceneNumber) ||
+              (allImages.indexOf(img) + 1 === sceneNumber)
+            )
+
+            if (currentScene?.images) {
+              const currentVersion = currentScene.images.current_version || 'v1'
+              const versionData = currentScene.images[currentVersion]
+
+              if (versionData?.images?.[0]) {
+                const firstFrame = versionData.images[0]
+
+                // Get base_image dimensions
+                const baseImageDims = firstFrame?.base_image?.image_dimensions
+                if (baseImageDims) {
+                  const frameWidth = baseImageDims.width
+                  const frameHeight = baseImageDims.height
+
+                  const isPortrait = frameHeight > frameWidth
+
+                  console.log('📐 Detected from API:', frameWidth, 'x', frameHeight, '→', isPortrait ? '9:16 (portrait)' : '16:9 (landscape)')
+
+                  if (isPortrait) {
+                    plotWidth = 810
+                    plotHeight = 1440
+                  } else {
+                    plotWidth = 960
+                    plotHeight = 540
+                  }
+                }
+
+                // Get bounding_box from overlay_elements
+                const overlayElements = firstFrame?.overlay_elements || []
+                const chartOverlay = overlayElements.find(el =>
+                  el?.element_id === 'chart_overlay' ||
+                  el?.label_name === 'Chart' ||
+                  overlayElements.indexOf(el) === 0
+                )
+
+                if (chartOverlay?.bounding_box) {
+                  existingBoundingBox = chartOverlay.bounding_box
+                  console.log('📦 Found existing bounding_box from API:', existingBoundingBox)
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('❌ Error fetching scene dimensions:', e)
+      }
+
+      // If still not found, throw error
+      if (!plotWidth || !plotHeight) {
+        console.error('❌ Could not determine chart dimensions from API')
+        console.error('sceneNumber:', sceneNumber)
+        throw new Error('Unable to determine chart dimensions - please ensure scene data is available')
+      }
+
+      console.log('📐 Final dimensions:', plotWidth, 'x', plotHeight)
+      console.log('📦 Bounding box:', existingBoundingBox || 'will use default if creating new')
+
+      // Use Plotly's built-in toImage method
+      const imageDataUrl = await Plotly.toImage(plotElement, {
+        format: 'png',
+        width: plotWidth,
+        height: plotHeight,
+      })
+      console.log('✅ Chart exported to data URL, converting to blob...')
+
+      // Convert data URL to blob
+      const response = await fetch(imageDataUrl)
+      if (!response.ok) {
+        throw new Error('Failed to convert image data URL to blob')
+      }
+      const blob = await response.blob()
+
+      if (!blob || blob.size === 0) {
+        throw new Error('Failed to create blob from image data')
+      }
+
+      console.log(`✅ Blob created: ${blob.size} bytes`)
+
+      // Generate filename
+      const fileName = `scene-${sceneNumber}-chart.png`
+
+      // Create a File object from the blob
+      const file = new File([blob], fileName, {
+        type: 'image/png',
+        lastModified: Date.now()
+      })
+
+      // Upload the chart image to the upload_chart API
+      console.log(`📤 Uploading chart to upload_chart API...`)
+      const uploadFormData = new FormData()
+      uploadFormData.append('session_id', sessionId)
+      uploadFormData.append('user_id', userId)
+      uploadFormData.append('scene_number', String(sceneNumber))
+      uploadFormData.append('file', file, fileName)
+
+      const uploadResponse = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/upload_chart',
+        {
+          method: 'POST',
+          body: uploadFormData
+        }
+      )
+
+      // Get the response text first (can only read once)
+      const uploadResponseText = await uploadResponse.text()
+
+      if (!uploadResponse.ok) {
+        throw new Error(uploadResponseText || 'Failed to upload chart')
+      }
+
+      // Get the URL from the upload response
+      let chartImageUrl = null
+      try {
+        const uploadData = JSON.parse(uploadResponseText)
+        chartImageUrl = uploadData?.url || uploadData?.image_url || uploadData?.chart_url || uploadData?.chart_image_url
+        if (!chartImageUrl && typeof uploadData === 'string') {
+          chartImageUrl = uploadData
+        }
+        console.log('✅ Chart uploaded successfully, URL:', chartImageUrl)
+      } catch (parseError) {
+        chartImageUrl = uploadResponseText.trim()
+        if (chartImageUrl && (chartImageUrl.startsWith('http://') || chartImageUrl.startsWith('https://'))) {
+          console.log('✅ Chart URL extracted from text response:', chartImageUrl)
+        } else {
+          throw new Error('Failed to extract chart URL from upload response')
+        }
+      }
+
+      if (!chartImageUrl) {
+        throw new Error('Chart upload succeeded but no URL was returned')
+      }
+
+      // Declare updatedOverlayElements at function scope so it's accessible for onSave callback
+      let updatedOverlayElements = []
+
+      // Call elements API to update overlay_elements with the new chart URL
+      console.log('📤 Calling elements API to update overlay_elements...')
+      try {
+        // First, fetch user session data to get the complete overlay structure
+        console.log('🔄 Fetching user session data to get complete overlay structure...')
         const sessionReqBody = { user_id: userId, session_id: sessionId }
         const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(sessionReqBody)
         })
-        
-        if (sessionResp.ok) {
-          const sessionDataResponse = await sessionResp.json()
-          const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
-          const allImages = Array.isArray(sessionData?.images) ? sessionData.images : []
-          
-          // Find the current scene
-          const currentScene = allImages.find(img => 
-            (img?.scene_number === sceneNumber) || 
-            (img?.sceneNumber === sceneNumber) ||
-            (allImages.indexOf(img) + 1 === sceneNumber)
-          )
-          
-          if (currentScene?.images) {
-            const currentVersion = currentScene.images.current_version || 'v1'
-            const versionData = currentScene.images[currentVersion]
-            
-            if (versionData?.images?.[0]) {
-              const firstFrame = versionData.images[0]
-              
-              // Get base_image dimensions
-              const baseImageDims = firstFrame?.base_image?.image_dimensions
-              if (baseImageDims) {
-                const frameWidth = baseImageDims.width
-                const frameHeight = baseImageDims.height
-                
-                const isPortrait = frameHeight > frameWidth
-                
-                console.log('📐 Detected from API:', frameWidth, 'x', frameHeight, '→', isPortrait ? '9:16 (portrait)' : '16:9 (landscape)')
-                
-                if (isPortrait) {
-                  plotWidth = 810
-                  plotHeight = 1440
-                } else {
-                  plotWidth = 960
-                  plotHeight = 540
-                }
-              }
-              
-              // Get bounding_box from overlay_elements
-              const overlayElements = firstFrame?.overlay_elements || []
-              const chartOverlay = overlayElements.find(el => 
-                el?.element_id === 'chart_overlay' || 
-                el?.label_name === 'Chart' || 
-                overlayElements.indexOf(el) === 0
-              )
-              
-              if (chartOverlay?.bounding_box) {
-                existingBoundingBox = chartOverlay.bounding_box
-                console.log('📦 Found existing bounding_box from API:', existingBoundingBox)
-              }
-            }
+
+        if (!sessionResp.ok) {
+          const text = await sessionResp.text()
+          throw new Error(`Failed to fetch user session data: ${sessionResp.status} ${text}`)
+        }
+
+        const sessionDataResponse = await sessionResp.json()
+        const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
+        const images = Array.isArray(sessionData?.images) ? sessionData.images : []
+
+        // Find the scene data for the current scene number
+        const sceneImageData = images.find(img =>
+          (img?.scene_number === sceneNumber) ||
+          (img?.sceneNumber === sceneNumber) ||
+          (images.indexOf(img) + 1 === sceneNumber)
+        )
+
+        // Get overlay_elements from the fetched session data for this scene
+        let existingOverlayElements = []
+        if (sceneImageData) {
+          if (Array.isArray(sceneImageData.imageFrames)) {
+            const frame = sceneImageData.imageFrames.find(f =>
+              f?.overlay_elements || f?.overlayElements
+            ) || sceneImageData.imageFrames[0]
+            existingOverlayElements = frame?.overlay_elements || frame?.overlayElements || []
+          }
+          if (existingOverlayElements.length === 0) {
+            existingOverlayElements = sceneImageData?.overlay_elements ||
+              sceneImageData?.overlayElements ||
+              []
           }
         }
-      }
-    } catch (e) {
-      console.error('❌ Error fetching scene dimensions:', e)
-    }
 
-    // If still not found, throw error
-    if (!plotWidth || !plotHeight) {
-      console.error('❌ Could not determine chart dimensions from API')
-      console.error('sceneNumber:', sceneNumber)
-      throw new Error('Unable to determine chart dimensions - please ensure scene data is available')
-    }
-
-    console.log('📐 Final dimensions:', plotWidth, 'x', plotHeight)
-    console.log('📦 Bounding box:', existingBoundingBox || 'will use default if creating new')
-
-    // Use Plotly's built-in toImage method
-    const imageDataUrl = await Plotly.toImage(plotElement, {
-      format: 'png',
-      width: plotWidth,
-      height: plotHeight,
-    })
-    console.log('✅ Chart exported to data URL, converting to blob...')
-
-    // Convert data URL to blob
-    const response = await fetch(imageDataUrl)
-    if (!response.ok) {
-      throw new Error('Failed to convert image data URL to blob')
-    }
-    const blob = await response.blob()
-
-    if (!blob || blob.size === 0) {
-      throw new Error('Failed to create blob from image data')
-    }
-
-    console.log(`✅ Blob created: ${blob.size} bytes`)
-
-    // Generate filename
-    const fileName = `scene-${sceneNumber}-chart.png`
-
-    // Create a File object from the blob
-    const file = new File([blob], fileName, {
-      type: 'image/png',
-      lastModified: Date.now()
-    })
-
-    // Upload the chart image to the upload_chart API
-    console.log(`📤 Uploading chart to upload_chart API...`)
-    const uploadFormData = new FormData()
-    uploadFormData.append('session_id', sessionId)
-    uploadFormData.append('user_id', userId)
-    uploadFormData.append('scene_number', String(sceneNumber))
-    uploadFormData.append('file', file, fileName)
-
-    const uploadResponse = await fetch(
-      'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/upload_chart',
-      {
-        method: 'POST',
-        body: uploadFormData
-      }
-    )
-
-    // Get the response text first (can only read once)
-    const uploadResponseText = await uploadResponse.text()
-
-    if (!uploadResponse.ok) {
-      throw new Error(uploadResponseText || 'Failed to upload chart')
-    }
-
-    // Get the URL from the upload response
-    let chartImageUrl = null
-    try {
-      const uploadData = JSON.parse(uploadResponseText)
-      chartImageUrl = uploadData?.url || uploadData?.image_url || uploadData?.chart_url || uploadData?.chart_image_url
-      if (!chartImageUrl && typeof uploadData === 'string') {
-        chartImageUrl = uploadData
-      }
-      console.log('✅ Chart uploaded successfully, URL:', chartImageUrl)
-    } catch (parseError) {
-      chartImageUrl = uploadResponseText.trim()
-      if (chartImageUrl && (chartImageUrl.startsWith('http://') || chartImageUrl.startsWith('https://'))) {
-        console.log('✅ Chart URL extracted from text response:', chartImageUrl)
-      } else {
-        throw new Error('Failed to extract chart URL from upload response')
-      }
-    }
-
-    if (!chartImageUrl) {
-      throw new Error('Chart upload succeeded but no URL was returned')
-    }
-
-    // Declare updatedOverlayElements at function scope so it's accessible for onSave callback
-    let updatedOverlayElements = []
-
-    // Call elements API to update overlay_elements with the new chart URL
-    console.log('📤 Calling elements API to update overlay_elements...')
-    try {
-      // First, fetch user session data to get the complete overlay structure
-      console.log('🔄 Fetching user session data to get complete overlay structure...')
-      const sessionReqBody = { user_id: userId, session_id: sessionId }
-      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sessionReqBody)
-      })
-      
-      if (!sessionResp.ok) {
-        const text = await sessionResp.text()
-        throw new Error(`Failed to fetch user session data: ${sessionResp.status} ${text}`)
-      }
-      
-      const sessionDataResponse = await sessionResp.json()
-      const sessionData = sessionDataResponse?.session_data || sessionDataResponse?.session || {}
-      const images = Array.isArray(sessionData?.images) ? sessionData.images : []
-      
-      // Find the scene data for the current scene number
-      const sceneImageData = images.find(img => 
-        (img?.scene_number === sceneNumber) || 
-        (img?.sceneNumber === sceneNumber) ||
-        (images.indexOf(img) + 1 === sceneNumber)
-      )
-      
-      // Get overlay_elements from the fetched session data for this scene
-      let existingOverlayElements = []
-      if (sceneImageData) {
-        if (Array.isArray(sceneImageData.imageFrames)) {
-          const frame = sceneImageData.imageFrames.find(f => 
-            f?.overlay_elements || f?.overlayElements
-          ) || sceneImageData.imageFrames[0]
-          existingOverlayElements = frame?.overlay_elements || frame?.overlayElements || []
-        }
+        // Fallback to sceneData if session data doesn't have overlay_elements
         if (existingOverlayElements.length === 0) {
-          existingOverlayElements = sceneImageData?.overlay_elements || 
-                                   sceneImageData?.overlayElements || 
-                                   []
+          existingOverlayElements = sceneData?.overlay_elements ||
+            sceneData?.overlayElements ||
+            []
         }
-      }
-      
-      // Fallback to sceneData if session data doesn't have overlay_elements
-      if (existingOverlayElements.length === 0) {
-        existingOverlayElements = sceneData?.overlay_elements || 
-                                 sceneData?.overlayElements || 
-                                 []
-      }
-      
-      // Update overlay_elements with the new chart URL while preserving all other data
-      if (Array.isArray(existingOverlayElements) && existingOverlayElements.length > 0) {
-        updatedOverlayElements = existingOverlayElements.map((overlay, idx) => {
-          const isChartOverlay = overlay?.element_id === 'chart_overlay' || 
-                                overlay?.label_name === 'Chart' || 
-                                overlay?.type === 'chart' || 
-                                overlay?.isChartOverlay ||
-                                idx === 0
-          
-          if (isChartOverlay) {
-            const updatedOverlay = JSON.parse(JSON.stringify(overlay))
-            
-            // ONLY update image_url and image_dimensions, preserve everything else INCLUDING bounding_box
-            if (updatedOverlay.overlay_image) {
-              updatedOverlay.overlay_image.image_url = chartImageUrl
-              updatedOverlay.overlay_image.image_dimensions = {
-                width: plotWidth,
-                height: plotHeight
-              }
-            } else {
-              updatedOverlay.overlay_image = {
-                enabled: true,
-                scaling: {
-                  enabled: false,
-                  scale_x: 1,
-                  scale_y: 1,
-                  fit_mode: "contain"
-                },
-                position: {
-                  x: 0,
-                  y: 0
-                },
-                image_url: chartImageUrl,
-                image_dimensions: {
+
+        // Update overlay_elements with the new chart URL while preserving all other data
+        if (Array.isArray(existingOverlayElements) && existingOverlayElements.length > 0) {
+          updatedOverlayElements = existingOverlayElements.map((overlay, idx) => {
+            const isChartOverlay = overlay?.element_id === 'chart_overlay' ||
+              overlay?.label_name === 'Chart' ||
+              overlay?.type === 'chart' ||
+              overlay?.isChartOverlay ||
+              idx === 0
+
+            if (isChartOverlay) {
+              const updatedOverlay = JSON.parse(JSON.stringify(overlay))
+
+              // ONLY update image_url and image_dimensions, preserve everything else INCLUDING bounding_box
+              if (updatedOverlay.overlay_image) {
+                updatedOverlay.overlay_image.image_url = chartImageUrl
+                updatedOverlay.overlay_image.image_dimensions = {
                   width: plotWidth,
                   height: plotHeight
                 }
+              } else {
+                updatedOverlay.overlay_image = {
+                  enabled: true,
+                  scaling: {
+                    enabled: false,
+                    scale_x: 1,
+                    scale_y: 1,
+                    fit_mode: "contain"
+                  },
+                  position: {
+                    x: 0,
+                    y: 0
+                  },
+                  image_url: chartImageUrl,
+                  image_dimensions: {
+                    width: plotWidth,
+                    height: plotHeight
+                  }
+                }
               }
+
+              return updatedOverlay
             }
-            
-            return updatedOverlay
+
+            return overlay
+          })
+        } else {
+          // Create a new overlay element structure for the chart if none exist
+          const boundingBoxToUse = existingBoundingBox || {
+            x: 0.17172897196261683,
+            y: 0.14583333333333334,
+            width: 0.6869158878504672,
+            height: 0.6479166666666667
           }
 
-          return overlay
-        })
-      } else {
-        // Create a new overlay element structure for the chart if none exist
-        const boundingBoxToUse = existingBoundingBox || {
-          x: 0.17172897196261683,
-          y: 0.14583333333333334,
-          width: 0.6869158878504672,
-          height: 0.6479166666666667
-        }
-
-        updatedOverlayElements = [{
-          layout: {
-            zIndex: 2,  
-            rotation: 0,
-            alignment: "center",
-            anchor_point: "center"
-          },
-          offset: {
-            x: 0,
-            y: 0
-          },
-          element_id: "chart_overlay",
-          label_name: "Chart",
-          synced_with: null,
-          bounding_box: boundingBoxToUse,
-          overlay_image: {
-            enabled: true,
-            scaling: {
-              enabled: false,
-              scale_x: 1,
-              scale_y: 1,
-              fit_mode: "contain"
+          updatedOverlayElements = [{
+            layout: {
+              zIndex: 2,
+              rotation: 0,
+              alignment: "center",
+              anchor_point: "center"
             },
-            position: {
+            offset: {
               x: 0,
               y: 0
             },
-            image_url: chartImageUrl,
-            image_dimensions: {
-              width: plotWidth,
-              height: plotHeight
+            element_id: "chart_overlay",
+            label_name: "Chart",
+            synced_with: null,
+            bounding_box: boundingBoxToUse,
+            overlay_image: {
+              enabled: true,
+              scaling: {
+                enabled: false,
+                scale_x: 1,
+                scale_y: 1,
+                fit_mode: "contain"
+              },
+              position: {
+                x: 0,
+                y: 0
+              },
+              image_url: chartImageUrl,
+              image_dimensions: {
+                width: plotWidth,
+                height: plotHeight
+              }
             }
-          }
-        }]
-      }
-      
-      // Get existing text_elements from the fetched session data or sceneData
-      let existingTextElements = []
-      if (sceneImageData) {
-        if (Array.isArray(sceneImageData.imageFrames)) {
-          const frame = sceneImageData.imageFrames.find(f => 
-            f?.text_elements || f?.textElements
-          ) || sceneImageData.imageFrames[0]
-          existingTextElements = frame?.text_elements || frame?.textElements || []
+          }]
         }
+
+        // Get existing text_elements from the fetched session data or sceneData
+        let existingTextElements = []
+        if (sceneImageData) {
+          if (Array.isArray(sceneImageData.imageFrames)) {
+            const frame = sceneImageData.imageFrames.find(f =>
+              f?.text_elements || f?.textElements
+            ) || sceneImageData.imageFrames[0]
+            existingTextElements = frame?.text_elements || frame?.textElements || []
+          }
+          if (existingTextElements.length === 0) {
+            existingTextElements = sceneImageData?.text_elements ||
+              sceneImageData?.textElements ||
+              []
+          }
+        }
+
         if (existingTextElements.length === 0) {
-          existingTextElements = sceneImageData?.text_elements || 
-                               sceneImageData?.textElements || 
-                               []
+          existingTextElements = sceneData?.text_elements ||
+            sceneData?.textElements ||
+            []
         }
-      }
-      
-      if (existingTextElements.length === 0) {
-        existingTextElements = sceneData?.text_elements || 
-                             sceneData?.textElements || 
-                             []
-      }
-      
-      // Build elements API request body with two updates (image_index 0 and 1)
-      const elementsRequestBody = {
-        session_id: sessionId,
-        user_id: userId,
-        updates: [
-          {
-            image_index: 0,
-            overlay_elements: updatedOverlayElements,
-            scene_number: sceneNumber,
-            text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
-          },
-          {
-            image_index: 1,
-            overlay_elements: updatedOverlayElements,
-            scene_number: sceneNumber,
-            text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
-          }
-        ]
-      }
-      
-      console.log('📋 Elements API request body:', JSON.stringify(elementsRequestBody, null, 2))
-      
-      const elementsResponse = await fetch(
-        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/elements',
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(elementsRequestBody)
-        }
-      )
-      
-      if (!elementsResponse.ok) {
-        const errorText = await elementsResponse.text()
-        throw new Error(`Failed to update elements: ${elementsResponse.status} ${errorText}`)
-      }
-      
-      console.log('✅ Elements updated successfully')
-    } catch (elementsError) {
-      console.error('❌ Error updating elements:', elementsError)
-      throw elementsError
-    }
 
-    // Build JSON data and send to chart-preset/update API
-    console.log('📤 Preparing JSON data for chart-preset/update API...')
-    try {
-      const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
-      const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
-      const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
-      
-      // Merge base sections with user-edited sectionsState
-      const mergedBase = { ...baseSections }
-      Object.keys(sectionsState).forEach(key => {
-        if (sectionsState[key]) {
-          mergedBase[key] = sectionsState[key]
-        }
-      })
-      const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
-
-      // Build JSON output structure
-      const output = {
-        preset: {
-          chart_type: sceneData?.preset?.chart_type || (chartTypeState === 'donut' ? 'pie_donut' : chartTypeState),
-          preset_definitions: [
+        // Build elements API request body with two updates (image_index 0 and 1)
+        const elementsRequestBody = {
+          session_id: sessionId,
+          user_id: userId,
+          updates: [
             {
-              name: "final",
-              sections: mergedSections
+              image_index: 0,
+              overlay_elements: updatedOverlayElements,
+              scene_number: sceneNumber,
+              text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
+            },
+            {
+              image_index: 1,
+              overlay_elements: updatedOverlayElements,
+              scene_number: sceneNumber,
+              text_elements: Array.isArray(existingTextElements) ? existingTextElements : []
             }
           ]
-        },
-        chart_data: chartDataState,
-        chart_type: chartTypeState,
-        scene_number: sceneNumber
-      }
-      
-      const jsonString = JSON.stringify(output, null, 2)
-      
-      // Send JSON to chart-preset/update API using PUT method
-      const updateUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/update?session_id=${encodeURIComponent(sessionId)}&user_id=${encodeURIComponent(userId)}`
-      
-      console.log('📤 Sending JSON to chart-preset/update API (PUT)...')
-      const updateResponse = await fetch(updateUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonString
-      })
-      
-      if (!updateResponse.ok) {
-        const errorText = await updateResponse.text()
-        throw new Error(`Failed to update chart preset: ${updateResponse.status} ${errorText}`)
-      }
-      console.log('✅ Chart preset updated successfully')
-    } catch (jsonError) {
-      console.error('❌ Error updating chart preset:', jsonError)
-      throw jsonError
-    }
-    
-    // Fetch updated user session data to refresh the UI
-    console.log('🔄 Fetching updated user session data...')
-    try {
-      const sessionReqBody = { user_id: userId, session_id: sessionId }
-      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sessionReqBody)
-      })
-      
-      if (!sessionResp.ok) {
-        const text = await sessionResp.text()
-        console.warn(`⚠️ Failed to fetch updated session data: ${sessionResp.status} ${text}`)
-      } else {
-        const sessionDataResponse = await sessionResp.json()
-        console.log('✅ User session data refreshed')
-        try {
-          localStorage.setItem('last_session_data', JSON.stringify(sessionDataResponse))
-        } catch (_) {
-          // Ignore localStorage errors
         }
-      }
-    } catch (sessionError) {
-      console.warn('⚠️ Error fetching updated session data:', sessionError)
-    }
-    
-    setIsDirty(false)
-    
-    // Pass the updated data to onSave callback
-    if (onSave) {
-      onSave({
-        sceneNumber,
-        overlayElements: updatedOverlayElements,
-        chartImageUrl
-      })
-    }
-    
-    // Close the modal after successful save
-    if (onClose) {
-      onClose()
-    }
-  } catch (err) {
-    console.error('❌ Error saving chart:', err)
-    setSaveError(err?.message || 'Failed to save chart')
-  } finally {
-    setIsSaving(false)
-  }
-}, [sceneNumber, figure, sceneData, availablePresets, selectedPresetIndex, seriesColorOverrides, sectionsState, chartTypeState, chartDataState, onSave, onClose])
 
-  
+        console.log('📋 Elements API request body:', JSON.stringify(elementsRequestBody, null, 2))
+
+        const elementsResponse = await fetch(
+          'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/api/image-editing/elements',
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(elementsRequestBody)
+          }
+        )
+
+        if (!elementsResponse.ok) {
+          const errorText = await elementsResponse.text()
+          throw new Error(`Failed to update elements: ${elementsResponse.status} ${errorText}`)
+        }
+
+        console.log('✅ Elements updated successfully')
+      } catch (elementsError) {
+        console.error('❌ Error updating elements:', elementsError)
+        throw elementsError
+      }
+
+      // Build JSON data and send to chart-preset/update API
+      console.log('📤 Preparing JSON data for chart-preset/update API...')
+      try {
+        const selectedPreset = availablePresets[selectedPresetIndex] || sceneData?.preset?.preset_definitions?.[0]
+        const baseSections = selectedPreset?.sections ?? sceneData?.preset?.preset_definitions?.[0]?.sections ?? {}
+        const overrideSections = buildSectionsOverrideFromColors(seriesColorOverrides, chartTypeState)
+
+        // ✅ FIX: Use functional state update to get the latest sectionsState
+        let latestSectionsState = sectionsState
+        setSectionsState(current => {
+          latestSectionsState = current
+          return current  // Don't actually change the state, just capture it
+        })
+
+        // Merge base sections with user-edited sectionsState
+        const mergedBase = { ...baseSections }
+        Object.keys(latestSectionsState).forEach(key => {
+          if (latestSectionsState[key]) {
+            mergedBase[key] = latestSectionsState[key]
+          }
+        })
+        const mergedSections = mergeSectionsWithOverrides(mergedBase, overrideSections)
+
+        // Build JSON output structure
+        const output = {
+          preset: {
+            chart_type: sceneData?.preset?.chart_type || (chartTypeState === 'donut' ? 'pie_donut' : chartTypeState),
+            preset_definitions: [
+              {
+                name: "final",
+                sections: mergedSections
+              }
+            ]
+          },
+          chart_data: chartDataState,
+          chart_type: chartTypeState,
+          scene_number: sceneNumber
+        }
+
+        const jsonString = JSON.stringify(output, null, 2)
+
+        // Send JSON to chart-preset/update API using PUT method
+        const updateUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/chart-preset/update?session_id=${encodeURIComponent(sessionId)}&user_id=${encodeURIComponent(userId)}`
+
+        console.log('📤 Sending JSON to chart-preset/update API (PUT)...')
+        const updateResponse = await fetch(updateUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: jsonString
+        })
+
+        if (!updateResponse.ok) {
+          const errorText = await updateResponse.text()
+          throw new Error(`Failed to update chart preset: ${updateResponse.status} ${errorText}`)
+        }
+        console.log('✅ Chart preset updated successfully')
+      } catch (jsonError) {
+        console.error('❌ Error updating chart preset:', jsonError)
+        throw jsonError
+      }
+
+      // Fetch updated user session data to refresh the UI
+      console.log('🔄 Fetching updated user session data...')
+      try {
+        const sessionReqBody = { user_id: userId, session_id: sessionId }
+        const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sessionReqBody)
+        })
+
+        if (!sessionResp.ok) {
+          const text = await sessionResp.text()
+          console.warn(`⚠️ Failed to fetch updated session data: ${sessionResp.status} ${text}`)
+        } else {
+          const sessionDataResponse = await sessionResp.json()
+          console.log('✅ User session data refreshed')
+          try {
+            localStorage.setItem('last_session_data', JSON.stringify(sessionDataResponse))
+          } catch (_) {
+            // Ignore localStorage errors
+          }
+        }
+      } catch (sessionError) {
+        console.warn('⚠️ Error fetching updated session data:', sessionError)
+      }
+
+      setIsDirty(false)
+
+      // Pass the updated data to onSave callback
+      if (onSave) {
+        onSave({
+          sceneNumber,
+          overlayElements: updatedOverlayElements,
+          chartImageUrl
+        })
+      }
+
+      // Close the modal after successful save
+      if (onClose) {
+        onClose()
+      }
+    } catch (err) {
+      console.error('❌ Error saving chart:', err)
+      setSaveError(err?.message || 'Failed to save chart')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [sceneNumber, figure, sceneData, availablePresets, selectedPresetIndex, seriesColorOverrides, sectionsState, chartTypeState, chartDataState, onSave, onClose])
+
+
   if (!isOpen) return null
 
   // Calculate modal dimensions based on aspect ratio
@@ -2635,11 +2635,10 @@ if (yLineVisible === true) {
                 type="button"
                 onClick={handleUndo}
                 disabled={!canUndo}
-                className={`w-9 h-9 flex items-center justify-center rounded-lg transition ${
-                  canUndo
-                    ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    : 'bg-gray-50 text-gray-400 cursor-not-allowed'
-                }`}
+                className={`w-9 h-9 flex items-center justify-center rounded-lg transition ${canUndo
+                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  : 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                  }`}
                 title="Undo"
                 aria-label="Undo"
               >
@@ -2649,11 +2648,10 @@ if (yLineVisible === true) {
                 type="button"
                 onClick={handleRedo}
                 disabled={!canRedo}
-                className={`w-9 h-9 flex items-center justify-center rounded-lg transition ${
-                  canRedo
-                    ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    : 'bg-gray-50 text-gray-400 cursor-not-allowed'
-                }`}
+                className={`w-9 h-9 flex items-center justify-center rounded-lg transition ${canRedo
+                  ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  : 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                  }`}
                 title="Redo"
                 aria-label="Redo"
               >
@@ -2665,9 +2663,8 @@ if (yLineVisible === true) {
                 type="button"
                 onClick={handleSaveChart}
                 disabled={isSaving}
-                className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition ${
-                  isSaving ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'
-                }`}
+                className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition ${isSaving ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'
+                  }`}
               >
                 {isSaving ? 'Saving…' : 'Save Chart'}
               </button>
@@ -2822,7 +2819,7 @@ if (yLineVisible === true) {
                       placeholder="Chart Title"
                     />
                   </div>
-                    <div>
+                  <div>
                     <label className="text-xs text-gray-600 block mb-1">Font</label>
                     <select
                       value={resolveBrandFont(getConfig(sectionsState, 'title', 'font_family'))}
@@ -2834,15 +2831,15 @@ if (yLineVisible === true) {
                   </div>
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Size</label>
-                      <input
-                        type="number"
+                    <input
+                      type="number"
                       value={getConfig(sectionsState, 'title', 'font_size') || 40}
                       onChange={(e) => updateSection('title', 'font_size', parseInt(e.target.value) || 40)}
-                        className="w-full text-sm border rounded px-2 py-1"
-                        min="8"
-                        max="48"
-                      />
-                    </div>
+                      className="w-full text-sm border rounded px-2 py-1"
+                      min="8"
+                      max="48"
+                    />
+                  </div>
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Weight</label>
                     <select
@@ -2853,15 +2850,15 @@ if (yLineVisible === true) {
                       <option value="normal">Normal</option>
                       <option value="bold">Bold</option>
                     </select>
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-600 block mb-1">Color</label>
-                      <input
-                        type="color"
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600 block mb-1">Color</label>
+                    <input
+                      type="color"
                       value={getConfig(sectionsState, 'title', 'font_color') || '#000000'}
                       onChange={(e) => updateSection('title', 'font_color', e.target.value)}
-                        className="w-full h-8 border rounded"
-                      />
+                      className="w-full h-8 border rounded"
+                    />
                   </div>
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Align</label>
@@ -2948,19 +2945,19 @@ if (yLineVisible === true) {
                   <label className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={layoutOverrides.showlegend}
-                      onChange={(e) => updateLayoutOverride('showlegend', e.target.checked)}
+                      checked={getConfig(sectionsState, 'legend', 'show') !== false}
+                      onChange={(e) => updateSection('legend', 'show', e.target.checked)}
                       className="w-4 h-4"
                     />
                     <span className="text-xs text-gray-700">Show Legend</span>
                   </label>
-                  {layoutOverrides.showlegend && (
+                  {getConfig(sectionsState, 'legend', 'show') !== false && (
                     <>
                       <div>
-                        <label className="text-xs text-gray-600 block mb-1">Position</label>
+                        <label className="text-xs text-gray-600 block mb-1">Orientation</label>
                         <select
-                          value={layoutOverrides.legend.orientation}
-                          onChange={(e) => updateLayoutOverride('legend.orientation', e.target.value)}
+                          value={getConfig(sectionsState, 'legend', 'orientation') || 'v'}
+                          onChange={(e) => updateSection('legend', 'orientation', e.target.value)}
                           className="w-full text-sm border rounded px-2 py-1"
                         >
                           <option value="v">Vertical</option>
@@ -2972,19 +2969,19 @@ if (yLineVisible === true) {
                           <label className="text-xs text-gray-600 block mb-1">Font Size</label>
                           <input
                             type="number"
-                            value={layoutOverrides.legend.font.size}
-                            onChange={(e) => updateLayoutOverride('legend.font.size', Number(e.target.value) || 12)}
+                            value={getConfig(sectionsState, 'legend', 'font_size') || 12}
+                            onChange={(e) => updateSection('legend', 'font_size', parseInt(e.target.value) || 12)}
                             className="w-full text-sm border rounded px-2 py-1"
                             min="8"
                             max="24"
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-gray-600 block mb-1">Color</label>
+                          <label className="text-xs text-gray-600 block mb-1">Font Color</label>
                           <input
                             type="color"
-                            value={layoutOverrides.legend.font.color}
-                            onChange={(e) => updateLayoutOverride('legend.font.color', e.target.value)}
+                            value={getConfig(sectionsState, 'legend', 'font_color') || '#000000'}
+                            onChange={(e) => updateSection('legend', 'font_color', e.target.value)}
                             className="w-full h-8 border rounded"
                           />
                         </div>
@@ -3068,149 +3065,149 @@ if (yLineVisible === true) {
             </div>
 
             {/* Bar Styling - for bar/column charts (excluding waterfall) */}
-            {(chartTypeState.includes('bar') || chartTypeState.includes('column')) && 
-            !chartTypeState.includes('waterfall') && (
-              <>
-            <div className="border rounded-lg bg-white">
-              <button
-                type="button"
-                    onClick={() => toggleSection('bars')}
-                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
-              >
-                    <span>Bar Styling</span>
-                    <span className={`transform transition-transform ${expandedSections.bars ? 'rotate-180' : ''}`}>▼</span>
-              </button>
-                  {expandedSections.bars && (
-                    <div className="px-3 pb-3 space-y-2 border-t">
-                  <div>
-                        <label className="text-xs text-gray-600 block mb-1">Select Series</label>
-                        <select
-                          value={selectedSeriesForSection.bars}
-                          onChange={(e) => setSelectedSeriesForSection(prev => ({ ...prev, bars: e.target.value }))}
-                          className="w-full text-sm border rounded px-2 py-1 mb-2"
-                        >
-                          {colorTargets.length > 0 ? colorTargets.map(target => (
-                            <option key={target} value={target}>{target}</option>
-                          )) : <option value="global">Global</option>}
-                        </select>
+            {(chartTypeState.includes('bar') || chartTypeState.includes('column')) &&
+              !chartTypeState.includes('waterfall') && (
+                <>
+                  <div className="border rounded-lg bg-white">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection('bars')}
+                      className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+                    >
+                      <span>Bar Styling</span>
+                      <span className={`transform transition-transform ${expandedSections.bars ? 'rotate-180' : ''}`}>▼</span>
+                    </button>
+                    {expandedSections.bars && (
+                      <div className="px-3 pb-3 space-y-2 border-t">
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Select Series</label>
+                          <select
+                            value={selectedSeriesForSection.bars}
+                            onChange={(e) => setSelectedSeriesForSection(prev => ({ ...prev, bars: e.target.value }))}
+                            className="w-full text-sm border rounded px-2 py-1 mb-2"
+                          >
+                            {colorTargets.length > 0 ? colorTargets.map(target => (
+                              <option key={target} value={target}>{target}</option>
+                            )) : <option value="global">Global</option>}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Opacity ({selectedSeriesForSection.bars})</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={tempInputValues[`bars-opacity-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'opacity', selectedSeriesForSection.bars) ?? ''}
+                            onChange={(e) => {
+                              setTempInputValues(prev => ({ ...prev, [`bars-opacity-${selectedSeriesForSection.bars}`]: e.target.value }))
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                              console.log('🔧 Setting opacity:', val, 'for series:', selectedSeriesForSection.bars)
+                              updateSection('bars', 'opacity', val, selectedSeriesForSection.bars)
+                              setTempInputValues(prev => {
+                                const newState = { ...prev }
+                                delete newState[`bars-opacity-${selectedSeriesForSection.bars}`]
+                                return newState
+                              })
+                            }}
+                            className="w-full text-sm border rounded px-2 py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Corner Radius ({selectedSeriesForSection.bars})</label>
+                          <input
+                            type="number"
+                            value={tempInputValues[`bars-corner_radius-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'corner_radius', selectedSeriesForSection.bars) ?? ''}
+                            onChange={(e) => {
+                              setTempInputValues(prev => ({ ...prev, [`bars-corner_radius-${selectedSeriesForSection.bars}`]: e.target.value }))
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value === '' ? null : parseInt(e.target.value)
+                              updateSection('bars', 'corner_radius', val, selectedSeriesForSection.bars)
+                              setTempInputValues(prev => {
+                                const newState = { ...prev }
+                                delete newState[`bars-corner_radius-${selectedSeriesForSection.bars}`]
+                                return newState
+                              })
+                            }}
+                            className="w-full text-sm border rounded px-2 py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Border Width ({selectedSeriesForSection.bars})</label>
+                          <input
+                            type="number"
+                            value={tempInputValues[`bars-border_width-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'border_width', selectedSeriesForSection.bars) ?? ''}
+                            onChange={(e) => {
+                              setTempInputValues(prev => ({ ...prev, [`bars-border_width-${selectedSeriesForSection.bars}`]: e.target.value }))
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value === '' ? null : parseInt(e.target.value)
+                              updateSection('bars', 'border_width', val, selectedSeriesForSection.bars)
+                              setTempInputValues(prev => {
+                                const newState = { ...prev }
+                                delete newState[`bars-border_width-${selectedSeriesForSection.bars}`]
+                                return newState
+                              })
+                            }}
+                            className="w-full text-sm border rounded px-2 py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Border Color ({selectedSeriesForSection.bars})</label>
+                          <input
+                            type="color"
+                            value={getConfig(sectionsState, 'bars', 'border_color', selectedSeriesForSection.bars) || '#FFFFFF'}
+                            onChange={(e) => updateSection('bars', 'border_color', e.target.value, selectedSeriesForSection.bars)}
+                            className="w-full h-8 border rounded"
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Opacity ({selectedSeriesForSection.bars})</label>
-                    <input
-  type="number"
-  min="0"
-  max="1"
-  step="0.1"
-  value={tempInputValues[`bars-opacity-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'opacity', selectedSeriesForSection.bars) ?? ''}
-  onChange={(e) => {
-    setTempInputValues(prev => ({ ...prev, [`bars-opacity-${selectedSeriesForSection.bars}`]: e.target.value }))
-  }}
-  onBlur={(e) => {
-    const val = e.target.value === '' ? null : parseFloat(e.target.value)
-    console.log('🔧 Setting opacity:', val, 'for series:', selectedSeriesForSection.bars)
-    updateSection('bars', 'opacity', val, selectedSeriesForSection.bars)
-    setTempInputValues(prev => {
-      const newState = { ...prev }
-      delete newState[`bars-opacity-${selectedSeriesForSection.bars}`]
-      return newState
-    })
-  }}
-  className="w-full text-sm border rounded px-2 py-1"
-/>
+                    )}
                   </div>
-                  <div>
-                        <label className="text-xs text-gray-600 block mb-1">Corner Radius ({selectedSeriesForSection.bars})</label>
-                    <input
-  type="number"
-  value={tempInputValues[`bars-corner_radius-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'corner_radius', selectedSeriesForSection.bars) ?? ''}
-  onChange={(e) => {
-    setTempInputValues(prev => ({ ...prev, [`bars-corner_radius-${selectedSeriesForSection.bars}`]: e.target.value }))
-  }}
-  onBlur={(e) => {
-    const val = e.target.value === '' ? null : parseInt(e.target.value)
-    updateSection('bars', 'corner_radius', val, selectedSeriesForSection.bars)
-    setTempInputValues(prev => {
-      const newState = { ...prev }
-      delete newState[`bars-corner_radius-${selectedSeriesForSection.bars}`]
-      return newState
-    })
-  }}
-  className="w-full text-sm border rounded px-2 py-1"
-/>
-                  </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Border Width ({selectedSeriesForSection.bars})</label>
-                        <input
-  type="number"
-  value={tempInputValues[`bars-border_width-${selectedSeriesForSection.bars}`] ?? getConfig(sectionsState, 'bars', 'border_width', selectedSeriesForSection.bars) ?? ''}
-  onChange={(e) => {
-    setTempInputValues(prev => ({ ...prev, [`bars-border_width-${selectedSeriesForSection.bars}`]: e.target.value }))
-  }}
-  onBlur={(e) => {
-    const val = e.target.value === '' ? null : parseInt(e.target.value)
-    updateSection('bars', 'border_width', val, selectedSeriesForSection.bars)
-    setTempInputValues(prev => {
-      const newState = { ...prev }
-      delete newState[`bars-border_width-${selectedSeriesForSection.bars}`]
-      return newState
-    })
-  }}
-  className="w-full text-sm border rounded px-2 py-1"
-/>
-                      </div>
-                      <div>
-                        <label className="text-xs text-gray-600 block mb-1">Border Color ({selectedSeriesForSection.bars})</label>
-                    <input
-                      type="color"
-                          value={getConfig(sectionsState, 'bars', 'border_color', selectedSeriesForSection.bars) || '#FFFFFF'}
-                          onChange={(e) => updateSection('bars', 'border_color', e.target.value, selectedSeriesForSection.bars)}
-                      className="w-full h-8 border rounded"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
 
-            <div className="border rounded-lg bg-white">
-              <button
-                type="button"
-                    onClick={() => toggleSection('spacing')}
-                className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
-              >
-                    <span>Bar Spacing</span>
-                    <span className={`transform transition-transform ${expandedSections.spacing ? 'rotate-180' : ''}`}>▼</span>
-              </button>
-                  {expandedSections.spacing && (
-                    <div className="px-3 pb-3 space-y-2 border-t">
-                  <div>
-                        <label className="text-xs text-gray-600 block mb-1">Bar Gap</label>
-                    <input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={getConfig(sectionsState, 'spacing', 'bargap') ?? 0.15}
-                          onChange={(e) => updateSection('spacing', 'bargap', parseFloat(e.target.value))}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    />
+                  <div className="border rounded-lg bg-white">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection('spacing')}
+                      className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
+                    >
+                      <span>Bar Spacing</span>
+                      <span className={`transform transition-transform ${expandedSections.spacing ? 'rotate-180' : ''}`}>▼</span>
+                    </button>
+                    {expandedSections.spacing && (
+                      <div className="px-3 pb-3 space-y-2 border-t">
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Bar Gap</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={getConfig(sectionsState, 'spacing', 'bargap') ?? 0.15}
+                            onChange={(e) => updateSection('spacing', 'bargap', parseFloat(e.target.value))}
+                            className="w-full text-sm border rounded px-2 py-1"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-1">Group Gap</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={getConfig(sectionsState, 'spacing', 'bargroupgap') ?? 0}
+                            onChange={(e) => updateSection('spacing', 'bargroupgap', parseFloat(e.target.value))}
+                            className="w-full text-sm border rounded px-2 py-1"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                        <label className="text-xs text-gray-600 block mb-1">Group Gap</label>
-                    <input
-                          type="number"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={getConfig(sectionsState, 'spacing', 'bargroupgap') ?? 0}
-                          onChange={(e) => updateSection('spacing', 'bargroupgap', parseFloat(e.target.value))}
-                      className="w-full text-sm border rounded px-2 py-1"
-                    />
-                  </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+                </>
+              )}
 
             {/* Lines - for line/area charts */}
             {(chartTypeState === 'line' || chartTypeState === 'area') && (
@@ -3430,7 +3427,7 @@ if (yLineVisible === true) {
                         className="w-4 h-4"
                       />
                       <label className="text-xs text-gray-700">Fill ({selectedSeriesForSection.areas})</label>
-                  </div>
+                    </div>
                     <div>
                       <label className="text-xs text-gray-600 block mb-1">Opacity ({selectedSeriesForSection.areas})</label>
                       <input
@@ -3495,7 +3492,7 @@ if (yLineVisible === true) {
                           max="0.5"
                           step="0.05"
                           value={getConfig(sectionsState, 'slices', 'explode', selectedSeriesForSection.slices) ?? ''}
-                        onChange={(e) => {
+                          onChange={(e) => {
                             const val = e.target.value === '' ? null : parseFloat(e.target.value)
                             updateSection('slices', 'explode', val, selectedSeriesForSection.slices)
                           }}
@@ -3520,8 +3517,8 @@ if (yLineVisible === true) {
                           type="color"
                           value={getConfig(sectionsState, 'slices', 'border_color', selectedSeriesForSection.slices) || '#FFFFFF'}
                           onChange={(e) => updateSection('slices', 'border_color', e.target.value, selectedSeriesForSection.slices)}
-                        className="w-full h-8 border rounded"
-                      />
+                          className="w-full h-8 border rounded"
+                        />
                       </div>
                       <div>
                         <label className="text-xs text-gray-600 block mb-1">Opacity ({selectedSeriesForSection.slices})</label>
@@ -3541,7 +3538,7 @@ if (yLineVisible === true) {
                     </div>
                   )}
                 </div>
-                
+
                 {/* Center Value - for donut charts */}
                 {chartTypeState === 'donut' && (
                   <div className="border rounded-lg bg-white">
@@ -3556,12 +3553,12 @@ if (yLineVisible === true) {
                     {expandedSections.centerValue && (
                       <div className="px-3 pb-3 space-y-2 border-t">
                         <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
+                          <input
+                            type="checkbox"
                             checked={getConfig(sectionsState, 'center_value', 'show') === true}
                             onChange={(e) => updateSection('center_value', 'show', e.target.checked)}
-                          className="w-4 h-4"
-                        />
+                            className="w-4 h-4"
+                          />
                           <label className="text-xs text-gray-700">Show</label>
                         </div>
                         <div>
@@ -3639,22 +3636,22 @@ if (yLineVisible === true) {
                     </select>
                   </div>
                   <div className="flex items-center gap-2">
-                        <input
-  type="checkbox"
-  checked={getConfig(sectionsState, 'segment_values', 'show', selectedSeriesForSection.dataLabels) !== false}
-  onChange={(e) => {
-    const seriesTarget = (chartTypeState === 'pie' || chartTypeState === 'donut') ? 'global' : selectedSeriesForSection.dataLabels
-    console.log('🏷️ Data Labels checkbox changed:', {
-      checked: e.target.checked,
-      series: seriesTarget,
-      chartType: chartTypeState
-    })
-    updateSection('segment_values', 'show', e.target.checked, seriesTarget)
-  }}
-  className="w-4 h-4"
-/>
+                    <input
+                      type="checkbox"
+                      checked={getConfig(sectionsState, 'segment_values', 'show', selectedSeriesForSection.dataLabels) !== false}
+                      onChange={(e) => {
+                        const seriesTarget = (chartTypeState === 'pie' || chartTypeState === 'donut') ? 'global' : selectedSeriesForSection.dataLabels
+                        console.log('🏷️ Data Labels checkbox changed:', {
+                          checked: e.target.checked,
+                          series: seriesTarget,
+                          chartType: chartTypeState
+                        })
+                        updateSection('segment_values', 'show', e.target.checked, seriesTarget)
+                      }}
+                      className="w-4 h-4"
+                    />
                     <label className="text-xs text-gray-700">Show</label>
-                    </div>
+                  </div>
                   {(chartTypeState === 'pie' || chartTypeState === 'donut') && selectedSeriesForSection.dataLabels !== 'global' ? (
                     <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
                       Note: Position can only be set globally for pie/donut charts
@@ -3727,8 +3724,8 @@ if (yLineVisible === true) {
                   </div>
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Font Color ({selectedSeriesForSection.dataLabels})</label>
-                          <input
-                            type="color"
+                    <input
+                      type="color"
                       value={getConfig(sectionsState, 'segment_values', 'font_color', selectedSeriesForSection.dataLabels) || '#FFFFFF'}
                       onChange={(e) => updateSection('segment_values', 'font_color', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full h-8 border rounded"
@@ -3738,7 +3735,7 @@ if (yLineVisible === true) {
               )}
             </div>
 
-            
+
 
             {/* Margins */}
             <div className="border rounded-lg bg-white">
@@ -3835,7 +3832,7 @@ if (yLineVisible === true) {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="space-y-2 border-b pb-2">
                       <p className="text-xs font-medium text-gray-700">Line</p>
                       <div className="flex items-center gap-2">
@@ -3866,7 +3863,7 @@ if (yLineVisible === true) {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="space-y-2 border-b pb-2">
                       <p className="text-xs font-medium text-gray-700">Ticks</p>
                       <div>
@@ -3934,7 +3931,7 @@ if (yLineVisible === true) {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-gray-700">Title</p>
                       <div>
@@ -3981,406 +3978,259 @@ if (yLineVisible === true) {
             )}
 
             {/* Y-Axis Settings - Enhanced */}
-{!(chartTypeState === 'pie' || chartTypeState === 'donut') && (
-  <div className="border rounded-lg bg-white">
-    <button
-      type="button"
-      onClick={() => {
-        toggleSection('yAxis')
-        // Debug: Log ALL possible sources when opening Y-Axis
-        console.log('📂 Opening Y-Axis section - checking all sources:')
-        console.log('1. sectionsState.y_axis:', sectionsState?.y_axis)
-        console.log('2. sceneData.preset:', sceneData?.preset?.preset_definitions?.[0]?.sections?.y_axis)
-        console.log('3. selectedPresetIndex:', selectedPresetIndex)
-        console.log('4. availablePresets[selectedPresetIndex]:', availablePresets[selectedPresetIndex]?.sections?.y_axis)
-      }}
-      className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
-    >
-      <span>Y-Axis</span>
-      <span className={`transform transition-transform ${expandedSections.yAxis ? 'rotate-180' : ''}`}>▼</span>
-    </button>
-    {expandedSections.yAxis && (
-      <div className="px-3 pb-3 space-y-3 border-t">
-        <div className="space-y-2 border-b pb-2">
-          <p className="text-xs font-medium text-gray-700">Grid</p>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={(() => {
-                const value = getAxisConfig(sectionsState, 'y_axis', 'grid', 'show')
-                console.log('🔍 Y-Axis Grid Show:', value, 'Type:', typeof value, 'sectionsState.y_axis:', sectionsState?.y_axis)
-                return value === true
-              })()}
-              onChange={(e) => {
-                console.log('✏️ Grid Show changed to:', e.target.checked)
-                updateAxisSection('y_axis', 'grid', 'show', e.target.checked)
-              }}
-              className="w-4 h-4"
-            />
-            <label className="text-xs text-gray-700">Show</label>
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Color</label>
-            <input
-              type="color"
-              value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'color') || '#E5E7EB'}
-              onChange={(e) => updateAxisSection('y_axis', 'grid', 'color', e.target.value)}
-              className="w-full h-8 border rounded"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Width</label>
-            <input
-              type="number"
-              value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'width') || 1}
-              onChange={(e) => updateAxisSection('y_axis', 'grid', 'width', parseInt(e.target.value) || 1)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-        </div>
-        
-        <div className="space-y-2 border-b pb-2">
-          <p className="text-xs font-medium text-gray-700">Line</p>
-          <div className="flex items-center gap-2">
-  <input
-    type="checkbox"
-    checked={(() => {
-      const value = getAxisConfig(sectionsState, 'y_axis', 'line', 'visible')
-      const isChecked = value === true
-      console.log('🔍 Y-Axis Line checkbox render:')
-      console.log('  - Raw value:', value, 'Type:', typeof value)
-      console.log('  - Computed checked:', isChecked)
-      console.log('  - sectionsState.y_axis.line:', sectionsState?.y_axis?.line)
-      return isChecked
-    })()}
-    onChange={(e) => {
-      console.log('✏️ Line Visible checkbox clicked, new checked state:', e.target.checked)
-      updateAxisSection('y_axis', 'line', 'visible', e.target.checked)
-    }}
-    className="w-4 h-4"
-  />
-  <label className="text-xs text-gray-700">Visible</label>
-</div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Color</label>
-            <input
-              type="color"
-              value={getAxisConfig(sectionsState, 'y_axis', 'line', 'color') || '#000000'}
-              onChange={(e) => updateAxisSection('y_axis', 'line', 'color', e.target.value)}
-              className="w-full h-8 border rounded"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Width</label>
-            <input
-              type="number"
-              value={getAxisConfig(sectionsState, 'y_axis', 'line', 'width') || 1}
-              onChange={(e) => updateAxisSection('y_axis', 'line', 'width', parseInt(e.target.value) || 1)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-        </div>
-        
-        <div className="space-y-2 border-b pb-2">
-          <p className="text-xs font-medium text-gray-700">Zero Line</p>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'show') === true}
-              onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'show', e.target.checked)}
-              className="w-4 h-4"
-            />
-            <label className="text-xs text-gray-700">Show</label>
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Color</label>
-            <input
-              type="color"
-              value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'color') || '#000000'}
-              onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'color', e.target.value)}
-              className="w-full h-8 border rounded"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Width</label>
-            <input
-              type="number"
-              value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'width') || 1}
-              onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'width', parseInt(e.target.value) || 1)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-        </div>
-        
-        <div className="space-y-2 border-b pb-2">
-          <p className="text-xs font-medium text-gray-700">Ticks</p>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Font</label>
-            <select
-              value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_family'))}
-              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_family', e.target.value)}
-              className="w-full text-sm border rounded px-2 py-1"
-            >
-              {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Size</label>
-            <input
-              type="number"
-              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_size') ?? 12}
-              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_size', parseInt(e.target.value) || 12)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Color</label>
-            <input
-              type="color"
-              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_color') || '#000000'}
-              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_color', e.target.value)}
-              className="w-full h-8 border rounded"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Format</label>
-            <input
-              type="text"
-              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'format') || ''}
-              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'format', e.target.value)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Prefix</label>
-            <input
-              type="text"
-              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'prefix') || ''}
-              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'prefix', e.target.value)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Suffix</label>
-            <input
-              type="text"
-              value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'suffix') || ''}
-              onChange={(e) => updateAxisSection('y_axis', 'ticks', 'suffix', e.target.value)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-        </div>
-        
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-gray-700">Title</p>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Text</label>
-            <input
-              type="text"
-              value={getAxisConfig(sectionsState, 'y_axis', 'title', 'text') || ''}
-              onChange={(e) => updateAxisSection('y_axis', 'title', 'text', e.target.value)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Font</label>
-            <select
-              value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'title', 'font_family'))}
-              onChange={(e) => updateAxisSection('y_axis', 'title', 'font_family', e.target.value)}
-              className="w-full text-sm border rounded px-2 py-1"
-            >
-              {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Size</label>
-            <input
-              type="number"
-              value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_size') || 14}
-              onChange={(e) => updateAxisSection('y_axis', 'title', 'font_size', parseInt(e.target.value) || 14)}
-              className="w-full text-sm border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-600 block mb-1">Color</label>
-            <input
-              type="color"
-              value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_color') || '#000000'}
-              onChange={(e) => updateAxisSection('y_axis', 'title', 'font_color', e.target.value)}
-              className="w-full h-8 border rounded"
-            />
-          </div>
-        </div>
-      </div>
-    )}
-  </div>
-)}
-
-            {/* Data Editing */}
-            {datasetSummary && (
+            {!(chartTypeState === 'pie' || chartTypeState === 'donut') && (
               <div className="border rounded-lg bg-white">
                 <button
                   type="button"
-                  onClick={() => toggleSection('data')}
+                  onClick={() => {
+                    toggleSection('yAxis')
+                    // Debug: Log ALL possible sources when opening Y-Axis
+                    console.log('📂 Opening Y-Axis section - checking all sources:')
+                    console.log('1. sectionsState.y_axis:', sectionsState?.y_axis)
+                    console.log('2. sceneData.preset:', sceneData?.preset?.preset_definitions?.[0]?.sections?.y_axis)
+                    console.log('3. selectedPresetIndex:', selectedPresetIndex)
+                    console.log('4. availablePresets[selectedPresetIndex]:', availablePresets[selectedPresetIndex]?.sections?.y_axis)
+                  }}
                   className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-gray-700"
                 >
-                  <span>Edit Data</span>
-                  <span className={`transform transition-transform ${expandedSections.data ? 'rotate-180' : ''}`}>▼</span>
+                  <span>Y-Axis</span>
+                  <span className={`transform transition-transform ${expandedSections.yAxis ? 'rotate-180' : ''}`}>▼</span>
                 </button>
-                {expandedSections.data && (
-                  <div className="px-3 pb-3 space-y-2 border-t max-h-64 overflow-y-auto">
-                    {datasetSummary.categories && datasetSummary.categories.length > 0 && (
+                {expandedSections.yAxis && (
+                  <div className="px-3 pb-3 space-y-3 border-t">
+                    <div className="space-y-2 border-b pb-2">
+                      <p className="text-xs font-medium text-gray-700">Grid</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={(() => {
+                            const value = getAxisConfig(sectionsState, 'y_axis', 'grid', 'show')
+                            console.log('🔍 Y-Axis Grid Show:', value, 'Type:', typeof value, 'sectionsState.y_axis:', sectionsState?.y_axis)
+                            return value === true
+                          })()}
+                          onChange={(e) => {
+                            console.log('✏️ Grid Show changed to:', e.target.checked)
+                            updateAxisSection('y_axis', 'grid', 'show', e.target.checked)
+                          }}
+                          className="w-4 h-4"
+                        />
+                        <label className="text-xs text-gray-700">Show</label>
+                      </div>
                       <div>
-                        <p className="text-xs font-medium text-gray-600 mb-2">Categories</p>
-                        <div className="space-y-1">
-                          {datasetSummary.categories.map((cat, idx) => (
-                            <input
-                              key={idx}
-                              type="text"
-                              value={cat}
-                              onChange={(e) => {
-                                if (historyInitializedRef.current) saveToHistory()
-                                const newCategories = [...datasetSummary.categories]
-                                newCategories[idx] = e.target.value
-                                const updatedData = { ...chartDataState }
-                                if (updatedData.series) {
-                                  updatedData.series.x = newCategories
-                                  setChartDataState(updatedData)
-                                  setRawChartDataInput(JSON.stringify(updatedData, null, 2))
-                                  markDirty()
-                                }
-                              }}
-                              className="w-full text-xs border rounded px-2 py-1"
-                            />
-                          ))}
-                        </div>
+                        <label className="text-xs text-gray-600 block mb-1">Color</label>
+                        <input
+                          type="color"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'color') || '#E5E7EB'}
+                          onChange={(e) => updateAxisSection('y_axis', 'grid', 'color', e.target.value)}
+                          className="w-full h-8 border rounded"
+                        />
                       </div>
-                    )}
-                    {datasetSummary.dataset &&
-                      Object.entries(datasetSummary.dataset).map(([seriesName, values]) => (
-                        <div key={seriesName} className="mt-2">
-                          <p className="text-xs font-medium text-gray-600 mb-1">{seriesName}</p>
-                          <div className="space-y-1">
-                            {values.map((val, idx) => (
-                              <input
-                                key={idx}
-                                type="number"
-                                value={val}
-                                onChange={(e) => {
-                                  if (historyInitializedRef.current) saveToHistory()
-                                  const numVal = Number(e.target.value) || 0
-                                  const updatedData = { ...chartDataState }
-                                  if (updatedData.series?.data) {
-                                    const seriesIdx = updatedData.series.data.findIndex((s) => s.name === seriesName)
-                                    if (seriesIdx >= 0) {
-                                      const newY = [...updatedData.series.data[seriesIdx].y]
-                                      newY[idx] = numVal
-                                      updatedData.series.data[seriesIdx].y = newY
-                                      setChartDataState(updatedData)
-                                      setRawChartDataInput(JSON.stringify(updatedData, null, 2))
-                                      markDirty()
-                                    }
-                                  }
-                                }}
-                                className="w-full text-xs border rounded px-2 py-1"
-                                step="any"
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    {datasetSummary.values && (
-                      <div className="mt-2">
-                        <p className="text-xs font-medium text-gray-600 mb-1">Values</p>
-                        <div className="space-y-1">
-                          {datasetSummary.values.map((val, idx) => (
-                            <input
-                              key={idx}
-                              type="number"
-                              value={val}
-                              onChange={(e) => {
-                                if (historyInitializedRef.current) saveToHistory()
-                                const numVal = Number(e.target.value) || 0
-                                const updatedData = { ...chartDataState }
-                                if (updatedData.series?.data?.[0]) {
-                                  const newValues = [...updatedData.series.data[0].values]
-                                  newValues[idx] = numVal
-                                  updatedData.series.data[0].values = newValues
-                                  setChartDataState(updatedData)
-                                  setRawChartDataInput(JSON.stringify(updatedData, null, 2))
-                                  markDirty()
-                                }
-                              }}
-                              className="w-full text-xs border rounded px-2 py-1"
-                              step="any"
-                            />
-                          ))}
-                        </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Width</label>
+                        <input
+                          type="number"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'grid', 'width') || 1}
+                          onChange={(e) => updateAxisSection('y_axis', 'grid', 'width', parseInt(e.target.value) || 1)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
                       </div>
-                    )}
+                    </div>
+
+                    <div className="space-y-2 border-b pb-2">
+                      <p className="text-xs font-medium text-gray-700">Line</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={(() => {
+                            const value = getAxisConfig(sectionsState, 'y_axis', 'line', 'visible')
+                            const isChecked = value === true
+                            console.log('🔍 Y-Axis Line checkbox render:')
+                            console.log('  - Raw value:', value, 'Type:', typeof value)
+                            console.log('  - Computed checked:', isChecked)
+                            console.log('  - sectionsState.y_axis.line:', sectionsState?.y_axis?.line)
+                            return isChecked
+                          })()}
+                          onChange={(e) => {
+                            console.log('✏️ Line Visible checkbox clicked, new checked state:', e.target.checked)
+                            updateAxisSection('y_axis', 'line', 'visible', e.target.checked)
+                          }}
+                          className="w-4 h-4"
+                        />
+                        <label className="text-xs text-gray-700">Visible</label>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Color</label>
+                        <input
+                          type="color"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'line', 'color') || '#000000'}
+                          onChange={(e) => updateAxisSection('y_axis', 'line', 'color', e.target.value)}
+                          className="w-full h-8 border rounded"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Width</label>
+                        <input
+                          type="number"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'line', 'width') || 1}
+                          onChange={(e) => updateAxisSection('y_axis', 'line', 'width', parseInt(e.target.value) || 1)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 border-b pb-2">
+                      <p className="text-xs font-medium text-gray-700">Zero Line</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'show') === true}
+                          onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'show', e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <label className="text-xs text-gray-700">Show</label>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Color</label>
+                        <input
+                          type="color"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'color') || '#000000'}
+                          onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'color', e.target.value)}
+                          className="w-full h-8 border rounded"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Width</label>
+                        <input
+                          type="number"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'zeroline', 'width') || 1}
+                          onChange={(e) => updateAxisSection('y_axis', 'zeroline', 'width', parseInt(e.target.value) || 1)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 border-b pb-2">
+                      <p className="text-xs font-medium text-gray-700">Ticks</p>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Font</label>
+                        <select
+                          value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_family'))}
+                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_family', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        >
+                          {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Size</label>
+                        <input
+                          type="number"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_size') ?? 12}
+                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_size', parseInt(e.target.value) || 12)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Color</label>
+                        <input
+                          type="color"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'font_color') || '#000000'}
+                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'font_color', e.target.value)}
+                          className="w-full h-8 border rounded"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Format</label>
+                        <input
+                          type="text"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'format') || ''}
+                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'format', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Prefix</label>
+                        <input
+                          type="text"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'prefix') || ''}
+                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'prefix', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Suffix</label>
+                        <input
+                          type="text"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'ticks', 'suffix') || ''}
+                          onChange={(e) => updateAxisSection('y_axis', 'ticks', 'suffix', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium text-gray-700">Title</p>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Text</label>
+                        <input
+                          type="text"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'title', 'text') || ''}
+                          onChange={(e) => updateAxisSection('y_axis', 'title', 'text', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Font</label>
+                        <select
+                          value={resolveBrandFont(getAxisConfig(sectionsState, 'y_axis', 'title', 'font_family'))}
+                          onChange={(e) => updateAxisSection('y_axis', 'title', 'font_family', e.target.value)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        >
+                          {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Size</label>
+                        <input
+                          type="number"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_size') || 14}
+                          onChange={(e) => updateAxisSection('y_axis', 'title', 'font_size', parseInt(e.target.value) || 14)}
+                          className="w-full text-sm border rounded px-2 py-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-600 block mb-1">Color</label>
+                        <input
+                          type="color"
+                          value={getAxisConfig(sectionsState, 'y_axis', 'title', 'font_color') || '#000000'}
+                          onChange={(e) => updateAxisSection('y_axis', 'title', 'font_color', e.target.value)}
+                          className="w-full h-8 border rounded"
+                        />
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
             )}
 
-            {datasetSummary && (
-              <div className="space-y-2">
-                <p className="text-xs uppercase tracking-wide text-gray-500">Data Preview</p>
-                <div className="space-y-2 text-sm text-gray-900">
-                  {datasetSummary.categories && datasetSummary.categories.length > 0 && (
-                    <div className="bg-white rounded-lg border border-gray-200 px-2 py-1">
-                      <div className="font-medium text-xs text-gray-600">Categories</div>
-                      <div className="text-xs text-gray-700 break-words">
-                        {datasetSummary.categories.join(', ')}
-                      </div>
-                    </div>
-                  )}
-                  {datasetSummary.dataset &&
-                    Object.entries(datasetSummary.dataset).map(([seriesName, values]) => (
-                      <div key={seriesName} className="bg-white rounded-lg border border-gray-200 px-2 py-1">
-                        <div className="font-medium text-xs text-gray-600">{seriesName}</div>
-                        <div className="text-xs text-gray-700 break-words">{values.join(', ')}</div>
-                      </div>
-                    ))}
-                  {datasetSummary.values && (
-                    <div className="bg-white rounded-lg border border-gray-200 px-2 py-1">
-                      <div className="font-medium text-xs text-gray-600">Values</div>
-                      <div className="text-xs text-gray-700 break-words">
-                        {datasetSummary.values.join(', ')}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* Data Editing */}
+
+
+
 
             <div className="space-y-2">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-gray-500">Chart Data (JSON)</p>
-                <textarea
-                  value={rawChartDataInput}
-                  onChange={handleRawChartDataInputChange}
-                  className="w-full h-32 text-xs font-mono border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                  spellCheck={false}
-                />
-                {rawChartError && <p className="text-xs text-red-600 mt-1">{rawChartError}</p>}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleApplyRawChartData}
-                  className="flex-1 bg-[#13008B] text-white text-xs font-medium rounded-lg px-3 py-2 hover:bg-blue-800 transition-colors"
-                >
-                  Apply Data
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResetEditor}
-                  className="flex-1 border border-gray-300 text-xs font-medium rounded-lg px-3 py-2 hover:bg-gray-100"
-                >
-                  Reset
-                </button>
-              </div>
+              <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Chart Data</p>
+              <button
+                type="button"
+                onClick={() => setIsDataEditorOpen(true)}
+                className="w-full bg-[#13008B] text-white text-sm font-medium rounded-lg px-4 py-3 hover:bg-blue-800 transition-colors flex items-center justify-center gap-2"
+              >
+                <span>📊</span>
+                <span>Edit Chart Data</span>
+              </button>
+              <p className="text-xs text-gray-500">
+                Click to edit data in a spreadsheet-like table
+              </p>
             </div>
 
             <div className="space-y-1">
@@ -4401,9 +4251,9 @@ if (yLineVisible === true) {
           </aside>
           <div className="col-span-4 bg-gray-50" style={{ overflow: 'auto', padding: isVertical ? '1rem 1.5rem' : '1rem', maxHeight: isVertical ? 'calc(95vh - 120px)' : 'calc(90vh - 120px)' }}>
             <div className={`w-full flex ${isVertical ? 'justify-center' : 'items-center justify-center'}`} style={{ paddingTop: isVertical ? '1rem' : '0' }}>
-              <div 
+              <div
                 className="bg-white rounded-lg shadow-sm"
-                style={{ 
+                style={{
                   aspectRatio: aspectRatioCss,
                   ...(isVertical ? {
                     width: '100%',
@@ -4422,7 +4272,7 @@ if (yLineVisible === true) {
                 }}
               >
                 {figure ? (
-                  <div style={{ 
+                  <div style={{
                     width: '100%',
                     height: '100%',
                     position: 'relative',
@@ -4449,6 +4299,44 @@ if (yLineVisible === true) {
           </div>
         </div>
       </div>
+      {/* ✅ ADD THE CHART DATA EDITOR MODAL HERE */}
+      {isDataEditorOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500">Chart Data Editor</p>
+                <h3 className="text-lg font-semibold text-gray-900">Edit Data - {chartTypeState}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDataEditorOpen(false)}
+                className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition"
+                aria-label="Close data editor"
+              >
+                <FaTimes />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-6">
+              <ChartDataEditor
+                chartType={chartTypeState}
+                chartData={chartDataState}
+                onDataChange={(newData) => {
+                  setChartDataState(newData)
+                  setRawChartDataInput(JSON.stringify(newData, null, 2))
+                  markDirty()
+                }}
+                onSave={async (newData) => {
+                  setChartDataState(newData)
+                  setRawChartDataInput(JSON.stringify(newData, null, 2))
+                  markDirty()
+                  setIsDataEditorOpen(false)
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

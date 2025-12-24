@@ -634,6 +634,22 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
             const newId = overlays.length > 0 ? Math.max(...overlays.map((o) => o.id)) + 1 : 0;
             const overlayWithId = { ...newOverlay, id: newId };
             
+            // 🆕 LOG: Track overlay creation for all types
+            console.log('🆕 [TIMELINE-HANDLERS] NEW OVERLAY CREATED:', {
+                overlayId: newId,
+                itemType: itemType,
+                overlayType: overlayWithId.type,
+                overlayTypeString: String(overlayWithId.type),
+                from: overlayWithId.from,
+                durationInFrames: overlayWithId.durationInFrames,
+                row: overlayWithId.row,
+                content: overlayWithId.content || overlayWithId.text || 'N/A',
+                src: overlayWithId.src || 'N/A',
+                hasSrc: !!overlayWithId.src,
+                styles: overlayWithId.styles || {},
+                fullOverlay: overlayWithId
+            });
+            
             // Log the final overlay ID for text overlays
             if (itemType === 'text') {
                 console.log('[TIMELINE-HANDLERS] Text Overlay created with ID:', {
@@ -643,9 +659,35 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                     styles: overlayWithId.styles || {},
                 });
             }
+            
+            // 🆕 LOG: Before adding to overlays
+            console.log('📊 [TIMELINE-HANDLERS] Before adding overlay:', {
+                currentOverlayCount: overlays.length,
+                newOverlayId: newId,
+                newOverlayType: overlayWithId.type,
+                existingOverlayIds: overlays.map(o => o.id)
+            });
+            
             // Add to overlays
             const updatedOverlays = [...overlays, overlayWithId];
+            
+            // 🆕 LOG: After creating updated overlays array
+            console.log('✅ [TIMELINE-HANDLERS] Updated overlays array created:', {
+                previousCount: overlays.length,
+                newCount: updatedOverlays.length,
+                newOverlayId: newId,
+                allOverlayIds: updatedOverlays.map(o => o.id)
+            });
+            
             setOverlays(updatedOverlays);
+            
+            // 🆕 LOG: After setOverlays call
+            console.log('🎯 [TIMELINE-HANDLERS] setOverlays called with new overlay:', {
+                overlayId: newId,
+                overlayType: overlayWithId.type,
+                totalOverlays: updatedOverlays.length
+            });
+            
             // Select the new overlay
             setSelectedOverlayId(newId);
             // Open the appropriate sidebar panel
