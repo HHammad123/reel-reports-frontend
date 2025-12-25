@@ -13,6 +13,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import LogoImage from '../../asset/mainLogo.png';
 import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
+import { uploadBlobUrl } from '../../utils/uploadAssets';
 
 // FFmpeg xfade filter transition types
 // Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
@@ -261,6 +262,12 @@ if (videoElement.readyState >= 2) {
   const [isSavingLayers, setIsSavingLayers] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const savedOverlayIdsRef = useRef(new Set()); // Track saved overlay IDs
+  // Upload Base Video Modal State
+  const [showUploadBaseVideoModal, setShowUploadBaseVideoModal] = useState(false);
+  const [selectedSceneForUpload, setSelectedSceneForUpload] = useState(null);
+  const [uploadBaseVideoFile, setUploadBaseVideoFile] = useState(null);
+  const [isUploadingBaseVideo, setIsUploadingBaseVideo] = useState(false);
+  const [uploadBaseVideoError, setUploadBaseVideoError] = useState('');
   const editorOverlaysRef = useRef([]); // Store current overlays from editor
   const initialOverlaysLoadedRef = useRef(false); // Track if initial overlays have been loaded
   const jobVideoResultsFetchedRef = useRef(false); // Track if video results have been fetched from job API
@@ -3777,7 +3784,100 @@ if (videoElement.readyState >= 2) {
               } else if (overlay.type === OverlayType.IMAGE || overlay.type === OverlayType.VIDEO || overlay.type === OverlayType.SOUND) {
                 // For file-based layers, include the URL
                 if (overlay.src) {
-                  layer.url = overlay.src;
+                  // Check if the URL is a blob URL - if so, upload it first
+                  if (overlay.src.startsWith('blob:')) {
+                    console.log('🔄 [SAVE-LAYERS] Detected blob URL, uploading before saving layer:', overlay.src);
+                    try {
+                      // Determine file type and purpose based on file extension/MIME type
+                      let mimeType = null;
+                      let fileName = null;
+                      let purpose = 'sticker'; // Default purpose
+                      
+                      // Try to detect from blob URL or overlay src
+                      const srcUrl = overlay.src || '';
+                      const lowerSrc = srcUrl.toLowerCase();
+                      
+                      // Check file extension in URL first
+                      if (lowerSrc.includes('.jpg') || lowerSrc.includes('.jpeg')) {
+                        mimeType = 'image/jpeg';
+                        fileName = `scene-${sceneNumber}-logo-${overlay.id || Date.now()}.jpg`;
+                        purpose = 'logo'; // JPG files are logos
+                      } else if (lowerSrc.includes('.mp4')) {
+                        mimeType = 'video/mp4';
+                        fileName = `scene-${sceneNumber}-video-${overlay.id || Date.now()}.mp4`;
+                        purpose = 'video'; // MP4 files are videos
+                      } else if (lowerSrc.includes('.mp3')) {
+                        mimeType = 'audio/mpeg';
+                        fileName = `scene-${sceneNumber}-audio-${overlay.id || Date.now()}.mp3`;
+                        purpose = 'audio'; // MP3 files are audio
+                      } else if (lowerSrc.includes('.png')) {
+                        mimeType = 'image/png';
+                        fileName = `scene-${sceneNumber}-image-${overlay.id || Date.now()}.png`;
+                        purpose = 'sticker'; // PNG files are stickers
+                      } else if (lowerSrc.includes('.gif')) {
+                        mimeType = 'image/gif';
+                        fileName = `scene-${sceneNumber}-image-${overlay.id || Date.now()}.gif`;
+                        purpose = 'sticker'; // GIF files are stickers
+                      } else {
+                        // Fallback to overlay type if extension not found in URL
+                        if (overlay.type === OverlayType.IMAGE) {
+                          mimeType = 'image/png';
+                          fileName = `scene-${sceneNumber}-image-${overlay.id || Date.now()}.png`;
+                          purpose = 'sticker';
+                        } else if (overlay.type === OverlayType.VIDEO) {
+                          mimeType = 'video/mp4';
+                          fileName = `scene-${sceneNumber}-video-${overlay.id || Date.now()}.mp4`;
+                          purpose = 'video';
+                        } else if (overlay.type === OverlayType.SOUND) {
+                          mimeType = 'audio/mpeg';
+                          fileName = `scene-${sceneNumber}-audio-${overlay.id || Date.now()}.mp3`;
+                          purpose = 'audio';
+                        }
+                      }
+                      
+                      console.log('🔍 [SAVE-LAYERS] Detected file type and purpose:', {
+                        srcUrl: srcUrl.substring(0, 50) + '...',
+                        mimeType,
+                        fileName,
+                        purpose
+                      });
+                      
+                      const layerName = overlay.name || `layer_${overlay.id || Date.now()}`;
+                      
+                      const uploadMetadata = {
+                        purpose: purpose,
+                        layer_name: layerName
+                      };
+                      
+                      // Upload the blob URL and get the uploaded file info
+                      // Pass session_id and metadata to the upload function
+                      const uploadedFileInfo = await uploadBlobUrl(
+                        overlay.src, 
+                        fileName, 
+                        mimeType, 
+                        session_id, 
+                        uploadMetadata
+                      );
+                      console.log('✅ [SAVE-LAYERS] Blob URL uploaded successfully:', uploadedFileInfo);
+                      
+                      // Use the file_url from the response
+                      layer.url = uploadedFileInfo.file_url;
+                      
+                      // Use the purpose as the layer name for manage-layers API
+                      if (uploadedFileInfo.purpose) {
+                        layer.name = uploadedFileInfo.purpose;
+                        console.log('✅ [SAVE-LAYERS] Using purpose as layer name from upload response:', uploadedFileInfo.purpose);
+                      }
+                    } catch (uploadError) {
+                      console.error('❌ [SAVE-LAYERS] Failed to upload blob URL:', uploadError);
+                      // If upload fails, still try to save with blob URL (may work in some cases)
+                      // Or throw error to prevent saving with invalid URL
+                      throw new Error(`Failed to upload blob asset: ${uploadError.message}`);
+                    }
+                  } else {
+                    // Not a blob URL, use it directly
+                    layer.url = overlay.src;
+                  }
                 }
               }
 
@@ -3840,6 +3940,35 @@ if (videoElement.readyState >= 2) {
             }
           }
 
+          // After all manage-layers API calls succeed, refresh user session data
+          console.log('🔄 [SAVE-LAYERS] Refreshing user session data to fetch updated layers...');
+          try {
+            const refreshResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ user_id, session_id })
+            });
+            
+            const refreshText = await refreshResponse.text();
+            let refreshData;
+            try {
+              refreshData = JSON.parse(refreshText);
+            } catch {
+              refreshData = refreshText;
+            }
+            
+            if (refreshResponse.ok && refreshData?.session_data) {
+              console.log('✅ [SAVE-LAYERS] User session data refreshed successfully');
+              // Parse and update overlays from refreshed session data if needed
+              // The overlays will be automatically updated when the editor re-renders
+            } else {
+              console.warn('⚠️ [SAVE-LAYERS] Failed to refresh user session data:', refreshResponse.status);
+            }
+          } catch (refreshError) {
+            console.error('❌ [SAVE-LAYERS] Error refreshing user session data:', refreshError);
+            // Don't throw - this is not critical, layers are already saved
+          }
+
           // Update state
           setHasUnsavedLayers(false);
         } else {
@@ -3887,6 +4016,138 @@ if (videoElement.readyState >= 2) {
       });
     }
   }, [isSavingLayers, selectedVideo, getLayerName, framesToTime, items, detectBaseVideoChanges]);
+
+  // Upload base video for selected scene
+  const handleUploadBaseVideo = useCallback(async () => {
+    // Validation
+    if (!selectedSceneForUpload) {
+      setUploadBaseVideoError('Please select a scene');
+      return;
+    }
+    
+    if (!uploadBaseVideoFile) {
+      setUploadBaseVideoError('Please select a video file');
+      return;
+    }
+    
+    const session_id = localStorage.getItem('session_id');
+    const user_id = localStorage.getItem('token');
+    
+    if (!session_id || !user_id) {
+      setUploadBaseVideoError('Session ID or User ID not found');
+      return;
+    }
+    
+    setIsUploadingBaseVideo(true);
+    setUploadBaseVideoError('');
+    
+    try {
+      console.log('🎬 [UPLOAD-BASE-VIDEO] Starting upload process', {
+        sceneNumber: selectedSceneForUpload,
+        fileName: uploadBaseVideoFile.name,
+        fileSize: uploadBaseVideoFile.size,
+        fileType: uploadBaseVideoFile.type
+      });
+      
+      // STEP 1: Upload file to Azure via upload-assets API
+      console.log('📤 [UPLOAD-BASE-VIDEO] Step 1: Uploading file to Azure...');
+      
+      const formData = new FormData();
+      formData.append('session_id', session_id);
+      formData.append('files', uploadBaseVideoFile);
+      formData.append('metadata', JSON.stringify([{
+        purpose: 'base_video',
+        layer_name: null
+      }]));
+      
+      const uploadResponse = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/api/upload-assets',
+        {
+          method: 'POST',
+          body: formData
+        }
+      );
+      
+      const uploadText = await uploadResponse.text();
+      let uploadData;
+      try {
+        uploadData = JSON.parse(uploadText);
+      } catch {
+        uploadData = uploadText;
+      }
+      
+      if (!uploadResponse.ok) {
+        throw new Error(`Upload failed: ${uploadResponse.status} - ${JSON.stringify(uploadData)}`);
+      }
+      
+      console.log('✅ [UPLOAD-BASE-VIDEO] File uploaded successfully', uploadData);
+      
+      // Extract file URL from response
+      const uploadedFile = uploadData?.uploaded_files?.[0];
+      if (!uploadedFile || !uploadedFile.file_url) {
+        throw new Error('Upload response missing file URL');
+      }
+      
+      const newBaseVideoUrl = uploadedFile.file_url;
+      
+      console.log('📥 [UPLOAD-BASE-VIDEO] Uploaded file URL:', newBaseVideoUrl);
+      
+      // STEP 2: Update base video via manage-layers API
+      console.log('🔄 [UPLOAD-BASE-VIDEO] Step 2: Updating scene base video...');
+      
+      const updateRequestBody = {
+        session_id: session_id,
+        scene_number: selectedSceneForUpload,
+        operation: 'update_base_video',
+        base_video_url: newBaseVideoUrl
+      };
+      
+      console.log('📤 [UPLOAD-BASE-VIDEO] Manage-layers request:', updateRequestBody);
+      
+      const updateResponse = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/manage-layers',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(updateRequestBody)
+        }
+      );
+      
+      const updateText = await updateResponse.text();
+      let updateData;
+      try {
+        updateData = JSON.parse(updateText);
+      } catch {
+        updateData = updateText;
+      }
+      
+      if (!updateResponse.ok) {
+        throw new Error(`Update failed: ${updateResponse.status} - ${JSON.stringify(updateData)}`);
+      }
+      
+      console.log('✅ [UPLOAD-BASE-VIDEO] Base video updated successfully', updateData);
+      
+      // STEP 3: Close modal and refresh page
+      console.log('🔄 [UPLOAD-BASE-VIDEO] Step 3: Refreshing page...');
+      
+      setShowUploadBaseVideoModal(false);
+      setSelectedSceneForUpload(null);
+      setUploadBaseVideoFile(null);
+      setIsUploadingBaseVideo(false);
+      
+      // Refresh page after 1 second to show success
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+      
+    } catch (error) {
+      console.error('❌ [UPLOAD-BASE-VIDEO] Upload failed:', error);
+      setUploadBaseVideoError(error?.message || 'Upload failed');
+      setIsUploadingBaseVideo(false);
+    }
+  }, [selectedSceneForUpload, uploadBaseVideoFile]);
 
   // Force ReactVideoEditor to remount when we have new overlays so defaultOverlays apply
   // Use ref to track overlay IDs to create stable key (prevents unnecessary remounts)
@@ -5830,6 +6091,165 @@ return () => {
         </>
       )}
 
+      {/* Save Layers Loader Modal */}
+      {isSavingLayers && (
+        <>
+          <div className="absolute inset-0 z-30 bg-white" />
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
+              <div className="relative w-20 h-20 flex items-center justify-center">
+                <video
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                >
+                  <source src={LoadingAnimationVideo} type="video/mp4" />
+                </video>
+              </div>
+              <div className="space-y-2">
+                <p className="text-lg font-semibold text-[#13008B]">Saving Layers</p>
+                <p className="text-sm text-gray-600">
+                  Please wait while we save your layer changes...
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Upload Base Video Modal */}
+      {showUploadBaseVideoModal && (
+        <>
+          {/* Modal Backdrop */}
+          <div 
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" 
+            onClick={() => !isUploadingBaseVideo && setShowUploadBaseVideoModal(false)} 
+          />
+          
+          {/* Modal Content */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
+              {/* Close Button */}
+              {!isUploadingBaseVideo && (
+                <button
+                  onClick={() => setShowUploadBaseVideoModal(false)}
+                  className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-600" />
+                </button>
+              )}
+              
+              {/* Modal Header */}
+              <h2 className="text-xl font-semibold text-[#13008B] mb-6">Upload Base Video</h2>
+              
+              {/* Error Message */}
+              {uploadBaseVideoError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm text-red-600">{uploadBaseVideoError}</p>
+                </div>
+              )}
+              
+              {/* Scene Dropdown */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Scene
+                </label>
+                <select
+                  value={selectedSceneForUpload || ''}
+                  onChange={(e) => setSelectedSceneForUpload(Number(e.target.value))}
+                  disabled={isUploadingBaseVideo}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100"
+                >
+                  <option value="">Choose a scene...</option>
+                  {items.map((item, index) => {
+                    const sceneNumber = item.sceneNumber || item.scene_number || (index + 1);
+                    const sceneTitle = item.title || item.name || `Scene ${sceneNumber}`;
+                    return (
+                      <option key={item.id || index} value={sceneNumber}>
+                        Scene {sceneNumber} - {sceneTitle}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              
+              {/* File Upload */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Upload Video (MP4)
+                </label>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-[#13008B] transition-colors">
+                  <input
+                    type="file"
+                    accept="video/mp4"
+                    onChange={(e) => setUploadBaseVideoFile(e.target.files?.[0] || null)}
+                    disabled={isUploadingBaseVideo}
+                    className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[#13008B] file:text-white hover:file:bg-[#0f0069] file:cursor-pointer disabled:opacity-50"
+                  />
+                  {uploadBaseVideoFile && (
+                    <p className="mt-2 text-xs text-green-600 font-medium">
+                      ✓ {uploadBaseVideoFile.name} ({(uploadBaseVideoFile.size / 1024 / 1024).toFixed(2)} MB)
+                    </p>
+                  )}
+                </div>
+              </div>
+              
+              {/* Action Buttons */}
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowUploadBaseVideoModal(false)}
+                  disabled={isUploadingBaseVideo}
+                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUploadBaseVideo}
+                  disabled={isUploadingBaseVideo || !selectedSceneForUpload || !uploadBaseVideoFile}
+                  className={`px-6 py-2 rounded-lg text-white font-medium ${
+                    isUploadingBaseVideo || !selectedSceneForUpload || !uploadBaseVideoFile
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-[#13008B] hover:bg-[#0f0069]'
+                  }`}
+                >
+                  {isUploadingBaseVideo ? 'Uploading...' : 'Upload & Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Upload Base Video Loader - Show during upload process */}
+      {isUploadingBaseVideo && (
+        <>
+          <div className="absolute inset-0 z-30 bg-white" />
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
+              <div className="relative w-20 h-20 flex items-center justify-center">
+                <video
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                >
+                  <source src={LoadingAnimationVideo} type="video/mp4" />
+                </video>
+              </div>
+              <div className="space-y-2">
+                <p className="text-lg font-semibold text-[#13008B]">Uploading Base Video</p>
+                <p className="text-sm text-gray-600">
+                  Please wait while we upload and update your scene...
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Render Video Modal */}
       {showRenderModal && (
         <>
@@ -5937,6 +6357,20 @@ return () => {
               </button>
             ) : null;
           })()}
+          
+          {/* Upload Base Video Button */}
+          <button
+            onClick={() => setShowUploadBaseVideoModal(true)}
+            disabled={items.length === 0}
+            className={`px-4 py-2 rounded-lg text-sm font-medium text-white shadow-lg transition-all ${
+              items.length === 0
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-[#13008B] hover:bg-[#0f0069]'
+            }`}
+          >
+            Upload Base Video
+          </button>
+          
           {/* Debug info in development */}
           
         {onClose && (
