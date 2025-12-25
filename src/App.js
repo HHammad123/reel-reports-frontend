@@ -27,6 +27,11 @@ import ProtectedRoute from './Components/ProtectedRoute';
 import OAuthCallback from './Components/Login/OAuthCallback';
 import AdminUsers from './pages/AdminUsers';
 import AdminCreateUser from './pages/AdminCreateUser';
+import AdminLogs from './pages/AdminLogs';
+import AdminUserStats from './pages/AdminUserStats';
+import AdminGeneratedImages from './pages/AdminGeneratedImages';
+import AdminGeneratedVideos from './pages/AdminGeneratedVideos';
+import AdminFinalVideos from './pages/AdminFinalVideos';
 import VideoEditor from './pages/VideoEditor';
 import VideoEditorPage from './pages/VideoEditorPage';
 import FreeTrialOver from './pages/FreeTrialOver';
@@ -48,7 +53,7 @@ function App() {
   const userStatus = useMemo(() => {
     // First check Redux user object
     let status = user?.status || user?.validation_status || '';
-    
+
     // Fallback to localStorage if not in Redux
     if (!status && isAuthenticated) {
       try {
@@ -61,7 +66,7 @@ function App() {
         console.warn('Error reading user from localStorage:', e);
       }
     }
-    
+
     return status ? status.toString().toLowerCase() : '';
   }, [user, isAuthenticated]);
 
@@ -92,26 +97,26 @@ function App() {
   // Role doesn't matter - only status matters
   const isValidated = useMemo(() => {
     if (!isAuthenticated) return false;
-    
+
     // If no status, default to validated (for backward compatibility with existing users)
     if (!normalizedStatus || normalizedStatus.trim() === '') {
       console.log('No status found, defaulting to validated');
       return true;
     }
-    
+
     const statusLower = normalizedStatus.toLowerCase().trim();
     console.log('Checking validation status:', { normalizedStatus, statusLower });
-    
+
     // Explicitly check for non-validated statuses
     if (statusLower === 'not_validated' || statusLower === 'non_validated') {
       return false;
     }
-    
+
     // Check for validated status (case-insensitive)
     if (statusLower === 'validated') {
       return true;
     }
-    
+
     // If status exists but is neither validated nor not_validated, default to validated
     console.log('Status is neither validated nor not_validated, defaulting to validated');
     return true;
@@ -119,9 +124,9 @@ function App() {
 
   // Debug authentication state
   useEffect(() => {
-    console.log('App - Authentication state changed:', { 
-      isAuthenticated, 
-      user, 
+    console.log('App - Authentication state changed:', {
+      isAuthenticated,
+      user,
       userStatus,
       normalizedStatus,
       isValidated,
@@ -133,113 +138,138 @@ function App() {
   return (
     <div className="App">
       <SidebarProvider>
-       <Routes>
-         {/* Public routes */}
-         <Route path="/login" element={<Login/>} />
-         <Route path="/onboarding" element={<Onboarding/>}/>
-   
-       
-    <Route path="/v1/auth/callback/:provider" element={<OAuthCallback />} />
-         {/* test route */  }
-         <Route path="/video-editor" element={<VideoEditorPage/>} />
-         {/* Protected routes */}
-         <Route path="/" element={
-           <ProtectedRoute>
-             <Dashboard />
-           </ProtectedRoute>
-         } />
-         <Route path="/free-trial" element={
-           <ProtectedRoute>
-             <FreeTrialOver />
-           </ProtectedRoute>
-         } />
-         <Route path="/chat/:sessionId" element={
-           <ProtectedRoute>
-             <Home/>
-           </ProtectedRoute>
-         } />
-         <Route path="/main" element={
-           <ProtectedRoute>
-            {/* sdgsd */}
-             <Main />
-           </ProtectedRoute>
-         } />
-         <Route path="/profile" element={
-           <ProtectedRoute>
-             <Profile />
-           </ProtectedRoute>
-         } />
-         <Route path="/brandguidelines" element={
-           <ProtectedRoute>
-             <BrandGuidelines />
-           </ProtectedRoute>
-         } />
-         <Route path="/videoguidelines" element={
-           <ProtectedRoute>
-             <VideoGuidelines />
-           </ProtectedRoute>
-         } />
-         <Route path="/buildreel" element={
-           <ProtectedRoute>
-             <BuildReel />
-           </ProtectedRoute>
-         } />
-         <Route path="/buildreel/:sessionId" element={
-           <ProtectedRoute>
-             <BuildReel />
-           </ProtectedRoute>
-         } />
-         <Route path="/scenesettings" element={
-           <ProtectedRoute>
-             <Scenesettings />
-           </ProtectedRoute>
-         } />
-         <Route path="/videoEditor" element={
-           <ProtectedRoute>
-             <VideoEditor />
-           </ProtectedRoute>
-         } />
-         <Route path="/subscription" element={
-           <ProtectedRoute>
-             <Subscription />
-           </ProtectedRoute>
-         } />
-         <Route path="/result" element={
-           <ProtectedRoute>
-             <Result />
-           </ProtectedRoute>
-         } />
-         <Route path="/result/:videoId" element={
-           <ProtectedRoute>
-             <Result />
-           </ProtectedRoute>
-         } />
-         <Route path="/media" element={
-           <ProtectedRoute>
-             <MyMedia />
-           </ProtectedRoute>
-         } />
-         <Route path="/price-guidelines" element={
-           <ProtectedRoute>
-             <PriceGuidelines />
-           </ProtectedRoute>
-         } />
-         <Route path="/scenes-images" element={
-           <ProtectedRoute>
-             <ScenesImages />
-           </ProtectedRoute>
-         } />
-         <Route path="/admin/users" element={
-           <ProtectedRoute>
-             <AdminUsers />
-           </ProtectedRoute>
-         } />
-         <Route path="/admin/users/create" element={
-           <ProtectedRoute>
-             <AdminCreateUser />
-           </ProtectedRoute>
-         } />
-       </Routes>
+        <Routes>
+          {/* Public routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/onboarding" element={<Onboarding />} />
+
+
+          <Route path="/v1/auth/callback/:provider" element={<OAuthCallback />} />
+          {/* test route */}
+          <Route path="/video-editor" element={<VideoEditorPage />} />
+          {/* Protected routes */}
+          <Route path="/" element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          } />
+          <Route path="/free-trial" element={
+            <ProtectedRoute>
+              <FreeTrialOver />
+            </ProtectedRoute>
+          } />
+          <Route path="/chat/:sessionId" element={
+            <ProtectedRoute>
+              <Home />
+            </ProtectedRoute>
+          } />
+          <Route path="/main" element={
+            <ProtectedRoute>
+              {/* sdgsd */}
+              <Main />
+            </ProtectedRoute>
+          } />
+          <Route path="/profile" element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          } />
+          <Route path="/brandguidelines" element={
+            <ProtectedRoute>
+              <BrandGuidelines />
+            </ProtectedRoute>
+          } />
+          <Route path="/videoguidelines" element={
+            <ProtectedRoute>
+              <VideoGuidelines />
+            </ProtectedRoute>
+          } />
+          <Route path="/buildreel" element={
+            <ProtectedRoute>
+              <BuildReel />
+            </ProtectedRoute>
+          } />
+          <Route path="/buildreel/:sessionId" element={
+            <ProtectedRoute>
+              <BuildReel />
+            </ProtectedRoute>
+          } />
+          <Route path="/scenesettings" element={
+            <ProtectedRoute>
+              <Scenesettings />
+            </ProtectedRoute>
+          } />
+          <Route path="/videoEditor" element={
+            <ProtectedRoute>
+              <VideoEditor />
+            </ProtectedRoute>
+          } />
+          <Route path="/subscription" element={
+            <ProtectedRoute>
+              <Subscription />
+            </ProtectedRoute>
+          } />
+          <Route path="/result" element={
+            <ProtectedRoute>
+              <Result />
+            </ProtectedRoute>
+          } />
+          <Route path="/result/:videoId" element={
+            <ProtectedRoute>
+              <Result />
+            </ProtectedRoute>
+          } />
+          <Route path="/media" element={
+            <ProtectedRoute>
+              <MyMedia />
+            </ProtectedRoute>
+          } />
+          <Route path="/price-guidelines" element={
+            <ProtectedRoute>
+              <PriceGuidelines />
+            </ProtectedRoute>
+          } />
+          <Route path="/scenes-images" element={
+            <ProtectedRoute>
+              <ScenesImages />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/users" element={
+            <ProtectedRoute>
+              <AdminUsers />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/users/create" element={
+            <ProtectedRoute>
+              <AdminCreateUser />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/logs" element={
+            <ProtectedRoute>
+              <AdminLogs />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/logs/:userId" element={
+            <ProtectedRoute>
+              <AdminUserStats />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/logs/:userId/images" element={
+            <ProtectedRoute>
+              <AdminGeneratedImages />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/logs/:userId/videos" element={
+            <ProtectedRoute>
+              <AdminGeneratedVideos />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/logs/:userId/final-videos" element={
+            <ProtectedRoute>
+              <AdminFinalVideos />
+            </ProtectedRoute>
+          } />
+        </Routes>
       </SidebarProvider>
     </div>
   );

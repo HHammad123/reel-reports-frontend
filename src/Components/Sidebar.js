@@ -1,7 +1,7 @@
 import React from 'react'
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars } from "react-icons/fa";
+import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars, FaFileAlt } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
@@ -431,11 +431,11 @@ const Sidebar = () => {
                   <span>Generate Reel</span>
                 </button>
                 <button
-                  onClick={createSessionAndGoBuildReel}
-                  className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
+                  disabled
+                  className="w-full mb-3 rounded-xl p-4 flex items-center gap-3 text-left text-sm font-medium text-white/50 transition-colors cursor-not-allowed opacity-60"
                 >
                   <FaThLarge className="h-5 w-5" />
-                  <span>Build Reel</span>
+                  <span>Build Reel (Coming Soon)</span>
                 </button>
                 <button
                   onClick={() => navigate('/media')}
@@ -465,6 +465,13 @@ const Sidebar = () => {
                     >
                       <FaUserPlus className="h-5 w-5" />
                       <span>Create User</span>
+                    </button>
+                    <button
+                      onClick={() => navigate('/admin/logs')}
+                      className={pathname === '/admin/logs' ? activeClass : inactiveClass}
+                    >
+                      <FaFileAlt className="h-5 w-5" />
+                      <span>Logs</span>
                     </button>
                   </div>
                 )}
