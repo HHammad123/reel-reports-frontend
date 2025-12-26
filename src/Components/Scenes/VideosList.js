@@ -262,6 +262,7 @@ if (videoElement.readyState >= 2) {
   const [isSavingLayers, setIsSavingLayers] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const savedOverlayIdsRef = useRef(new Set()); // Track saved overlay IDs
+  const savedOverlaysSnapshotRef = useRef([]); // Store snapshot of saved overlays for comparison
   // Upload Base Video Modal State
   const [showUploadBaseVideoModal, setShowUploadBaseVideoModal] = useState(false);
   const [selectedSceneForUpload, setSelectedSceneForUpload] = useState(null);
@@ -2210,6 +2211,7 @@ if (videoElement.readyState >= 2) {
   // Reset saved overlay tracking when selected video changes
   useEffect(() => {
     savedOverlayIdsRef.current.clear();
+    savedOverlaysSnapshotRef.current = [];
     initialOverlaysLoadedRef.current = false;
     setHasUnsavedLayers(false);
     editorOverlaysRef.current = [];
@@ -3065,13 +3067,110 @@ if (videoElement.readyState >= 2) {
     }
   }, []);
 
+  // Helper function to normalize an overlay for comparison (removes volatile properties)
+  const normalizeOverlayForComparison = useCallback((overlay) => {
+    if (!overlay) return null;
+    
+    // Extract only the properties that matter for comparison
+    const normalized = {
+      id: overlay.id,
+      type: overlay.type,
+      from: overlay.from || 0,
+      durationInFrames: overlay.durationInFrames || 0,
+      row: overlay.row ?? 0,
+      // Position properties (normalize to handle both x/y and left/top)
+      x: overlay.x ?? overlay.left ?? 0,
+      y: overlay.y ?? overlay.top ?? 0,
+      width: overlay.width || 0,
+      height: overlay.height || 0,
+      // Content properties
+      content: overlay.content || '',
+      text: overlay.text || overlay.content || '',
+      src: overlay.src || '',
+      volume: overlay.volume ?? 1,
+    };
+    
+    // Handle styles - normalize to consistent format
+    if (overlay.styles) {
+      normalized.styles = {
+        fontSize: overlay.styles.fontSize || overlay.styles.fontSizeScale || overlay.fontSize || '',
+        fontFamily: overlay.styles.fontFamily || overlay.fontFamily || '',
+        fontWeight: overlay.styles.fontWeight || '',
+        color: overlay.styles.color || overlay.color || '',
+        textAlign: overlay.styles.textAlign || '',
+        backgroundColor: overlay.styles.backgroundColor || overlay.backgroundColor || '',
+        opacity: overlay.styles.opacity ?? 1,
+      };
+    } else if (overlay.style) {
+      normalized.styles = overlay.style;
+    } else {
+      normalized.styles = {};
+    }
+    
+    return normalized;
+  }, []);
+
+  // Helper function to detect if overlays have changed
+  const detectOverlayChanges = useCallback((currentOverlays, savedOverlays) => {
+    // Normalize both arrays for comparison
+    const normalizeOverlay = normalizeOverlayForComparison;
+    
+    // Create normalized snapshots
+    const normalizeArray = (overlays) => {
+      return overlays
+        .filter(overlay => overlay?.id !== undefined && overlay?.id !== null)
+        .map(normalizeOverlay)
+        .filter(Boolean)
+        .sort((a, b) => {
+          // Sort by ID for consistent comparison
+          const idA = String(a.id);
+          const idB = String(b.id);
+          return idA.localeCompare(idB);
+        });
+    };
+    
+    const currentNormalized = normalizeArray(currentOverlays);
+    const savedNormalized = normalizeArray(savedOverlays);
+    
+    // Create maps for easier comparison
+    const currentMap = new Map();
+    const savedMap = new Map();
+    
+    currentNormalized.forEach(overlay => {
+      currentMap.set(String(overlay.id), JSON.stringify(overlay));
+    });
+    
+    savedNormalized.forEach(overlay => {
+      savedMap.set(String(overlay.id), JSON.stringify(overlay));
+    });
+    
+    // Check for new overlays (in current but not in saved)
+    const newOverlays = Array.from(currentMap.keys()).filter(id => !savedMap.has(id));
+    
+    // Check for deleted overlays (in saved but not in current)
+    const deletedOverlays = Array.from(savedMap.keys()).filter(id => !currentMap.has(id));
+    
+    // Check for modified overlays (same ID but different properties)
+    const modifiedOverlays = Array.from(currentMap.keys()).filter(id => {
+      if (!savedMap.has(id)) return false;
+      return currentMap.get(id) !== savedMap.get(id);
+    });
+    
+    const hasChanges = newOverlays.length > 0 || deletedOverlays.length > 0 || modifiedOverlays.length > 0;
+    
+    return {
+      hasChanges,
+      newOverlays,
+      deletedOverlays,
+      modifiedOverlays
+    };
+  }, [normalizeOverlayForComparison]);
+
   // Handle overlay changes from ReactVideoEditor
   const handleOverlaysChange = useCallback((overlays) => {
     const currentOverlays = overlays || [];
-    const previousOverlays = editorOverlaysRef.current || [];
-    const previousOverlayIds = new Set(previousOverlays.map(o => o?.id).filter(Boolean));
-    const currentOverlayIds = new Set(currentOverlays.map(o => o?.id).filter(Boolean));
     
+    // Update the ref with current overlays
     editorOverlaysRef.current = currentOverlays;
     
     // If initial overlays haven't been marked as loaded yet
@@ -3080,41 +3179,269 @@ if (videoElement.readyState >= 2) {
         // Mark initial overlays as loaded and saved
         initialOverlaysLoadedRef.current = true;
         currentOverlays.forEach(overlay => {
-          if (overlay?.id !== undefined) {
+          if (overlay?.id !== undefined && overlay?.id !== null) {
             savedOverlayIdsRef.current.add(overlay.id);
           }
         });
+        // Store normalized snapshot of initial overlays
+        savedOverlaysSnapshotRef.current = JSON.parse(JSON.stringify(currentOverlays));
         setHasUnsavedLayers(false);
+        console.log('📸 [OVERLAYS] Initial overlays snapshot saved', {
+          overlayCount: currentOverlays.length,
+          overlayIds: currentOverlays.map(o => o?.id).filter(Boolean)
+        });
         return;
       } else {
         // No overlays yet, don't show save button
+        savedOverlaysSnapshotRef.current = [];
         setHasUnsavedLayers(false);
         return;
       }
     }
     
-    // After initial overlays are loaded, check for new unsaved overlays
-    const savedIds = savedOverlayIdsRef.current;
+    // After initial overlays are loaded, check for any changes
+    const savedOverlays = savedOverlaysSnapshotRef.current || [];
+    const changes = detectOverlayChanges(currentOverlays, savedOverlays);
     
-    // Check if there are any current overlays that aren't in saved set
-    const unsavedIds = Array.from(currentOverlayIds).filter(id => !savedIds.has(id));
-    const hasNewOverlays = unsavedIds.length > 0;
+    // Show save button if there are ANY changes (new, modified, or deleted layers)
+    setHasUnsavedLayers(changes.hasChanges);
     
-    // Check if any overlay IDs are new (not in previous set) - this means user added a layer
-    const newOverlayIds = Array.from(currentOverlayIds).filter(id => !previousOverlayIds.has(id));
-    const hasNewOverlayIds = newOverlayIds.length > 0;
-    
-    // Also check if overlay count increased (user added a new layer)
-    // This is a backup check in case IDs aren't being tracked properly
-    const overlayCountIncreased = previousOverlays.length > 0 && currentOverlays.length > previousOverlays.length;
-    
-    // Show save button if:
-    // 1. There are unsaved overlays (not in saved set), OR
-    // 2. New overlay IDs appeared (user added a layer), OR
-    // 3. Overlay count increased (backup check)
-    const shouldShowButton = hasNewOverlays || hasNewOverlayIds || overlayCountIncreased;
-    setHasUnsavedLayers(shouldShowButton);
+    if (changes.hasChanges) {
+      console.log('🔄 [OVERLAYS] Changes detected in timeline', {
+        currentOverlayCount: currentOverlays.length,
+        savedOverlayCount: savedOverlays.length,
+        newOverlays: changes.newOverlays.length,
+        deletedOverlays: changes.deletedOverlays.length,
+        modifiedOverlays: changes.modifiedOverlays.length,
+        totalChanges: changes.newOverlays.length + changes.deletedOverlays.length + changes.modifiedOverlays.length
+      });
+    } else {
+      console.log('✅ [OVERLAYS] No changes detected - current state matches saved state', {
+        currentOverlayCount: currentOverlays.length,
+        savedOverlayCount: savedOverlays.length
+      });
+    }
+  }, [detectOverlayChanges]);
+
+  /**
+   * Delete a text layer from a specific scene
+   * @param {number} sceneNumber - The scene number where the layer exists
+   * @param {string} layerName - The layer name (e.g., "text_overlay")
+   * @param {number} layerIndex - The index of the layer to delete
+   */
+  const deleteLayer = useCallback(async (sceneNumber, layerName = 'text_overlay', layerIndex) => {
+    try {
+      console.log('🗑️ [DELETE-LAYER] Starting layer deletion', {
+        sceneNumber,
+        layerName,
+        layerIndex
+      });
+
+      const session_id = localStorage.getItem('session_id');
+      const user_id = localStorage.getItem('user_id');
+
+      if (!session_id) {
+        throw new Error('Session ID is required');
+      }
+
+      if (layerIndex === undefined || layerIndex === null) {
+        throw new Error('Layer index is required for deletion');
+      }
+
+      // Build delete layer request body
+      const requestBody = {
+        session_id: session_id,
+        scene_number: sceneNumber,
+        operation: "delete_layer",
+        layer_selector: {
+          name: layerName,
+          index: layerIndex
+        }
+      };
+
+      console.log('📤 [DELETE-LAYER] Calling manage-layers API', {
+        requestBody
+      });
+
+      const response = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/manage-layers',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody)
+        }
+      );
+
+      const responseText = await response.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        responseData = responseText;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete layer: ${response.status} ${JSON.stringify(responseData)}`);
+      }
+
+      console.log('✅ [DELETE-LAYER] Layer deleted successfully', {
+        sceneNumber,
+        layerName,
+        layerIndex,
+        response: responseData
+      });
+
+      // Refresh the page after successful deletion
+      console.log('🔄 [DELETE-LAYER] Refreshing page...');
+      window.location.reload();
+    } catch (error) {
+      console.error('❌ [DELETE-LAYER] Error deleting layer:', error);
+      alert(`Failed to delete layer: ${error.message}`);
+      throw error;
+    }
   }, []);
+
+  /**
+   * Delete overlay handler - called when user clicks delete in timeline
+   * This function is passed to ReactVideoEditor and called when delete is clicked
+   * @param {string|number} overlayId - The ID of the overlay to delete
+   */
+  const deleteOverlay = useCallback(async (overlayId) => {
+    try {
+      console.log('🗑️ [DELETE-OVERLAY] Starting overlay deletion', { overlayId });
+
+      // Get current overlays to find the overlay being deleted
+      const currentOverlays = editorOverlaysRef.current || [];
+      const overlayToDelete = currentOverlays.find(o => o?.id === overlayId || String(o?.id) === String(overlayId));
+
+      if (!overlayToDelete) {
+        console.warn('⚠️ [DELETE-OVERLAY] Overlay not found:', overlayId);
+        return;
+      }
+
+      console.log('🔍 [DELETE-OVERLAY] Found overlay to delete', {
+        overlayId,
+        overlayType: overlayToDelete.type,
+        overlayFrom: overlayToDelete.from,
+        overlayTo: overlayToDelete.to
+      });
+
+      // Determine scene number from overlay position
+      const fps = APP_CONFIG.fps || 30;
+      const overlayStartFrame = overlayToDelete.from || 0;
+
+      // Calculate scene frame ranges
+      const sceneFrameRanges = [];
+      let cumulativeFrames = 0;
+      
+      items.forEach((video, index) => {
+        const sceneNum = video.sceneNumber || video.scene_number || (index + 1);
+        const videoDuration = video.duration || 
+                            video.videos?.v1?.duration || 
+                            video.videos?.duration ||
+                            10;
+        const videoFrames = Math.round(videoDuration * fps);
+        
+        sceneFrameRanges.push({
+          sceneNumber: sceneNum,
+          startFrame: cumulativeFrames,
+          endFrame: cumulativeFrames + videoFrames
+        });
+        
+        cumulativeFrames += videoFrames;
+      });
+
+      // Find which scene this overlay belongs to
+      let targetScene = null;
+      for (const range of sceneFrameRanges) {
+        const isLastScene = range === sceneFrameRanges[sceneFrameRanges.length - 1];
+        const isInRange = isLastScene
+          ? (overlayStartFrame >= range.startFrame && overlayStartFrame <= range.endFrame)
+          : (overlayStartFrame >= range.startFrame && overlayStartFrame < range.endFrame);
+        
+        if (isInRange) {
+          targetScene = range.sceneNumber;
+          break;
+        }
+      }
+
+      if (!targetScene) {
+        console.warn('⚠️ [DELETE-OVERLAY] Could not determine scene for overlay', {
+          overlayId,
+          overlayStartFrame,
+          availableRanges: sceneFrameRanges
+        });
+        // Fallback to first scene
+        targetScene = sceneFrameRanges[0]?.sceneNumber || 1;
+      }
+
+      // Determine layer name based on overlay type
+      let layerName = 'text_overlay'; // Default
+      if (overlayToDelete.type === OverlayType.IMAGE) {
+        layerName = 'logo';
+      } else if (overlayToDelete.type === OverlayType.VIDEO) {
+        layerName = 'chart';
+      } else if (overlayToDelete.type === OverlayType.SOUND) {
+        layerName = 'audio';
+      } else if (overlayToDelete.type === OverlayType.TEXT || overlayToDelete.type === OverlayType.CAPTION) {
+        layerName = 'text_overlay';
+      }
+
+      // Count how many overlays of the same type exist in this scene to determine index
+      // Filter overlays in the same scene with the same type
+      const sceneOverlays = currentOverlays.filter(o => {
+        const oStartFrame = o.from || 0;
+        const sceneRange = sceneFrameRanges.find(r => r.sceneNumber === targetScene);
+        if (!sceneRange) return false;
+        
+        const isLastScene = sceneRange === sceneFrameRanges[sceneFrameRanges.length - 1];
+        const isInRange = isLastScene
+          ? (oStartFrame >= sceneRange.startFrame && oStartFrame <= sceneRange.endFrame)
+          : (oStartFrame >= sceneRange.startFrame && oStartFrame < sceneRange.endFrame);
+        
+        if (!isInRange) return false;
+        
+        // Check if same type
+        if (overlayToDelete.type === OverlayType.TEXT || overlayToDelete.type === OverlayType.CAPTION) {
+          return o.type === OverlayType.TEXT || o.type === OverlayType.CAPTION;
+        }
+        return o.type === overlayToDelete.type;
+      });
+
+      // Sort by start frame to get consistent index
+      sceneOverlays.sort((a, b) => (a.from || 0) - (b.from || 0));
+
+      // Find the index of the overlay to delete
+      const layerIndex = sceneOverlays.findIndex(o => 
+        o?.id === overlayId || String(o?.id) === String(overlayId)
+      );
+
+      if (layerIndex === -1) {
+        console.warn('⚠️ [DELETE-OVERLAY] Could not find layer index', {
+          overlayId,
+          sceneOverlaysCount: sceneOverlays.length
+        });
+        // Use 0 as fallback
+        await deleteLayer(targetScene, layerName, 0);
+        return;
+      }
+
+      console.log('✅ [DELETE-OVERLAY] Calling deleteLayer API', {
+        sceneNumber: targetScene,
+        layerName,
+        layerIndex,
+        totalLayersOfType: sceneOverlays.length
+      });
+
+      // Call the deleteLayer function
+      await deleteLayer(targetScene, layerName, layerIndex);
+    } catch (error) {
+      console.error('❌ [DELETE-OVERLAY] Error deleting overlay:', error);
+      alert(`Failed to delete overlay: ${error.message}`);
+    }
+  }, [items, deleteLayer]);
 
   // Convert frames to HH:MM:SS format
   const framesToTime = useCallback((frames, fps = 30) => {
@@ -3633,15 +3960,20 @@ if (videoElement.readyState >= 2) {
           
           items.forEach((video, index) => {
             const sceneNum = video.sceneNumber || video.scene_number || (index + 1);
-            // Estimate video duration in frames (use default if not available)
-            const videoDuration = video.duration || 10; // Default 10 seconds
+            // Get video duration - try multiple sources
+            const videoDuration = video.duration || 
+                                video.videos?.v1?.duration || 
+                                video.videos?.duration ||
+                                10; // Default 10 seconds if not available
             const videoFrames = Math.round(videoDuration * fps);
             
             sceneFrameRanges.push({
               sceneNumber: sceneNum,
               startFrame: cumulativeFrames,
               endFrame: cumulativeFrames + videoFrames,
-              video: video
+              video: video,
+              duration: videoDuration,
+              durationFrames: videoFrames
             });
             
             cumulativeFrames += videoFrames;
@@ -3661,18 +3993,60 @@ if (videoElement.readyState >= 2) {
           
           for (const overlay of overlaysToSave) {
             const overlayStartFrame = overlay.from || 0;
+            // Calculate end frame from from + durationInFrames (overlays don't have a 'to' property)
+            const overlayDurationFrames = overlay.durationInFrames || (5 * fps); // Default 5 seconds if duration not specified
+            const overlayEndFrame = overlayStartFrame + overlayDurationFrames;
+            
+            console.log('🔍 [SAVE-LAYERS] Determining scene for overlay', {
+              overlayId: overlay.id,
+              overlayType: overlay.type,
+              overlayStartFrame,
+              overlayEndFrame,
+              totalScenes: sceneFrameRanges.length
+            });
             
             // Find which scene this overlay belongs to based on frame position
+            // Use overlay start frame to determine scene
             let targetScene = null;
+            let matchedRange = null;
+            
             for (const range of sceneFrameRanges) {
-              if (overlayStartFrame >= range.startFrame && overlayStartFrame < range.endFrame) {
+              // Check if overlay start frame falls within this scene's range
+              // Use >= startFrame and < endFrame to ensure proper boundary detection
+              // For the last scene, use <= endFrame to include the boundary
+              const isLastScene = range === sceneFrameRanges[sceneFrameRanges.length - 1];
+              const isInRange = isLastScene
+                ? (overlayStartFrame >= range.startFrame && overlayStartFrame <= range.endFrame)
+                : (overlayStartFrame >= range.startFrame && overlayStartFrame < range.endFrame);
+              
+              if (isInRange) {
                 targetScene = range.sceneNumber;
+                matchedRange = range;
+                console.log('✅ [SAVE-LAYERS] Scene matched by frame position', {
+                  overlayStartFrame,
+                  overlayEndFrame,
+                  sceneNumber: targetScene,
+                  sceneStartFrame: range.startFrame,
+                  sceneEndFrame: range.endFrame,
+                  sceneDuration: range.duration,
+                  relativeFrameInScene: overlayStartFrame - range.startFrame,
+                  relativeTimeInScene: ((overlayStartFrame - range.startFrame) / fps).toFixed(2) + 's'
+                });
                 break;
               }
             }
             
             // Fallback: if not found in ranges, try to match by video properties or use first scene
             if (!targetScene) {
+              console.warn('⚠️ [SAVE-LAYERS] Overlay frame position not found in any scene range', {
+                overlayStartFrame,
+                overlayEndFrame,
+                availableRanges: sceneFrameRanges.map(r => ({
+                  scene: r.sceneNumber,
+                  start: r.startFrame,
+                  end: r.endFrame
+                }))
+              });
               // Try to match overlay to video by checking if overlay src matches video base_video_url
               const overlaySrc = overlay.src || overlay.content;
               if (overlaySrc) {
@@ -3732,56 +4106,245 @@ if (videoElement.readyState >= 2) {
             
             console.log(`💾 [SAVE-LAYERS] Processing scene ${sceneNumber} with ${sceneOverlays.length} overlays`);
             
-            // Build operations array for this scene
-            const operations = [];
+            // Find the scene frame range for this scene to calculate relative timing
+            const sceneRange = sceneFrameRanges.find(r => r.sceneNumber === sceneNumber);
+            if (!sceneRange) {
+              console.warn('⚠️ [SAVE-LAYERS] Scene range not found for scene', sceneNumber);
+              continue;
+            }
+            
+            console.log('📍 [SAVE-LAYERS] Scene frame range', {
+              sceneNumber,
+              startFrame: sceneRange.startFrame,
+              endFrame: sceneRange.endFrame,
+              durationFrames: sceneRange.endFrame - sceneRange.startFrame
+            });
+            
+            // Separate text overlays from other overlays
+            const textOverlays = [];
+            const otherOverlays = [];
             
             for (const overlay of sceneOverlays) {
+              if (overlay.type === OverlayType.TEXT || overlay.type === OverlayType.CAPTION) {
+                textOverlays.push(overlay);
+              } else {
+                otherOverlays.push(overlay);
+              }
+            }
+            
+            // Process text overlays individually with start_time and end_time at root level
+            for (const overlay of textOverlays) {
               const layerName = getLayerName(overlay.type);
-              const startTime = framesToTime(overlay.from || 0, fps);
-              const endTime = overlay.to !== undefined ? framesToTime(overlay.to, fps) : null;
               
-              // Build layer object
+              // Calculate relative frame positions within the scene
+              // overlay.from is absolute frame position, we need relative to scene start
+              const absoluteStartFrame = overlay.from || 0;
+              // Calculate end frame from from + durationInFrames (overlays don't have a 'to' property)
+              const overlayDurationFrames = overlay.durationInFrames || (5 * fps); // Default 5 seconds if duration not specified
+              let absoluteEndFrame = absoluteStartFrame + overlayDurationFrames;
+              
+              // Ensure end frame doesn't exceed scene end
+              absoluteEndFrame = Math.min(absoluteEndFrame, sceneRange.endFrame);
+              
+              // Calculate relative frames (relative to scene start at frame 0)
+              const relativeStartFrame = Math.max(0, absoluteStartFrame - sceneRange.startFrame);
+              const relativeEndFrame = Math.max(0, absoluteEndFrame - sceneRange.startFrame);
+              
+              // Convert relative frames to time (HH:MM:SS format)
+              const startTime = framesToTime(relativeStartFrame, fps);
+              const endTime = framesToTime(relativeEndFrame, fps);
+              
+              console.log('⏱️ [SAVE-LAYERS] Timing calculation', {
+                overlayId: overlay.id,
+                absoluteStartFrame,
+                absoluteEndFrame,
+                sceneStartFrame: sceneRange.startFrame,
+                relativeStartFrame,
+                relativeEndFrame,
+                startTime,
+                endTime,
+                overlayDurationFrames
+              });
+              
+              // Build layer object for text overlay
               const layer = {
-                name: layerName,
-                start_time: startTime
+                name: layerName
               };
               
-              if (endTime) {
-                layer.end_time = endTime;
-              }
-
-              // Add type-specific fields
-              if (overlay.type === OverlayType.TEXT || overlay.type === OverlayType.CAPTION) {
-                const text = overlay.text || overlay.content || '';
-                layer.text = text;
+              // Text overlay - match exact API format
+              const text = overlay.text || overlay.content || '';
+              layer.text = text;
                 
+                // Font size (camelCase: fontSize)
                 if (overlay.styles?.fontSize) {
                   const fontSize = parseInt(overlay.styles.fontSize.replace('px', '')) || null;
-                  if (fontSize) layer.font_size = fontSize;
+                  if (fontSize) layer.fontSize = fontSize;
                 }
                 
+                // Font family (camelCase: fontFamily)
                 if (overlay.styles?.fontFamily) {
-                  layer.font_family = overlay.styles.fontFamily;
+                  layer.fontFamily = overlay.styles.fontFamily;
                 }
                 
+                // Font weight (camelCase: fontWeight)
+                if (overlay.styles?.fontWeight) {
+                  layer.fontWeight = overlay.styles.fontWeight;
+                } else if (overlay.styles?.bold || overlay.styles?.fontWeight === 'bold') {
+                  layer.fontWeight = 'bold';
+                } else {
+                  layer.fontWeight = 'normal';
+                }
+                
+                // Color (use 'color' not 'fill')
                 if (overlay.styles?.color) {
-                  layer.fill = overlay.styles.color;
+                  layer.color = overlay.styles.color;
                 }
                 
-                // Calculate position_x from left position (0-1 scale)
-                const canvasWidth = 1280; // Default canvas width, adjust if needed
+                // Alignment (text alignment)
+                if (overlay.styles?.textAlign) {
+                  layer.alignment = overlay.styles.textAlign;
+                } else if (overlay.styles?.align) {
+                  layer.alignment = overlay.styles.align;
+                } else {
+                  layer.alignment = 'center'; // Default
+                }
+                
+                // Position as object {x, y} (0.0 to 1.0 scale)
+                const canvasWidth = 1280; // Default canvas width
+                const canvasHeight = 720; // Default canvas height
+                const position = {};
+                
                 if (overlay.left !== undefined) {
-                  const positionX = overlay.left / canvasWidth;
-                  layer.position_x = positionX;
+                  position.x = overlay.left / canvasWidth;
+                } else {
+                  position.x = 0.5; // Default center
                 }
                 
-                // Calculate position_y from top position (0-1 scale)
-                const canvasHeight = 720; // Default canvas height, adjust if needed
                 if (overlay.top !== undefined) {
-                  const positionY = overlay.top / canvasHeight;
-                  layer.position_y = positionY;
+                  position.y = overlay.top / canvasHeight;
+                } else {
+                  position.y = 0.5; // Default center
                 }
-              } else if (overlay.type === OverlayType.IMAGE || overlay.type === OverlayType.VIDEO || overlay.type === OverlayType.SOUND) {
+                
+                layer.position = position;
+                
+                // Bounding box (optional) - if overlay has width and height
+                if (overlay.width !== undefined && overlay.height !== undefined) {
+                  layer.bounding_box = {
+                    x: position.x - (overlay.width / canvasWidth / 2),
+                    y: position.y - (overlay.height / canvasHeight / 2),
+                    width: overlay.width / canvasWidth,
+                    height: overlay.height / canvasHeight
+                  };
+                } else if (overlay.styles?.bounding_box) {
+                  // Use provided bounding box if available
+                  layer.bounding_box = overlay.styles.bounding_box;
+                }
+                
+              console.log('📝 [SAVE-LAYERS] Text overlay layer built', {
+                text: text.substring(0, 50),
+                fontSize: layer.fontSize,
+                fontFamily: layer.fontFamily,
+                fontWeight: layer.fontWeight,
+                color: layer.color,
+                alignment: layer.alignment,
+                position: layer.position,
+                bounding_box: layer.bounding_box
+              });
+
+              // Build request body with start_time and end_time at root level (not in operations array)
+              const requestBody = {
+                session_id: session_id,
+                scene_number: sceneNumber,
+                operation: "add_layer",
+                layer: layer,
+                start_time: startTime,
+                end_time: endTime
+              };
+
+              console.log('📤 [SAVE-LAYERS] Sending individual text overlay request', {
+                sceneNumber,
+                startTime,
+                endTime,
+                requestBody
+              });
+
+              // Send individual request for this text overlay
+              const response = await fetch(
+                'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/manage-layers',
+                {
+                  method: 'PATCH',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(requestBody)
+                }
+              );
+
+              const responseText = await response.text();
+              let responseData;
+              try {
+                responseData = JSON.parse(responseText);
+              } catch {
+                responseData = responseText;
+              }
+
+              if (!response.ok) {
+                throw new Error(`Failed to save text overlay for scene ${sceneNumber}: ${response.status} ${JSON.stringify(responseData)}`);
+              }
+
+              console.log('✅ [SAVE-LAYERS] Text overlay saved successfully', {
+                sceneNumber,
+                overlayId: overlay.id,
+                response: responseData
+              });
+
+              // Mark overlay as saved
+              if (overlay?.id !== undefined) {
+                savedOverlayIdsRef.current.add(overlay.id);
+              }
+            }
+
+            // Process other overlays (non-text) - send individual add_layer requests
+            for (const overlay of otherOverlays) {
+              // Calculate relative frame positions within the scene
+              const absoluteStartFrame = overlay.from || 0;
+              // Calculate end frame from from + durationInFrames (overlays don't have a 'to' property)
+              const overlayDurationFrames = overlay.durationInFrames || (5 * fps); // Default 5 seconds if duration not specified
+              let absoluteEndFrame = absoluteStartFrame + overlayDurationFrames;
+              
+              // Ensure end frame doesn't exceed scene end
+              absoluteEndFrame = Math.min(absoluteEndFrame, sceneRange.endFrame);
+              
+              // Calculate relative frames (relative to scene start at frame 0)
+              const relativeStartFrame = Math.max(0, absoluteStartFrame - sceneRange.startFrame);
+              const relativeEndFrame = Math.max(0, absoluteEndFrame - sceneRange.startFrame);
+              
+              // Convert relative frames to time (HH:MM:SS format)
+              const startTime = framesToTime(relativeStartFrame, fps);
+              const endTime = framesToTime(relativeEndFrame, fps);
+              
+              console.log('⏱️ [SAVE-LAYERS] Timing calculation for non-text overlay', {
+                overlayId: overlay.id,
+                absoluteStartFrame,
+                absoluteEndFrame,
+                sceneStartFrame: sceneRange.startFrame,
+                relativeStartFrame,
+                relativeEndFrame,
+                startTime,
+                endTime,
+                overlayDurationFrames
+              });
+              
+              // Build layer object
+              let layer = {};
+              
+              // Determine layer name based on purpose or file type
+              let layerName = getLayerName(overlay.type);
+              let purpose = null;
+              
+              // Add type-specific fields for non-text overlays
+              if (overlay.type === OverlayType.IMAGE || overlay.type === OverlayType.VIDEO || overlay.type === OverlayType.SOUND) {
                 // For file-based layers, include the URL
                 if (overlay.src) {
                   // Check if the URL is a blob URL - if so, upload it first
@@ -3791,7 +4354,6 @@ if (videoElement.readyState >= 2) {
                       // Determine file type and purpose based on file extension/MIME type
                       let mimeType = null;
                       let fileName = null;
-                      let purpose = 'sticker'; // Default purpose
                       
                       // Try to detect from blob URL or overlay src
                       const srcUrl = overlay.src || '';
@@ -3802,36 +4364,53 @@ if (videoElement.readyState >= 2) {
                         mimeType = 'image/jpeg';
                         fileName = `scene-${sceneNumber}-logo-${overlay.id || Date.now()}.jpg`;
                         purpose = 'logo'; // JPG files are logos
+                        layerName = 'logo';
                       } else if (lowerSrc.includes('.mp4')) {
                         mimeType = 'video/mp4';
                         fileName = `scene-${sceneNumber}-video-${overlay.id || Date.now()}.mp4`;
                         purpose = 'video'; // MP4 files are videos
+                        layerName = 'video';
                       } else if (lowerSrc.includes('.mp3')) {
                         mimeType = 'audio/mpeg';
                         fileName = `scene-${sceneNumber}-audio-${overlay.id || Date.now()}.mp3`;
                         purpose = 'audio'; // MP3 files are audio
+                        layerName = 'audio';
                       } else if (lowerSrc.includes('.png')) {
                         mimeType = 'image/png';
                         fileName = `scene-${sceneNumber}-image-${overlay.id || Date.now()}.png`;
-                        purpose = 'sticker'; // PNG files are stickers
+                        // PNG could be logo, watermark, or sticker - check overlay properties
+                        if (overlay.name?.toLowerCase().includes('watermark') || overlay.name?.toLowerCase().includes('wm')) {
+                          purpose = 'watermark';
+                          layerName = 'watermark';
+                        } else if (overlay.name?.toLowerCase().includes('logo')) {
+                          purpose = 'logo';
+                          layerName = 'logo';
+                        } else {
+                          purpose = 'custom_sticker';
+                          layerName = 'custom_sticker';
+                        }
                       } else if (lowerSrc.includes('.gif')) {
                         mimeType = 'image/gif';
                         fileName = `scene-${sceneNumber}-image-${overlay.id || Date.now()}.gif`;
-                        purpose = 'sticker'; // GIF files are stickers
+                        purpose = 'custom_sticker'; // GIF files are stickers
+                        layerName = 'custom_sticker';
                       } else {
                         // Fallback to overlay type if extension not found in URL
                         if (overlay.type === OverlayType.IMAGE) {
                           mimeType = 'image/png';
                           fileName = `scene-${sceneNumber}-image-${overlay.id || Date.now()}.png`;
-                          purpose = 'sticker';
+                          purpose = 'custom_sticker';
+                          layerName = 'custom_sticker';
                         } else if (overlay.type === OverlayType.VIDEO) {
                           mimeType = 'video/mp4';
                           fileName = `scene-${sceneNumber}-video-${overlay.id || Date.now()}.mp4`;
                           purpose = 'video';
+                          layerName = 'video';
                         } else if (overlay.type === OverlayType.SOUND) {
                           mimeType = 'audio/mpeg';
                           fileName = `scene-${sceneNumber}-audio-${overlay.id || Date.now()}.mp3`;
                           purpose = 'audio';
+                          layerName = 'audio';
                         }
                       }
                       
@@ -3839,18 +4418,18 @@ if (videoElement.readyState >= 2) {
                         srcUrl: srcUrl.substring(0, 50) + '...',
                         mimeType,
                         fileName,
-                        purpose
+                        purpose,
+                        layerName
                       });
                       
-                      const layerName = overlay.name || `layer_${overlay.id || Date.now()}`;
+                      const uploadLayerName = overlay.name || `layer_${overlay.id || Date.now()}`;
                       
                       const uploadMetadata = {
                         purpose: purpose,
-                        layer_name: layerName
+                        layer_name: uploadLayerName
                       };
                       
                       // Upload the blob URL and get the uploaded file info
-                      // Pass session_id and metadata to the upload function
                       const uploadedFileInfo = await uploadBlobUrl(
                         overlay.src, 
                         fileName, 
@@ -3865,75 +4444,161 @@ if (videoElement.readyState >= 2) {
                       
                       // Use the purpose as the layer name for manage-layers API
                       if (uploadedFileInfo.purpose) {
-                        layer.name = uploadedFileInfo.purpose;
+                        layerName = uploadedFileInfo.purpose;
                         console.log('✅ [SAVE-LAYERS] Using purpose as layer name from upload response:', uploadedFileInfo.purpose);
                       }
                     } catch (uploadError) {
                       console.error('❌ [SAVE-LAYERS] Failed to upload blob URL:', uploadError);
-                      // If upload fails, still try to save with blob URL (may work in some cases)
-                      // Or throw error to prevent saving with invalid URL
                       throw new Error(`Failed to upload blob asset: ${uploadError.message}`);
                     }
                   } else {
                     // Not a blob URL, use it directly
                     layer.url = overlay.src;
+                    
+                    // Try to determine layer name from URL or overlay properties
+                    const srcUrl = overlay.src || '';
+                    const lowerSrc = srcUrl.toLowerCase();
+                    if (lowerSrc.includes('logo') || lowerSrc.includes('brand')) {
+                      layerName = 'logo';
+                    } else if (lowerSrc.includes('watermark') || lowerSrc.includes('wm')) {
+                      layerName = 'watermark';
+                    } else if (lowerSrc.includes('sticker') || lowerSrc.includes('animation')) {
+                      layerName = 'custom_sticker';
+                    }
                   }
                 }
               }
+              
+              // Set layer name
+              layer.name = layerName;
+              
+              // Calculate normalized position (0.0 to 1.0 scale)
+              // Get canvas dimensions - try to get from aspect ratio or use defaults
+              let canvasWidth = 1920; // Default for 16:9
+              let canvasHeight = 1080;
+              
+              // Check if aspect ratio is 9:16 (portrait)
+              if (aspectRatio === '9:16' || aspectRatio === '9/16') {
+                canvasWidth = 1080;
+                canvasHeight = 1920;
+              }
+              
+              const position = {};
+              
+              // Calculate normalized position from overlay's left/top
+              if (overlay.left !== undefined && overlay.width !== undefined) {
+                // Position is center of overlay, so calculate center point
+                const centerX = overlay.left + (overlay.width / 2);
+                position.x = Math.max(0, Math.min(1, centerX / canvasWidth));
+              } else if (overlay.position?.x !== undefined) {
+                position.x = overlay.position.x;
+              } else {
+                position.x = 0.5; // Default center
+              }
+              
+              if (overlay.top !== undefined && overlay.height !== undefined) {
+                // Position is center of overlay, so calculate center point
+                const centerY = overlay.top + (overlay.height / 2);
+                position.y = Math.max(0, Math.min(1, centerY / canvasHeight));
+              } else if (overlay.position?.y !== undefined) {
+                position.y = overlay.position.y;
+              } else {
+                position.y = 0.5; // Default center
+              }
+              
+              layer.position = position;
+              
+              // Add bounding_box if overlay has width and height
+              if (overlay.width !== undefined && overlay.height !== undefined) {
+                const boundingBoxX = overlay.left !== undefined 
+                  ? Math.max(0, Math.min(1, overlay.left / canvasWidth))
+                  : position.x - (overlay.width / canvasWidth / 2);
+                const boundingBoxY = overlay.top !== undefined
+                  ? Math.max(0, Math.min(1, overlay.top / canvasHeight))
+                  : position.y - (overlay.height / canvasHeight / 2);
+                const boundingBoxWidth = Math.max(0, Math.min(1, overlay.width / canvasWidth));
+                const boundingBoxHeight = Math.max(0, Math.min(1, overlay.height / canvasHeight));
+                
+                layer.bounding_box = {
+                  x: boundingBoxX,
+                  y: boundingBoxY,
+                  width: boundingBoxWidth,
+                  height: boundingBoxHeight
+                };
+              } else if (overlay.bounding_box) {
+                // Use provided bounding box if available
+                layer.bounding_box = overlay.bounding_box;
+              }
+              
+              // Add animation properties if available (for custom_sticker)
+              if (layerName === 'custom_sticker' || overlay.animation) {
+                if (overlay.animation?.enter || overlay.enter_animation) {
+                  layer.enter_animation = overlay.animation.enter || overlay.enter_animation;
+                }
+                if (overlay.animation?.exit || overlay.exit_animation) {
+                  layer.exit_animation = overlay.animation.exit || overlay.exit_animation;
+                }
+              }
+              
+              console.log('📝 [SAVE-LAYERS] Non-text overlay layer built', {
+                layerName: layer.name,
+                url: layer.url?.substring(0, 50) + '...',
+                position: layer.position,
+                bounding_box: layer.bounding_box,
+                enter_animation: layer.enter_animation,
+                exit_animation: layer.exit_animation
+              });
 
-              // Add operation with correct scene number
-              operations.push({
+              // Build request body with start_time and end_time at root level
+              const requestBody = {
+                session_id: session_id,
                 scene_number: sceneNumber,
                 operation: "add_layer",
-                layer: layer
+                layer: layer,
+                start_time: startTime,
+                end_time: endTime
+              };
+
+              console.log('📤 [SAVE-LAYERS] Sending individual non-text overlay request', {
+                sceneNumber,
+                startTime,
+                endTime,
+                layerName: layer.name,
+                requestBody
               });
-            }
 
-            // Call manage-layers API for this scene
-            console.log('📤 [SAVE-LAYERS] Calling manage-layers API for scene', {
-              sceneNumber: sceneNumber,
-              operationsCount: operations.length,
-              endpoint: '/v1/videos/manage-layers'
-            });
+              // Send individual request for this overlay
+              const response = await fetch(
+                'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/manage-layers',
+                {
+                  method: 'PATCH',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(requestBody)
+                }
+              );
 
-            const requestBody = {
-              session_id: session_id,
-              scene_number: sceneNumber,
-              operation: "bulk_update",
-              operations: operations
-            };
-
-            const response = await fetch(
-              'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/manage-layers',
-              {
-                method: 'PATCH',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody)
+              const responseText = await response.text();
+              let responseData;
+              try {
+                responseData = JSON.parse(responseText);
+              } catch {
+                responseData = responseText;
               }
-            );
 
-            const responseText = await response.text();
-            let responseData;
-            try {
-              responseData = JSON.parse(responseText);
-            } catch {
-              responseData = responseText;
-            }
+              if (!response.ok) {
+                throw new Error(`Failed to save overlay for scene ${sceneNumber}: ${response.status} ${JSON.stringify(responseData)}`);
+              }
 
-            if (!response.ok) {
-              throw new Error(`Failed to save layers for scene ${sceneNumber}: ${response.status} ${JSON.stringify(responseData)}`);
-            }
+              console.log('✅ [SAVE-LAYERS] Non-text overlay saved successfully', {
+                sceneNumber,
+                overlayId: overlay.id,
+                layerName: layer.name,
+                response: responseData
+              });
 
-            console.log('✅ [SAVE-LAYERS] Layers saved successfully via manage-layers API', {
-              sceneNumber: sceneNumber,
-              operationsCount: operations.length,
-              response: responseData
-            });
-
-            // Mark overlays for this scene as saved
-            for (const overlay of sceneOverlays) {
+              // Mark overlay as saved
               if (overlay?.id !== undefined) {
                 savedOverlayIdsRef.current.add(overlay.id);
               }
@@ -3969,8 +4634,25 @@ if (videoElement.readyState >= 2) {
             // Don't throw - this is not critical, layers are already saved
           }
 
+          // Update saved overlays snapshot after successful save
+          const currentOverlays = editorOverlaysRef.current || [];
+          savedOverlaysSnapshotRef.current = JSON.parse(JSON.stringify(currentOverlays));
+          
+          // Update saved overlay IDs
+          savedOverlayIdsRef.current.clear();
+          currentOverlays.forEach(overlay => {
+            if (overlay?.id !== undefined && overlay?.id !== null) {
+              savedOverlayIdsRef.current.add(overlay.id);
+            }
+          });
+          
           // Update state
           setHasUnsavedLayers(false);
+          
+          console.log('💾 [SAVE-LAYERS] Snapshot updated after save', {
+            overlayCount: currentOverlays.length,
+            overlayIds: currentOverlays.map(o => o?.id).filter(Boolean)
+          });
         } else {
           console.log('ℹ️ [SAVE-LAYERS] No overlays to save');
         }
@@ -3982,40 +4664,14 @@ if (videoElement.readyState >= 2) {
       // STEP 4: SHOW SUCCESS MESSAGE
       // =====================================================
       console.log('✅ [SAVE-LAYERS] ===== ALL CHANGES SAVED SUCCESSFULLY =====');
-      console.log('✅ [SAVE-LAYERS] Save complete summary', {
-        baseVideoChanges: baseVideoChanges.length,
-        otherLayersSaved: currentOverlays.length > 0 ? 'Yes' : 'No',
-        timestamp: new Date().toISOString()
-      });
-      
-      setSaveSuccess(true);
-      
-      // Hide success message after 3 seconds
-      setTimeout(() => {
-        setSaveSuccess(false);
-        console.log('ℹ️ [SAVE-LAYERS] Success message hidden');
-      }, 3000);
-      
-    } catch (e) {
-      console.error('❌ [SAVE-LAYERS] ===== SAVE FAILED =====');
-      console.error('❌ [SAVE-LAYERS] Error details', {
-        errorMessage: e?.message,
-        errorName: e?.name,
-        errorStack: e?.stack,
-        timestamp: new Date().toISOString()
-      });
-      
-      setError(e?.message || 'Failed to save layers');
-      
-      // Show error to user
-      alert(`Failed to save changes: ${e?.message || 'Unknown error'}`);
+    } catch (error) {
+      console.error('❌ [SAVE-LAYERS] Error saving layers:', error);
+      alert(`Failed to save layers: ${error.message}`);
+      throw error;
     } finally {
       setIsSavingLayers(false);
-      console.log('🏁 [SAVE-LAYERS] Save process ended', {
-        timestamp: new Date().toISOString()
-      });
     }
-  }, [isSavingLayers, selectedVideo, getLayerName, framesToTime, items, detectBaseVideoChanges]);
+  }, [isSavingLayers, selectedVideo, getLayerName, framesToTime, items, detectBaseVideoChanges, aspectRatio]);
 
   // Upload base video for selected scene
   const handleUploadBaseVideo = useCallback(async () => {
@@ -6313,12 +6969,9 @@ return () => {
           <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
             </div>
         <div className="flex items-center gap-4">
-          {/* Save Layers Button - Show when there are overlays OR base video changes */}
+          {/* Save Layers Button - Show when there are ANY changes in the timeline (new, modified, deleted layers) or base video changes */}
           {(() => {
-            const currentOverlays = editorOverlaysRef.current || [];
-            const hasOverlays = currentOverlays.length > 0;
-            
-            // Also check if base video has changed
+            // Check if base video has changed
             const hasBaseVideoChanges = items.some(video => {
               const sceneNumber = video.sceneNumber;
               if (!sceneNumber) return false;
@@ -6333,13 +6986,14 @@ return () => {
               return originalUrl && currentUrl && originalUrl !== currentUrl;
             });
             
-            const shouldShowButton = hasOverlays || hasBaseVideoChanges;
+            // Show button if there are ANY changes (overlay changes from timeline OR base video changes)
+            // hasUnsavedLayers is set by handleOverlaysChange when timeline changes occur
+            const shouldShowButton = hasUnsavedLayers || hasBaseVideoChanges;
             
             console.log('🔘 [SAVE-LAYERS] Button visibility check', {
-              hasOverlays,
+              hasUnsavedLayers,
               hasBaseVideoChanges,
               shouldShowButton,
-              overlayCount: currentOverlays.length,
               itemsCount: items.length
             });
             
@@ -6483,6 +7137,7 @@ return () => {
               sidebarFooterText=""
               onOverlaysChange={handleOverlaysChange}
               onSelectedOverlayChange={handleSelectedOverlayChange}
+              deleteOverlay={deleteOverlay}
               isLoadingProject={true}
               className="bg-white text-gray-900"
               style={{
@@ -6555,6 +7210,39 @@ return () => {
             .rve-host [data-sidebar="sidebar"]:last-child [data-sidebar="content"] a[role="button"] + a[role="button"],
             .rve-host [data-sidebar="sidebar"]:last-child [data-sidebar="content"] button + a[role="button"] {
               display: inline-flex !important;
+            }
+            /* Increase video player height for 9:16 aspect ratio */
+            .rve-host[data-aspect-ratio="9:16"] .video-container,
+            .rve-host[data-aspect-ratio="9/16"] .video-container,
+            .rve-host .rve-video-container[data-aspect-ratio="9:16"],
+            .rve-host .rve-video-container[data-aspect-ratio="9/16"] {
+              min-height: 95vh !important;
+              height: 95vh !important;
+              max-height: 95vh !important;
+            }
+            .rve-host[data-aspect-ratio="9:16"] .video-container > div,
+            .rve-host[data-aspect-ratio="9/16"] .video-container > div,
+            .rve-host .rve-video-container[data-aspect-ratio="9:16"] > div,
+            .rve-host .rve-video-container[data-aspect-ratio="9/16"] > div {
+              min-height: 95vh !important;
+              height: 95vh !important;
+              max-height: 95vh !important;
+            }
+            /* Alternative selector for nested video container */
+            .rve-host[data-aspect-ratio="9:16"] .video-container .z-10,
+            .rve-host[data-aspect-ratio="9/16"] .video-container .z-10,
+            .rve-host .rve-video-container[data-aspect-ratio="9:16"] .z-10,
+            .rve-host .rve-video-container[data-aspect-ratio="9/16"] .z-10 {
+              min-height: 95vh !important;
+              height: 95vh !important;
+              max-height: 95vh !important;
+            }
+            /* Additional selectors for video player wrapper */
+            .rve-host[data-aspect-ratio="9:16"] .video-container .z-10 > div,
+            .rve-host[data-aspect-ratio="9/16"] .video-container .z-10 > div {
+              min-height: 95vh !important;
+              height: 95vh !important;
+              max-height: 95vh !important;
             }
             /* Make all dropdowns, popovers, and select menus white */
             .rve-host [role="menu"],

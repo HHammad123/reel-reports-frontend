@@ -593,6 +593,7 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                 });
                 
                 // CRITICAL: Create complete styles object with ALL required properties for TextStylePanel
+                const textContent = (_a = template.content) !== null && _a !== void 0 ? _a : "Testing";
                 newOverlay = {
                     left: 100,
                     top: 100,
@@ -604,7 +605,8 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                     row: trackIndex,
                     isDragging: false,
                     type: OverlayType.TEXT,
-                    content: (_a = template.content) !== null && _a !== void 0 ? _a : "Testing",
+                    content: textContent,
+                    text: textContent, // Ensure both content and text properties exist for editing compatibility
                     src: textOverlaySrc, // URL for text overlay video/text source (can be null if no URL)
                     styles: {
                         // CRITICAL: Include ALL properties for TextStylePanel
@@ -630,9 +632,25 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                 console.warn('[TIMELINE-HANDLERS] No data provided for item drop');
                 return;
             }
-            // Generate new ID for all overlay types
-            const newId = overlays.length > 0 ? Math.max(...overlays.map((o) => o.id)) + 1 : 0;
+            // Generate new ID for all overlay types - ensure it's always a number and unique
+            const existingIds = overlays
+                .map((o) => o?.id)
+                .filter((id) => id !== undefined && id !== null && typeof id === 'number')
+                .filter((id) => !isNaN(id));
+            
+            const newId = existingIds.length > 0 
+                ? Math.max(...existingIds) + 1 
+                : Date.now(); // Use timestamp as fallback for unique ID
+            
             const overlayWithId = { ...newOverlay, id: newId };
+            
+            console.log('✅ [TIMELINE-HANDLERS] Generated overlay ID:', {
+                overlayId: newId,
+                overlayType: overlayWithId.type,
+                hasContent: !!overlayWithId.content,
+                hasText: !!overlayWithId.text,
+                existingIdsCount: existingIds.length
+            });
             
             // 🆕 LOG: Track overlay creation for all types
             console.log('🆕 [TIMELINE-HANDLERS] NEW OVERLAY CREATED:', {

@@ -4629,20 +4629,67 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
   const handleFrameEditComplete = useCallback(
     ({ sceneNumber, imageIndex, textElements = [], overlayElements = [] }) => {
       setIsSceneUpdating(true);
+      
+      // Helper function to identify chart overlays
+      const isChartOverlay = (overlay) => {
+        if (!overlay || typeof overlay !== 'object') return false;
+        return overlay?.element_id === 'chart_overlay' ||
+               overlay?.label_name === 'Chart' ||
+               overlay?.type === 'chart' ||
+               overlay?.isChartOverlay === true ||
+               (overlay?.overlay_image?.image_url && overlay?.overlay_image?.image_url.includes('chart'));
+      };
+      
       setRows((prevRows) =>
         prevRows.map((row) => {
           const rowSceneNumber = row?.scene_number ?? row?.sceneNumber;
           if (rowSceneNumber !== sceneNumber) return row;
           const updatedRow = { ...row };
+          // Check both model and mode fields (some rows use mode instead of model)
+          const modelUpper = String(row?.model || row?.mode || '').toUpperCase();
+          const isPlotly = modelUpper === 'PLOTLY';
+          
           if (Array.isArray(row.imageFrames)) {
-            updatedRow.imageFrames = row.imageFrames.map((frame, idx) => {
-              if (idx !== imageIndex) return frame;
-              return {
-                ...frame,
-                text_elements: textElements,
-                overlay_elements: overlayElements
-              };
-            });
+            if (isPlotly) {
+              // For PLOTLY: Only sync chart overlays between images
+              // Separate chart overlays from other overlays
+              const chartOverlays = overlayElements.filter(isChartOverlay);
+              
+              updatedRow.imageFrames = row.imageFrames.map((frame, idx) => {
+                if (idx === imageIndex) {
+                  // For the edited image: update with all text and overlay elements
+                  return {
+                    ...frame,
+                    text_elements: textElements,
+                    overlay_elements: overlayElements
+                  };
+                } else {
+                  // For the other image: keep existing text and non-chart overlays, update chart overlays
+                  const existingTextElements = Array.isArray(frame?.text_elements) ? frame.text_elements : 
+                                               Array.isArray(frame?.textElements) ? frame.textElements : [];
+                  const existingOverlayElements = Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : 
+                                                  Array.isArray(frame?.overlayElements) ? frame.overlayElements : [];
+                  const existingNonChartOverlays = existingOverlayElements.filter(ov => !isChartOverlay(ov));
+                  const mergedOverlays = [...existingNonChartOverlays, ...chartOverlays];
+                  
+                  return {
+                    ...frame,
+                    text_elements: existingTextElements, // Keep existing text elements
+                    overlay_elements: mergedOverlays // Merge: keep non-chart, replace chart
+                  };
+                }
+              });
+            } else {
+              // For other models: apply only to the specific frame being edited
+              updatedRow.imageFrames = row.imageFrames.map((frame, idx) => {
+                if (idx !== imageIndex) return frame;
+                return {
+                  ...frame,
+                  text_elements: textElements,
+                  overlay_elements: overlayElements
+                };
+              });
+            }
           }
           updatedRow.textElements = textElements;
           return updatedRow;
@@ -4654,17 +4701,52 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         const rowSceneNumber = prev?.sceneNumber || prev?.scene_number;
         if (rowSceneNumber !== sceneNumber) return prev;
         const next = { ...prev };
+        // Check both model and mode fields (some rows use mode instead of model)
+        const modelUpper = String(prev?.model || prev?.mode || '').toUpperCase();
+        const isPlotly = modelUpper === 'PLOTLY';
+        
         next.textElements = textElements;
         if (Array.isArray(prev.imageFrames)) {
-          next.imageFrames = prev.imageFrames.map((frame, idx) =>
-            idx === imageIndex
-              ? {
+          if (isPlotly) {
+            // For PLOTLY: Only sync chart overlays between images
+            const chartOverlays = overlayElements.filter(isChartOverlay);
+            
+            next.imageFrames = prev.imageFrames.map((frame, idx) => {
+              if (idx === imageIndex) {
+                // For the edited image: update with all text and overlay elements
+                return {
                   ...frame,
                   text_elements: textElements,
                   overlay_elements: overlayElements
-                }
-              : frame
-          );
+                };
+              } else {
+                // For the other image: keep existing text and non-chart overlays, update chart overlays
+                const existingTextElements = Array.isArray(frame?.text_elements) ? frame.text_elements : 
+                                             Array.isArray(frame?.textElements) ? frame.textElements : [];
+                const existingOverlayElements = Array.isArray(frame?.overlay_elements) ? frame.overlay_elements : 
+                                                Array.isArray(frame?.overlayElements) ? frame.overlayElements : [];
+                const existingNonChartOverlays = existingOverlayElements.filter(ov => !isChartOverlay(ov));
+                const mergedOverlays = [...existingNonChartOverlays, ...chartOverlays];
+                
+                return {
+                  ...frame,
+                  text_elements: existingTextElements, // Keep existing text elements
+                  overlay_elements: mergedOverlays // Merge: keep non-chart, replace chart
+                };
+              }
+            });
+          } else {
+            // For other models: apply only to the specific frame being edited
+            next.imageFrames = prev.imageFrames.map((frame, idx) =>
+              idx === imageIndex
+                ? {
+                    ...frame,
+                    text_elements: textElements,
+                    overlay_elements: overlayElements
+                  }
+                : frame
+            );
+          }
         }
         return next;
       });

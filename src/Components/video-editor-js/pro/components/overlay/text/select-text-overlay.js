@@ -30,6 +30,7 @@ export const SelectTextOverlay = () => {
     const handleAddOverlay = useCallback((option) => {
         var _a;
         const { from, row, updatedOverlays } = addAtPlayhead(currentFrame, overlays);
+        const textContent = (_a = option.content) !== null && _a !== void 0 ? _a : "Testing";
         const newOverlay = {
             left: 64,    // Your desired default
             top: 72,     // Your desired default
@@ -41,7 +42,8 @@ export const SelectTextOverlay = () => {
             rotation: 0,
             isDragging: false,
             type: OverlayType.TEXT,
-            content: (_a = option.content) !== null && _a !== void 0 ? _a : "Testing",
+            content: textContent,
+            text: textContent, // Ensure both content and text properties exist for editing compatibility
             styles: {
                 ...option.styles,
                 // Remove hardcoded fontSize to let dynamic calculation work
@@ -53,11 +55,37 @@ export const SelectTextOverlay = () => {
             },
         };
         // Update overlays with both the shifted overlays and the new overlay in a single operation
-        const newId = updatedOverlays.length > 0 ? Math.max(...updatedOverlays.map((o) => o.id)) + 1 : 0;
-        const overlayWithId = { ...newOverlay, id: newId };
+        // Generate a unique ID - ensure it's always a number and unique
+        const existingIds = updatedOverlays
+            .map((o) => o?.id)
+            .filter((id) => id !== undefined && id !== null && typeof id === 'number')
+            .filter((id) => !isNaN(id));
+        
+        const newId = existingIds.length > 0 
+            ? Math.max(...existingIds) + 1 
+            : Date.now(); // Use timestamp as fallback for unique ID
+        
+        const overlayWithId = { 
+            ...newOverlay, 
+            id: newId
+        };
+        
+        console.log('✅ [SelectTextOverlay] Created text overlay with ID:', {
+            overlayId: newId,
+            content: overlayWithId.content,
+            text: overlayWithId.text,
+            type: overlayWithId.type,
+            from: overlayWithId.from,
+            row: overlayWithId.row
+        });
+        
         const finalOverlays = [...updatedOverlays, overlayWithId];
         setOverlays(finalOverlays);
+        
+        // Select the new overlay so it can be edited immediately
         setSelectedOverlayId(newId);
+        
+        console.log('✅ [SelectTextOverlay] Text overlay selected for editing:', newId);
     }, [currentFrame, overlays, addAtPlayhead, setOverlays, setSelectedOverlayId]);
     /**
      * Handle drag start for timeline integration

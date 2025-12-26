@@ -4614,6 +4614,7 @@ const handleTemplateJsonLoad = () => {
         
         // Log the loaded JSON data
         console.log('📥 Image JSON loaded:', JSON.stringify(frameData, null, 2));
+        console.log('🔍 ImageEdit - frameData.model:', frameData?.model, 'frameData.mode:', frameData?.mode);
         
         // Load base image
         if (data.base_image?.image_url) {
@@ -5243,18 +5244,118 @@ const handleTemplateJsonLoad = () => {
       
       console.log(`📊 Total overlay_elements to save: ${overlayElements.length}`, overlayElements);
       
+      // Helper function to identify chart overlays
+      const isChartOverlay = (overlay) => {
+        if (!overlay || typeof overlay !== 'object') return false;
+        return overlay?.element_id === 'chart_overlay' ||
+               overlay?.label_name === 'Chart' ||
+               overlay?.type === 'chart' ||
+               overlay?.isChartOverlay === true ||
+               (overlay?.overlay_image?.image_url && overlay?.overlay_image?.image_url.includes('chart'));
+      };
+      
+      // Get model type from frameData (check both model and mode fields)
+      const modelType = String(frameData?.model || frameData?.mode || '').toUpperCase();
+      const isPlotly = modelType === 'PLOTLY';
+      
       // Build request body
+      let updates = [];
+      
+      if (isPlotly) {
+        // For PLOTLY: Only sync chart overlays between images
+        // Separate chart overlays from other overlays
+        const chartOverlays = overlayElements.filter(isChartOverlay);
+        const nonChartOverlays = overlayElements.filter(ov => !isChartOverlay(ov));
+        
+        console.log(`🔄 PLOTLY detected: Found ${chartOverlays.length} chart overlays and ${nonChartOverlays.length} non-chart overlays`);
+        
+        // For the image being edited: save all text_elements and all overlay_elements
+        updates.push({
+          image_index: imageIndex,
+          scene_number: sceneNumber,
+          text_elements: textElements,
+          overlay_elements: overlayElements
+        });
+        
+        // For the other image: fetch its current state, then merge chart overlays
+        const otherImageIndex = imageIndex === 0 ? 1 : 0;
+        
+        // Fetch current state of the other image to preserve its text and non-chart overlays
+        try {
+          const sessionReqBody = { user_id: userId, session_id: sessionId };
+          const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sessionReqBody)
+          });
+          
+          if (sessionResp.ok) {
+            const sessionData = await sessionResp.json();
+            const scenes = Array.isArray(sessionData?.scenes) ? sessionData.scenes : [];
+            const scene = scenes.find(s => String(s?.scene_number || s?.sceneNumber) === String(sceneNumber));
+            
+            if (scene && Array.isArray(scene.imageFrames) && scene.imageFrames[otherImageIndex]) {
+              const otherFrame = scene.imageFrames[otherImageIndex];
+              const otherTextElements = Array.isArray(otherFrame?.text_elements) ? otherFrame.text_elements : 
+                                       Array.isArray(otherFrame?.textElements) ? otherFrame.textElements : [];
+              const otherOverlayElements = Array.isArray(otherFrame?.overlay_elements) ? otherFrame.overlay_elements : 
+                                          Array.isArray(otherFrame?.overlayElements) ? otherFrame.overlayElements : [];
+              
+              // Keep non-chart overlays from the other image, replace chart overlays with new ones
+              const otherNonChartOverlays = otherOverlayElements.filter(ov => !isChartOverlay(ov));
+              const mergedOverlays = [...otherNonChartOverlays, ...chartOverlays];
+              
+              updates.push({
+                image_index: otherImageIndex,
+                scene_number: sceneNumber,
+                text_elements: otherTextElements, // Keep existing text elements
+                overlay_elements: mergedOverlays // Merge: keep non-chart, replace chart
+              });
+              
+              console.log(`✅ PLOTLY: Updated image ${otherImageIndex} with ${chartOverlays.length} chart overlays, preserved ${otherNonChartOverlays.length} non-chart overlays and ${otherTextElements.length} text elements`);
+            } else {
+              // Fallback: if we can't fetch the other image's state, just sync chart overlays
+              updates.push({
+                image_index: otherImageIndex,
+                scene_number: sceneNumber,
+                text_elements: [], // Empty text elements (preserve existing via API)
+                overlay_elements: chartOverlays // Only chart overlays
+              });
+            }
+          } else {
+            // Fallback: if API call fails, just sync chart overlays
+            updates.push({
+              image_index: otherImageIndex,
+              scene_number: sceneNumber,
+              text_elements: [],
+              overlay_elements: chartOverlays
+            });
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to fetch other image state, using fallback:', error);
+          // Fallback: if error, just sync chart overlays
+          const otherImageIndex = imageIndex === 0 ? 1 : 0;
+          updates.push({
+            image_index: otherImageIndex,
+            scene_number: sceneNumber,
+            text_elements: [],
+            overlay_elements: chartOverlays
+          });
+        }
+      } else {
+        // For other models: save only to the specific image_index being edited
+        updates.push({
+          image_index: imageIndex,
+          scene_number: sceneNumber,
+          text_elements: textElements,
+          overlay_elements: overlayElements
+        });
+      }
+      
       const requestBody = {
         session_id: sessionId,
         user_id: userId,
-        updates: [
-          {
-            image_index: imageIndex,
-            scene_number: sceneNumber,
-            text_elements: textElements,
-            overlay_elements: overlayElements
-          }
-        ]
+        updates: updates
       };
       
       // Log the full update JSON structure
