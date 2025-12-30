@@ -33,6 +33,8 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
     const resolvedBaseUrl = baseUrl || contextBaseUrl || (typeof window !== 'undefined' ? window.location.origin : undefined);
     const preloadedAudioRef = useRef(new Set()); // Track which audio URLs we've already preloaded
     const audioElementsRef = useRef(new Map()); // Store audio elements to prevent garbage collection
+    const activePreloadsRef = useRef(0); // Track concurrent preload operations
+    const MAX_CONCURRENT_PRELOADS = 3; // Limit concurrent preloads to prevent browser overload
     
     useEffect(() => {
         
@@ -104,10 +106,20 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                 return;
             }
             
+            const isScene1Audio = overlay.from === 0;
+            
+            // OPTIMIZED: Limit concurrent preloads to prevent browser overload
+            // Prioritize Scene 1 audio, queue others
+            if (!isScene1Audio && activePreloadsRef.current >= MAX_CONCURRENT_PRELOADS) {
+                // Queue non-Scene-1 audio if we're at the limit
+                // Scene 1 audio always loads immediately
+                setTimeout(() => preloadAudioOverlay(overlay), 500);
+                return;
+            }
+            
             // Mark as preloaded immediately to prevent duplicates
             preloadedAudioRef.current.add(finalAudioSrc);
-            
-            const isScene1Audio = overlay.from === 0;
+            activePreloadsRef.current++;
             
             // METHOD 1: Use fetch to trigger network request (appears in network tab)
             // CRITICAL: For Scene 1 audio, this MUST succeed and appear in network tab
@@ -127,9 +139,11 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                 // Store the blob URL for later use
                 const blobUrl = URL.createObjectURL(blob);
                 audioElementsRef.current.set(finalAudioSrc, { blobUrl, blob });
+                activePreloadsRef.current--;
             })
             .catch(error => {
                 // Silently handle errors - audio will still try to load via audio element
+                activePreloadsRef.current--;
             });
             
             // METHOD 2: Also create audio element for browser caching (backup method)
@@ -188,7 +202,19 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             audio.load();
             
             // Remove from DOM after loading starts (keep in memory for cache)
-            // Increased timeout to allow more buffering time
+            // Track when audio is ready to reduce active preload count
+            audio.addEventListener('canplaythrough', () => {
+                activePreloadsRef.current = Math.max(0, activePreloadsRef.current - 1);
+                try {
+                    if (audio.parentNode && !audioElementsRef.current.get(finalAudioSrc)?.persistent) {
+                        audio.parentNode.removeChild(audio);
+                    }
+                } catch (e) {
+                    // Ignore errors removing from DOM
+                }
+            }, { once: true });
+            
+            // Fallback timeout if canplaythrough doesn't fire
             setTimeout(() => {
                 try {
                     if (audio.parentNode && !audioElementsRef.current.get(finalAudioSrc)?.persistent) {
@@ -197,7 +223,7 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                 } catch (e) {
                     // Ignore errors removing from DOM
                 }
-            }, 2000); // Increased from 1000ms to allow more buffering
+            }, 3000); // 3 seconds timeout
         };
         
         // CRITICAL: Load Scene 1 audio FIRST with guaranteed playback readiness
@@ -345,6 +371,15 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                     return;
                 }
                 
+                // OPTIMIZED: Clean up blob URLs to prevent memory leaks
+                if (value?.blobUrl) {
+                    try {
+                        URL.revokeObjectURL(value.blobUrl);
+                    } catch (e) {
+                        // Ignore errors revoking blob URLs
+                    }
+                }
+                
                 // Remove non-Scene-1 audio from DOM
                 if (value?.audio && value.audio.parentNode) {
                     try {
@@ -354,7 +389,16 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
                     }
                 }
             });
-            // Keep all refs in memory for browser cache
+            // Keep Scene 1 audio refs in memory for browser cache
+            // Clear non-Scene-1 entries to free memory
+            const scene1Entries = new Map();
+            audioElementsRef.current.forEach((value, url) => {
+                if (value?.persistent) {
+                    scene1Entries.set(url, value);
+                }
+            });
+            audioElementsRef.current = scene1Entries;
+            activePreloadsRef.current = 0;
         };
     }, [overlays, resolvedBaseUrl]); // Re-run when overlays change
     

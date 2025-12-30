@@ -40,6 +40,27 @@ export const VideoOverlayPanel = () => {
     const { addAtPlayhead } = useTimelinePositioning();
     const { getAspectRatioDimensions } = useAspectRatio();
     const [localOverlay, setLocalOverlay] = useState(null);
+    
+    // Auto-load videos on mount (similar to audio panel)
+    useEffect(() => {
+        const loadVideos = async () => {
+            if (videoAdaptors.length === 0) return;
+            setIsLoading(true);
+            try {
+                // Search with empty query to get all available videos (including session videos)
+                const result = await searchVideos({ query: '', perPage: 50, page: 1 });
+                setVideos(result.items);
+                setSourceResults(result.sourceResults);
+            } catch (error) {
+                console.error('Failed to load videos:', error);
+                setVideos([]);
+                setSourceResults([]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        loadVideos();
+    }, [searchVideos, videoAdaptors]);
     useEffect(() => {
         if (selectedOverlayId === null) {
             setLocalOverlay(null);
@@ -227,7 +248,17 @@ export const VideoOverlayPanel = () => {
         setSourceResults([]);
     };
     const getThumbnailUrl = (video) => {
+        // For session videos, always return empty string so video element is used
+        if (video._isSessionVideo || video._sessionVideo) {
+            // Return empty string - MediaGrid will use video element
+            return video.thumbnail && video.thumbnail.trim() ? video.thumbnail : '';
+        }
+        // For other videos, use thumbnail if available
+        if (video.thumbnail) {
         return video.thumbnail;
+        }
+        // Fallback to video URL for non-session videos
+        return video.file || '';
     };
     const getItemKey = (video) => {
         return `${video._source}-${video.id}`;

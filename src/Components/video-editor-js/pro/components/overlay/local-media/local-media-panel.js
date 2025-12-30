@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useLocalMedia } from "../../../contexts/local-media-context";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
@@ -22,12 +22,32 @@ export const LocalMediaPanel = () => {
     const { addAtPlayhead } = useTimelinePositioning();
     const { getAspectRatioDimensions } = useAspectRatio();
   // Session media injected via window from parent (VideosList)
-  const sessionMedia = useMemo(() => {
+  // Use state to make it reactive to window.__SESSION_MEDIA_FILES changes
+  const [sessionMedia, setSessionMedia] = useState(() => {
     if (typeof window === "undefined") return [];
     const arr = window.__SESSION_MEDIA_FILES;
     return Array.isArray(arr) ? arr : [];
-  }, []);
+  });
   const sessionMediaAddedRef = useRef(false);
+  
+  // Update sessionMedia when window.__SESSION_MEDIA_FILES changes
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    
+    const checkSessionMedia = () => {
+      const arr = window.__SESSION_MEDIA_FILES;
+      const newSessionMedia = Array.isArray(arr) ? arr : [];
+      setSessionMedia(newSessionMedia);
+    };
+    
+    // Check initially
+    checkSessionMedia();
+    
+    // Poll for changes (since window.__SESSION_MEDIA_FILES can be updated by VideosList)
+    const interval = setInterval(checkSessionMedia, 500);
+    
+    return () => clearInterval(interval);
+  }, []);
     /**
      * Load image to get its natural dimensions
      */

@@ -34,6 +34,8 @@ export const VideoPreloader = ({ overlays = [], baseUrl }) => {
     const resolvedBaseUrl = baseUrl || contextBaseUrl || (typeof window !== 'undefined' ? window.location.origin : undefined);
     const preloadedVideoRef = useRef(new Set()); // Track which video URLs we've already preloaded
     const videoElementsRef = useRef(new Map()); // Store video elements to prevent garbage collection
+    const activePreloadsRef = useRef(0); // Track concurrent preload operations
+    const MAX_CONCURRENT_PRELOADS = 2; // Limit concurrent video preloads (lower than audio due to larger file sizes)
     
     useEffect(() => {
         // Filter to only video overlays
@@ -88,8 +90,16 @@ export const VideoPreloader = ({ overlays = [], baseUrl }) => {
                 return;
             }
             
+            // OPTIMIZED: Limit concurrent preloads to prevent browser overload
+            if (activePreloadsRef.current >= MAX_CONCURRENT_PRELOADS) {
+                // Queue video if we're at the limit
+                setTimeout(() => preloadVideoOverlay(overlay), 500);
+                return;
+            }
+            
             // Mark as preloaded immediately to prevent duplicates
             preloadedVideoRef.current.add(finalVideoSrc);
+            activePreloadsRef.current++;
             
             // METHOD 1: Use fetch to trigger network request (appears in network tab)
             fetch(finalVideoSrc, { 
@@ -107,9 +117,11 @@ export const VideoPreloader = ({ overlays = [], baseUrl }) => {
                 // Store the blob URL for later use
                 const blobUrl = URL.createObjectURL(blob);
                 videoElementsRef.current.set(finalVideoSrc, { blobUrl, blob });
+                activePreloadsRef.current--;
             })
             .catch(error => {
                 // Silently handle errors - video will still try to load via video element
+                activePreloadsRef.current--;
             });
             
             // METHOD 2: Also create video element for browser caching (backup method)
@@ -195,10 +207,19 @@ export const VideoPreloader = ({ overlays = [], baseUrl }) => {
         // Preload all videos immediately
         sortedVideoOverlays.forEach(preloadVideoOverlay);
         
-        // Cleanup function
+        // OPTIMIZED: Cleanup function with blob URL cleanup
         return () => {
-            // Remove video elements from DOM
+            // Remove video elements from DOM and clean up blob URLs
             videoElementsRef.current.forEach((value, url) => {
+                // Clean up blob URLs to prevent memory leaks
+                if (value?.blobUrl) {
+                    try {
+                        URL.revokeObjectURL(value.blobUrl);
+                    } catch (e) {
+                        // Ignore errors revoking blob URLs
+                    }
+                }
+                
                 if (value?.video && value.video.parentNode) {
                     try {
                         value.video.parentNode.removeChild(value.video);
@@ -207,7 +228,9 @@ export const VideoPreloader = ({ overlays = [], baseUrl }) => {
                     }
                 }
             });
-            // Keep all refs in memory for browser cache
+            // Clear all refs to free memory
+            videoElementsRef.current.clear();
+            activePreloadsRef.current = 0;
         };
     }, [overlays, resolvedBaseUrl]); // Re-run when overlays change
     

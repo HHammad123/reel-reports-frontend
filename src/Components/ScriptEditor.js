@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import ErrorBoundary from './ErrorBoundary';
 import Chat from './Chat';
+import Loader from './Loader';
 
 // Lightweight dedicated Script editor section.
 // Reuses the scenes editor from Chat with scenesMode enabled and hides chat input.
@@ -415,23 +416,10 @@ const ScriptEditor = ({
         <ErrorBoundary>
           {isLoadingScript || !scriptLoaded ? (
             <div className="flex items-center justify-center w-full" style={{ minHeight: '100vh' }}>
-              <div className="text-center space-y-6">
-                <div className="relative">
-                  <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-[#13008B] mx-auto"></div>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="h-8 w-8 rounded-full bg-[#13008B] opacity-20 animate-pulse"></div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-lg font-semibold text-[#13008B]">Loading Script</p>
-                  <p className="text-sm text-gray-500">Fetching script data from session...</p>
-                  <div className="flex items-center justify-center space-x-1 pt-2">
-                    <div className="w-2 h-2 bg-[#13008B] rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-[#13008B] rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-2 h-2 bg-[#13008B] rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                  </div>
-                </div>
-              </div>
+              <Loader
+                title="Loading Script"
+                description="Fetching script data from session..."
+              />
             </div>
           ) : (
             <Chat

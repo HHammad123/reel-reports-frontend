@@ -6,6 +6,7 @@ import html2canvas from 'html2canvas';
 import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
 import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
+import Loader from '../Loader';
 
 // Preset Voice Options
 const PRESET_VOICE_OPTIONS = {
@@ -6086,27 +6087,13 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
       {isLoading && isPolling && (
         <>
           <div className="absolute inset-0 z-30 bg-white" />
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4">
-              <div className="relative w-20 h-20 flex items-center justify-center">
-                <video
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="w-full h-full object-contain"
-                >
-                  <source src={LoadingAnimationVideo} type="video/mp4" />
-                </video>
-              </div>
-              <div className="space-y-2">
-                <p className="text-lg font-semibold text-[#13008B]">Generating Storyboard</p>
-                <p className="text-sm text-gray-600">
-                  This may take a few moments. Please keep this tab open while we finish.
-                </p>
-              </div>
-            </div>
-          </div>
+          <Loader
+            fullScreen
+            zIndex="z-40"
+            overlayBg="bg-black/40 backdrop-blur-sm"
+            title="Generating Storyboard"
+            description="This may take a few moments. Please keep this tab open while we finish."
+          />
         </>
       )}
 
@@ -8089,20 +8076,12 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                         {/* Loading Overlay - Shows until update-scene-field API completes */}
                         {isSavingVeo3Template && (
                           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
-                            <div className="bg-white shadow-xl rounded-lg px-6 py-4 text-center space-y-3">
-                              <div className="w-16 h-16 mx-auto">
-                                <video
-                                  src={LoadingAnimationVideo}
-                                  autoPlay
-                                  loop
-                                  muted
-                                  playsInline
-                                  className="w-full h-full object-contain"
-                                />
-                              </div>
-                              <div className="text-sm font-semibold text-[#13008B]">Updating Scene Field</div>
-                              <p className="text-xs text-gray-500">Please wait while we save your changes...</p>
-                            </div>
+                            <Loader
+                              videoSize="w-16 h-16"
+                              title="Updating Scene Field"
+                              description="Please wait while we save your changes..."
+                              containerClass="!max-w-xs !p-4"
+                            />
                           </div>
                         )}
                         <div className="flex items-center justify-between mb-3">
@@ -8686,20 +8665,12 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                             {/* Loading Overlay - Shows until update-scene-field API completes */}
                             {isSavingAnimationDesc && (
                               <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
-                                <div className="bg-white shadow-xl rounded-lg px-6 py-4 text-center space-y-3">
-                                  <div className="w-16 h-16 mx-auto">
-                                    <video
-                                      src={LoadingAnimationVideo}
-                                      autoPlay
-                                      loop
-                                      muted
-                                      playsInline
-                                      className="w-full h-full object-contain"
-                                    />
-                                  </div>
-                                  <div className="text-sm font-semibold text-[#13008B]">Saving Animation Description</div>
-                                  <p className="text-xs text-gray-500">Please wait while we save your changes...</p>
-                                </div>
+                                <Loader
+                                  videoSize="w-16 h-16"
+                                  title="Saving Animation Description"
+                                  description="Please wait while we save your changes..."
+                                  containerClass="!max-w-xs !p-4"
+                                />
                               </div>
                             )}
                             <div className="mb-3 flex items-center justify-between">
@@ -9116,20 +9087,12 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                       {/* Loading Overlay */}
                       {isSavingDescription && (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
-                          <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                            <div className="w-16 h-16 mx-auto">
-                              <video
-                                src={LoadingAnimationVideo}
-                                autoPlay
-                                loop
-                                muted
-                                playsInline
-                                className="w-full h-full object-contain"
-                              />
-                            </div>
-                            <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
-                            <p className="text-xs text-gray-500">Please wait...</p>
-                          </div>
+                          <Loader
+                            videoSize="w-16 h-16"
+                            title="Updating Description"
+                            description="Please wait..."
+                            containerClass="!max-w-xs !p-4"
+                          />
                         </div>
                       )}
                       <div className="flex items-center justify-between mb-3">
@@ -10847,21 +10810,12 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
               {/* Loading Overlay */}
               {isRegenerating && (
                 <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                    <div className="relative w-16 h-16 flex items-center justify-center">
-                      <video
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                        className="w-full h-full object-contain"
-                      >
-                        <source src={LoadingAnimationVideo} type="video/mp4" />
-                      </video>
-                    </div>
-                    <p className="text-lg font-semibold text-[#13008B]">Regenerating Storyboard</p>
-                    <p className="text-sm text-gray-600">Please wait while we create your new image...</p>
-                  </div>
+                  <Loader
+                    videoSize="w-16 h-16"
+                    title="Regenerating Storyboard"
+                    description="Please wait while we create your new image..."
+                    containerClass="!max-w-sm"
+                  />
                 </div>
               )}
 
@@ -11453,41 +11407,12 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
               {/* Loading Overlay */}
               {isUploadingBackground && (
                 <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                    <div className="relative w-16 h-16">
-                      <svg className="w-16 h-16" viewBox="0 0 100 100">
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          stroke="#E5E7EB"
-                          strokeWidth="8"
-                          fill="none"
-                        />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          stroke="#13008B"
-                          strokeWidth="8"
-                          fill="none"
-                          strokeLinecap="round"
-                          strokeDasharray="283"
-                          strokeDashoffset="70"
-                          className="animate-spin"
-                          style={{
-                            transformOrigin: '50% 50%',
-                            animation: 'spin 1.5s linear infinite'
-                          }}
-                        />
-                      </svg>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-3 h-3 bg-[#13008B] rounded-full" />
-                      </div>
-                    </div>
-                    <p className="text-lg font-semibold text-[#13008B]">Uploading Background...</p>
-                    <p className="text-sm text-gray-600">Please wait while we upload your background image...</p>
-                  </div>
+                  <Loader
+                    videoSize="w-16 h-16"
+                    title="Uploading Background..."
+                    description="Please wait while we upload your background image..."
+                    containerClass="!max-w-xs"
+                  />
                 </div>
               )}
           </div>

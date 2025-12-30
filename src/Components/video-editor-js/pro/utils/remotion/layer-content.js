@@ -6,6 +6,7 @@ import { VideoLayerContent } from "./components/video-layer-content";
 import { ImageLayerContent } from "./components/image-layer-content";
 import { SoundLayerContent } from "./components/sound-layer-content";
 import { StickerLayerContent } from "./components/sticker-layer-content";
+import { ShapeLayerContent } from "./components/shape-layer-content";
 /**
  * LayerContent Component
  *
@@ -60,6 +61,8 @@ export const LayerContent = ({ overlay, baseUrl, fontInfos, }) => {
                 }, children: _jsx(CaptionLayerContent, { overlay: overlay, ...(fontInfos && { fontInfos }) }) }));
         case OverlayType.STICKER:
             return (_jsx("div", { style: { ...commonStyle }, children: _jsx(StickerLayerContent, { overlay: overlay, isSelected: false }) }));
+        case OverlayType.SHAPE:
+            return (_jsx("div", { style: { ...commonStyle }, children: _jsx(ShapeLayerContent, { overlay: overlay }) }));
         case OverlayType.SOUND:
             return _jsx(SoundLayerContent, { overlay: overlay, ...(baseUrl && { baseUrl }) });
         default:

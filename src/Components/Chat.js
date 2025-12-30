@@ -5,6 +5,7 @@ import { formatAIResponse } from '../utils/formatting';
 import ChartDataEditor from './ChartDataEditor';
 import LogoImage from '../asset/mainLogo.png';
 import LoadingAnimationVideo from '../asset/Loading animation.mp4';
+import Loader from './Loader';
 
 const GOOGLE_FONT_OPTIONS = [
   'Roboto',
@@ -8627,24 +8628,12 @@ const saveAnchorPromptTemplate = async () => {
     <div className='bg-white h-[79vh] flex justify-between flex-col rounded-lg mt-3 p-6 relative'>
       {/* Video Type Switching Loader - Centered circular loader with text */}
       {isSwitchingVideoType && loadingVideoType && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/20">
-          <div className="bg-white p-8 w-[300px] rounded-lg flex flex-col items-center justify-center shadow-xl">
-            {/* Circular loader with logo */}
-            <div className="relative w-20 h-20 mb-4">
-              <div className="absolute inset-0 rounded-full border-4 border-[#D8D3FF]"></div>
-              <div className="absolute inset-2 rounded-full overflow-hidden">
-                <img 
-                  src={LogoImage} 
-                  alt="Logo" 
-                  className="w-full h-full object-contain animate-spin"
-                  style={{ animationDuration: '2s' }}
-                />
-              </div>
-            </div>
-            {/* Loading text with video type */}
-            <p className="text-lg font-semibold text-gray-900">Loading {loadingVideoType}...</p>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-[100]"
+          overlayBg="bg-black/20"
+          title={`Loading ${loadingVideoType}...`}
+        />
       )}
       {/* Add Scene Modal */}
       {showAddSceneModal && (
@@ -10545,21 +10534,13 @@ const saveAnchorPromptTemplate = async () => {
                                {/* Loading Overlay */}
                                {isSavingDescription && (
                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
-                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                                     <div className="w-16 h-16 mx-auto">
-                                       <video
-                                         src={LoadingAnimationVideo}
-                                         autoPlay
-                                         loop
-                                         muted
-                                         playsInline
-                                         className="w-full h-full object-contain"
-                                       />
-                                         </div>
-                                         <div className="text-sm font-semibold text-[#13008B]">Updating Description</div>
-                                         <p className="text-xs text-gray-500">Please wait...</p>
-                                       </div>
-                                     </div>
+                                   <Loader
+                                     videoSize="w-16 h-16"
+                                     title="Updating Description"
+                                     description="Please wait..."
+                                     containerClass="!max-w-xs !p-4"
+                                   />
+                                 </div>
                                    )}
                                    <h4 className="text-lg font-semibold text-gray-800 mb-4">Description</h4>
                                    {!isInlineEditing && (
@@ -11512,20 +11493,12 @@ const saveAnchorPromptTemplate = async () => {
                               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative">
                                 {isSavingSceneData && (
                                   <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
-                                    <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
-                                      <div className="w-16 h-16 mx-auto">
-                                        <video
-                                          src={LoadingAnimationVideo}
-                                          autoPlay
-                                          loop
-                                          muted
-                                          playsInline
-                                          className="w-full h-full object-contain"
-                                        />
-                                      </div>
-                                      <div className="text-sm font-semibold text-[#13008B]">Updating Scene Description</div>
-                                      <p className="text-xs text-gray-500">Please wait...</p>
-                                    </div>
+                                    <Loader
+                                      videoSize="w-16 h-16"
+                                      title="Updating Scene Description"
+                                      description="Please wait..."
+                                      containerClass="!max-w-xs !p-4"
+                                    />
                                   </div>
                                 )}
                                 <div className="flex items-center justify-between mb-3">
@@ -13766,21 +13739,14 @@ const saveAnchorPromptTemplate = async () => {
         </div>
       )}
       {isApplyingChartType && (
-        <div className="fixed inset-0 z-[74] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-lg shadow-xl px-6 py-5 flex items-center gap-3">
-            <div className="w-6 h-6">
-              <video
-                src={LoadingAnimationVideo}
-                autoPlay
-                loop
-                muted
-                playsInline
-                className="w-full h-full object-contain"
-              />
-            </div>
-            <div className="text-sm font-medium text-gray-800">Applying chart type…</div>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-[74]"
+          overlayBg="bg-black/30"
+          title="Applying chart type…"
+          videoSize="w-16 h-16"
+          containerClass="!max-w-xs"
+        />
       )}
 
       {/* Brand Assets Modal (logos, icons, uploaded_images, templates, voiceover) */}
@@ -14627,40 +14593,22 @@ const saveAnchorPromptTemplate = async () => {
         </div>
       )}
       {isEnhancing && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40">
-          <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-20 h-20">
-              <video
-                src={LoadingAnimationVideo}
-                autoPlay
-                loop
-                muted
-                playsInline
-                className="w-full h-full object-contain"
-              />
-            </div>
-            <h4 className="text-lg font-semibold text-gray-900">Generating scene…</h4>
-            <p className="mt-1 text-sm text-gray-600">Applying selected image to scene.</p>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-[75]"
+          overlayBg="bg-black/40"
+          title="Generating scene…"
+          description="Applying selected image to scene."
+        />
       )}
       {isApplyingKeepDefault && (
-        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/40">
-          <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-20 h-20">
-              <video
-                src={LoadingAnimationVideo}
-                autoPlay
-                loop
-                muted
-                playsInline
-                className="w-full h-full object-contain"
-              />
-            </div>
-            <h4 className="text-lg font-semibold text-gray-900">Applying changes…</h4>
-            <p className="mt-1 text-sm text-gray-600">Updating scene with selected image.</p>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-[75]"
+          overlayBg="bg-black/40"
+          title="Applying changes…"
+          description="Updating scene with selected image."
+        />
       )}
       {/* Regenerate Scene Modal */}
       {showRegenModal && (
@@ -15046,45 +14994,43 @@ const saveAnchorPromptTemplate = async () => {
       {/* Inline Images view replaces chat when active */}
       {/* Global lightweight loaders for other actions */}
       {isGeneratingQuestionnaire && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white/95 max-w-sm w-[90%] rounded-lg shadow p-4 text-center">
-            <div className="mx-auto mb-3 w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <div className="text-sm font-medium text-gray-800">Generating Questionnaire…</div>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Generating Questionnaire…"
+        />
       )}
       {(isUpdatingText || isSavingReorder || isUploadingAvatar || isUploadingSceneImages) && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white/95 max-w-sm w-[90%] rounded-lg shadow p-4 text-center">
-            <div className="mx-auto mb-3 w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <div className="text-sm font-medium text-gray-800">
-              {isUpdatingText && 'Saving changes…'}
-              {isSavingReorder && 'Saving new order…'}
-              {isUploadingAvatar && !isUpdatingText && !isSavingReorder && 'Uploading avatar…'}
-              {isUploadingSceneImages && !isUpdatingText && !isSavingReorder && !isUploadingAvatar && 'Uploading images…'}
-            </div>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title={
+            isUpdatingText && 'Saving changes…' ||
+            isSavingReorder && 'Saving new order…' ||
+            isUploadingAvatar && !isUpdatingText && !isSavingReorder && 'Uploading avatar…' ||
+            isUploadingSceneImages && !isUpdatingText && !isSavingReorder && !isUploadingAvatar && 'Uploading images…' ||
+            'Loading…'
+          }
+        />
       )}
       {/* Full-screen loader while switching reel/video type */}
       {isSwitchingModel && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40">
-          <div className="bg-white/95 max-w-sm w-[90%] rounded-xl shadow-xl px-6 py-5 text-center">
-            <div className="mx-auto mb-3 w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <div className="text-base font-medium text-gray-800">
-              {(() => {
-                const vt = String(pendingModelType || selectedVideoType || '').toLowerCase();
-                let label = pendingModelType || selectedVideoType || 'Video';
-                if (vt.includes('avatar')) label = 'Avatar';
-                else if (vt.includes('info')) label = 'Infographic';
-                else if (vt.includes('financial')) label = 'Financial';
-                else if (vt.includes('hybrid')) label = 'Hybrid';
-                return `Loading ${label}`;
-              })()}
-              <span className="ml-1 thinking-dots"><span className="dot">.</span><span className="dot">.</span><span className="dot">.</span></span>
-            </div>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-[1000]"
+          overlayBg="bg-black/40"
+          title={(() => {
+            const vt = String(pendingModelType || selectedVideoType || '').toLowerCase();
+            let label = pendingModelType || selectedVideoType || 'Video';
+            if (vt.includes('avatar')) label = 'Avatar';
+            else if (vt.includes('info')) label = 'Infographic';
+            else if (vt.includes('financial')) label = 'Financial';
+            else if (vt.includes('hybrid')) label = 'Hybrid';
+            return `Loading ${label}`;
+          })()}
+        />
       )}
       {/* Inject CSS for thinking dots animation */}
       <style>{thinkingDotsStyles}</style>

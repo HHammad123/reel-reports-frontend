@@ -6,6 +6,7 @@ import Sidebar from '../Components/Sidebar'
 import Topbar from '../Components/Topbar'
 import Resultarea from '../Components/Result/Resultarea'
 import Scencearea from '../Components/Result/Scencearea'
+import Loader from '../Components/Loader'
 
 const Result = () => {
   const navigate = useNavigate()
@@ -247,13 +248,13 @@ const Result = () => {
         )}
 
         {showShortPopup && (
-          <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/50'>
-            <div className='bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center'>
-              <div className='mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin' />
-              <h4 className='text-lg font-semibold text-gray-900'>Merging with transitions…</h4>
-              <p className='mt-1 text-sm text-gray-600'>Please wait while we process your video.</p>
-            </div>
-          </div>
+          <Loader
+            fullScreen
+            zIndex="z-50"
+            overlayBg="bg-black/50"
+            title="Merging with transitions…"
+            description="Please wait while we process your video."
+          />
         )}
 
       </div>

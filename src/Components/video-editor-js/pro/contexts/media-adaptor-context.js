@@ -2,6 +2,7 @@ import { jsx as _jsx } from "react/jsx-runtime";
 import { createContext, useContext, useMemo, useCallback } from 'react';
 import { shuffleArray } from '../types/overlay-adaptors';
 import { getDefaultAudioAdaptors } from '../adaptors/default-audio-adaptors';
+import { getDefaultVideoAdaptors } from '../adaptors/default-video-adaptors';
 import { getDefaultTextAdaptors } from '../adaptors/default-text-adaptors';
 import { getDefaultTemplateAdaptors } from '../adaptors/default-templates-adaptor';
 import { getDefaultAnimationAdaptors } from '../adaptors/default-animation-adaptors';
@@ -10,7 +11,7 @@ export const MediaAdaptorProvider = ({ children, adaptors }) => {
     // Resolve adaptors with defaults
     const resolvedAdaptors = useMemo(() => {
         const resolvedAdaptorsConfig = {
-            videoAdaptors: (adaptors === null || adaptors === void 0 ? void 0 : adaptors.video) || [],
+            videoAdaptors: (adaptors === null || adaptors === void 0 ? void 0 : adaptors.video) || getDefaultVideoAdaptors(),
             imageAdaptors: (adaptors === null || adaptors === void 0 ? void 0 : adaptors.images) || [],
             audioAdaptors: (adaptors === null || adaptors === void 0 ? void 0 : adaptors.audio) || getDefaultAudioAdaptors(),
             textAdaptors: (adaptors === null || adaptors === void 0 ? void 0 : adaptors.text) || getDefaultTextAdaptors(),

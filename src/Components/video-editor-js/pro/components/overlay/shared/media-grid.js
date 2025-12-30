@@ -77,7 +77,33 @@ export const MediaGrid = ({ items, isLoading, isDurationLoading = false, loading
         return (_jsx("div", { className: "columns-2 sm:columns-2 gap-3 space-y-3", children: items.map((item) => {
                 const itemKey = getItemKey(item);
                 const isItemLoading = isDurationLoading && loadingItemKey === itemKey;
-                return (_jsx("button", { className: "relative block w-full cursor-pointer border border-transparent rounded-sm overflow-hidden break-inside-avoid mb-3", onClick: () => !isItemLoading && onItemClick(item), disabled: isItemLoading, draggable: enableTimelineDrag && !isItemLoading, onDragStart: handleDragStart(item), onDragEnd: handleDragEnd, children: _jsx("div", { className: "relative w-full", children: _jsxs("div", { className: "relative w-full pb-[75%]", children: [" ", _jsx("img", { src: getThumbnailUrl(item), alt: `${mediaType.slice(0, -1)} from ${item._sourceDisplayName}`, className: `absolute inset-0 w-full h-full rounded-sm object-cover  ${isItemLoading ? 'opacity-50' : 'hover:opacity-60'}`, draggable: false }), isItemLoading && (_jsx("div", { className: "absolute inset-0 bg-background/80 flex items-center justify-center", children: _jsx("div", { className: "w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin" }) })), !isItemLoading && (_jsx("div", { className: "absolute inset-0 bg-background/20 opacity-0 hover:opacity-100 transition-opacity duration-200" }))] }) }) }, itemKey));
+                const thumbnailUrl = getThumbnailUrl(item);
+                // For videos, check if we have a real thumbnail or should show video element
+                const isVideo = mediaType === "videos";
+                // For session videos, always use video element (they don't have real thumbnails)
+                const isSessionVideo = item._isSessionVideo || item._sessionVideo;
+                // Get video URL - prioritize base video URL for session videos
+                const videoUrl = item.file || 
+                                item._sessionVideo?.baseVideoUrl || 
+                                item._sessionVideo?.base_video_url || 
+                                item._sessionVideo?.path || 
+                                item._sessionVideo?.url || 
+                                item._sessionVideo?.src || '';
+                // Check if we have a real thumbnail (image URL, not video URL)
+                const hasRealThumbnail = item.thumbnail && 
+                                        item.thumbnail.trim() && 
+                                        !item.thumbnail.match(/\.(mp4|webm|mov|avi|mkv|flv|wmv|m4v)(\?|$)/i) &&
+                                        !isSessionVideo;
+                const hasRealPoster = item.poster && 
+                                     item.poster.trim() && 
+                                     !item.poster.match(/\.(mp4|webm|mov|avi|mkv|flv|wmv|m4v)(\?|$)/i) &&
+                                     !isSessionVideo;
+                // Show video element if: (1) it's a session video with URL, OR (2) no real thumbnail/poster and we have a video URL
+                const shouldShowVideo = isVideo && videoUrl && (isSessionVideo || (!hasRealThumbnail && !hasRealPoster));
+                return (_jsx("button", { className: "relative block w-full cursor-pointer border border-transparent rounded-sm overflow-hidden break-inside-avoid mb-3", onClick: () => !isItemLoading && onItemClick(item), disabled: isItemLoading, draggable: enableTimelineDrag && !isItemLoading, onDragStart: handleDragStart(item), onDragEnd: handleDragEnd, children: _jsx("div", { className: "relative w-full", children: _jsxs("div", { className: "relative w-full pb-[75%]", children: [" ", shouldShowVideo ? (_jsx("video", { src: videoUrl, className: `absolute inset-0 w-full h-full rounded-sm object-cover ${isItemLoading ? 'opacity-50' : 'hover:opacity-60'}`, muted: true, playsInline: true, preload: "metadata", onLoadedMetadata: (e) => {
+                            // Seek to 0.1s to show a frame
+                            e.currentTarget.currentTime = 0.1;
+                        }, draggable: false })) : (_jsx("img", { src: thumbnailUrl, alt: `${mediaType.slice(0, -1)} from ${item._sourceDisplayName}`, className: `absolute inset-0 w-full h-full rounded-sm object-cover ${isItemLoading ? 'opacity-50' : 'hover:opacity-60'}`, draggable: false })), isItemLoading && (_jsx("div", { className: "absolute inset-0 bg-background/80 flex items-center justify-center", children: _jsx("div", { className: "w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin" }) })), !isItemLoading && (_jsx("div", { className: "absolute inset-0 bg-background/20 opacity-0 hover:opacity-100 transition-opacity duration-200" }))] }) }) }, itemKey));
             }) }));
     }
     // Determine empty state type

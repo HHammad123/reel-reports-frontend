@@ -34,6 +34,7 @@ export const ImageOverlayPanel = () => {
     const { addAtPlayhead } = useTimelinePositioning();
     const { getAspectRatioDimensions } = useAspectRatio();
     const [localOverlay, setLocalOverlay] = useState(null);
+    const hasLoadedInitialImages = useRef(false);
     
     // Track previous selectedOverlayId to prevent unnecessary updates
     const prevSelectedIdRef = useRef(selectedOverlayId);
@@ -41,6 +42,65 @@ export const ImageOverlayPanel = () => {
     // Store overlays in a ref to access latest without causing re-renders
     const overlaysRef = useRef(overlays);
     overlaysRef.current = overlays;
+    
+    // Load session images automatically when component mounts
+    useEffect(() => {
+        const loadSessionImages = async () => {
+            // Only load once on mount
+            if (hasLoadedInitialImages.current) return;
+            
+            // Check if we have session images adaptor
+            const sessionImagesAdaptor = imageAdaptors.find(adaptor => adaptor.name === 'session-images');
+            if (!sessionImagesAdaptor) {
+                hasLoadedInitialImages.current = true;
+                return;
+            }
+            
+            setIsLoading(true);
+            try {
+                // Load session images with empty query to get all images
+                const results = await searchImages({ query: '', page: 1, perPage: 100 });
+                if (results.items && results.items.length > 0) {
+                    setImages(results.items);
+                    setSourceResults(results.sourceResults || []);
+                }
+                hasLoadedInitialImages.current = true;
+            } catch (error) {
+                console.error('Failed to load session images:', error);
+                hasLoadedInitialImages.current = true;
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        
+        loadSessionImages();
+    }, [searchImages, imageAdaptors]);
+    
+    // Reload session images when search query is cleared
+    useEffect(() => {
+        // Only reload if we've already loaded initial images and search is empty
+        if (!hasLoadedInitialImages.current || searchQuery.trim() !== '') return;
+        
+        const reloadSessionImages = async () => {
+            const sessionImagesAdaptor = imageAdaptors.find(adaptor => adaptor.name === 'session-images');
+            if (!sessionImagesAdaptor) return;
+            
+            setIsLoading(true);
+            try {
+                const results = await searchImages({ query: '', page: 1, perPage: 100 });
+                setImages(results.items);
+                setSourceResults(results.sourceResults || []);
+            } catch (error) {
+                console.error('Failed to reload session images:', error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        
+        // Debounce to avoid too many reloads
+        const timeoutId = setTimeout(reloadSessionImages, 300);
+        return () => clearTimeout(timeoutId);
+    }, [searchQuery, searchImages, imageAdaptors]);
     
     // CRITICAL FIX: Only update when selectedOverlayId changes, not when overlays array is recreated
     // This prevents infinite loops when handleUpdateOverlay updates the overlays array
@@ -85,11 +145,29 @@ export const ImageOverlayPanel = () => {
     /**
      * Handles the image search form submission
      * Searches across all configured image adaptors
+     * If query is empty, reloads session images
      */
     const handleSearch = async (e) => {
         e.preventDefault();
-        if (!searchQuery.trim())
+        
+        // If search query is empty, reload session images
+        if (!searchQuery.trim()) {
+            const sessionImagesAdaptor = imageAdaptors.find(adaptor => adaptor.name === 'session-images');
+            if (sessionImagesAdaptor) {
+                setIsLoading(true);
+                try {
+                    const results = await searchImages({ query: '', page: 1, perPage: 100 });
+                    setImages(results.items);
+                    setSourceResults(results.sourceResults || []);
+                } catch (error) {
+                    console.error('Failed to reload session images:', error);
+                } finally {
+                    setIsLoading(false);
+                }
+            }
             return;
+        }
+        
         setIsLoading(true);
         try {
             const results = await searchImages({ query: searchQuery, page: 1, perPage: 50 });

@@ -13,6 +13,7 @@ import Guidlines from '../Components/VideoGuidlines/Guidlines'
 import DynamicQuestion from '../Components/DynamicQuestion'
 import { selectToken, selectIsAuthenticated, selectUser } from '../redux/slices/userSlice'
 import { useNavigate, useParams } from 'react-router-dom'
+import Loader from '../Components/Loader'
 
 const wrapAdditional = (value) => {
   if (value && typeof value === 'object' && Object.keys(value).length > 0) {
@@ -1408,13 +1409,13 @@ const Home = () => {
         )}
       </div>
       {showVideoPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <h4 className="text-lg font-semibold text-gray-900">{isMerging ? 'Merging video…' : 'Generating Video…'}</h4>
-            <p className="mt-1 text-sm text-gray-600">{isMerging ? 'Redirecting to Media…' : 'Redirecting to Videos list…'}</p>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-50"
+          overlayBg="bg-black/50"
+          title={isMerging ? 'Merging video…' : 'Generating Video…'}
+          description={isMerging ? 'Redirecting to Media…' : 'Redirecting to Videos list…'}
+        />
       )}
     </div>
   )

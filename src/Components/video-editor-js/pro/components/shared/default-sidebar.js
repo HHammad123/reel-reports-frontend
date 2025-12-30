@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Film, Music, Type, Subtitles, ImageIcon, FolderOpen, Sticker, Layout, ChevronsLeft, Settings, } from "lucide-react";
+import { Film, Music, Type, Subtitles, ImageIcon, FolderOpen, Sticker, Layout, ChevronsLeft, Settings, Shapes } from "lucide-react";
 // Import OverlayType directly from types to avoid export issues
 import { OverlayType } from "../../types";
 // Import hooks and contexts directly
@@ -14,6 +14,7 @@ import { ImageOverlayPanel } from "../overlay/images/image-overlay-panel";
 import { LocalMediaPanel } from "../overlay/local-media/local-media-panel";
 import { StickersPanel } from "../overlay/stickers/stickers-panel";
 import { TemplateOverlayPanel } from "../overlay/templates/template-overlay-panel";
+import { ShapesOverlayPanel } from "../overlay/shapes/shapes-overlay-panel";
 import { SettingsPanel } from "../settings/settings-panel";
 // Import UI components directly
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, } from "../ui/sidebar";
@@ -53,6 +54,8 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
                 return "Caption";
             case OverlayType.IMAGE:
                 return "Image";
+            case OverlayType.SHAPE:
+                return "Shapes";
             case OverlayType.LOCAL_DIR:
                 return "Uploads";
             case OverlayType.STICKER:
@@ -102,6 +105,13 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
             type: OverlayType.IMAGE,
         },
         {
+            title: getPanelTitle(OverlayType.SHAPE),
+            url: "#",
+            icon: Shapes,
+            panel: OverlayType.SHAPE,
+            type: OverlayType.SHAPE,
+        },
+        {
             title: getPanelTitle(OverlayType.STICKER),
             url: "#",
             icon: Sticker,
@@ -146,6 +156,8 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
                 return _jsx(CaptionsOverlayPanel, {});
             case OverlayType.IMAGE:
                 return _jsx(ImageOverlayPanel, {});
+            case OverlayType.SHAPE:
+                return _jsx(ShapesOverlayPanel, {});
             case OverlayType.STICKER:
                 return _jsx(StickersPanel, {});
             case OverlayType.LOCAL_DIR:

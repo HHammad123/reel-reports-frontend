@@ -41,6 +41,7 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     const canvasRef = useRef(null);
     const lastProcessedFrameRef = useRef(null);
     const frameSkipRef = useRef(0);
+    const videoErrorRef = useRef(false);
     
     // Use prop baseUrl first, then context baseUrl
     const resolvedBaseUrl = baseUrl || contextBaseUrl;
@@ -58,6 +59,39 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     else if (overlay.src && overlay.src.startsWith("/")) {
         videoSrc = toAbsoluteUrl(overlay.src, resolvedBaseUrl);
     }
+    
+    // Handle video playback errors
+    const handleVideoError = useCallback((error) => {
+        if (videoErrorRef.current) return; // Only log once
+        videoErrorRef.current = true;
+        
+        console.error('❌ [VideoLayerContent] Video playback error:', {
+            overlayId: overlay.id,
+            overlayType: overlay.type,
+            videoSrc: videoSrc?.substring(0, 100) + '...',
+            error: error,
+            errorCode: error?.code,
+            errorMessage: error?.message,
+            possibleCauses: [
+                'CORS configuration issue',
+                'Invalid MIME type (should be video/mp4)',
+                'Video format not supported',
+                'Video file does not exist or is corrupted',
+                'Network connectivity issue'
+            ]
+        });
+        
+        // Log specific error codes
+        if (error?.code) {
+            const errorCodes = {
+                1: 'MEDIA_ERR_ABORTED - Video loading aborted',
+                2: 'MEDIA_ERR_NETWORK - Network error while loading video',
+                3: 'MEDIA_ERR_DECODE - Video decoding error',
+                4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - Video format not supported or source invalid'
+            };
+            console.error(`Error Code ${error.code}: ${errorCodes[error.code] || 'Unknown error'}`);
+        }
+    }, [overlay.id, overlay.type, videoSrc]);
     
     // Process video frame with greenscreen/chart background removal - OPTIMIZED: Skip frames to reduce lag
     const processVideoFrame = useCallback((videoFrame) => {
@@ -85,9 +119,10 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
             });
         }
         
-        // CRITICAL: Skip frames to reduce CPU usage - process every 2nd frame
-        // This reduces processing by 50% while maintaining visual quality
-        frameSkipRef.current = (frameSkipRef.current + 1) % 2;
+        // OPTIMIZED: Skip frames to reduce CPU usage - process every 3rd frame (reduced from every 2nd)
+        // This reduces processing by 66% while maintaining acceptable visual quality
+        // For smoother playback, we prioritize frame rate over perfect chroma key quality
+        frameSkipRef.current = (frameSkipRef.current + 1) % 3;
         if (frameSkipRef.current !== 0 && lastProcessedFrameRef.current) {
             return; // Skip this frame, use last processed frame
         }
@@ -119,7 +154,7 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
         if (isChartVideo) {
             // White background removal for charts
             const WHITE_THRESHOLD = 240; // Pixels with RGB > 240 are considered white
-            const step = 2; // Process every 2nd pixel for performance
+            const step = 3; // OPTIMIZED: Process every 3rd pixel (reduced from 2nd) for better performance
             for (let i = 0; i < data.length; i += step * 4) {
                 const red = data[i];
                 const green = data[i + 1];
@@ -140,8 +175,8 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
         const smoothing = (_j = config.smoothing) !== null && _j !== void 0 ? _j : 0;
         const spill = (_k = config.spill) !== null && _k !== void 0 ? _k : 0;
         // OPTIMIZED: Process pixels in chunks to avoid blocking main thread
-        // Process every 2nd pixel (reduces processing by 50%)
-        const step = 2; // Process every 2nd pixel
+        // Process every 3rd pixel (reduces processing by 66% for smoother playback)
+        const step = 3; // Process every 3rd pixel (reduced from 2nd)
         for (let i = 0; i < data.length; i += step * 4) {
             const red = data[i];
             const green = data[i + 1];
@@ -189,6 +224,8 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
         // Don't block rendering for ANY videos to prevent lag with multiple layers
         // Videos will load and play as they become ready
         // No blocking - videos load asynchronously
+        // Reset error state when video source changes
+        videoErrorRef.current = false;
     }, [overlay.src, videoSrc]);
     
     // Greenscreen removal callback for video frame processing
@@ -295,7 +332,7 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
                             top: 0,
                             left: 0,
                             opacity: 0,
-                        }, volume: (_g = overlay.styles.volume) !== null && _g !== void 0 ? _g : 1, playbackRate: (_h = overlay.speed) !== null && _h !== void 0 ? _h : 1 }), _jsx("canvas", { ref: canvasRef, width: overlay.width, height: overlay.height, style: {
+                        }, volume: (_g = overlay.styles.volume) !== null && _g !== void 0 ? _g : 1, playbackRate: (_h = overlay.speed) !== null && _h !== void 0 ? _h : 1, onError: handleVideoError }), _jsx("canvas", { ref: canvasRef, width: overlay.width, height: overlay.height, style: {
                             ...videoStyle,
                             position: 'absolute',
                             top: 0,
@@ -303,5 +340,5 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
                         } })] }) }));
     }
     // Normal rendering without greenscreen removal
-    return (_jsx("div", { style: containerStyle, children: _jsx(Html5Video, { src: videoSrc, trimBefore: startFromFrames, style: videoStyle, volume: (_j = overlay.styles.volume) !== null && _j !== void 0 ? _j : 1, playbackRate: (_k = overlay.speed) !== null && _k !== void 0 ? _k : 1 }) }));
+    return (_jsx("div", { style: containerStyle, children: _jsx(Html5Video, { src: videoSrc, trimBefore: startFromFrames, style: videoStyle, volume: (_j = overlay.styles.volume) !== null && _j !== void 0 ? _j : 1, playbackRate: (_k = overlay.speed) !== null && _k !== void 0 ? _k : 1, onError: handleVideoError }) }));
 };

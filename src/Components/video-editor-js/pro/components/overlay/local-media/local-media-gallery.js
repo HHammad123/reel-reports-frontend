@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { useLocalMedia } from "../../../contexts/local-media-context";
 import { formatBytes, formatDuration } from "../../../utils/general/format-utils";
 import { Button } from "../../ui/button";
@@ -20,15 +20,20 @@ import { setCurrentNewItemDragData, setCurrentNewItemDragType } from "../../adva
 export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll }) {
     const { localMediaFiles, addMediaFile, removeMediaFile, isLoading } = useLocalMedia();
     // Normalize session media into file-like objects
+    // Videos from session data should appear in Videos tab (type: 'video')
+    // Images from session data should appear in Images tab (type: 'image')
     const normalizedSessionMedia = useMemo(() => {
         const base = Array.isArray(sessionMedia) ? sessionMedia : [];
         return base.map((m, idx) => {
             const path = m.path || m.url || m.src || "";
+            // Preserve the type from session media (should be 'video', 'image', or 'audio')
+            // This ensures videos appear in Videos tab, images in Images tab, etc.
+            const mediaType = m.type || "video";
             return ({
                 id: m.id || `session-${idx}`,
-                name: m.title || m.name || `Session Video ${idx + 1}`,
+                name: m.title || m.name || `Session ${mediaType === 'video' ? 'Video' : mediaType === 'image' ? 'Image' : 'Media'} ${idx + 1}`,
                 path,
-                type: m.type || "video",
+                type: mediaType, // Preserve type so videos go to Videos tab, images to Images tab
                 duration: m.duration || m.mediaSrcDuration || m.length || 10,
                 size: m.size || 0,
                 thumbnail: m.thumbnail || m.poster || m.url || "",
@@ -36,7 +41,8 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
             });
         });
     }, [sessionMedia]);
-    const [activeTab, setActiveTab] = useState("all");
+    const [activeTab, setActiveTab] = useState("upload");
+    // Note: Removed auto-switch to video tab to allow users to access upload section
     const [selectedFile, setSelectedFile] = useState(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [uploadError, setUploadError] = useState(null);
@@ -44,6 +50,11 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
     // Create source results for the tabs - memoized to prevent recalculation
     const allMediaFiles = useMemo(() => [...normalizedSessionMedia, ...localMediaFiles], [normalizedSessionMedia, localMediaFiles]);
     const sourceResults = useMemo(() => [
+        {
+            adaptorName: "upload",
+            adaptorDisplayName: "Upload",
+            itemCount: 0, // Upload tab doesn't need a count
+        },
         {
             adaptorName: "image",
             adaptorDisplayName: "Images",
@@ -61,7 +72,13 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
         },
     ], [allMediaFiles]);
     // Filter media files based on active tab - memoized to prevent recalculation
+    // Session media should only appear in Videos and Images tabs, not in Upload tab
     const filteredMedia = useMemo(() => {
+        // Don't show any media files in the Upload tab
+        if (activeTab === "upload") {
+            return [];
+        }
+        // Filter by type for other tabs (images, videos, audio)
         return allMediaFiles.filter((file) => {
             if (activeTab === "all")
                 return true;
@@ -266,12 +283,16 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
     const renderMediaItem = useCallback((file) => {
         const rawPath = file.path || file.url || file.src || "";
         const resolvedThumb = file.thumbnail || rawPath;
-        return (_jsxs("div", { className: "relative group/item border border-gray-200 rounded-md overflow-hidden cursor-pointer \n          hover:border-gray-300 transition-all \n          bg-white shadow-sm hover:shadow-md", onClick: () => handleMediaSelect(file), draggable: true, onDragStart: handleDragStart(file), onDragEnd: handleDragEnd, children: [_jsxs("div", { className: "aspect-video relative", children: [file.type === "image" && (_jsx("img", { src: resolvedThumb, alt: file.name, className: "absolute inset-0 w-full h-full object-cover bg-gray-50", draggable: false })), file.type === "video" && (_jsxs(_Fragment, { children: [_jsx("img", { src: resolvedThumb, alt: file.name, className: "absolute inset-0 w-full h-full object-cover bg-gray-50", draggable: false }), _jsx("div", { className: "absolute bottom-1.5 right-1.5 bg-black/75 text-white text-xs px-1.5 py-0.5 rounded-md", children: formatDuration(file.duration) })] })), file.type === "audio" && (_jsx("div", { className: "w-full h-full flex items-center justify-center bg-gray-50", children: _jsx(Music, { className: "w-10 h-10 text-gray-400" }) }))] }), _jsxs("div", { className: "p-2.5 bg-white", children: [_jsx("p", { className: "text-sm font-extralight truncate text-gray-800", children: file.name }), _jsx("p", { className: "text-xs text-gray-500 mt-0.5", children: formatBytes(file.size) })] }), _jsx("button", { className: "absolute top-2 right-2 bg-red-500\n            text-white p-1.5 rounded-full opacity-0 group-hover/item:opacity-100 transition-all duration-200 \n            shadow-sm hover:shadow-md transform hover:scale-105", onClick: (e) => {
+        const videoUrl = file.type === "video" ? (file.path || file.url || file.src || "") : "";
+        return (_jsxs("div", { className: "relative group/item border border-gray-200 rounded-md overflow-hidden cursor-pointer \n          hover:border-gray-300 transition-all \n          bg-white shadow-sm hover:shadow-md", onClick: () => handleMediaSelect(file), draggable: true, onDragStart: handleDragStart(file), onDragEnd: handleDragEnd, children: [_jsxs("div", { className: "aspect-video relative", children: [file.type === "image" && (_jsx("img", { src: resolvedThumb, alt: file.name, className: "absolute inset-0 w-full h-full object-cover bg-gray-50", draggable: false })), file.type === "video" && (_jsxs(_Fragment, { children: [videoUrl ? (_jsx("video", { src: videoUrl, className: "absolute inset-0 w-full h-full object-cover bg-gray-50", muted: true, playsInline: true, preload: "metadata", onLoadedMetadata: (e) => {
+                            // Ensure video is loaded and displayed
+                            e.currentTarget.currentTime = 0.1; // Seek to 0.1s to show a frame
+                        }, draggable: false })) : (_jsx("img", { src: resolvedThumb, alt: file.name, className: "absolute inset-0 w-full h-full object-cover bg-gray-50", draggable: false })), _jsx("div", { className: "absolute bottom-1.5 right-1.5 bg-black/75 text-white text-xs px-1.5 py-0.5 rounded-md", children: formatDuration(file.duration) })] })), file.type === "audio" && (_jsx("div", { className: "w-full h-full flex items-center justify-center bg-gray-50", children: _jsx(Music, { className: "w-10 h-10 text-gray-400" }) }))] }), _jsxs("div", { className: "p-2.5 bg-white", children: [_jsx("p", { className: "text-sm font-extralight truncate text-gray-800", children: file.name }), _jsx("p", { className: "text-xs text-gray-500 mt-0.5", children: formatBytes(file.size) })] }), _jsx("button", { className: "absolute top-2 right-2 bg-red-500\n            text-white p-1.5 rounded-full opacity-0 group-hover/item:opacity-100 transition-all duration-200 \n            shadow-sm hover:shadow-md transform hover:scale-105", onClick: (e) => {
                         e.stopPropagation();
                         if (!file._session) {
                         removeMediaFile(file.id);
                         }
                     }, title: "Delete media", children: _jsx(Trash2, { className: "w-3.5 h-3.5" }) })] }, file.id));
     }, [handleMediaSelect, removeMediaFile, handleDragStart, handleDragEnd]);
-    return (_jsxs("div", { className: "h-full flex flex-col bg-white", children: [_jsx("h2", { className: "text-sm font-extralight text-gray-800 mb-4", children: "Saved Uploads" }), _jsxs("div", { className: "flex justify-between items-center mb-4", children: [_jsxs("div", { className: "flex items-center gap-2", children: [onClearAll && (_jsx(Button, { variant: "outline", size: "sm", className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", onClick: onClearAll, children: [_jsx(X, { className: "w-4 h-4" }), "Clear All"] })), _jsxs(Button, { variant: "default", size: "sm", className: "gap-1 bg-blue-600 hover:bg-blue-700 text-white border-0", onClick: handleUploadClick, disabled: isLoading, children: [isLoading ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(Upload, { className: "w-4 h-4" })), "Upload"] }), _jsx("input", { ref: fileInputRef, id: "file-upload", type: "file", className: "hidden", onChange: handleFileUpload, accept: "image/*,video/*,audio/*", disabled: isLoading })] })] }), uploadError && (_jsx("div", { className: "bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-4", children: uploadError })), _jsxs("div", { className: "flex-1 flex flex-col", children: [_jsx(UnifiedTabs, { sourceResults: sourceResults, activeTab: activeTab, onTabChange: setActiveTab, className: "mb-4" }), _jsx("div", { className: "flex-1 overflow-y-auto", children: isLoading ? (_jsxs("div", { className: "h-full flex flex-col items-center justify-center text-center space-y-4 text-sm text-gray-500", children: [_jsx(Loader2, { className: "w-5 h-5 animate-spin" }), _jsx("p", { children: "Loading media files..." })] })) : filteredMedia.length === 0 ? (_jsxs("div", { className: "h-full flex flex-col font-extralight items-center justify-center py-8 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-8 w-8 mb-2" }), _jsx("p", { className: "text-sm text-center", children: "No media files" }), _jsx("p", { className: "text-xs text-center mt-1", children: "Upload your first media file to get started" }), _jsx(Button, { variant: "default", size: "sm", onClick: handleUploadClick, className: "text-xs mt-3 bg-blue-600 hover:bg-blue-700 text-white", children: "Upload Media" })] })) : (_jsx("div", { className: "flex flex-col gap-2", children: filteredMedia.map(renderMediaItem) })) })] }), _jsx(Dialog, { open: previewOpen, onOpenChange: setPreviewOpen, children: _jsxs(DialogContent, { className: "max-w-2xl bg-white", children: [_jsxs(DialogHeader, { children: [_jsx(DialogTitle, { className: "text-gray-800", children: selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.name }), _jsxs(DialogDescription, { className: "text-gray-600", children: [selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.type, " \u2022 ", formatBytes(selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.size)] })] }), _jsx("div", { className: "flex justify-center", children: renderPreviewContent() }), _jsx("div", { className: "flex justify-end mt-4", children: _jsx(Button, { variant: "default", size: "sm", className: "bg-blue-600 hover:bg-blue-700 text-white", onClick: handleAddToTimeline, children: "Add to Timeline" }) })] }) })] }));
+    return (_jsxs("div", { className: "h-full flex flex-col bg-white", children: [_jsx("h2", { className: "text-sm font-extralight text-gray-800 mb-4", children: "Saved Uploads" }), _jsx(UnifiedTabs, { sourceResults: sourceResults, activeTab: activeTab, onTabChange: setActiveTab, className: "mb-4", showAllTab: false }), uploadError && (_jsx("div", { className: "bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-4", children: uploadError })), _jsxs("div", { className: "flex-1 flex flex-col overflow-hidden", children: activeTab === "upload" ? (_jsxs("div", { className: "flex flex-col gap-4 p-4", children: [_jsxs("div", { className: "flex items-center gap-2", children: [onClearAll && (_jsx(Button, { variant: "outline", size: "sm", className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", onClick: onClearAll, children: [_jsx(X, { className: "w-4 h-4" }), "Clear All"] })), _jsxs(Button, { variant: "default", size: "sm", className: "gap-1 bg-blue-600 hover:bg-blue-700 text-white border-0", onClick: handleUploadClick, disabled: isLoading, children: [isLoading ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(Upload, { className: "w-4 h-4" })), "Upload"] }), _jsx("input", { ref: fileInputRef, id: "file-upload", type: "file", className: "hidden", onChange: handleFileUpload, accept: "image/*,video/*,audio/*", disabled: isLoading, multiple: true })] }), _jsxs("div", { className: "flex flex-col items-center justify-center py-12 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-12 w-12 mb-4 text-gray-400" }), _jsx("p", { className: "text-sm font-medium mb-2", children: "Upload Media Files" }), _jsx("p", { className: "text-xs text-gray-400 mb-4", children: "Upload images, videos, or audio files to use in your video" }), _jsx(Button, { variant: "default", size: "sm", onClick: handleUploadClick, disabled: isLoading, className: "bg-blue-600 hover:bg-blue-700 text-white", children: isLoading ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "w-4 h-4 animate-spin mr-2" }), "Uploading..."] })) : (_jsxs(_Fragment, { children: [_jsx(Upload, { className: "w-4 h-4 mr-2" }), "Select Files"] })) })] })] })) : (_jsx("div", { className: "flex-1 overflow-y-auto", children: isLoading ? (_jsxs("div", { className: "h-full flex flex-col items-center justify-center text-center space-y-4 text-sm text-gray-500", children: [_jsx(Loader2, { className: "w-5 h-5 animate-spin" }), _jsx("p", { children: "Loading media files..." })] })) : filteredMedia.length === 0 ? (_jsxs("div", { className: "h-full flex flex-col font-extralight items-center justify-center py-8 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-8 w-8 mb-2" }), _jsx("p", { className: "text-sm text-center", children: "No media files" }), _jsx("p", { className: "text-xs text-center mt-1", children: "Switch to Upload tab to add files" })] })) : (_jsx("div", { className: "flex flex-col gap-2 p-2", children: filteredMedia.map(renderMediaItem) })) })) }), _jsx(Dialog, { open: previewOpen, onOpenChange: setPreviewOpen, children: _jsxs(DialogContent, { className: "max-w-2xl bg-white", children: [_jsxs(DialogHeader, { children: [_jsx(DialogTitle, { className: "text-gray-800", children: selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.name }), _jsxs(DialogDescription, { className: "text-gray-600", children: [selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.type, " \u2022 ", formatBytes(selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.size)] })] }), _jsx("div", { className: "flex justify-center", children: renderPreviewContent() }), _jsx("div", { className: "flex justify-end mt-4", children: _jsx(Button, { variant: "default", size: "sm", className: "bg-blue-600 hover:bg-blue-700 text-white", onClick: handleAddToTimeline, children: "Add to Timeline" }) })] }) })] }));
 }
