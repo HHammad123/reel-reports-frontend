@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { hasAutosave, clearAutosave } from "../utils/general/indexdb-helper";
+// Autosave removed - IndexedDB imports removed
 import { DEFAULT_OVERLAYS } from "app/constants";
 /**
  * Custom hook to load project state (overlays) from API via URL parameter.
@@ -117,31 +117,16 @@ export function useProjectStateFromUrl(paramName = "projectId", projectId = "Tes
                 if (projectBackgroundColor) {
                     console.log(`[useProjectStateFromUrl] Project background color: ${projectBackgroundColor}`);
                 }
-                // Check if there's existing autosave data
-                const hasExistingAutosave = await hasAutosave(projectId);
-                if (hasExistingAutosave) {
-                    // Store project data and show modal for user decision
-                    console.log("[useProjectStateFromUrl] Existing autosave found, showing confirmation modal");
-                    pendingProjectDataRef.current = {
-                        overlays: projectData.overlays,
-                        aspectRatio: projectAspectRatio,
-                        backgroundColor: projectBackgroundColor
-                    };
-                    setShowModal(true);
-                    setIsLoading(false);
+                // Autosave check removed - load project directly
+                console.log("[useProjectStateFromUrl] Loading project");
+                setOverlays(projectData.overlays);
+                if (projectAspectRatio) {
+                    setAspectRatio(projectAspectRatio);
                 }
-                else {
-                    // No autosave conflict - load project directly
-                    console.log("[useProjectStateFromUrl] No autosave conflict, loading project");
-                    setOverlays(projectData.overlays);
-                    if (projectAspectRatio) {
-                        setAspectRatio(projectAspectRatio);
-                    }
-                    if (projectBackgroundColor) {
-                        setBackgroundColor(projectBackgroundColor);
-                    }
-                    setIsLoading(false);
+                if (projectBackgroundColor) {
+                    setBackgroundColor(projectBackgroundColor);
                 }
+                setIsLoading(false);
             }
             catch (error) {
                 console.error(`[useProjectStateFromUrl] Failed to load project:`, error);
@@ -154,8 +139,7 @@ export function useProjectStateFromUrl(paramName = "projectId", projectId = "Tes
     // Handler for when user confirms they want to load the project
     const onConfirmLoad = async () => {
         if (pendingProjectDataRef.current) {
-            console.log("[useProjectStateFromUrl] User confirmed load, clearing autosave and loading project");
-            await clearAutosave(projectId);
+            console.log("[useProjectStateFromUrl] User confirmed load, loading project");
             setOverlays(pendingProjectDataRef.current.overlays);
             if (pendingProjectDataRef.current.aspectRatio) {
                 setAspectRatio(pendingProjectDataRef.current.aspectRatio);

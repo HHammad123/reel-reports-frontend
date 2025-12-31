@@ -5077,7 +5077,7 @@ const Brandimages = () => {
                 >Add</button>
               </div>
               {/* Or type a custom font */}
-              <div className="flex gap-2">
+              {/* <div className="flex gap-2">
                 <input
                   type="text"
                   placeholder="Enter font name (e.g., Inter)"
@@ -5090,7 +5090,7 @@ const Brandimages = () => {
                   onClick={() => { if (newFont.trim()) { setWorkingFonts(prev => Array.from(new Set([...(prev||[]), newFont.trim()]))); setNewFont(''); } }}
                   className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md"
                 >Add</button>
-              </div>
+              </div> */}
               {workingFonts && workingFonts.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {workingFonts.map((f, i) => (

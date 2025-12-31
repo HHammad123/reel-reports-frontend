@@ -1,7 +1,11 @@
+// Autosave functionality has been removed
+// This file is kept for backward compatibility but all autosave features are disabled
+
 import { useEffect, useRef, useState } from "react";
-import { saveEditorState, loadEditorState } from "../utils/general/indexdb-helper";
+
 /**
  * Hook for automatically saving editor state to IndexedDB
+ * DISABLED: Autosave functionality has been removed
  *
  * @param projectId Unique identifier for the project
  * @param state Current state to be saved
@@ -9,102 +13,30 @@ import { saveEditorState, loadEditorState } from "../utils/general/indexdb-helpe
  * @returns Object with functions to manually save and load state
  */
 export const useAutosave = (projectId, state, options = {}) => {
-    const { interval = 5000, onLoad, onSave, isLoadingProject = false } = options;
-    const timerRef = useRef(null);
-    const lastSavedStateRef = useRef("");
-    const [hasCheckedForAutosave, setHasCheckedForAutosave] = useState(false);
+    const { onLoad, isLoadingProject = false } = options;
     const [isInitialLoadComplete, setIsInitialLoadComplete] = useState(false);
-    // Automatically load saved state on mount, but only once and after project loading completes
+
+    // Autosave functionality removed - just mark as complete immediately
     useEffect(() => {
-        const autoLoadState = async () => {
-            if (hasCheckedForAutosave)
-                return;
-            // Wait for project loading to complete before loading from IndexedDB
-            // This ensures project overlays take precedence over saved state
-            if (isLoadingProject) {
-                console.log('[Autosave] Waiting for project to load before checking IndexedDB...');
-                return;
-            }
-            try {
-                console.log('[Autosave] Checking for saved state in IndexedDB...');
-                const loadedState = await loadEditorState(projectId);
-                if (loadedState && onLoad) {
-                    console.log('[Autosave] Restored saved state from IndexedDB');
-                    onLoad(loadedState);
-                }
-                else {
-                    console.log('[Autosave] No saved state found in IndexedDB');
-                }
-                setHasCheckedForAutosave(true);
-                setIsInitialLoadComplete(true);
-            }
-            catch (error) {
-                console.error('[Autosave] Failed to auto-load state:', error);
-                // Always complete the load even if it fails to prevent infinite loading
-                setHasCheckedForAutosave(true);
-                setIsInitialLoadComplete(true);
-            }
-        };
-        autoLoadState();
-    }, [projectId, onLoad, hasCheckedForAutosave, isLoadingProject]);
-    // Set up autosave timer
-    useEffect(() => {
-        // Don't start autosave if projectId is not valid
-        if (!projectId)
+        if (isLoadingProject) {
             return;
-        const saveIfChanged = async () => {
-            const currentStateString = JSON.stringify(state);
-            // Only save if state has changed since last save
-            if (currentStateString !== lastSavedStateRef.current) {
-                try {
-                    await saveEditorState(projectId, state);
-                    lastSavedStateRef.current = currentStateString;
-                    if (onSave)
-                        onSave();
-                }
-                catch (error) {
-                    console.error('[Autosave] Save failed:', error);
-                }
-            }
-        };
-        // Set up interval for autosave
-        timerRef.current = setInterval(saveIfChanged, interval);
-        // Clean up timer on unmount
-        return () => {
-            if (timerRef.current) {
-                clearInterval(timerRef.current);
-                timerRef.current = null;
-            }
-        };
-    }, [projectId, state, interval, onSave]);
-    // Function to manually save state
+        }
+        // Mark as complete without checking IndexedDB
+        setIsInitialLoadComplete(true);
+    }, [isLoadingProject]);
+
+    // Function to manually save state - DISABLED
     const saveState = async () => {
-        try {
-            await saveEditorState(projectId, state);
-            lastSavedStateRef.current = JSON.stringify(state);
-            if (onSave)
-                onSave();
-            return true;
-        }
-        catch (error) {
-            console.error('[Autosave] Manual save failed:', error);
-            return false;
-        }
+        console.log('[Autosave] Manual save disabled - autosave functionality removed');
+        return false;
     };
-    // Function to manually load state
+
+    // Function to manually load state - DISABLED
     const loadState = async () => {
-        try {
-            const loadedState = await loadEditorState(projectId);
-            if (loadedState && onLoad) {
-                onLoad(loadedState);
-            }
-            return loadedState;
-        }
-        catch (error) {
-            console.error('[Autosave] Manual load failed:', error);
-            return null;
-        }
+        console.log('[Autosave] Manual load disabled - autosave functionality removed');
+        return null;
     };
+
     return {
         saveState,
         loadState,

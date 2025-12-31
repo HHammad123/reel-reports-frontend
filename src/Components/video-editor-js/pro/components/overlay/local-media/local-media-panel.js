@@ -17,7 +17,7 @@ import { DEFAULT_IMAGE_DURATION_FRAMES, IMAGE_DURATION_PERCENTAGE } from "../../
  * 3. Add uploaded media to the timeline
  */
 export const LocalMediaPanel = () => {
-    const { overlays, currentFrame, setOverlays, setSelectedOverlayId, durationInFrames } = useEditorContext();
+    const { overlays, currentFrame, setOverlays, setSelectedOverlayId, durationInFrames, aspectRatio } = useEditorContext();
     const { clearMediaFiles } = useLocalMedia();
     const { addAtPlayhead } = useTimelinePositioning();
     const { getAspectRatioDimensions } = useAspectRatio();
@@ -297,6 +297,6 @@ export const LocalMediaPanel = () => {
         }
     }, [setOverlays, setSelectedOverlayId, clearMediaFiles]);
 
-    return (_jsx("div", { className: "flex flex-col gap-4 p-2 bg-white h-full", children: _jsx(LocalMediaGallery, { onSelectMedia: handleAddToTimeline, sessionMedia: sessionMedia, onClearAll: handleClearAll }) }));
+    return (_jsx("div", { className: "flex flex-col gap-4 p-2 bg-white h-full", children: _jsx(LocalMediaGallery, { onSelectMedia: handleAddToTimeline, sessionMedia: sessionMedia, onClearAll: handleClearAll, aspectRatio: aspectRatio || '16:9' }) }));
 };
 export default LocalMediaPanel;

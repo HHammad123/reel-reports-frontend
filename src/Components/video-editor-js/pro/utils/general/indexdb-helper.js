@@ -77,157 +77,51 @@ export const initDatabase = () => {
 };
 /**
  * Save editor state to autosave store
+ * DISABLED: Autosave functionality has been removed
  * @param projectId Unique identifier for the project
  * @param editorState Current state of the editor
- * @returns Promise that resolves when the save is complete
+ * @returns Promise that resolves immediately without saving
  */
 export const saveEditorState = async (projectId, editorState) => {
-    try {
-        const db = await initDatabase();
-        const transaction = db.transaction([AUTOSAVE_STORE], "readwrite");
-        const store = transaction.objectStore(AUTOSAVE_STORE);
-        
-        const autosaveRecord = {
-            id: projectId,
-            timestamp: new Date().toISOString(),
-            editorState: editorState
-        };
-        
-        await new Promise((resolve, reject) => {
-            const request = store.put(autosaveRecord);
-            request.onsuccess = () => {
-                console.log("[IndexedDB] Saved editor state for projectId:", projectId);
-                resolve();
-            };
-            request.onerror = (event) => {
-                console.error("[IndexedDB] Error saving editor state:", event.target.error);
-                reject(event.target.error);
-            };
-        });
-    } catch (error) {
-        console.error("[IndexedDB] Failed to save editor state:", error);
-        throw error;
-    }
+    console.log("[IndexedDB] Autosave disabled - saveEditorState called but not saving");
+    return Promise.resolve();
 };
 /**
  * Load editor state from autosave store
+ * DISABLED: Autosave functionality has been removed
  * @param projectId Unique identifier for the project
- * @returns Promise that resolves with the editor state or null if not found
+ * @returns Promise that resolves with null (no saved state)
  */
 export const loadEditorState = async (projectId) => {
-    try {
-        const db = await initDatabase();
-        const transaction = db.transaction([AUTOSAVE_STORE], "readonly");
-        const store = transaction.objectStore(AUTOSAVE_STORE);
-        
-        return new Promise((resolve, reject) => {
-            const request = store.get(projectId);
-            request.onsuccess = () => {
-                const result = request.result;
-                if (result && result.editorState) {
-                    console.log("[IndexedDB] Loaded editor state for projectId:", projectId);
-                    resolve(result.editorState);
-                } else {
-                    console.log("[IndexedDB] No saved state found for projectId:", projectId);
-                    resolve(null);
-                }
-            };
-            request.onerror = (event) => {
-                console.error("[IndexedDB] Error loading editor state:", event.target.error);
-                reject(event.target.error);
-            };
-        });
-    } catch (error) {
-        console.error("[IndexedDB] Failed to load editor state:", error);
-        return null;
-    }
+    console.log("[IndexedDB] Autosave disabled - loadEditorState returning null");
+    return Promise.resolve(null);
 };
 /**
  * Clear autosave data for a project
+ * DISABLED: Autosave functionality has been removed
  * @param projectId Unique identifier for the project
- * @returns Promise that resolves when the delete is complete
+ * @returns Promise that resolves immediately without clearing
  */
 export const clearAutosave = async (projectId) => {
-    try {
-        const db = await initDatabase();
-        const transaction = db.transaction([AUTOSAVE_STORE], "readwrite");
-        const store = transaction.objectStore(AUTOSAVE_STORE);
-        
-        return new Promise((resolve, reject) => {
-            const request = store.delete(projectId);
-            request.onsuccess = () => {
-                console.log("[IndexedDB] Cleared autosave for projectId:", projectId);
-                resolve();
-            };
-            request.onerror = (event) => {
-                console.error("[IndexedDB] Error clearing autosave:", event.target.error);
-                reject(event.target.error);
-            };
-        });
-    } catch (error) {
-        console.error("[IndexedDB] Failed to clear autosave:", error);
-        throw error;
-    }
+    console.log("[IndexedDB] Autosave disabled - clearAutosave called but not clearing");
+    return Promise.resolve();
 };
 /**
  * Check if there's an autosave for a project
+ * DISABLED: Autosave functionality has been removed
  * @param projectId Unique identifier for the project
- * @returns Promise that resolves with the timestamp of the autosave or null if not found
+ * @returns Promise that resolves with null (no autosave found)
  */
 export const hasAutosave = async (projectId) => {
-    try {
-        const db = await initDatabase();
-        const transaction = db.transaction([AUTOSAVE_STORE], "readonly");
-        const store = transaction.objectStore(AUTOSAVE_STORE);
-        
-        return new Promise((resolve, reject) => {
-            const request = store.get(projectId);
-            request.onsuccess = () => {
-                const result = request.result;
-                if (result && result.timestamp) {
-                    console.log("[IndexedDB] Found autosave for projectId:", projectId, "timestamp:", result.timestamp);
-                    resolve(result.timestamp);
-                } else {
-                    console.log("[IndexedDB] No autosave found for projectId:", projectId);
-                    resolve(null);
-                }
-            };
-            request.onerror = (event) => {
-                console.error("[IndexedDB] Error checking autosave:", event.target.error);
-                reject(event.target.error);
-            };
-        });
-    } catch (error) {
-        console.error("[IndexedDB] Failed to check autosave:", error);
-        return null;
-    }
+    console.log("[IndexedDB] Autosave disabled - hasAutosave returning null");
+    return Promise.resolve(null);
 };
 /**
  * Get all autosave records
- * @returns Promise that resolves with an array of all autosave records
+ * DISABLED: Autosave functionality has been removed
+ * @returns Promise that resolves with an empty array
  */
 export const getAllAutosaves = async () => {
-    try {
-        const db = await initDatabase();
-        const transaction = db.transaction([AUTOSAVE_STORE], "readonly");
-        const store = transaction.objectStore(AUTOSAVE_STORE);
-        
-        return new Promise((resolve, reject) => {
-            const request = store.getAll();
-            request.onsuccess = () => {
-                const records = request.result || [];
-                // Sort by timestamp descending (most recent first)
-                records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                console.log("[IndexedDB] Loaded", records.length, "autosave records");
-                resolve(records);
-            };
-            request.onerror = (event) => {
-                console.error("[IndexedDB] Error loading all autosaves:", event.target.error);
-                reject(event.target.error);
-            };
-        });
-    } catch (error) {
-        console.error("[IndexedDB] Failed to load all autosaves:", error);
-        return [];
-    }
+    console.log("[IndexedDB] Autosave disabled - getAllAutosaves returning empty array");
+    return Promise.resolve([]);
 };

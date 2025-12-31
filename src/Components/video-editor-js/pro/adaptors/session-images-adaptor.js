@@ -90,11 +90,44 @@ export const sessionImagesAdaptor = {
                 };
             }).filter(Boolean); // Remove null entries
             
+            // Also include logos from window.__SESSION_MEDIA_FILES
+            let logoImages = [];
+            if (typeof window !== 'undefined' && Array.isArray(window.__SESSION_MEDIA_FILES)) {
+                logoImages = window.__SESSION_MEDIA_FILES
+                    .filter(item => item.type === 'image' && item._isLogo && item.url)
+                    .map((logo, idx) => ({
+                        id: logo.id || `session-logo-${idx}`,
+                        type: 'image',
+                        width: 1920,
+                        height: 1080,
+                        thumbnail: logo.url || logo.path || logo.src || '',
+                        src: {
+                            original: logo.url || logo.path || logo.src || '',
+                            large: logo.url || logo.path || logo.src || '',
+                            medium: logo.url || logo.path || logo.src || '',
+                            small: logo.url || logo.path || logo.src || '',
+                            thumbnail: logo.url || logo.path || logo.src || '',
+                        },
+                        alt: logo.title || logo.name || `Logo ${idx + 1}`,
+                        attribution: {
+                            author: 'Session',
+                            source: 'User Session',
+                            license: 'User Content',
+                        },
+                        _session: true,
+                        _isLogo: true,
+                        _logoImage: true,
+                    }));
+            }
+            
+            // Combine session images with logos
+            const allImages = [...standardImages, ...logoImages];
+            
             // Filter by search query if provided
-            let filteredImages = standardImages;
+            let filteredImages = allImages;
             if (params.query && params.query.trim()) {
                 const query = params.query.toLowerCase();
-                filteredImages = standardImages.filter(img => 
+                filteredImages = allImages.filter(img => 
                     (img.alt && img.alt.toLowerCase().includes(query)) ||
                     (img.sceneNumber && String(img.sceneNumber).includes(query))
                 );

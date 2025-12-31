@@ -1,11 +1,12 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { AlertCircle, Music2 } from "lucide-react";
+import { AlertCircle, Music2, Upload, X, Loader2 } from "lucide-react";
 import { OverlayType } from "../../../types";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useEditorSidebar } from "../../../contexts/sidebar-context";
 import { useMediaAdaptors } from "../../../contexts/media-adaptor-context";
+import { useLocalMedia } from "../../../contexts/local-media-context";
 import { SoundDetails } from "./sound-details";
 import SoundCard from "./sound-card";
 import { getSrcDuration } from "../../../hooks/use-src-duration";
@@ -29,8 +30,11 @@ const SoundsOverlayPanel = () => {
     const [playingTrack, setPlayingTrack] = useState(null);
     const [audioTracks, setAudioTracks] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [uploadError, setUploadError] = useState(null);
     const audioRefs = useRef({});
+    const fileInputRef = useRef(null);
     const { searchAudio, audioAdaptors } = useMediaAdaptors();
+    const { localMediaFiles, addMediaFile, clearMediaFiles, isLoading: isUploadingMedia } = useLocalMedia();
     const { overlays, selectedOverlayId, changeOverlay, currentFrame, setOverlays, setSelectedOverlayId, } = useEditorContext();
     const { setActivePanel, setIsOpen } = useEditorSidebar();
     const { addAtPlayhead } = useTimelinePositioning();
@@ -107,11 +111,46 @@ const SoundsOverlayPanel = () => {
         changeOverlay(updatedOverlay.id, () => updatedOverlay);
     };
     /**
+     * Convert local media audio files to audio track format
+     */
+    const convertLocalMediaToAudioTracks = useCallback((mediaFiles) => {
+        return mediaFiles
+            .filter(file => file.type === 'audio')
+            .map(file => {
+                // Build the audio URL - handle both local paths and external URLs
+                let audioUrl = file.path || '';
+                if (audioUrl && !audioUrl.startsWith('http://') && !audioUrl.startsWith('https://') && !audioUrl.startsWith('blob:')) {
+                    // Local path - add prefix if needed
+                    const cleanPath = audioUrl.startsWith('/') ? audioUrl.slice(1) : audioUrl;
+                    audioUrl = `/api/latest/local-media/serve/${cleanPath}`;
+                }
+                
+                return {
+                    id: `local-media-${file.id}`,
+                    title: file.name || 'Uploaded Audio',
+                    artist: 'Uploaded',
+                    duration: file.duration || 0,
+                    file: audioUrl,
+                    _source: 'local-media',
+                    _sourceDisplayName: 'Uploaded Audio',
+                };
+            });
+    }, []);
+    
+    /**
+     * Merge local media audio files with adaptor audio tracks
+     */
+    const mergedAudioTracks = useMemo(() => {
+        const localAudioTracks = convertLocalMediaToAudioTracks(localMediaFiles);
+        return [...localAudioTracks, ...audioTracks];
+    }, [localMediaFiles, audioTracks, convertLocalMediaToAudioTracks]);
+    
+    /**
      * Initialize audio elements for each sound and handle cleanup
      */
     useEffect(() => {
-        audioTracks.forEach((sound) => {
-            if (sound.file) {
+        mergedAudioTracks.forEach((sound) => {
+            if (sound.file && !audioRefs.current[sound.id]) {
                 audioRefs.current[sound.id] = new Audio(sound.file);
             }
         });
@@ -122,7 +161,7 @@ const SoundsOverlayPanel = () => {
                 audio.currentTime = 0;
             });
         };
-    }, [audioTracks]);
+    }, [mergedAudioTracks]);
     /**
      * Toggles play/pause state for a sound track
      * Ensures only one track plays at a time
@@ -158,8 +197,14 @@ const SoundsOverlayPanel = () => {
      */
     const handleAddToTimeline = async (sound) => {
         // Get the audio URL using the adaptor's getAudioUrl method (same pattern as videos)
-        const adaptor = audioAdaptors.find((a) => a.name === sound._source);
-        const audioUrl = (adaptor === null || adaptor === void 0 ? void 0 : adaptor.getAudioUrl) ? adaptor.getAudioUrl(sound) : (sound.file || sound.src || '');
+        // For local media, use the file URL directly
+        let audioUrl;
+        if (sound._source === 'local-media') {
+            audioUrl = sound.file || sound.src || '';
+        } else {
+            const adaptor = audioAdaptors.find((a) => a.name === sound._source);
+            audioUrl = (adaptor === null || adaptor === void 0 ? void 0 : adaptor.getAudioUrl) ? adaptor.getAudioUrl(sound) : (sound.file || sound.src || '');
+        }
         
         // Check if the sound has a valid URL
         if (!audioUrl || audioUrl.trim() === '') {
@@ -262,9 +307,57 @@ const SoundsOverlayPanel = () => {
         }
     }, [audioOverlays]);
     
+    /**
+     * Handle file upload
+     */
+    const handleFileUpload = useCallback(async (event) => {
+        const files = event.target.files;
+        if (files && files.length > 0) {
+            try {
+                setUploadError(null);
+                // Filter for audio files only
+                const audioFiles = Array.from(files).filter(file => 
+                    file.type.startsWith('audio/')
+                );
+                
+                if (audioFiles.length === 0) {
+                    setUploadError('Please select audio files only');
+                    event.target.value = '';
+                    return;
+                }
+                
+                // Upload each audio file
+                for (const file of audioFiles) {
+                    await addMediaFile(file);
+                }
+                
+                // Reset the input value to allow uploading the same file again
+                event.target.value = '';
+            } catch (error) {
+                console.error("Error uploading audio file:", error);
+                setUploadError("Failed to upload audio file. Please try again.");
+                event.target.value = '';
+            }
+        }
+    }, [addMediaFile]);
+    
+    /**
+     * Handle upload button click
+     */
+    const handleUploadClick = useCallback(() => {
+        fileInputRef.current?.click();
+    }, []);
+    
+    /**
+     * Handle clear all uploaded audio files
+     */
+    const handleClearAll = useCallback(() => {
+        clearMediaFiles();
+    }, [clearMediaFiles]);
+    
     // Filter out "Default Audio" source and show all audio tracks without tabs
     const filteredAudioTracks = useMemo(() => {
-        return audioTracks.filter(track => {
+        return mergedAudioTracks.filter(track => {
             // Filter out "Default Audio" adaptor - check both source name and display name
             const source = track._source || '';
             const sourceDisplayName = track._sourceDisplayName || '';
@@ -276,7 +369,7 @@ const SoundsOverlayPanel = () => {
                    !sourceLower.includes('default') && 
                    !displayNameLower.includes('default audio');
         });
-    }, [audioTracks]);
+    }, [mergedAudioTracks]);
     
     // Handle clicking on an existing audio overlay to select it
     const handleSelectAudioOverlay = (overlayId) => {
@@ -287,6 +380,21 @@ const SoundsOverlayPanel = () => {
     };
     
     return (_jsx("div", { className: "flex flex-col p-2 bg-background h-full overflow-hidden", children: !localOverlay ? (_jsxs(_Fragment, { children: [
+        // Upload section
+        _jsxs("div", { className: "shrink-0 mb-4 pb-4 border-b border-border", children: [
+            _jsxs("div", { className: "flex items-center gap-2 mb-4", children: [
+                _jsx(Button, { variant: "outline", size: "sm", className: "gap-1 text-purple-700 border-purple-300 hover:bg-purple-50 hover:text-purple-900 bg-white", onClick: handleClearAll, disabled: isUploadingMedia || localMediaFiles.filter(f => f.type === 'audio').length === 0, children: [_jsx(X, { className: "w-4 h-4" }), "Clear All"] }),
+                _jsxs(Button, { variant: "outline", size: "sm", className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", onClick: handleUploadClick, disabled: isUploadingMedia, children: [isUploadingMedia ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(Upload, { className: "w-4 h-4" })), "Upload"] }),
+                _jsx("input", { ref: fileInputRef, id: "audio-file-upload", type: "file", className: "hidden", onChange: handleFileUpload, accept: "audio/*", disabled: isUploadingMedia, multiple: true })
+            ]}),
+            uploadError && (_jsx("div", { className: "bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded mb-4 text-xs", children: uploadError })),
+            _jsxs("div", { className: "flex flex-col items-center justify-center py-12 text-center", children: [
+                _jsxs("svg", { className: "h-16 w-16 mb-4 text-purple-600", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 1.5, children: [_jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5m-9 0V21h18V7.5" })] }),
+                _jsx("p", { className: "text-sm font-semibold mb-2 text-purple-900", children: "Upload Media Files" }),
+                _jsx("p", { className: "text-xs text-purple-700 mb-4", children: "Upload images, videos, or audio files to use in your video." }),
+                _jsx(Button, { variant: "outline", size: "sm", onClick: handleUploadClick, disabled: isUploadingMedia, className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", children: isUploadingMedia ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "w-4 h-4 animate-spin mr-2" }), "Uploading..."] })) : (_jsxs(_Fragment, { children: [_jsx(Upload, { className: "w-4 h-4 mr-2" }), "Select Files"] })) })
+            ]})
+        ]}),
         // Show existing audio overlays from timeline at the top
         audioOverlays.length > 0 && (_jsxs("div", { className: "shrink-0 mb-4 pb-4 border-b border-border", children: [
             _jsxs("div", { className: "flex items-center gap-2 mb-3", children: [

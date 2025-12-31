@@ -5,14 +5,15 @@ import { defaultCaptionStyles } from "../components/overlay/captions/caption-set
  * Hook to manage overlay elements in the editor
  * Overlays can be text, videos, or sounds that are positioned on the timeline
  * @param initialOverlays - Default overlays to initialize with
- * @param waitForAutosave - If true, wait for autosave check before using initialOverlays
+ * @param waitForAutosave - DEPRECATED: Autosave functionality has been removed, this parameter is ignored
  * @returns Object containing overlay state and management functions
  */
 export const useOverlays = (initialOverlays, waitForAutosave) => {
-    // Initialize with provided overlays or default overlays (unless waiting for autosave)
-    const [overlays, setOverlays] = useState(waitForAutosave ? [] : (initialOverlays || []));
-    // Track if we've applied initial overlays when waitForAutosave is true
-    const [hasAppliedInitial, setHasAppliedInitial] = useState(!waitForAutosave);
+    // Initialize with provided overlays or default overlays
+    // Autosave removed - waitForAutosave parameter is ignored
+    const [overlays, setOverlays] = useState(initialOverlays || []);
+    // Track if we've applied initial overlays (always true since autosave is removed)
+    const [hasAppliedInitial, setHasAppliedInitial] = useState(true);
     // Tracks which overlay is currently selected for editing
     const [selectedOverlayId, setSelectedOverlayId] = useState(null);
     // Multi-select support: tracks which overlays are currently selected
@@ -197,16 +198,13 @@ export const useOverlays = (initialOverlays, waitForAutosave) => {
         changeOverlay(updatedOverlay.id, () => updatedOverlay);
     }, [changeOverlay]);
     /**
-     * Apply initial overlays if we're waiting for autosave and no saved state was loaded
+     * Apply initial overlays if needed
+     * DEPRECATED: Autosave functionality has been removed, this function is a no-op
      */
     const applyInitialOverlaysIfNeeded = useCallback((savedStateExists) => {
-        if (waitForAutosave && !hasAppliedInitial) {
-            if (!savedStateExists && initialOverlays) {
-                setOverlays(initialOverlays);
-            }
-            setHasAppliedInitial(true);
-        }
-    }, [waitForAutosave, hasAppliedInitial, initialOverlays]);
+        // Autosave removed - this function does nothing
+        // Initial overlays are already applied in useState initialization
+    }, []);
     return {
         overlays,
         selectedOverlayId,

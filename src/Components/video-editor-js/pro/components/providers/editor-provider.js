@@ -11,7 +11,7 @@ import { useRendering } from "../../hooks/use-rendering";
 import { useRenderer } from "../../contexts/renderer-context";
 import { TIMELINE_CONSTANTS } from "../advanced-timeline/constants";
 import { transformOverlaysForAspectRatio, shouldTransformOverlays, getDimensionsForAspectRatio } from "../../utils/aspect-ratio-transform";
-import { saveEditorState } from "../../utils/general/indexdb-helper";
+// Autosave removed - IndexedDB import removed
 export const EditorProvider = ({ children, projectId, defaultOverlays = [], defaultAspectRatio, defaultBackgroundColor, autoSaveInterval = 10000, fps = 30, onSaving, onSaved, onOverlaysChange, onSelectedOverlayChange, 
 // Loading State
 isLoadingProject = false, 
@@ -871,34 +871,7 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
         }
     }, [onSaving, onSaved, overlays, projectId, aspectRatio, defaultAspectRatio, backgroundColor, defaultBackgroundColor, fps]);
     
-    // Autosave functionality - save every 2 minutes (120000ms)
-    useEffect(() => {
-        if (!projectId) return;
-        
-        const autosaveInterval = 120000; // 2 minutes in milliseconds
-        
-        const autosaveTimer = setInterval(async () => {
-            try {
-                // Auto-save current project state to IndexedDB
-                const editorState = {
-                    overlays: overlays || [],
-                    aspectRatio: aspectRatio || defaultAspectRatio,
-                    playbackRate: playbackRate || 1,
-                    backgroundColor: backgroundColor || defaultBackgroundColor,
-                    fps: fps || 30,
-                };
-                
-                await saveEditorState(projectId, editorState);
-                console.log('[EditorProvider] Autosave completed for projectId:', projectId);
-            } catch (error) {
-                console.error('[EditorProvider] Autosave error:', error);
-            }
-        }, autosaveInterval);
-        
-        return () => {
-            clearInterval(autosaveTimer);
-        };
-    }, [overlays, projectId, aspectRatio, defaultAspectRatio, backgroundColor, defaultBackgroundColor, fps, playbackRate]);
+    // Autosave functionality removed
     
     // Load saved project on mount (only once when projectId is available and not loading)
     const hasLoadedSavedProjectRef = useRef(false);

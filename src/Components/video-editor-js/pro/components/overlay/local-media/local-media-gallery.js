@@ -7,6 +7,7 @@ import { Loader2, Upload, Trash2, Music, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, } from "../../ui/dialog";
 import { UnifiedTabs } from "../shared/unified-tabs";
 import { setCurrentNewItemDragData, setCurrentNewItemDragType } from "../../advanced-timeline/hooks/use-new-item-drag";
+import { getUserId } from "../../../utils/general/user-id";
 /**
  * User Media Gallery Component
  *
@@ -17,8 +18,26 @@ import { setCurrentNewItemDragData, setCurrentNewItemDragType } from "../../adva
  * - Delete media files
  * - Add media to the timeline
  */
-export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll }) {
-    const { localMediaFiles, addMediaFile, removeMediaFile, isLoading } = useLocalMedia();
+export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll, aspectRatio = '16:9' }) {
+    const { localMediaFiles, addMediaFile, removeMediaFile, isLoading, generatedImages, generatedVideos, isLoadingGeneratedMedia } = useLocalMedia();
+    
+    // Normalize aspect ratio helper function
+    const normalizeAspectRatio = useCallback((ratio) => {
+        if (!ratio || typeof ratio !== 'string') return '16:9';
+        // Normalize common separators: space, underscore, "x", "/", ":"
+        const cleaned = ratio.replace(/\s+/g, '').replace(/_/g, ':');
+        const match = cleaned.match(/(\d+(?:\.\d+)?)[:/xX](\d+(?:\.\d+)?)/);
+        if (match) {
+            const w = Number(match[1]);
+            const h = Number(match[2]);
+            if (w > 0 && h > 0) return `${w}:${h}`;
+        }
+        const lower = cleaned.toLowerCase();
+        if (lower === '9:16' || lower === '9x16') return '9:16';
+        if (lower === '16:9' || lower === '16x9') return '16:9';
+        return '16:9';
+    }, []);
+    
     // Normalize session media into file-like objects
     // Videos from session data should appear in Videos tab (type: 'video')
     // Images from session data should appear in Images tab (type: 'image')
@@ -48,7 +67,19 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
     const [uploadError, setUploadError] = useState(null);
     const fileInputRef = useRef(null);
     // Create source results for the tabs - memoized to prevent recalculation
-    const allMediaFiles = useMemo(() => [...normalizedSessionMedia, ...localMediaFiles], [normalizedSessionMedia, localMediaFiles]);
+    // Include generated images in the allMediaFiles for images tab
+    const allMediaFiles = useMemo(() => {
+        const baseFiles = [...normalizedSessionMedia, ...localMediaFiles];
+        // Add generated images only to images (when filtering by type)
+        return baseFiles;
+    }, [normalizedSessionMedia, localMediaFiles]);
+    
+    // Get all images including generated ones for the Images tab count
+    const allImagesForTab = useMemo(() => {
+        const regularImages = allMediaFiles.filter(file => file.type === "image");
+        return [...regularImages, ...generatedImages];
+    }, [allMediaFiles, generatedImages]);
+    
     const sourceResults = useMemo(() => [
         {
             adaptorName: "upload",
@@ -58,33 +89,62 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
         {
             adaptorName: "image",
             adaptorDisplayName: "Images",
-            itemCount: allMediaFiles.filter(file => file.type === "image").length,
+            itemCount: allImagesForTab.length,
         },
         {
             adaptorName: "video",
             adaptorDisplayName: "Videos",
-            itemCount: allMediaFiles.filter(file => file.type === "video").length,
+            itemCount: allMediaFiles.filter(file => file.type === "video").length + generatedVideos.length,
         },
         {
             adaptorName: "audio",
             adaptorDisplayName: "Audio",
             itemCount: allMediaFiles.filter(file => file.type === "audio").length,
         },
-    ], [allMediaFiles]);
-    // Filter media files based on active tab - memoized to prevent recalculation
+    ], [allMediaFiles, allImagesForTab, generatedVideos]);
+    // Filter media files based on active tab and aspect ratio - memoized to prevent recalculation
     // Session media should only appear in Videos and Images tabs, not in Upload tab
     const filteredMedia = useMemo(() => {
         // Don't show any media files in the Upload tab
         if (activeTab === "upload") {
             return [];
         }
-        // Filter by type for other tabs (images, videos, audio)
+        // For images tab, include generated images filtered by aspect ratio
+        if (activeTab === "image") {
+            const normalizedCurrentAspect = normalizeAspectRatio(aspectRatio);
+            const regularImages = allMediaFiles.filter((file) => file.type === "image");
+            
+            // Filter generated images by current aspect ratio
+            const filteredGeneratedImages = generatedImages.filter((img) => {
+                const imgAspect = normalizeAspectRatio(img._aspectRatio || '16:9');
+                return imgAspect === normalizedCurrentAspect;
+            });
+            
+            // For regular images (session/uploaded), show all (or filter by aspect if they have aspect ratio info)
+            // For now, show all regular images since they might not have aspect ratio metadata
+            return [...regularImages, ...filteredGeneratedImages];
+        }
+        // For videos tab, include generated videos filtered by aspect ratio
+        if (activeTab === "video") {
+            const normalizedCurrentAspect = normalizeAspectRatio(aspectRatio);
+            const regularVideos = allMediaFiles.filter((file) => file.type === "video");
+            
+            // Filter generated videos by current aspect ratio
+            const filteredGeneratedVideos = generatedVideos.filter((vid) => {
+                const vidAspect = normalizeAspectRatio(vid._aspectRatio || '16:9');
+                return vidAspect === normalizedCurrentAspect;
+            });
+            
+            // For regular videos (session/uploaded), show all
+            return [...regularVideos, ...filteredGeneratedVideos];
+        }
+        // Filter by type for other tabs (audio)
         return allMediaFiles.filter((file) => {
             if (activeTab === "all")
                 return true;
             return file.type === activeTab;
         });
-    }, [allMediaFiles, activeTab]);
+    }, [allMediaFiles, activeTab, generatedImages, generatedVideos, aspectRatio, normalizeAspectRatio]);
     // Handle file upload - memoized to prevent recreation
     const handleFileUpload = useCallback(async (event) => {
         const files = event.target.files;
@@ -294,5 +354,5 @@ export function LocalMediaGallery({ onSelectMedia, sessionMedia = [], onClearAll
                         }
                     }, title: "Delete media", children: _jsx(Trash2, { className: "w-3.5 h-3.5" }) })] }, file.id));
     }, [handleMediaSelect, removeMediaFile, handleDragStart, handleDragEnd]);
-    return (_jsxs("div", { className: "h-full flex flex-col bg-white", children: [_jsx("h2", { className: "text-sm font-extralight text-gray-800 mb-4", children: "Saved Uploads" }), _jsx(UnifiedTabs, { sourceResults: sourceResults, activeTab: activeTab, onTabChange: setActiveTab, className: "mb-4", showAllTab: false }), uploadError && (_jsx("div", { className: "bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-4", children: uploadError })), _jsxs("div", { className: "flex-1 flex flex-col overflow-hidden", children: activeTab === "upload" ? (_jsxs("div", { className: "flex flex-col gap-4 p-4", children: [_jsxs("div", { className: "flex items-center gap-2", children: [onClearAll && (_jsx(Button, { variant: "outline", size: "sm", className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", onClick: onClearAll, children: [_jsx(X, { className: "w-4 h-4" }), "Clear All"] })), _jsxs(Button, { variant: "default", size: "sm", className: "gap-1 bg-blue-600 hover:bg-blue-700 text-white border-0", onClick: handleUploadClick, disabled: isLoading, children: [isLoading ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(Upload, { className: "w-4 h-4" })), "Upload"] }), _jsx("input", { ref: fileInputRef, id: "file-upload", type: "file", className: "hidden", onChange: handleFileUpload, accept: "image/*,video/*,audio/*", disabled: isLoading, multiple: true })] }), _jsxs("div", { className: "flex flex-col items-center justify-center py-12 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-12 w-12 mb-4 text-gray-400" }), _jsx("p", { className: "text-sm font-medium mb-2", children: "Upload Media Files" }), _jsx("p", { className: "text-xs text-gray-400 mb-4", children: "Upload images, videos, or audio files to use in your video" }), _jsx(Button, { variant: "default", size: "sm", onClick: handleUploadClick, disabled: isLoading, className: "bg-blue-600 hover:bg-blue-700 text-white", children: isLoading ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "w-4 h-4 animate-spin mr-2" }), "Uploading..."] })) : (_jsxs(_Fragment, { children: [_jsx(Upload, { className: "w-4 h-4 mr-2" }), "Select Files"] })) })] })] })) : (_jsx("div", { className: "flex-1 overflow-y-auto", children: isLoading ? (_jsxs("div", { className: "h-full flex flex-col items-center justify-center text-center space-y-4 text-sm text-gray-500", children: [_jsx(Loader2, { className: "w-5 h-5 animate-spin" }), _jsx("p", { children: "Loading media files..." })] })) : filteredMedia.length === 0 ? (_jsxs("div", { className: "h-full flex flex-col font-extralight items-center justify-center py-8 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-8 w-8 mb-2" }), _jsx("p", { className: "text-sm text-center", children: "No media files" }), _jsx("p", { className: "text-xs text-center mt-1", children: "Switch to Upload tab to add files" })] })) : (_jsx("div", { className: "flex flex-col gap-2 p-2", children: filteredMedia.map(renderMediaItem) })) })) }), _jsx(Dialog, { open: previewOpen, onOpenChange: setPreviewOpen, children: _jsxs(DialogContent, { className: "max-w-2xl bg-white", children: [_jsxs(DialogHeader, { children: [_jsx(DialogTitle, { className: "text-gray-800", children: selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.name }), _jsxs(DialogDescription, { className: "text-gray-600", children: [selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.type, " \u2022 ", formatBytes(selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.size)] })] }), _jsx("div", { className: "flex justify-center", children: renderPreviewContent() }), _jsx("div", { className: "flex justify-end mt-4", children: _jsx(Button, { variant: "default", size: "sm", className: "bg-blue-600 hover:bg-blue-700 text-white", onClick: handleAddToTimeline, children: "Add to Timeline" }) })] }) })] }));
+    return (_jsxs("div", { className: "h-full flex flex-col bg-white", children: [_jsx("h2", { className: "text-sm font-extralight text-gray-800 mb-4", children: "Saved Uploads" }), _jsx(UnifiedTabs, { sourceResults: sourceResults, activeTab: activeTab, onTabChange: setActiveTab, className: "mb-4", showAllTab: false }), uploadError && (_jsx("div", { className: "bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-4", children: uploadError })), _jsxs("div", { className: "flex-1 flex flex-col overflow-hidden", children: activeTab === "upload" ? (_jsxs("div", { className: "flex flex-col gap-4 p-4", children: [_jsxs("div", { className: "flex items-center gap-2", children: [onClearAll && (_jsx(Button, { variant: "outline", size: "sm", className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", onClick: onClearAll, children: [_jsx(X, { className: "w-4 h-4" }), "Clear All"] })), _jsxs(Button, { variant: "default", size: "sm", className: "gap-1 bg-blue-600 hover:bg-blue-700 text-white border-0", onClick: handleUploadClick, disabled: isLoading, children: [isLoading ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(Upload, { className: "w-4 h-4" })), "Upload"] }), _jsx("input", { ref: fileInputRef, id: "file-upload", type: "file", className: "hidden", onChange: handleFileUpload, accept: "image/*,video/*,audio/*", disabled: isLoading, multiple: true })] }), _jsxs("div", { className: "flex flex-col items-center justify-center py-12 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-12 w-12 mb-4 text-gray-400" }), _jsx("p", { className: "text-sm font-medium mb-2", children: "Upload Media Files" }), _jsx("p", { className: "text-xs text-gray-400 mb-4", children: "Upload images, videos, or audio files to use in your video" }), _jsx(Button, { variant: "default", size: "sm", onClick: handleUploadClick, disabled: isLoading, className: "bg-blue-600 hover:bg-blue-700 text-white", children: isLoading ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "w-4 h-4 animate-spin mr-2" }), "Uploading..."] })) : (_jsxs(_Fragment, { children: [_jsx(Upload, { className: "w-4 h-4 mr-2" }), "Select Files"] })) })] })] })) : (_jsx("div", { className: "flex-1 overflow-y-auto", children: (isLoading || isLoadingGeneratedMedia) ? (_jsxs("div", { className: "h-full flex flex-col items-center justify-center text-center space-y-4 text-sm text-gray-500", children: [_jsx(Loader2, { className: "w-5 h-5 animate-spin" }), _jsx("p", { children: "Loading media files..." })] })) : filteredMedia.length === 0 ? (_jsxs("div", { className: "h-full flex flex-col font-extralight items-center justify-center py-8 text-gray-500 text-center", children: [_jsx(Upload, { className: "h-8 w-8 mb-2" }), _jsx("p", { className: "text-sm text-center", children: "No media files" }), _jsx("p", { className: "text-xs text-center mt-1", children: "Switch to Upload tab to add files" })] })) : (_jsx("div", { className: "flex flex-col gap-2 p-2", children: filteredMedia.map(renderMediaItem) })) })) }), _jsx(Dialog, { open: previewOpen, onOpenChange: setPreviewOpen, children: _jsxs(DialogContent, { className: "max-w-2xl bg-white", children: [_jsxs(DialogHeader, { children: [_jsx(DialogTitle, { className: "text-gray-800", children: selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.name }), _jsxs(DialogDescription, { className: "text-gray-600", children: [selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.type, " \u2022 ", formatBytes(selectedFile === null || selectedFile === void 0 ? void 0 : selectedFile.size)] })] }), _jsx("div", { className: "flex justify-center", children: renderPreviewContent() }), _jsx("div", { className: "flex justify-end mt-4", children: _jsx(Button, { variant: "default", size: "sm", className: "bg-blue-600 hover:bg-blue-700 text-white", onClick: handleAddToTimeline, children: "Add to Timeline" }) })] }) })] }));
 }
