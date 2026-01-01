@@ -86,6 +86,7 @@ export const sessionImagesAdaptor = {
                     },
                     _session: true,
                     _sessionImage: true,
+                    _source: 'session-images',
                     sceneNumber: img?.scene_number || img?.sceneNumber || (idx + 1),
                 };
             }).filter(Boolean); // Remove null entries
@@ -117,11 +118,135 @@ export const sessionImagesAdaptor = {
                         _session: true,
                         _isLogo: true,
                         _logoImage: true,
+                        _source: 'session-images',
                     }));
             }
             
-            // Combine session images with logos
-            const allImages = [...standardImages, ...logoImages];
+            // Fetch generated images from generate-media API
+            let generatedImages = [];
+            try {
+                const generatedMediaResponse = await fetch(
+                    `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(userId)}/generated-media`,
+                    {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    }
+                );
+                
+                if (generatedMediaResponse.ok) {
+                    const generatedMediaText = await generatedMediaResponse.text();
+                    let generatedMediaData;
+                    try {
+                        generatedMediaData = JSON.parse(generatedMediaText);
+                    } catch (_) {
+                        generatedMediaData = generatedMediaText;
+                    }
+                    
+                    const generatedImagesData = generatedMediaData?.generated_images || {};
+                    
+                    // Transform generated images to standard format
+                    // Only include images from the current session
+                    Object.keys(generatedImagesData).forEach((aspectRatio) => {
+                        const sessionsForRatio = generatedImagesData[aspectRatio];
+                        if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                            // Handle new structure: sessionsForRatio is an object with session names as keys
+                            Object.entries(sessionsForRatio).forEach(([sessionName, images]) => {
+                                // Filter: Only include images from current session
+                                // Session name might match session ID or contain it
+                                const sessionNameLower = String(sessionName || '').toLowerCase();
+                                const sessionIdLower = String(sessionId || '').toLowerCase();
+                                const isCurrentSession = sessionNameLower === sessionIdLower || 
+                                                       sessionNameLower.includes(sessionIdLower) ||
+                                                       sessionIdLower.includes(sessionNameLower);
+                                
+                                if (!isCurrentSession) return; // Skip images from other sessions
+                                
+                                if (Array.isArray(images)) {
+                                    images.forEach((imgUrl, idx) => {
+                                        let imageUrl = '';
+                                        let imageName = `${sessionName} - Image ${idx + 1}`;
+                                        
+                                        if (typeof imgUrl === 'string' && imgUrl) {
+                                            imageUrl = imgUrl;
+                                        } else if (imgUrl && typeof imgUrl === 'object') {
+                                            // Handle object format
+                                            imageUrl = imgUrl.image_url || imgUrl.url || imgUrl.src || '';
+                                            imageName = imgUrl.name || imgUrl.title || imageName;
+                                        }
+                                        
+                                        if (imageUrl) {
+                                            generatedImages.push({
+                                                id: `generated-img-${aspectRatio}-${sessionName}-${idx}`,
+                                                type: 'image',
+                                                width: 1920,
+                                                height: 1080,
+                                                thumbnail: imageUrl,
+                                                src: {
+                                                    original: imageUrl,
+                                                    large: imageUrl,
+                                                    medium: imageUrl,
+                                                    small: imageUrl,
+                                                    thumbnail: imageUrl,
+                                                },
+                                                alt: imageName,
+                                                attribution: {
+                                                    author: 'Generated',
+                                                    source: 'Generated Media',
+                                                    license: 'User Content',
+                                                },
+                                                _session: true,
+                                                _generated: true,
+                                                _sessionImage: true,
+                                                _aspectRatio: aspectRatio,
+                                                _sessionName: sessionName,
+                                                _sessionId: sessionId,
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                        } else if (Array.isArray(sessionsForRatio)) {
+                            // Legacy format: aspectRatio directly contains array of images
+                            // For legacy format, include all images (no session filtering)
+                            sessionsForRatio.forEach((imgUrl, idx) => {
+                                if (typeof imgUrl === 'string' && imgUrl) {
+                                    generatedImages.push({
+                                        id: `generated-img-${aspectRatio}-${idx}`,
+                                        type: 'image',
+                                        width: 1920,
+                                        height: 1080,
+                                        thumbnail: imgUrl,
+                                        src: {
+                                            original: imgUrl,
+                                            large: imgUrl,
+                                            medium: imgUrl,
+                                            small: imgUrl,
+                                            thumbnail: imgUrl,
+                                        },
+                                        alt: `Generated Image (${aspectRatio}) ${idx + 1}`,
+                                        attribution: {
+                                            author: 'Generated',
+                                            source: 'Generated Media',
+                                            license: 'User Content',
+                                        },
+                                        _session: true,
+                                        _generated: true,
+                                        _sessionImage: true,
+                                        _aspectRatio: aspectRatio,
+                                        _sessionId: sessionId,
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error fetching generated images:', error);
+                // Continue with other images even if generated images fail
+            }
+            
+            // Combine session images with logos and generated images
+            const allImages = [...standardImages, ...logoImages, ...generatedImages];
             
             // Filter by search query if provided
             let filteredImages = allImages;

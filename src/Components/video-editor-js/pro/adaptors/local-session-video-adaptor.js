@@ -78,7 +78,8 @@ export const createLocalSessionVideoAdaptor = () => ({
                 // Store video URL for direct access (always base video URL)
                 file: videoUrl,
                 // Flag to indicate this is a session video (for video element rendering)
-                _isSessionVideo: true
+                _isSessionVideo: true,
+                _source: 'local-session-videos',
             };
         });
         

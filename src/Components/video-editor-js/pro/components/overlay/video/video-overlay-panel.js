@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
 import { useAspectRatio } from "../../../hooks/use-aspect-ratio";
@@ -10,6 +10,7 @@ import { MediaOverlayPanel } from "../shared/media-overlay-panel";
 import { getSrcDuration } from "../../../hooks/use-src-duration";
 import { calculateIntelligentAssetSize, getAssetDimensions } from "../../../utils/asset-sizing";
 import { useVideoReplacement } from "../../../hooks/use-video-replacement";
+import { Loader2 } from "lucide-react";
 /**
  * VideoOverlayPanel is a component that provides video search and management functionality.
  * It allows users to:
@@ -31,36 +32,160 @@ export const VideoOverlayPanel = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [videos, setVideos] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingSessionVideos, setIsLoadingSessionVideos] = useState(false);
     const [isDurationLoading, setIsDurationLoading] = useState(false);
     const [loadingItemKey, setLoadingItemKey] = useState(null);
     const [sourceResults, setSourceResults] = useState([]);
+    const [generatedBaseVideos, setGeneratedBaseVideos] = useState([]);
+    const [sessionVideos, setSessionVideos] = useState([]);
     const { searchVideos, videoAdaptors } = useMediaAdaptors();
     const { isReplaceMode, startReplaceMode, cancelReplaceMode, replaceVideo } = useVideoReplacement();
     const { overlays, selectedOverlayId, changeOverlay, currentFrame, setOverlays, setSelectedOverlayId, } = useEditorContext();
     const { addAtPlayhead } = useTimelinePositioning();
     const { getAspectRatioDimensions } = useAspectRatio();
     const [localOverlay, setLocalOverlay] = useState(null);
+    const hasLoadedInitialVideos = useRef(false);
     
-    // Auto-load videos on mount (similar to audio panel)
+    // Fetch all videos from generate-base-video API for All tab
     useEffect(() => {
-        const loadVideos = async () => {
-            if (videoAdaptors.length === 0) return;
+        const fetchGeneratedBaseVideos = async () => {
+            try {
+                const userId = localStorage.getItem('token');
+                if (!userId) return;
+                
+                const response = await fetch(
+                    `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(userId)}/generated-base-videos`,
+                    {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    }
+                );
+                
+                if (!response.ok) return;
+                
+                const text = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (_) {
+                    data = text;
+                }
+                
+                const baseVideosData = data?.base_videos || {};
+                const allGeneratedVideos = [];
+                
+                // Transform all videos from generate-base-video API (all sessions, all aspect ratios)
+                Object.keys(baseVideosData).forEach((aspectRatio) => {
+                    const sessionsForRatio = baseVideosData[aspectRatio];
+                    if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                        Object.entries(sessionsForRatio).forEach(([sessionName, videos]) => {
+                            if (Array.isArray(videos)) {
+                                videos.forEach((videoUrl, idx) => {
+                                    let videoUrlStr = '';
+                                    let videoName = `${sessionName} - Video ${idx + 1}`;
+                                    
+                                    if (typeof videoUrl === 'string' && videoUrl) {
+                                        videoUrlStr = videoUrl;
+                                    } else if (videoUrl && typeof videoUrl === 'object') {
+                                        videoUrlStr = videoUrl.video_url || videoUrl.url || videoUrl.src || '';
+                                        videoName = videoUrl.name || videoUrl.title || videoName;
+                                    }
+                                    
+                                    if (videoUrlStr) {
+                                        allGeneratedVideos.push({
+                                            id: `generated-video-${aspectRatio}-${sessionName}-${idx}`,
+                                            type: 'video',
+                                            width: 1920,
+                                            height: 1080,
+                                            thumbnail: videoUrlStr,
+                                            file: videoUrlStr,
+                                            src: videoUrlStr,
+                                            alt: videoName,
+                                            title: videoName,
+                                            attribution: {
+                                                author: 'Generated',
+                                                source: 'Generated Base Video',
+                                                license: 'User Content',
+                                            },
+                                            _session: true,
+                                            _generated: true,
+                                            _sessionVideo: true,
+                                            _sessionName: sessionName,
+                                            _aspectRatio: aspectRatio,
+                                            _source: 'local-session-videos',
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                console.log('[VideoOverlayPanel] Fetched generated base videos:', allGeneratedVideos.length, 'videos from', Object.keys(baseVideosData).length, 'aspect ratios');
+                setGeneratedBaseVideos(allGeneratedVideos);
+            } catch (error) {
+                console.error('Failed to fetch generated base videos:', error);
+            }
+        };
+        
+        fetchGeneratedBaseVideos();
+    }, []);
+    
+    // Load session videos automatically when component mounts
+    useEffect(() => {
+        const loadSessionVideos = async () => {
+            // Only load once on mount
+            if (hasLoadedInitialVideos.current) return;
+            
+            // Check if we have session videos adaptor
+            const sessionVideosAdaptor = videoAdaptors.find(adaptor => adaptor.name === 'local-session-videos');
+            if (!sessionVideosAdaptor) {
+                // If no adaptor, still show generated base videos
+                setVideos(generatedBaseVideos);
+                hasLoadedInitialVideos.current = true;
+                return;
+            }
+            
+            setIsLoadingSessionVideos(true);
             setIsLoading(true);
             try {
-                // Search with empty query to get all available videos (including session videos)
-                const result = await searchVideos({ query: '', perPage: 50, page: 1 });
-                setVideos(result.items);
-                setSourceResults(result.sourceResults);
+                // Load session videos with empty query to get all videos (only current session)
+                const results = await searchVideos({ query: '', page: 1, perPage: 100 });
+                const sessionVids = results.items || [];
+                setSessionVideos(sessionVids);
+                
+                // For All tab: combine session videos with generated base videos
+                // For Session Videos tab: only show session videos (handled by MediaOverlayPanel filtering)
+                const allVideos = [...sessionVids, ...generatedBaseVideos];
+                setVideos(allVideos);
+                setSourceResults(results.sourceResults || []);
+                hasLoadedInitialVideos.current = true;
             } catch (error) {
-                console.error('Failed to load videos:', error);
-                setVideos([]);
-                setSourceResults([]);
+                console.error('Failed to load session videos:', error);
+                setSessionVideos([]);
+                // On error, still show generated base videos for All tab
+                setVideos(generatedBaseVideos);
+                hasLoadedInitialVideos.current = true;
             } finally {
+                setIsLoadingSessionVideos(false);
                 setIsLoading(false);
             }
         };
-        loadVideos();
-    }, [searchVideos, videoAdaptors]);
+        
+        loadSessionVideos();
+    }, [searchVideos, videoAdaptors, generatedBaseVideos]);
+    
+    // Update videos when generatedBaseVideos changes (in case they load after session videos)
+    useEffect(() => {
+        if (hasLoadedInitialVideos.current && generatedBaseVideos.length > 0) {
+            // Combine with existing session videos
+            const allVideos = [...sessionVideos, ...generatedBaseVideos];
+            setVideos(allVideos);
+        } else if (!hasLoadedInitialVideos.current && generatedBaseVideos.length > 0) {
+            // If generated videos load first, show them immediately
+            setVideos(generatedBaseVideos);
+        }
+    }, [generatedBaseVideos, sessionVideos]);
     useEffect(() => {
         if (selectedOverlayId === null) {
             setLocalOverlay(null);
@@ -73,8 +198,37 @@ export const VideoOverlayPanel = () => {
     }, [selectedOverlayId, overlays]);
     const handleSearch = async (e) => {
         e.preventDefault();
-        if (!searchQuery.trim())
+        
+        // If search query is empty, reload session videos
+        if (!searchQuery.trim()) {
+            const sessionVideosAdaptor = videoAdaptors.find(adaptor => adaptor.name === 'local-session-videos');
+            if (sessionVideosAdaptor) {
+                setIsLoadingSessionVideos(true);
+                setIsLoading(true);
+                try {
+                    const results = await searchVideos({ query: '', page: 1, perPage: 100 });
+                    const sessionVids = results.items || [];
+                    setSessionVideos(sessionVids);
+                    // Combine session videos with generated base videos for All tab
+                    const allVideos = [...sessionVids, ...generatedBaseVideos];
+                    setVideos(allVideos);
+                    setSourceResults(results.sourceResults || []);
+                } catch (error) {
+                    console.error('Failed to reload session videos:', error);
+                    setSessionVideos([]);
+                    // On error, still show generated base videos
+                    setVideos(generatedBaseVideos);
+                } finally {
+                    setIsLoadingSessionVideos(false);
+                    setIsLoading(false);
+                }
+            } else {
+                // If no adaptor, still show generated base videos
+                setVideos(generatedBaseVideos);
+            }
             return;
+        }
+        
         setIsLoading(true);
         try {
             const result = await searchVideos({
@@ -82,13 +236,35 @@ export const VideoOverlayPanel = () => {
                 perPage: 50,
                 page: 1,
             });
-            setVideos(result.items);
-            setSourceResults(result.sourceResults);
+            // Filter generated base videos by search query if provided
+            let filteredGeneratedVideos = generatedBaseVideos;
+            if (searchQuery.trim()) {
+                const queryLower = searchQuery.toLowerCase();
+                filteredGeneratedVideos = generatedBaseVideos.filter(vid => 
+                    (vid.alt && vid.alt.toLowerCase().includes(queryLower)) ||
+                    (vid.title && vid.title.toLowerCase().includes(queryLower)) ||
+                    (vid._sessionName && vid._sessionName.toLowerCase().includes(queryLower))
+                );
+            }
+            // Combine search results with filtered generated base videos
+            const allVideos = [...(result.items || []), ...filteredGeneratedVideos];
+            setVideos(allVideos);
+            setSourceResults(result.sourceResults || []);
         }
         catch (error) {
             console.error("Error searching videos:", error);
-            // Reset state on error
-            setVideos([]);
+            // On error, show generated base videos if search matches
+            if (searchQuery.trim()) {
+                const queryLower = searchQuery.toLowerCase();
+                const filtered = generatedBaseVideos.filter(vid => 
+                    (vid.alt && vid.alt.toLowerCase().includes(queryLower)) ||
+                    (vid.title && vid.title.toLowerCase().includes(queryLower)) ||
+                    (vid._sessionName && vid._sessionName.toLowerCase().includes(queryLower))
+                );
+                setVideos(filtered);
+            } else {
+                setVideos(generatedBaseVideos);
+            }
             setSourceResults([]);
         }
         finally {
@@ -263,5 +439,15 @@ export const VideoOverlayPanel = () => {
     const getItemKey = (video) => {
         return `${video._source}-${video.id}`;
     };
-    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: videos, isLoading: isLoading, isDurationLoading: isDurationLoading, loadingItemKey: loadingItemKey, hasAdaptors: videoAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddClip, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "videos", searchPlaceholder: isReplaceMode ? "Search for replacement video" : "Search videos", showSourceBadge: false, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(VideoDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeVideo: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay }));
+    
+    // Filter videos based on active tab
+    // For Session Videos tab: only show session videos (not generated base videos)
+    // For All tab: show all videos (session + generated base videos)
+    const filteredVideosForDisplay = useMemo(() => {
+        // This will be filtered by MediaOverlayPanel based on activeTab
+        // But we need to ensure session videos don't include generated base videos
+        return videos;
+    }, [videos]);
+    
+    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: filteredVideosForDisplay, isLoading: isLoading, isLoadingSessionImages: isLoadingSessionVideos, hasAdaptors: videoAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddClip, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "videos", searchPlaceholder: isReplaceMode ? "Search for replacement video" : "Search videos", showSourceBadge: false, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(VideoDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeVideo: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay, isDurationLoading: isDurationLoading, loadingItemKey: loadingItemKey, sessionImages: sessionVideos }));
 };

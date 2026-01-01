@@ -35,7 +35,9 @@ const AdminGeneratedVideos = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedAspectRatio, setSelectedAspectRatio] = useState('16:9')
+  const [baseVideosData, setBaseVideosData] = useState({}) // Store raw base_videos structure
   const abortControllerRef = useRef(null)
+  const isFetchingRef = useRef(false) // Track if fetch is in progress to prevent duplicate calls
 
   // Helper to normalize aspect ratio values for comparison
   const normalizeAspectRatio = (ratio) => {
@@ -62,36 +64,44 @@ const AdminGeneratedVideos = () => {
     return null
   }
 
-  // Filter videos based on selected aspect ratio
-  const filteredVideos = useMemo(() => {
-    if (!selectedAspectRatio || selectedAspectRatio === 'all') return videos
+  // Get sessions and videos for selected aspect ratio
+  const sessionsForAspectRatio = useMemo(() => {
+    if (!selectedAspectRatio || !baseVideosData[selectedAspectRatio]) return []
     
-    return videos.filter(video => {
-      if (!video || typeof video !== 'object') return false
-      
-      const aspectRatio = video?.aspect_ratio || 
-                         video?.aspectRatio || 
-                         video?.aspect_ratio_value ||
-                         video?.ratio ||
-                         video?.size ||
-                         video?.dimensions?.aspect_ratio
-      
-      const normalized = normalizeAspectRatio(aspectRatio)
-      return normalized === selectedAspectRatio
-    })
-  }, [videos, selectedAspectRatio])
+    const aspectRatioData = baseVideosData[selectedAspectRatio]
+    if (typeof aspectRatioData !== 'object') return []
+    
+    // Convert to array of { sessionName, videos } objects
+    return Object.entries(aspectRatioData).map(([sessionName, videos]) => ({
+      sessionName,
+      videos: Array.isArray(videos) ? videos : []
+    })).filter(session => session.videos.length > 0)
+  }, [selectedAspectRatio, baseVideosData])
 
   const fetchVideos = useCallback(
     async (abortSignal) => {
       if (!isAdmin || !userId) {
         setLoading(false)
+        isFetchingRef.current = false
         return
       }
+      
+      // Prevent duplicate calls
+      if (isFetchingRef.current) {
+        return
+      }
+      
+      isFetchingRef.current = true
       setLoading(true)
       setError('')
       try {
         const token = localStorage.getItem('token') || ''
-        const response = await fetch(`${ADMIN_BASE}/v1/users/user/${encodeURIComponent(userId)}/generated-base-videos`, {
+        const apiPath = `${ADMIN_BASE}/v1/users/user/${encodeURIComponent(userId)}/generated-base-videos`
+        
+        console.log('=== ADMIN GENERATED VIDEOS: API FETCH ===')
+        console.log('API Fetch Path:', apiPath)
+        
+        const response = await fetch(apiPath, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -130,85 +140,97 @@ const AdminGeneratedVideos = () => {
           return
         }
 
-        // Handle different response structures
+        console.log('=== ADMIN GENERATED VIDEOS: API RESPONSE ===')
+        console.log('Full API Response:', data)
+        console.log('Base Videos Structure:', data?.base_videos)
+        
+        // Store the raw base_videos structure
+        // Structure: base_videos[aspectRatio][sessionName] = [array of video URLs/objects]
+        const baseVideos = data?.base_videos || {}
+        setBaseVideosData(baseVideos)
+        
+        // Log the structure for debugging
+        console.log('=== ADMIN GENERATED VIDEOS: STRUCTURE BY ASPECT RATIO ===')
+        Object.keys(baseVideos).forEach(aspectRatio => {
+          const sessions = baseVideos[aspectRatio]
+          if (typeof sessions === 'object') {
+            console.log(`Aspect Ratio: ${aspectRatio}`)
+            Object.entries(sessions).forEach(([sessionName, videos]) => {
+              if (Array.isArray(videos)) {
+                console.log(`  Session: ${sessionName} - ${videos.length} videos`)
+              }
+            })
+          }
+        })
+        
+        // Also create flat array for backward compatibility
         let videosData = []
-        
-        // Log the response for debugging
-        console.log('Generated base videos API response:', data)
-        
-        if (Array.isArray(data)) {
-          videosData = data
+        if (data?.base_videos && typeof data.base_videos === 'object') {
+          Object.entries(data.base_videos).forEach(([aspectRatio, sessions]) => {
+            if (typeof sessions === 'object') {
+              Object.entries(sessions).forEach(([sessionName, videos]) => {
+                if (Array.isArray(videos)) {
+                  videos.forEach((video, idx) => {
+                    if (typeof video === 'string') {
+                      videosData.push({ 
+                        video_url: video, 
+                        url: video,
+                        aspect_ratio: aspectRatio,
+                        session_name: sessionName,
+                        video_id: `${aspectRatio}-${sessionName}-${idx}`
+                      })
+                    } else if (video && typeof video === 'object') {
+                      videosData.push({ 
+                        ...video, 
+                        aspect_ratio: aspectRatio,
+                        session_name: sessionName,
+                        video_id: video.id || video.video_id || `${aspectRatio}-${sessionName}-${idx}`
+                      })
+                    }
+                  })
+                }
+              })
+            }
+          })
         } else if (data?.generated_videos && typeof data.generated_videos === 'object') {
-          // If data has generated_videos object with aspect ratio keys
           Object.entries(data.generated_videos).forEach(([aspectRatio, videosList]) => {
             if (Array.isArray(videosList)) {
               videosList.forEach(video => {
                 if (video && typeof video === 'object') {
                   videosData.push({ ...video, aspect_ratio: aspectRatio })
                 } else if (typeof video === 'string') {
-                  // If video is just a URL string
                   videosData.push({ video_url: video, aspect_ratio: aspectRatio })
                 }
               })
-            } else if (typeof videosList === 'string') {
-              // If videosList is a single URL string
-              videosData.push({ video_url: videosList, aspect_ratio: aspectRatio })
             }
           })
-        } else if (data?.base_videos && typeof data.base_videos === 'object') {
-          // Handle base_videos object structure
-          Object.entries(data.base_videos).forEach(([aspectRatio, videosList]) => {
-            if (Array.isArray(videosList)) {
-              videosList.forEach(video => {
-                if (video && typeof video === 'object') {
-                  videosData.push({ ...video, aspect_ratio: aspectRatio })
-                } else if (typeof video === 'string') {
-                  videosData.push({ video_url: video, aspect_ratio: aspectRatio })
-                }
-              })
-            } else if (typeof videosList === 'string') {
-              videosData.push({ video_url: videosList, aspect_ratio: aspectRatio })
-            }
-          })
+        } else if (Array.isArray(data)) {
+          videosData = data
         } else if (Array.isArray(data?.videos)) {
           videosData = data.videos
         } else if (Array.isArray(data?.data)) {
           videosData = data.data
-        } else if (Array.isArray(data?.base_videos)) {
-          videosData = data.base_videos
-        } else if (data === null || data === undefined) {
-          videosData = []
-        } else if (typeof data === 'object' && data !== null) {
-          // Check if it's a single video object
-          if (data.video_url || data.url || data.video || data.src || data.link) {
-            videosData = [data]
-          } else if (Object.keys(data).length > 0) {
-            // Try to extract videos from object properties
-            Object.values(data).forEach(value => {
-              if (Array.isArray(value)) {
-                videosData.push(...value)
-              } else if (value && typeof value === 'object' && (value.video_url || value.url || value.video)) {
-                videosData.push(value)
-              }
-            })
-          }
         }
         
-        console.log('Processed videos data:', videosData)
         setVideos(videosData)
+        
+        // Set default aspect ratio if available
+        const availableAspectRatios = Object.keys(baseVideos).filter(key => {
+          const sessions = baseVideos[key]
+          return typeof sessions === 'object' && Object.values(sessions).some(videos => Array.isArray(videos) && videos.length > 0)
+        })
+        if (availableAspectRatios.length > 0 && !availableAspectRatios.includes(selectedAspectRatio)) {
+          setSelectedAspectRatio(availableAspectRatios[0])
+        }
+        
         setError('') // Clear any previous errors if we got a successful response
       } catch (err) {
         if (err.name === 'AbortError') {
           // Don't update state if request was aborted
-          console.log('Video fetch was aborted')
+          isFetchingRef.current = false
           return
         }
         console.error('Failed to fetch videos:', err)
-        console.error('Error details:', {
-          name: err.name,
-          message: err.message,
-          stack: err.stack
-        })
         setError(err.message || 'Failed to fetch videos.')
         setVideos([]) // Clear videos on error
       } finally {
@@ -216,6 +238,7 @@ const AdminGeneratedVideos = () => {
         if (!abortSignal || !abortSignal.aborted) {
           setLoading(false)
         }
+        isFetchingRef.current = false
       }
     },
     [isAdmin, userId]
@@ -228,29 +251,29 @@ const AdminGeneratedVideos = () => {
       return
     }
     
-    console.log('Fetching generated base videos for userId:', userId)
+    // Prevent duplicate calls
+    if (isFetchingRef.current) {
+      return
+    }
     
     // Abort any previous request
     if (abortControllerRef.current) {
-      console.log('Aborting previous video fetch request')
       abortControllerRef.current.abort()
+      abortControllerRef.current = null
     }
     
     const controller = new AbortController()
     abortControllerRef.current = controller
     
-    fetchVideos(controller.signal).catch(err => {
-      if (err.name !== 'AbortError') {
-        console.error('Error in fetchVideos:', err)
-      }
-    })
+    fetchVideos(controller.signal)
     
     return () => {
+      // Only abort if this is the current controller
       if (abortControllerRef.current === controller) {
-        console.log('Cleaning up video fetch on unmount/change')
         controller.abort()
         abortControllerRef.current = null
       }
+      // Don't reset isFetchingRef here - let it reset in the fetchVideos finally block
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, userId]) // Only depend on isAdmin and userId, not fetchVideos
@@ -338,8 +361,16 @@ const AdminGeneratedVideos = () => {
                     onChange={(e) => setSelectedAspectRatio(e.target.value)}
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-[#13008B]"
                   >
-                    <option value="16:9">16:9</option>
-                    <option value="9:16">9:16</option>
+                    {Object.keys(baseVideosData).length > 0 ? (
+                      Object.keys(baseVideosData).map(aspectRatio => (
+                        <option key={aspectRatio} value={aspectRatio}>{aspectRatio}</option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="16:9">16:9</option>
+                        <option value="9:16">9:16</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 <button
@@ -357,6 +388,8 @@ const AdminGeneratedVideos = () => {
                       abortControllerRef.current.abort()
                       abortControllerRef.current = null
                     }
+                    // Reset fetch flag to allow manual refresh
+                    isFetchingRef.current = false
                     // Fetch fresh data without abort signal (manual refresh)
                     fetchVideos(undefined)
                   }}
@@ -380,100 +413,94 @@ const AdminGeneratedVideos = () => {
                 <div className="rounded-xl border border-[#E8E4FF] bg-[#F6F4FF] px-4 py-6 text-center text-sm text-[#4B3CC4]">
                   No generated videos found for this user.
                 </div>
-              ) : filteredVideos.length === 0 ? (
+              ) : sessionsForAspectRatio.length === 0 ? (
                 <div className="rounded-xl border border-[#E8E4FF] bg-[#F6F4FF] px-4 py-6 text-center text-sm text-[#4B3CC4]">
                   No videos found for aspect ratio {selectedAspectRatio}. Try selecting a different aspect ratio.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {filteredVideos.map((video, idx) => {
-                    // Find video URL from various possible fields
-                    let videoUrl = null
-                    
-                    // Check if video is a string URL
-                    if (typeof video === 'string' && (video.startsWith('http://') || video.startsWith('https://'))) {
-                      videoUrl = video
-                    } else if (video && typeof video === 'object') {
-                      // Check various possible field names
-                      videoUrl = video?.video_url || 
-                                video?.videoUrl || 
-                                video?.url || 
-                                video?.src || 
-                                video?.link ||
-                                video?.video ||
-                                video?.file_url ||
-                                video?.fileUrl ||
-                                video?.download_url ||
-                                video?.downloadUrl ||
-                                video?.base_video_url ||
-                                video?.baseVideoUrl
-                    }
-                    
-                    // Get other metadata
-                    const videoId = video?.id || video?._id || video?.video_id || `video-${idx}`
-                    const createdAt = video?.created_at || video?.createdAt || video?.created || video?.timestamp
-                    const aspectRatio = video?.aspect_ratio || video?.aspectRatio || selectedAspectRatio
-                    
-                    return (
-                      <div 
-                        key={videoId} 
-                        className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow"
-                      >
-                        {videoUrl ? (
-                          <div className="relative group">
-                            <video 
-                              src={videoUrl} 
-                              className="w-full h-auto object-cover"
-                              style={{ 
-                                aspectRatio: aspectRatio === '9:16' ? '9/16' : '16/9',
-                                maxHeight: aspectRatio === '9:16' ? '400px' : '300px'
-                              }}
-                              controls
-                              preload="metadata"
-                              onError={(e) => {
-                                e.target.style.display = 'none'
-                                const errorDiv = e.target.nextElementSibling
-                                if (errorDiv) errorDiv.style.display = 'flex'
-                              }}
-                            />
-                            <div 
-                              className="hidden absolute inset-0 bg-gray-100 items-center justify-center text-gray-500 text-sm"
-                              style={{ display: 'none' }}
-                            >
-                              Video failed to load
-                            </div>
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                              <a 
-                                href={videoUrl} 
-                                target="_blank" 
-                                rel="noopener noreferrer" 
-                                className="px-4 py-2 bg-white rounded-lg text-[#13008B] font-medium text-sm hover:bg-gray-50 transition-colors"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                View Full
-                              </a>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="w-full h-48 bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
-                            No video URL
-                          </div>
-                        )}
-                        <div className="p-3 space-y-1">
-                          {createdAt && (
-                            <div className="text-xs text-gray-500">
-                              {formatValue(createdAt)}
-                            </div>
-                          )}
-                          {aspectRatio && (
-                            <div className="text-xs text-gray-600 font-medium">
-                              Aspect Ratio: {aspectRatio}
-                            </div>
-                          )}
-                        </div>
+                <div className="space-y-8">
+                  {sessionsForAspectRatio.map((session, sessionIdx) => (
+                    <div key={session.sessionName} className="space-y-4">
+                      {/* Session Name Header */}
+                      <div className="border-b border-gray-200 pb-2">
+                        <h3 className="text-lg font-semibold text-[#13008B]">{session.sessionName}</h3>
+                        <p className="text-sm text-gray-500">{session.videos.length} video{session.videos.length !== 1 ? 's' : ''}</p>
                       </div>
-                    )
-                  })}
+                      
+                      {/* Videos Grid for this Session */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {session.videos.map((video, videoIdx) => {
+                          // Handle both string URLs and object structures
+                          const videoUrl = typeof video === 'string' 
+                            ? video 
+                            : (video?.video_url || video?.videoUrl || video?.url || video?.src || video?.link || video?.video || video?.file_url || video?.fileUrl || video?.download_url || video?.downloadUrl || video?.base_video_url || video?.baseVideoUrl || null)
+                          
+                          const videoId = typeof video === 'object' && video?.id 
+                            ? video.id 
+                            : `${selectedAspectRatio}-${session.sessionName}-${videoIdx}`
+                          
+                          const createdAt = typeof video === 'object' 
+                            ? (video?.created_at || video?.createdAt || video?.created || video?.timestamp)
+                            : null
+                          
+                          return (
+                            <div 
+                              key={videoId} 
+                              className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                            >
+                              {videoUrl ? (
+                                <div className="relative group">
+                                  <video 
+                                    src={videoUrl} 
+                                    className="w-full h-auto object-cover"
+                                    style={{ 
+                                      aspectRatio: selectedAspectRatio === '9:16' ? '9/16' : selectedAspectRatio === '1:1' ? '1/1' : '16/9',
+                                      maxHeight: selectedAspectRatio === '9:16' ? '400px' : '300px'
+                                    }}
+                                    controls
+                                    preload="metadata"
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      const errorDiv = e.target.nextElementSibling
+                                      if (errorDiv) errorDiv.style.display = 'flex'
+                                    }}
+                                  />
+                                  <div 
+                                    className="hidden absolute inset-0 bg-gray-100 items-center justify-center text-gray-500 text-sm"
+                                    style={{ display: 'none' }}
+                                  >
+                                    Video failed to load
+                                  </div>
+                                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                    <a 
+                                      href={videoUrl} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="px-4 py-2 bg-white rounded-lg text-[#13008B] font-medium text-sm hover:bg-gray-50 transition-colors"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      View Full
+                                    </a>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="w-full h-48 bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
+                                  No video URL
+                                </div>
+                              )}
+                              <div className="p-3 space-y-1">
+                                {createdAt && (
+                                  <div className="text-xs text-gray-500">
+                                    {formatValue(createdAt)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -184,12 +184,10 @@ const UnifiedTabsComponent = (props) => {
     // Handle source tabs mode
     if (isSourceProps(props)) {
         const { sourceResults, activeTab, onTabChange, className = "", showAllTab = true } = props;
-        // Calculate total count for "All" tab
-        const totalCount = sourceResults.reduce((sum, source) => sum + source.itemCount, 0);
         if (sourceResults.length === 0) {
             return null;
         }
-        return (_jsx("div", { className: className, children: _jsx(Tabs, { value: activeTab, onValueChange: onTabChange, children: _jsxs(TabsList, { className: "bg-white border-b border-gray-200", children: [showAllTab && (_jsxs(TabsTrigger, { value: "all", className: "text-xs font-extralight border-b-2 border-transparent rounded-none text-gray-700 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600", children: ["All (", totalCount, ")"] })), sourceResults.map((source) => (_jsxs(TabsTrigger, { value: source.adaptorName, className: "text-xs font-extralight border-b-2 border-transparent rounded-none text-gray-700 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600", children: [_jsx("span", { children: source.adaptorDisplayName }), _jsxs("span", { className: "text-[10px] opacity-70", children: ["(", source.itemCount, ")"] }), source.error && _jsx("span", { className: "text-[10px]", children: "\u26A0\uFE0F" })] }, source.adaptorName)))] }) }) }));
+        return (_jsx("div", { className: className, children: _jsx(Tabs, { value: activeTab, onValueChange: onTabChange, children: _jsxs(TabsList, { className: "bg-white border-b border-gray-200", children: [showAllTab && (_jsx(TabsTrigger, { value: "all", className: "text-xs font-extralight border-b-2 border-transparent rounded-none text-gray-700 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600", children: "All" })), sourceResults.map((source) => (_jsxs(TabsTrigger, { value: source.adaptorName, className: "text-xs font-extralight border-b-2 border-transparent rounded-none text-gray-700 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600", children: [_jsx("span", { children: source.adaptorDisplayName }), source.error && _jsx("span", { className: "text-[10px]", children: "\u26A0\uFE0F" })] }, source.adaptorName)))] }) }) }));
     }
     // Check if tabs should be at bottom (for stickers panel)
     const tabsAtBottom = props.tabsAtBottom !== undefined ? props.tabsAtBottom : false;

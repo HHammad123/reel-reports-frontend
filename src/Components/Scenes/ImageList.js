@@ -11221,16 +11221,40 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                   const generatedImages = generatedImagesData.generated_images || {};
                   const allGeneratedImages = [];
                   
-                  Object.entries(generatedImages).forEach(([aspectRatio, urls]) => {
-                    if (Array.isArray(urls)) {
-                      urls.forEach((url, idx) => {
+                  // Handle both old format (aspectRatio -> array) and new format (aspectRatio -> session -> array)
+                  Object.entries(generatedImages).forEach(([aspectRatio, value]) => {
+                    const normalizedAspect = normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified';
+                    
+                    // Check if value is an array (old format)
+                    if (Array.isArray(value)) {
+                      value.forEach((url, idx) => {
                         if (typeof url === 'string' && url.trim()) {
                           allGeneratedImages.push({
                             id: `generated-${aspectRatio}-${idx}`,
                             imageUrl: url.trim(),
-                            aspect: normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified',
+                            aspect: normalizedAspect,
+                            sessionId: '',
                             label: `Generated Image ${idx + 1}`,
                             assetType: 'generated_images'
+                          });
+                        }
+                      });
+                    } 
+                    // Check if value is an object with session IDs (new format)
+                    else if (value && typeof value === 'object' && !Array.isArray(value)) {
+                      Object.entries(value).forEach(([sessionId, sessionUrls]) => {
+                        if (Array.isArray(sessionUrls)) {
+                          sessionUrls.forEach((url, idx) => {
+                            if (typeof url === 'string' && url.trim()) {
+                              allGeneratedImages.push({
+                                id: `generated-${aspectRatio}-${sessionId}-${idx}`,
+                                imageUrl: url.trim(),
+                                aspect: normalizedAspect,
+                                sessionId: sessionId || '',
+                                label: `Generated Image ${idx + 1}`,
+                                assetType: 'generated_images'
+                              });
+                            }
                           });
                         }
                       });
@@ -11257,6 +11281,95 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                   const itemAssetType = item?.assetType || '';
                   return itemAssetType === assetsTab;
                 });
+                
+                // For generated_images, group by session and aspect ratio
+                if (assetsTab === 'generated_images' && finalList.length > 0) {
+                  // Group images by session ID and aspect ratio
+                  const groupedBySession = {};
+                  finalList.forEach(entry => {
+                    const sessionId = entry.sessionId || 'default';
+                    const aspect = entry.aspect || 'Unspecified';
+                    
+                    if (!groupedBySession[sessionId]) {
+                      groupedBySession[sessionId] = {};
+                    }
+                    if (!groupedBySession[sessionId][aspect]) {
+                      groupedBySession[sessionId][aspect] = [];
+                    }
+                    groupedBySession[sessionId][aspect].push(entry);
+                  });
+                  
+                  return (
+                    <div className="space-y-6" key={assetsTab}>
+                      {Object.entries(groupedBySession).map(([sessionId, aspectGroups]) => (
+                        <div key={sessionId} className="space-y-4">
+                          {/* Session Header */}
+                          <div className="border-b border-gray-200 pb-2">
+                            <h4 className="text-sm font-semibold text-gray-800">
+                              {sessionId && sessionId !== 'default' ? `Session: ${sessionId}` : 'Generated Images'}
+                            </h4>
+                          </div>
+                          
+                          {/* Aspect Ratio Groups */}
+                          {Object.entries(aspectGroups).map(([aspect, images]) => (
+                            <div key={`${sessionId}-${aspect}`} className="space-y-2">
+                              {/* Aspect Ratio Header */}
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                                  {aspect}
+                                </span>
+                                <span className="text-xs text-gray-500">
+                                  ({images.length} {images.length === 1 ? 'image' : 'images'})
+                                </span>
+                              </div>
+                              
+                              {/* Images Grid */}
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                {images.map((entry, idx) => {
+                                  const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
+                                  if (!imageUrl) return null;
+                                  
+                                  const isSelected = selectedTemplateUrls.includes(imageUrl) || selectedAssetUrl === imageUrl;
+                                  
+                                  const handleClick = () => {
+                                    if (isSelected) {
+                                      setSelectedTemplateUrls([]);
+                                      setSelectedAssetUrl('');
+                                    } else {
+                                      setSelectedTemplateUrls([imageUrl]);
+                                      setSelectedAssetUrl(imageUrl);
+                                    }
+                                  };
+                                  
+                                  return (
+                                    <div
+                                      key={entry.id || idx}
+                                      className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                                      onClick={handleClick}
+                                      title={entry.label || `${entry.aspect || 'Unspecified'} • Generated Image`}
+                                    >
+                                      <img 
+                                        src={imageUrl} 
+                                        alt={entry.label || `Generated Image ${idx + 1}`} 
+                                        className="w-full h-28 object-cover"
+                                        height={entry?.raw?.base_image?.image_dimensions?.height || entry?.raw?.base_image?.imageDimensions?.height || entry?.raw?.image_dimensions?.height || entry?.raw?.imageDimensions?.height || undefined}
+                                      />
+                                      <div className="p-2">
+                                        <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
+                                          {entry.label || `Generated Image ${idx + 1}`}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
                 
                 return (
                   <>

@@ -99,12 +99,60 @@ export const LocalMediaProvider = ({ children, }) => {
                 }
                 
                 // Transform generated images
+                // Structure: generated_images[aspectRatio][sessionName] = [array of image URLs]
                 const generatedImagesData = imagesJson?.generated_images || {};
                 const transformedImages = [];
+                
+                console.log('[LocalMediaContext] Generated images structure:', generatedImagesData);
+                
                 Object.keys(generatedImagesData).forEach((aspectRatio) => {
-                    const imagesForRatio = generatedImagesData[aspectRatio];
-                    if (Array.isArray(imagesForRatio)) {
-                        imagesForRatio.forEach((imgUrl, idx) => {
+                    const sessionsForRatio = generatedImagesData[aspectRatio];
+                    if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                        // Handle new structure: sessionsForRatio is an object with session names as keys
+                        Object.entries(sessionsForRatio).forEach(([sessionName, images]) => {
+                            if (Array.isArray(images)) {
+                                images.forEach((imgUrl, idx) => {
+                                    if (typeof imgUrl === 'string' && imgUrl) {
+                                        transformedImages.push({
+                                            id: `generated-img-${aspectRatio}-${sessionName}-${idx}`,
+                                            name: `${sessionName} - Image ${idx + 1}`,
+                                            path: imgUrl,
+                                            url: imgUrl,
+                                            src: imgUrl,
+                                            type: 'image',
+                                            duration: 0,
+                                            size: 0,
+                                            thumbnail: imgUrl,
+                                            _generated: true,
+                                            _aspectRatio: aspectRatio,
+                                            _sessionName: sessionName,
+                                        });
+                                    } else if (imgUrl && typeof imgUrl === 'object') {
+                                        // Handle object format
+                                        const imgPath = imgUrl.image_url || imgUrl.url || imgUrl.src || '';
+                                        if (imgPath) {
+                                            transformedImages.push({
+                                                id: imgUrl.id || `generated-img-${aspectRatio}-${sessionName}-${idx}`,
+                                                name: imgUrl.name || imgUrl.title || `${sessionName} - Image ${idx + 1}`,
+                                                path: imgPath,
+                                                url: imgPath,
+                                                src: imgPath,
+                                                type: 'image',
+                                                duration: 0,
+                                                size: 0,
+                                                thumbnail: imgPath,
+                                                _generated: true,
+                                                _aspectRatio: aspectRatio,
+                                                _sessionName: sessionName,
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    } else if (Array.isArray(sessionsForRatio)) {
+                        // Legacy format: aspectRatio directly contains array of images
+                        sessionsForRatio.forEach((imgUrl, idx) => {
                             if (typeof imgUrl === 'string' && imgUrl) {
                                 transformedImages.push({
                                     id: `generated-img-${aspectRatio}-${idx}`,
@@ -126,12 +174,60 @@ export const LocalMediaProvider = ({ children, }) => {
                 setGeneratedImages(transformedImages);
                 
                 // Transform generated videos
+                // Structure: base_videos[aspectRatio][sessionName] = [array of video URLs]
                 const generatedVideosData = videosJson?.base_videos || {};
                 const transformedVideos = [];
+                
+                console.log('[LocalMediaContext] Generated videos structure:', generatedVideosData);
+                
                 Object.keys(generatedVideosData).forEach((aspectRatio) => {
-                    const videosForRatio = generatedVideosData[aspectRatio];
-                    if (Array.isArray(videosForRatio)) {
-                        videosForRatio.forEach((videoUrl, idx) => {
+                    const sessionsForRatio = generatedVideosData[aspectRatio];
+                    if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                        // Handle new structure: sessionsForRatio is an object with session names as keys
+                        Object.entries(sessionsForRatio).forEach(([sessionName, videos]) => {
+                            if (Array.isArray(videos)) {
+                                videos.forEach((videoUrl, idx) => {
+                                    if (typeof videoUrl === 'string' && videoUrl) {
+                                        transformedVideos.push({
+                                            id: `generated-vid-${aspectRatio}-${sessionName}-${idx}`,
+                                            name: `${sessionName} - Video ${idx + 1}`,
+                                            path: videoUrl,
+                                            url: videoUrl,
+                                            src: videoUrl,
+                                            type: 'video',
+                                            duration: 0,
+                                            size: 0,
+                                            thumbnail: videoUrl,
+                                            _generated: true,
+                                            _aspectRatio: aspectRatio,
+                                            _sessionName: sessionName,
+                                        });
+                                    } else if (videoUrl && typeof videoUrl === 'object') {
+                                        // Handle object format
+                                        const videoPath = videoUrl.video_url || videoUrl.url || videoUrl.src || '';
+                                        if (videoPath) {
+                                            transformedVideos.push({
+                                                id: videoUrl.id || `generated-vid-${aspectRatio}-${sessionName}-${idx}`,
+                                                name: videoUrl.name || videoUrl.title || `${sessionName} - Video ${idx + 1}`,
+                                                path: videoPath,
+                                                url: videoPath,
+                                                src: videoPath,
+                                                type: 'video',
+                                                duration: 0,
+                                                size: 0,
+                                                thumbnail: videoPath,
+                                                _generated: true,
+                                                _aspectRatio: aspectRatio,
+                                                _sessionName: sessionName,
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    } else if (Array.isArray(sessionsForRatio)) {
+                        // Legacy format: aspectRatio directly contains array of videos
+                        sessionsForRatio.forEach((videoUrl, idx) => {
                             if (typeof videoUrl === 'string' && videoUrl) {
                                 transformedVideos.push({
                                     id: `generated-vid-${aspectRatio}-${idx}`,

@@ -1,5 +1,5 @@
-import { jsx as _jsx } from "react/jsx-runtime";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
 import { useAspectRatio } from "../../../hooks/use-aspect-ratio";
@@ -7,9 +7,11 @@ import { OverlayType } from "../../../types";
 import { ImageDetails } from "./image-details";
 import { useMediaAdaptors } from "../../../contexts/media-adaptor-context";
 import { MediaOverlayPanel } from "../shared/media-overlay-panel";
+import { MediaGrid } from "../shared/media-grid";
 import { calculateIntelligentAssetSize, getAssetDimensions } from "../../../utils/asset-sizing";
 import { useImageReplacement } from "../../../hooks/use-image-replacement";
 import { DEFAULT_IMAGE_DURATION_FRAMES, IMAGE_DURATION_PERCENTAGE } from "../../../../constants";
+import { Loader2 } from "lucide-react";
 /**
  * ImageOverlayPanel Component
  *
@@ -27,7 +29,10 @@ export const ImageOverlayPanel = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [images, setImages] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingSessionImages, setIsLoadingSessionImages] = useState(false);
     const [sourceResults, setSourceResults] = useState([]);
+    const [generatedMediaImages, setGeneratedMediaImages] = useState([]);
+    const [sessionImages, setSessionImages] = useState([]);
     const { searchImages, imageAdaptors } = useMediaAdaptors();
     const { isReplaceMode, startReplaceMode, cancelReplaceMode, replaceImage } = useImageReplacement();
     const { overlays, selectedOverlayId, changeOverlay, currentFrame, setOverlays, setSelectedOverlayId, durationInFrames, } = useEditorContext();
@@ -43,6 +48,94 @@ export const ImageOverlayPanel = () => {
     const overlaysRef = useRef(overlays);
     overlaysRef.current = overlays;
     
+    // Fetch all images from generate-media API for All tab
+    useEffect(() => {
+        const fetchGeneratedMediaImages = async () => {
+            try {
+                const userId = localStorage.getItem('token');
+                if (!userId) return;
+                
+                const response = await fetch(
+                    `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(userId)}/generated-media`,
+                    {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/json' }
+                    }
+                );
+                
+                if (!response.ok) return;
+                
+                const text = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (_) {
+                    data = text;
+                }
+                
+                const generatedImagesData = data?.generated_images || {};
+                const allGeneratedImages = [];
+                
+                // Transform all images from generate-media API (all sessions, all aspect ratios)
+                Object.keys(generatedImagesData).forEach((aspectRatio) => {
+                    const sessionsForRatio = generatedImagesData[aspectRatio];
+                    if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                        Object.entries(sessionsForRatio).forEach(([sessionName, images]) => {
+                            if (Array.isArray(images)) {
+                                images.forEach((imgUrl, idx) => {
+                                    let imageUrl = '';
+                                    let imageName = `${sessionName} - Image ${idx + 1}`;
+                                    
+                                    if (typeof imgUrl === 'string' && imgUrl) {
+                                        imageUrl = imgUrl;
+                                    } else if (imgUrl && typeof imgUrl === 'object') {
+                                        imageUrl = imgUrl.image_url || imgUrl.url || imgUrl.src || '';
+                                        imageName = imgUrl.name || imgUrl.title || imageName;
+                                    }
+                                    
+                                    if (imageUrl) {
+                                        allGeneratedImages.push({
+                                            id: `generated-img-${aspectRatio}-${sessionName}-${idx}`,
+                                            type: 'image',
+                                            width: 1920,
+                                            height: 1080,
+                                            thumbnail: imageUrl,
+                                            src: {
+                                                original: imageUrl,
+                                                large: imageUrl,
+                                                medium: imageUrl,
+                                                small: imageUrl,
+                                                thumbnail: imageUrl,
+                                            },
+                                            alt: imageName,
+                                            attribution: {
+                                                author: 'Generated',
+                                                source: 'Generated Media',
+                                                license: 'User Content',
+                                            },
+                                            _session: true,
+                                            _generated: true,
+                                            _sessionImage: true,
+                                            _sessionName: sessionName,
+                                            _aspectRatio: aspectRatio,
+                                            _source: 'session-images',
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                setGeneratedMediaImages(allGeneratedImages);
+            } catch (error) {
+                console.error('Failed to fetch generated media images:', error);
+            }
+        };
+        
+        fetchGeneratedMediaImages();
+    }, []);
+    
     // Load session images automatically when component mounts
     useEffect(() => {
         const loadSessionImages = async () => {
@@ -56,25 +149,34 @@ export const ImageOverlayPanel = () => {
                 return;
             }
             
+            setIsLoadingSessionImages(true);
             setIsLoading(true);
             try {
-                // Load session images with empty query to get all images
+                // Load session images with empty query to get all images (only current session)
                 const results = await searchImages({ query: '', page: 1, perPage: 100 });
-                if (results.items && results.items.length > 0) {
-                    setImages(results.items);
-                    setSourceResults(results.sourceResults || []);
-                }
+                const sessionImgs = results.items || [];
+                setSessionImages(sessionImgs);
+                
+                // For All tab: combine session images with generated media images
+                // For Session Images tab: only show session images (handled by MediaOverlayPanel filtering)
+                const allImages = [...sessionImgs, ...generatedMediaImages];
+                setImages(allImages);
+                setSourceResults(results.sourceResults || []);
                 hasLoadedInitialImages.current = true;
             } catch (error) {
                 console.error('Failed to load session images:', error);
+                setSessionImages([]);
+                // On error, still show generated media images for All tab
+                setImages(generatedMediaImages);
                 hasLoadedInitialImages.current = true;
             } finally {
+                setIsLoadingSessionImages(false);
                 setIsLoading(false);
             }
         };
         
         loadSessionImages();
-    }, [searchImages, imageAdaptors]);
+    }, [searchImages, imageAdaptors, generatedMediaImages]);
     
     // Reload session images when search query is cleared
     useEffect(() => {
@@ -85,14 +187,23 @@ export const ImageOverlayPanel = () => {
             const sessionImagesAdaptor = imageAdaptors.find(adaptor => adaptor.name === 'session-images');
             if (!sessionImagesAdaptor) return;
             
+            setIsLoadingSessionImages(true);
             setIsLoading(true);
             try {
                 const results = await searchImages({ query: '', page: 1, perPage: 100 });
-                setImages(results.items);
+                const sessionImgs = results.items || [];
+                setSessionImages(sessionImgs);
+                // Combine session images with generated media images for All tab
+                const allImages = [...sessionImgs, ...generatedMediaImages];
+                setImages(allImages);
                 setSourceResults(results.sourceResults || []);
             } catch (error) {
                 console.error('Failed to reload session images:', error);
+                setSessionImages([]);
+                // On error, still show generated media images
+                setImages(generatedMediaImages);
             } finally {
+                setIsLoadingSessionImages(false);
                 setIsLoading(false);
             }
         };
@@ -100,7 +211,7 @@ export const ImageOverlayPanel = () => {
         // Debounce to avoid too many reloads
         const timeoutId = setTimeout(reloadSessionImages, 300);
         return () => clearTimeout(timeoutId);
-    }, [searchQuery, searchImages, imageAdaptors]);
+    }, [searchQuery, searchImages, imageAdaptors, generatedMediaImages]);
     
     // CRITICAL FIX: Only update when selectedOverlayId changes, not when overlays array is recreated
     // This prevents infinite loops when handleUpdateOverlay updates the overlays array
@@ -154,16 +265,28 @@ export const ImageOverlayPanel = () => {
         if (!searchQuery.trim()) {
             const sessionImagesAdaptor = imageAdaptors.find(adaptor => adaptor.name === 'session-images');
             if (sessionImagesAdaptor) {
+                setIsLoadingSessionImages(true);
                 setIsLoading(true);
                 try {
                     const results = await searchImages({ query: '', page: 1, perPage: 100 });
-                    setImages(results.items);
+                    const sessionImgs = results.items || [];
+                    setSessionImages(sessionImgs);
+                    // Combine session images with generated media images for All tab
+                    const allImages = [...sessionImgs, ...generatedMediaImages];
+                    setImages(allImages);
                     setSourceResults(results.sourceResults || []);
                 } catch (error) {
                     console.error('Failed to reload session images:', error);
+                    setSessionImages([]);
+                    // On error, still show generated media images
+                    setImages(generatedMediaImages);
                 } finally {
+                    setIsLoadingSessionImages(false);
                     setIsLoading(false);
                 }
+            } else {
+                // If no adaptor, still show generated media images
+                setImages(generatedMediaImages);
             }
             return;
         }
@@ -171,12 +294,33 @@ export const ImageOverlayPanel = () => {
         setIsLoading(true);
         try {
             const results = await searchImages({ query: searchQuery, page: 1, perPage: 50 });
-            setImages(results.items);
+            // Filter generated media images by search query if provided
+            let filteredGeneratedImages = generatedMediaImages;
+            if (searchQuery.trim()) {
+                const queryLower = searchQuery.toLowerCase();
+                filteredGeneratedImages = generatedMediaImages.filter(img => 
+                    (img.alt && img.alt.toLowerCase().includes(queryLower)) ||
+                    (img._sessionName && img._sessionName.toLowerCase().includes(queryLower))
+                );
+            }
+            // Combine search results with filtered generated media images
+            const allImages = [...(results.items || []), ...filteredGeneratedImages];
+            setImages(allImages);
             setSourceResults(results.sourceResults || []);
         }
         catch (error) {
             console.error('Failed to search images:', error);
-            setImages([]);
+            // On error, show generated media images if search matches
+            if (searchQuery.trim()) {
+                const queryLower = searchQuery.toLowerCase();
+                const filtered = generatedMediaImages.filter(img => 
+                    (img.alt && img.alt.toLowerCase().includes(queryLower)) ||
+                    (img._sessionName && img._sessionName.toLowerCase().includes(queryLower))
+                );
+                setImages(filtered);
+            } else {
+                setImages(generatedMediaImages);
+            }
             setSourceResults([]);
         }
         finally {
@@ -307,5 +451,15 @@ export const ImageOverlayPanel = () => {
     const getItemKey = (image) => {
         return `${image._source}-${image.id}`;
     };
-    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: images, isLoading: isLoading, hasAdaptors: imageAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddImage, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "images", searchPlaceholder: isReplaceMode ? "Search for replacement image" : "Search images", showSourceBadge: true, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(ImageDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeImage: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay }));
+    
+    // Filter images based on active tab
+    // For Session Images tab: only show session images (not generated media)
+    // For All tab: show all images (session + generated media)
+    const filteredImagesForDisplay = useMemo(() => {
+        // This will be filtered by MediaOverlayPanel based on activeTab
+        // But we need to ensure session images don't include generated media
+        return images;
+    }, [images]);
+    
+    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: filteredImagesForDisplay, isLoading: isLoading, isLoadingSessionImages: isLoadingSessionImages, hasAdaptors: imageAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddImage, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "images", searchPlaceholder: isReplaceMode ? "Search for replacement image" : "Search images", showSourceBadge: true, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(ImageDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeImage: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay, sessionImages: sessionImages }));
 };

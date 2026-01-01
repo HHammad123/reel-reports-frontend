@@ -380,21 +380,6 @@ const SoundsOverlayPanel = () => {
     };
     
     return (_jsx("div", { className: "flex flex-col p-2 bg-background h-full overflow-hidden", children: !localOverlay ? (_jsxs(_Fragment, { children: [
-        // Upload section
-        _jsxs("div", { className: "shrink-0 mb-4 pb-4 border-b border-border", children: [
-            _jsxs("div", { className: "flex items-center gap-2 mb-4", children: [
-                _jsx(Button, { variant: "outline", size: "sm", className: "gap-1 text-purple-700 border-purple-300 hover:bg-purple-50 hover:text-purple-900 bg-white", onClick: handleClearAll, disabled: isUploadingMedia || localMediaFiles.filter(f => f.type === 'audio').length === 0, children: [_jsx(X, { className: "w-4 h-4" }), "Clear All"] }),
-                _jsxs(Button, { variant: "outline", size: "sm", className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", onClick: handleUploadClick, disabled: isUploadingMedia, children: [isUploadingMedia ? (_jsx(Loader2, { className: "w-4 h-4 animate-spin" })) : (_jsx(Upload, { className: "w-4 h-4" })), "Upload"] }),
-                _jsx("input", { ref: fileInputRef, id: "audio-file-upload", type: "file", className: "hidden", onChange: handleFileUpload, accept: "audio/*", disabled: isUploadingMedia, multiple: true })
-            ]}),
-            uploadError && (_jsx("div", { className: "bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded mb-4 text-xs", children: uploadError })),
-            _jsxs("div", { className: "flex flex-col items-center justify-center py-12 text-center", children: [
-                _jsxs("svg", { className: "h-16 w-16 mb-4 text-purple-600", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 1.5, children: [_jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5m-9 0V21h18V7.5" })] }),
-                _jsx("p", { className: "text-sm font-semibold mb-2 text-purple-900", children: "Upload Media Files" }),
-                _jsx("p", { className: "text-xs text-purple-700 mb-4", children: "Upload images, videos, or audio files to use in your video." }),
-                _jsx(Button, { variant: "outline", size: "sm", onClick: handleUploadClick, disabled: isUploadingMedia, className: "gap-1 text-gray-700 border-gray-300 hover:bg-gray-50 hover:text-gray-900 bg-white", children: isUploadingMedia ? (_jsxs(_Fragment, { children: [_jsx(Loader2, { className: "w-4 h-4 animate-spin mr-2" }), "Uploading..."] })) : (_jsxs(_Fragment, { children: [_jsx(Upload, { className: "w-4 h-4 mr-2" }), "Select Files"] })) })
-            ]})
-        ]}),
         // Show existing audio overlays from timeline at the top
         audioOverlays.length > 0 && (_jsxs("div", { className: "shrink-0 mb-4 pb-4 border-b border-border", children: [
             _jsxs("div", { className: "flex items-center gap-2 mb-3", children: [

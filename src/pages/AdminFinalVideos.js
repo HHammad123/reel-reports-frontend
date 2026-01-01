@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { useSelector } from 'react-redux'
 import { Navigate, useParams, useNavigate } from 'react-router-dom'
 import Sidebar from '../Components/Sidebar'
@@ -34,18 +34,33 @@ const AdminFinalVideos = () => {
   const [videos, setVideos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const abortControllerRef = useRef(null)
+  const isFetchingRef = useRef(false) // Track if fetch is in progress to prevent duplicate calls
 
   const fetchVideos = useCallback(
     async (abortSignal) => {
       if (!isAdmin || !userId) {
         setLoading(false)
+        isFetchingRef.current = false
         return
       }
+      
+      // Prevent duplicate calls
+      if (isFetchingRef.current) {
+        return
+      }
+      
+      isFetchingRef.current = true
       setLoading(true)
       setError('')
       try {
         const token = localStorage.getItem('token') || ''
-        const response = await fetch(`${ADMIN_BASE}/v1/users/user/${encodeURIComponent(userId)}/final-videos`, {
+        const apiPath = `${ADMIN_BASE}/v1/users/user/${encodeURIComponent(userId)}/final-videos`
+        
+        console.log('=== ADMIN FINAL VIDEOS: API FETCH ===')
+        console.log('API Fetch Path:', apiPath)
+        
+        const response = await fetch(apiPath, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -59,7 +74,28 @@ const AdminFinalVideos = () => {
           throw new Error(message || `Unable to load final videos (${response.status})`)
         }
 
-        const data = await response.json()
+        let data
+        try {
+          const responseText = await response.text()
+          if (!responseText || responseText.trim() === '') {
+            setVideos([])
+            setError('')
+            setLoading(false)
+            isFetchingRef.current = false
+            return
+          }
+          data = JSON.parse(responseText)
+        } catch (parseError) {
+          setVideos([])
+          setError('')
+          setLoading(false)
+          isFetchingRef.current = false
+          return
+        }
+
+        console.log('=== ADMIN FINAL VIDEOS: API RESPONSE ===')
+        console.log('Full API Response:', data)
+
         // Handle different response structures
         let videosData = []
         if (Array.isArray(data)) {
@@ -75,23 +111,53 @@ const AdminFinalVideos = () => {
         }
         
         setVideos(videosData)
+        setError('')
       } catch (err) {
-        if (err.name === 'AbortError') return
+        if (err.name === 'AbortError') {
+          isFetchingRef.current = false
+          return
+        }
         console.error('Failed to fetch final videos:', err)
         setError(err.message || 'Failed to fetch final videos.')
       } finally {
-        setLoading(false)
+        if (!abortSignal || !abortSignal.aborted) {
+          setLoading(false)
+        }
+        isFetchingRef.current = false
       }
     },
     [isAdmin, userId]
   )
 
   useEffect(() => {
-    if (!isAdmin || !userId) return
+    if (!isAdmin || !userId) {
+      setLoading(false)
+      return
+    }
+    
+    // Abort any previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    
+    // Reset fetch flag to allow new request
+    isFetchingRef.current = false
+    
     const controller = new AbortController()
+    abortControllerRef.current = controller
+    
     fetchVideos(controller.signal)
-    return () => controller.abort()
-  }, [isAdmin, userId]) // Removed fetchVideos from dependencies to prevent cancellation loop
+    
+    return () => {
+      // Only abort if this is still the current controller
+      if (abortControllerRef.current === controller) {
+        controller.abort()
+        abortControllerRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, userId])
 
   const [checkingAdmin, setCheckingAdmin] = useState(true)
   
@@ -133,19 +199,6 @@ const AdminFinalVideos = () => {
     }
   }
 
-  // Get all unique keys from videos to create table columns
-  const getAllKeys = (videosArray) => {
-    const keysSet = new Set()
-    videosArray.forEach(video => {
-      if (video && typeof video === 'object') {
-        Object.keys(video).forEach(key => keysSet.add(key))
-      }
-    })
-    return Array.from(keysSet).sort()
-  }
-
-  const tableKeys = videos.length > 0 ? getAllKeys(videos) : []
-
   const formatValue = (value) => {
     if (value === null || value === undefined) return '—'
     if (typeof value === 'boolean') return value ? 'Yes' : 'No'
@@ -155,13 +208,6 @@ const AdminFinalVideos = () => {
       } catch (e) {
         return value
       }
-    }
-    if (typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'))) {
-      return (
-        <a href={value} target="_blank" rel="noopener noreferrer" className="text-[#13008B] hover:underline">
-          View Video
-        </a>
-      )
     }
     return String(value)
   }
@@ -191,7 +237,17 @@ const AdminFinalVideos = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => fetchVideos(undefined)}
+                  onClick={() => {
+                    // Abort any ongoing request
+                    if (abortControllerRef.current) {
+                      abortControllerRef.current.abort()
+                      abortControllerRef.current = null
+                    }
+                    // Reset fetch flag to allow manual refresh
+                    isFetchingRef.current = false
+                    // Fetch fresh data without abort signal (manual refresh)
+                    fetchVideos(undefined)
+                  }}
                   className="inline-flex items-center justify-center rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#13008B]/10"
                 >
                   Refresh
@@ -213,50 +269,93 @@ const AdminFinalVideos = () => {
                   No final videos found for this user.
                 </div>
               ) : (
-                <div className="rounded-lg border border-gray-200 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-[#F6F4FF]">
-                        <tr>
-                          {tableKeys.map((key) => (
-                            <th key={key} className="px-6 py-3 text-left text-xs font-medium text-[#13008B] uppercase tracking-wider">
-                              {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {videos.map((video, idx) => (
-                          <tr key={idx} className="hover:bg-gray-50">
-                            {tableKeys.map((key) => {
-                              const value = video[key]
-                              const isVideoUrl = typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://')) && (value.match(/\.(mp4|webm|ogg|mov)$/i))
-                              
-                              return (
-                                <td key={key} className="px-6 py-4 text-sm text-gray-700">
-                                  {isVideoUrl ? (
-                                    <div className="flex items-center gap-3">
-                                      <video 
-                                        src={value} 
-                                        className="w-32 h-20 object-cover rounded border border-gray-200"
-                                        controls
-                                        preload="metadata"
-                                      />
-                                      <a href={value} target="_blank" rel="noopener noreferrer" className="text-[#13008B] hover:underline text-xs">
-                                        View Full
-                                      </a>
-                                    </div>
-                                  ) : (
-                                    formatValue(value)
-                                  )}
-                                </td>
-                              )
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {videos.map((video, idx) => {
+                    // Find video URL from various possible fields
+                    let videoUrl = null
+                    
+                    // Check if video is a string URL
+                    if (typeof video === 'string' && (video.startsWith('http://') || video.startsWith('https://'))) {
+                      videoUrl = video
+                    } else if (video && typeof video === 'object') {
+                      // Check various possible field names
+                      videoUrl = video?.video_url || 
+                                video?.videoUrl || 
+                                video?.url || 
+                                video?.src || 
+                                video?.link ||
+                                video?.video ||
+                                video?.file_url ||
+                                video?.fileUrl ||
+                                video?.download_url ||
+                                video?.downloadUrl ||
+                                video?.final_video_url ||
+                                video?.finalVideoUrl
+                    }
+                    
+                    // Get other metadata
+                    const videoId = video?.id || video?._id || video?.video_id || `video-${idx}`
+                    const videoName = video?.name || video?.title || video?.filename || `Video ${idx + 1}`
+                    const createdAt = video?.created_at || video?.createdAt || video?.created || video?.timestamp
+                    
+                    return (
+                      <div 
+                        key={videoId} 
+                        className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                      >
+                        {videoUrl ? (
+                          <div className="relative group">
+                            <video 
+                              src={videoUrl} 
+                              className="w-full h-auto object-cover"
+                              style={{ 
+                                aspectRatio: '16/9',
+                                maxHeight: '300px'
+                              }}
+                              controls
+                              preload="metadata"
+                              onError={(e) => {
+                                e.target.style.display = 'none'
+                                const errorDiv = e.target.nextElementSibling
+                                if (errorDiv) errorDiv.style.display = 'flex'
+                              }}
+                            />
+                            <div 
+                              className="hidden absolute inset-0 bg-gray-100 items-center justify-center text-gray-500 text-sm"
+                              style={{ display: 'none' }}
+                            >
+                              Video failed to load
+                            </div>
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                              <a 
+                                href={videoUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="px-4 py-2 bg-white rounded-lg text-[#13008B] font-medium text-sm hover:bg-gray-50 transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                View Full
+                              </a>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full h-48 bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
+                            No video URL
+                          </div>
+                        )}
+                        <div className="p-3 space-y-1">
+                          <div className="text-sm font-medium text-gray-900 truncate" title={videoName}>
+                            {videoName}
+                          </div>
+                          {createdAt && (
+                            <div className="text-xs text-gray-500">
+                              {formatValue(createdAt)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

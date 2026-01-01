@@ -2226,6 +2226,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const [showAvatarUploadPopup, setShowAvatarUploadPopup] = useState(false);
   const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
   const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
+  const [avatarName, setAvatarName] = useState('');
   const avatarUploadFileInputRef = useRef(null);
   const presetAvatars = useMemo(
     () => [
@@ -2237,6 +2238,20 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png',
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png'
     ],
+    []
+  );
+  
+  // Human names for preset avatars
+  const presetAvatarNames = useMemo(
+    () => ({
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Alex',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Sarah',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Michael',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Fawad',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'David',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Olivia',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png': 'James'
+    }),
     []
   );
 
@@ -2517,7 +2532,21 @@ const [textEditorFormat, setTextEditorFormat] = useState({
               const cached = localStorage.getItem(cacheKey);
               if (cached) {
                 const cachedData = JSON.parse(cached);
-                const avatars = Array.isArray(cachedData?.avatars) ? cachedData.avatars : [];
+                // Handle both old format (URL strings) and new format (objects with name and url)
+                let avatars = [];
+                if (Array.isArray(cachedData?.avatars)) {
+                  avatars = cachedData.avatars.map(item => {
+                    // If it's already an object with name and url, use it as is
+                    if (item && typeof item === 'object' && item.url) {
+                      return { name: item.name || '', url: String(item.url).trim() };
+                    }
+                    // If it's a string (old format), convert to object
+                    if (typeof item === 'string') {
+                      return { name: '', url: item.trim() };
+                    }
+                    return null;
+                  }).filter(Boolean);
+                }
                 if (avatars.length > 0) {
                   setBrandAssetsAvatars(avatars);
                   return; // Use cached data, don't call API
@@ -2535,15 +2564,33 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           return;
         }
         
-        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
         const text = await resp.text();
         let data; 
         try { data = JSON.parse(text); } catch(_) { data = text; }
         
         if (resp.ok && data && typeof data === 'object') {
-          const avatars = Array.isArray(data?.avatars) ? data.avatars : [];
-          setBrandAssetsAvatars(avatars);
-          // Also cache in localStorage
+          // Extract all avatar objects (with name and url) from the new response structure
+          // Response structure: { avatars: { profile_id: [{ name, url, uploaded_at }] } }
+          const avatarsObject = data?.avatars || {};
+          const avatarObjects = [];
+          
+          // Iterate through all profiles and extract avatar objects with name and url
+          Object.values(avatarsObject).forEach((profileAvatars) => {
+            if (Array.isArray(profileAvatars)) {
+              profileAvatars.forEach((avatar) => {
+                if (avatar && typeof avatar === 'object' && avatar.url) {
+                  avatarObjects.push({
+                    name: avatar.name || '',
+                    url: String(avatar.url).trim()
+                  });
+                }
+              });
+            }
+          });
+          
+          setBrandAssetsAvatars(avatarObjects);
+          // Also cache in localStorage (store both objects and URLs for backward compatibility)
           try {
             const cacheKey = `brand_assets_images:${token}`;
             const cached = localStorage.getItem(cacheKey);
@@ -2551,7 +2598,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             if (cached) {
               try { cachedData = JSON.parse(cached); } catch(_) {}
             }
-            cachedData.avatars = avatars;
+            cachedData.avatars = avatarObjects;
+            cachedData.avatar_urls = avatarObjects.map(a => a.url); // Keep URLs for backward compatibility
             localStorage.setItem(cacheKey, JSON.stringify(cachedData));
           } catch(_) {}
         }
@@ -3708,7 +3756,9 @@ const [textEditorFormat, setTextEditorFormat] = useState({
             ? String(presetAvatars[0]).trim() 
             : null;
           const firstBrandAvatar = Array.isArray(brandAssetsAvatars) && brandAssetsAvatars.length > 0 
-            ? String(brandAssetsAvatars[0]).trim() 
+            ? (brandAssetsAvatars[0] && typeof brandAssetsAvatars[0] === 'object' && brandAssetsAvatars[0].url
+              ? String(brandAssetsAvatars[0].url).trim()
+              : String(brandAssetsAvatars[0]).trim())
             : null;
           
           // Prefer preset avatar, fallback to brand asset avatar
@@ -12397,20 +12447,35 @@ const saveAnchorPromptTemplate = async () => {
                         const seenUrls = new Set();
                         const allAvatars = [];
                         
+                        // Helper to normalize avatar to object format {name, url}
+                        const normalizeAvatar = (item) => {
+                          if (item && typeof item === 'object' && item.url) {
+                            // For API avatars, use the name from the object
+                            return { name: item.name || '', url: String(item.url).trim() };
+                          }
+                          if (typeof item === 'string') {
+                            const trimmedUrl = item.trim();
+                            // Check if it's a preset avatar and assign human name
+                            const presetName = presetAvatarNames[trimmedUrl];
+                            return { name: presetName || '', url: trimmedUrl };
+                          }
+                          return null;
+                        };
+                        
                         // Add avatars in original order, skipping duplicates
-                        const addIfNotSeen = (url) => {
-                          const trimmed = typeof url === 'string' ? url.trim() : url;
-                          if (trimmed && !seenUrls.has(trimmed)) {
-                            seenUrls.add(trimmed);
-                            allAvatars.push(trimmed);
+                        const addIfNotSeen = (avatar) => {
+                          const normalized = normalizeAvatar(avatar);
+                          if (normalized && normalized.url && !seenUrls.has(normalized.url)) {
+                            seenUrls.add(normalized.url);
+                            allAvatars.push(normalized);
                           }
                         };
                         
-                        // Add preset avatars first (original order)
+                        // Add preset avatars first (original order) - these are just URLs
                         presetAvatars.forEach(addIfNotSeen);
-                        // Add brand assets avatars (original order)
+                        // Add brand assets avatars (original order) - these are now objects with name and url
                         brandAssetsAvatars.forEach(addIfNotSeen);
-                        // Add session avatars last (but only if not already in list)
+                        // Add session avatars last (but only if not already in list) - these are URLs
                         sessionAvatarUrls.forEach(addIfNotSeen);
                         
                         // Get the current scene's avatar (what's actually saved for this scene)
@@ -12422,9 +12487,9 @@ const saveAnchorPromptTemplate = async () => {
                         
                         // Helper function to compare avatar URLs (normalized)
                         // Check against the scene's actual avatar, not just selectedAvatar state
-                        const isAvatarSelected = (url) => {
-                          if (!url) return false;
-                          const normalizedUrl = String(url).trim();
+                        const isAvatarSelected = (avatarObj) => {
+                          if (!avatarObj || !avatarObj.url) return false;
+                          const normalizedUrl = String(avatarObj.url).trim();
                           // If selectedAvatar exists and matches, it's selected (user just clicked it)
                           if (normalizedSelectedAvatar && normalizedSelectedAvatar === normalizedUrl) {
                             return true;
@@ -12502,30 +12567,35 @@ const saveAnchorPromptTemplate = async () => {
                                <div className="col-span-full text-center py-8 text-gray-500">
                                  No avatars available. Click "Upload Avatar" to add one.
                                </div>
-                             ) : (
-                               allAvatars.map((avatarUrl, index) => {
-                                 const trimmedUrl = typeof avatarUrl === 'string' ? avatarUrl.trim() : avatarUrl;
-                                 const isSelected = isAvatarSelected(trimmedUrl);
-                                 return (
-                                 <button
-                                   type="button"
-                                   key={index}
-                                  onClick={() => {
-                                     try {
-                                       // Only update selectedAvatar state, don't modify scriptRows or call API
-                                       setSelectedAvatar(trimmedUrl);
-                                     } catch (_) { /* noop */ }
-                                   }}
-                                   className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
-                                     isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
-                                   }`}
-                                   title={`Avatar ${index + 1}`}
-                                 >
-                                   <img src={trimmedUrl} alt={`Avatar ${index + 1}`} className="w-full h-full object-cover" />
-                                 </button>
-                               );
-                               })
-                             )}
+                            ) : (
+                              allAvatars.map((avatarObj, index) => {
+                                const avatarUrl = avatarObj.url;
+                                const avatarName = avatarObj.name || `Avatar ${index + 1}`;
+                                const isSelected = isAvatarSelected(avatarObj);
+                                return (
+                                <div key={index} className="flex flex-col items-center gap-2">
+                                  <button
+                                    type="button"
+                                   onClick={() => {
+                                      try {
+                                        // Only update selectedAvatar state, don't modify scriptRows or call API
+                                        setSelectedAvatar(avatarUrl);
+                                      } catch (_) { /* noop */ }
+                                    }}
+                                    className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
+                                      isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
+                                    }`}
+                                    title={avatarName}
+                                  >
+                                    <img src={avatarUrl} alt={avatarName} className="w-full h-full object-cover" />
+                                  </button>
+                                  <span className="text-xs text-gray-600 text-center max-w-[80px] truncate" title={avatarName}>
+                                    {avatarName}
+                                  </span>
+                                </div>
+                              );
+                              })
+                            )}
                              <button
                                type="button"
                                onClick={() => setShowAvatarUploadPopup(true)}
@@ -15502,29 +15572,35 @@ const saveAnchorPromptTemplate = async () => {
               </div>
               
               <div className="p-6 overflow-y-auto flex-1">
+                {/* Avatar Name Input */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Avatar Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={avatarName}
+                    onChange={(e) => setAvatarName(e.target.value)}
+                    placeholder="Enter avatar name"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                  />
+                </div>
+                
                 {/* Upload Box */}
                 <div className="mb-6">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Avatar Files
+                    Select Avatar File
                   </label>
                   <input
                     ref={avatarUploadFileInputRef}
                     type="file"
                     accept="image/*"
-                    multiple
                     className="hidden"
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
                       if (files.length > 0) {
-                        setAvatarUploadFiles(prev => {
-                          const newFiles = [...prev];
-                          files.forEach(file => {
-                            if (!newFiles.find(f => f.name === file.name && f.size === file.size)) {
-                              newFiles.push(file);
-                            }
-                          });
-                          return newFiles;
-                        });
+                        // Only allow single file selection
+                        setAvatarUploadFiles([files[0]]);
                       }
                       if (avatarUploadFileInputRef.current) {
                         avatarUploadFileInputRef.current.value = '';
@@ -15538,7 +15614,7 @@ const saveAnchorPromptTemplate = async () => {
                   >
                     <div className="text-center">
                       <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-600">Click to select avatar files</p>
+                      <p className="text-sm text-gray-600">Click to select avatar file</p>
                       <p className="text-xs text-gray-500 mt-1">Supported: JPG, PNG, WEBP</p>
                     </div>
                   </button>
@@ -15548,7 +15624,7 @@ const saveAnchorPromptTemplate = async () => {
                 {avatarUploadFiles.length > 0 && (
                   <div className="mb-6">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Selected Files ({avatarUploadFiles.length})
+                      Selected File
                     </label>
                     <div className="space-y-2">
                       {avatarUploadFiles.map((file, index) => (
@@ -15567,7 +15643,7 @@ const saveAnchorPromptTemplate = async () => {
                           <button
                             type="button"
                             onClick={() => {
-                              setAvatarUploadFiles(prev => prev.filter((_, i) => i !== index));
+                              setAvatarUploadFiles([]);
                             }}
                             className="ml-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
                             title="Remove file"
@@ -15587,6 +15663,7 @@ const saveAnchorPromptTemplate = async () => {
                     onClick={() => {
                       setShowAvatarUploadPopup(false);
                       setAvatarUploadFiles([]);
+                      setAvatarName('');
                     }}
                     className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
                     disabled={isUploadingAvatarFiles}
@@ -15597,8 +15674,13 @@ const saveAnchorPromptTemplate = async () => {
                     type="button"
                     onClick={async () => {
                       try {
+                        if (!avatarName || !avatarName.trim()) {
+                          alert('Please enter an avatar name');
+                          return;
+                        }
+                        
                         if (avatarUploadFiles.length === 0) {
-                          alert('Please select at least one file to upload');
+                          alert('Please select a file to upload');
                           return;
                         }
                         
@@ -15609,14 +15691,14 @@ const saveAnchorPromptTemplate = async () => {
                         }
                         
                         setIsUploadingAvatarFiles(true);
+                        
+                        // Create FormData request body
                         const form = new FormData();
                         form.append('user_id', token);
-                        form.append('file_type', 'avatar');
-                        avatarUploadFiles.forEach(file => {
-                          form.append('files', file);
-                        });
+                        form.append('name', avatarName.trim());
+                        form.append('file', avatarUploadFiles[0]);
                         
-                        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', {
+                        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
                           method: 'POST',
                           body: form
                         });
@@ -15627,15 +15709,32 @@ const saveAnchorPromptTemplate = async () => {
                         }
                         
                         // Re-call brand assets GET API
-                        const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+                        const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
                         const getText = await getResp.text();
                         let data;
                         try { data = JSON.parse(getText); } catch(_) { data = getText; }
                         
                         if (getResp.ok && data && typeof data === 'object') {
-                          const avatars = Array.isArray(data?.avatars) ? data.avatars : [];
-                          setBrandAssetsAvatars(avatars);
-                          // Update cache
+                          // Extract all avatar objects (with name and url) from the new response structure
+                          const avatarsObject = data?.avatars || {};
+                          const avatarObjects = [];
+                          
+                          // Iterate through all profiles and extract avatar objects with name and url
+                          Object.values(avatarsObject).forEach((profileAvatars) => {
+                            if (Array.isArray(profileAvatars)) {
+                              profileAvatars.forEach((avatar) => {
+                                if (avatar && typeof avatar === 'object' && avatar.url) {
+                                  avatarObjects.push({
+                                    name: avatar.name || '',
+                                    url: String(avatar.url).trim()
+                                  });
+                                }
+                              });
+                            }
+                          });
+                          
+                          setBrandAssetsAvatars(avatarObjects);
+                          // Update cache (store both objects and URLs for backward compatibility)
                           try {
                             const cacheKey = `brand_assets_images:${token}`;
                             const cached = localStorage.getItem(cacheKey);
@@ -15643,7 +15742,8 @@ const saveAnchorPromptTemplate = async () => {
                             if (cached) {
                               try { cachedData = JSON.parse(cached); } catch(_) {}
                             }
-                            cachedData.avatars = avatars;
+                            cachedData.avatars = avatarObjects;
+                            cachedData.avatar_urls = avatarObjects.map(a => a.url); // Keep URLs for backward compatibility
                             localStorage.setItem(cacheKey, JSON.stringify(cachedData));
                           } catch(_) {}
                         }
@@ -15651,6 +15751,7 @@ const saveAnchorPromptTemplate = async () => {
                         // Close popup and reset
                         setShowAvatarUploadPopup(false);
                         setAvatarUploadFiles([]);
+                        setAvatarName('');
                         alert('Avatar uploaded successfully!');
                       } catch (err) {
                         console.error('Avatar upload failed:', err);
@@ -15660,7 +15761,7 @@ const saveAnchorPromptTemplate = async () => {
                       }
                     }}
                     className="px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={isUploadingAvatarFiles || avatarUploadFiles.length === 0}
+                    disabled={isUploadingAvatarFiles || avatarUploadFiles.length === 0 || !avatarName || !avatarName.trim()}
                   >
                     {isUploadingAvatarFiles ? (
                       <span className="flex items-center gap-2">

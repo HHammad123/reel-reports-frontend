@@ -36,6 +36,7 @@ const AdminGeneratedImages = () => {
   const [error, setError] = useState('')
   const [selectedAspectRatio, setSelectedAspectRatio] = useState('16:9')
   const abortControllerRef = useRef(null)
+  const isFetchingRef = useRef(false) // Track if fetch is in progress to prevent duplicate calls
 
   // Helper to normalize aspect ratio values for comparison
   const normalizeAspectRatio = (ratio) => {
@@ -68,38 +69,48 @@ const AdminGeneratedImages = () => {
     return null
   }
 
-  // Filter images based on selected aspect ratio
-  const filteredImages = useMemo(() => {
-    if (!selectedAspectRatio || selectedAspectRatio === 'all') return images
+  // Store the raw generated_images structure
+  const [generatedImagesData, setGeneratedImagesData] = useState({})
+
+  // Get sessions and images for selected aspect ratio
+  const sessionsForAspectRatio = useMemo(() => {
+    if (!selectedAspectRatio || !generatedImagesData[selectedAspectRatio]) return []
     
-    return images.filter(img => {
-      if (!img || typeof img !== 'object') return false
-      
-      // Check various possible field names for aspect ratio
-      const aspectRatio = img?.aspect_ratio || 
-                         img?.aspectRatio || 
-                         img?.aspect_ratio_value ||
-                         img?.ratio ||
-                         img?.size ||
-                         img?.dimensions?.aspect_ratio
-      
-      const normalized = normalizeAspectRatio(aspectRatio)
-      return normalized === selectedAspectRatio
-    })
-  }, [images, selectedAspectRatio])
+    const aspectRatioData = generatedImagesData[selectedAspectRatio]
+    if (typeof aspectRatioData !== 'object') return []
+    
+    // Convert to array of { sessionName, images } objects
+    return Object.entries(aspectRatioData).map(([sessionName, images]) => ({
+      sessionName,
+      images: Array.isArray(images) ? images : []
+    })).filter(session => session.images.length > 0)
+  }, [selectedAspectRatio, generatedImagesData])
 
   // Fetch images function that can be called manually (for refresh)
   const fetchImages = useCallback(
     async (abortSignal) => {
       if (!isAdmin || !userId) {
         setLoading(false)
+        isFetchingRef.current = false
         return
       }
+      
+      // Prevent duplicate calls
+      if (isFetchingRef.current) {
+        return
+      }
+      
+      isFetchingRef.current = true
       setLoading(true)
       setError('')
       try {
         const token = localStorage.getItem('token') || ''
-        const response = await fetch(`${ADMIN_BASE}/v1/users/user/${encodeURIComponent(userId)}/generated-media`, {
+        const apiPath = `${ADMIN_BASE}/v1/users/user/${encodeURIComponent(userId)}/generated-media`
+        
+        console.log('=== ADMIN GENERATED IMAGES: API FETCH ===')
+        console.log('API Fetch Path:', apiPath)
+        
+        const response = await fetch(apiPath, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -112,8 +123,10 @@ const AdminGeneratedImages = () => {
           // If 404 or empty response, treat as no media found
           if (response.status === 404) {
             setImages([])
+            setGeneratedImagesData({})
             setError('')
             setLoading(false)
+            isFetchingRef.current = false
             return
           }
           const message = await response.text()
@@ -125,58 +138,101 @@ const AdminGeneratedImages = () => {
           const responseText = await response.text()
           if (!responseText || responseText.trim() === '') {
             setImages([])
+            setGeneratedImagesData({})
             setError('')
             setLoading(false)
+            isFetchingRef.current = false
             return
           }
           data = JSON.parse(responseText)
         } catch (parseError) {
           // If response is not valid JSON, treat as empty
           setImages([])
+          setGeneratedImagesData({})
           setError('')
           setLoading(false)
+          isFetchingRef.current = false
           return
         }
-        // Handle different response structures
+        
+        console.log('=== ADMIN GENERATED IMAGES: API RESPONSE ===')
+        console.log('Full API Response:', data)
+        console.log('Generated Images Structure:', data?.generated_images)
+        
+        // Store the raw generated_images structure
+        // Structure: generated_images[aspectRatio][sessionName] = [array of image URLs/objects]
+        const generatedImages = data?.generated_images || {}
+        setGeneratedImagesData(generatedImages)
+        
+        // Log the structure for debugging
+        console.log('=== ADMIN GENERATED IMAGES: STRUCTURE BY ASPECT RATIO ===')
+        Object.keys(generatedImages).forEach(aspectRatio => {
+          const sessions = generatedImages[aspectRatio]
+          if (typeof sessions === 'object') {
+            console.log(`Aspect Ratio: ${aspectRatio}`)
+            Object.entries(sessions).forEach(([sessionName, images]) => {
+              if (Array.isArray(images)) {
+                console.log(`  Session: ${sessionName} - ${images.length} images`)
+              }
+            })
+          }
+        })
+        
+        // Also create flat array for backward compatibility
         let imagesData = []
-        if (Array.isArray(data)) {
-          imagesData = data
-        } else if (data?.generated_images && typeof data.generated_images === 'object') {
-          // If data has generated_images object with aspect ratio keys
-          // Flatten all images and add aspect ratio to each
-          Object.entries(data.generated_images).forEach(([aspectRatio, images]) => {
-            if (Array.isArray(images)) {
-              images.forEach(img => {
-                if (img && typeof img === 'object') {
-                  imagesData.push({ ...img, aspect_ratio: aspectRatio })
-                } else {
-                  imagesData.push({ image: img, aspect_ratio: aspectRatio })
+        if (data?.generated_images && typeof data.generated_images === 'object') {
+          Object.entries(data.generated_images).forEach(([aspectRatio, sessions]) => {
+            if (typeof sessions === 'object') {
+              Object.entries(sessions).forEach(([sessionName, images]) => {
+                if (Array.isArray(images)) {
+                  images.forEach((img, idx) => {
+                    if (typeof img === 'string') {
+                      imagesData.push({ 
+                        image_url: img, 
+                        url: img,
+                        aspect_ratio: aspectRatio,
+                        session_name: sessionName,
+                        image_id: `${aspectRatio}-${sessionName}-${idx}`
+                      })
+                    } else if (img && typeof img === 'object') {
+                      imagesData.push({ 
+                        ...img, 
+                        aspect_ratio: aspectRatio,
+                        session_name: sessionName,
+                        image_id: img.id || img.image_id || `${aspectRatio}-${sessionName}-${idx}`
+                      })
+                    }
+                  })
                 }
               })
             }
           })
+        } else if (Array.isArray(data)) {
+          imagesData = data
         } else if (Array.isArray(data?.images)) {
           imagesData = data.images
         } else if (Array.isArray(data?.data)) {
           imagesData = data.data
         } else if (Array.isArray(data?.media)) {
           imagesData = data.media
-        } else if (data === null || data === undefined) {
-          imagesData = []
-        } else if (typeof data === 'object' && data !== null) {
-          // Only add as single item if it has meaningful data
-          if (Object.keys(data).length > 0) {
-            imagesData = [data]
-          } else {
-            imagesData = []
-          }
         }
         
         setImages(imagesData)
+        
+        // Set default aspect ratio if available
+        const availableAspectRatios = Object.keys(generatedImages).filter(key => {
+          const sessions = generatedImages[key]
+          return typeof sessions === 'object' && Object.values(sessions).some(images => Array.isArray(images) && images.length > 0)
+        })
+        if (availableAspectRatios.length > 0 && !availableAspectRatios.includes(selectedAspectRatio)) {
+          setSelectedAspectRatio(availableAspectRatios[0])
+        }
+        
         setError('') // Clear any previous errors if we got a successful response
       } catch (err) {
         if (err.name === 'AbortError') {
           // Don't update state if request was aborted
+          isFetchingRef.current = false
           return
         }
         console.error('Failed to fetch images:', err)
@@ -186,6 +242,7 @@ const AdminGeneratedImages = () => {
         if (!abortSignal || !abortSignal.aborted) {
           setLoading(false)
         }
+        isFetchingRef.current = false
       }
     },
     [isAdmin, userId]
@@ -201,7 +258,11 @@ const AdminGeneratedImages = () => {
     // Abort any previous request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
+      abortControllerRef.current = null
     }
+    
+    // Reset fetch flag to allow new request
+    isFetchingRef.current = false
     
     const controller = new AbortController()
     abortControllerRef.current = controller
@@ -209,10 +270,13 @@ const AdminGeneratedImages = () => {
     fetchImages(controller.signal)
     
     return () => {
+      // Only abort if this is still the current controller
+      // In StrictMode, the cleanup runs immediately but a second effect may have already replaced the controller
       if (abortControllerRef.current === controller) {
         controller.abort()
         abortControllerRef.current = null
       }
+      // Don't reset isFetchingRef here - let fetchImages handle it in finally block
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, userId]) // Only depend on isAdmin and userId, not fetchImages
@@ -300,8 +364,16 @@ const AdminGeneratedImages = () => {
                     onChange={(e) => setSelectedAspectRatio(e.target.value)}
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-[#13008B]"
                   >
-                    <option value="16:9">16:9</option>
-                    <option value="9:16">9:16</option>
+                    {Object.keys(generatedImagesData).length > 0 ? (
+                      Object.keys(generatedImagesData).map(aspectRatio => (
+                        <option key={aspectRatio} value={aspectRatio}>{aspectRatio}</option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="16:9">16:9</option>
+                        <option value="9:16">9:16</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 <button
@@ -319,6 +391,8 @@ const AdminGeneratedImages = () => {
                       abortControllerRef.current.abort()
                       abortControllerRef.current = null
                     }
+                    // Reset fetch flag to allow manual refresh
+                    isFetchingRef.current = false
                     // Fetch fresh data without abort signal (manual refresh)
                     fetchImages(undefined)
                   }}
@@ -342,86 +416,93 @@ const AdminGeneratedImages = () => {
                 <div className="rounded-xl border border-[#E8E4FF] bg-[#F6F4FF] px-4 py-6 text-center text-sm text-[#4B3CC4]">
                   No generated images found for this user.
                 </div>
-              ) : filteredImages.length === 0 ? (
+              ) : sessionsForAspectRatio.length === 0 ? (
                 <div className="rounded-xl border border-[#E8E4FF] bg-[#F6F4FF] px-4 py-6 text-center text-sm text-[#4B3CC4]">
                   No images found for aspect ratio {selectedAspectRatio}. Try selecting a different aspect ratio.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {filteredImages.map((img, idx) => {
-                    // Find image URL from various possible fields
-                    const imageUrl = img?.image_url || 
-                                   img?.imageUrl || 
-                                   img?.url || 
-                                   img?.src || 
-                                   img?.link ||
-                                   img?.image ||
-                                   (typeof img === 'string' && (img.startsWith('http://') || img.startsWith('https://')) ? img : null)
-                    
-                    // Get other metadata
-                    const imageId = img?.id || img?._id || img?.image_id || `image-${idx}`
-                    const createdAt = img?.created_at || img?.createdAt || img?.created || img?.timestamp
-                    const aspectRatio = img?.aspect_ratio || img?.aspectRatio || selectedAspectRatio
-                    
-                    return (
-                      <div 
-                        key={imageId} 
-                        className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow"
-                      >
-                        {imageUrl ? (
-                          <div className="relative group">
-                            <img 
-                              src={imageUrl} 
-                              alt={`Generated image ${idx + 1}`}
-                              className="w-full h-auto object-cover"
-                              style={{ 
-                                aspectRatio: aspectRatio === '9:16' ? '9/16' : '16/9',
-                                maxHeight: aspectRatio === '9:16' ? '400px' : '300px'
-                              }}
-                              onError={(e) => {
-                                e.target.style.display = 'none'
-                                const errorDiv = e.target.nextElementSibling
-                                if (errorDiv) errorDiv.style.display = 'flex'
-                              }}
-                            />
-                            <div 
-                              className="hidden absolute inset-0 bg-gray-100 items-center justify-center text-gray-500 text-sm"
-                              style={{ display: 'none' }}
-                            >
-                              Image failed to load
-                            </div>
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                              <a 
-                                href={imageUrl} 
-                                target="_blank" 
-                                rel="noopener noreferrer" 
-                                className="px-4 py-2 bg-white rounded-lg text-[#13008B] font-medium text-sm hover:bg-gray-50 transition-colors"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                View Full
-                              </a>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="w-full h-48 bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
-                            No image URL
-                          </div>
-                        )}
-                        <div className="p-3 space-y-1">
-                          {createdAt && (
-                            <div className="text-xs text-gray-500">
-                              {formatValue(createdAt)}
-                            </div>
-                          )}
-                          {aspectRatio && (
-                            <div className="text-xs text-gray-600 font-medium">
-                              Aspect Ratio: {aspectRatio}
-                            </div>
-                          )}
-                        </div>
+                <div className="space-y-8">
+                  {sessionsForAspectRatio.map((session, sessionIdx) => (
+                    <div key={session.sessionName} className="space-y-4">
+                      {/* Session Name Header */}
+                      <div className="border-b border-gray-200 pb-2">
+                        <h3 className="text-lg font-semibold text-[#13008B]">{session.sessionName}</h3>
+                        <p className="text-sm text-gray-500">{session.images.length} image{session.images.length !== 1 ? 's' : ''}</p>
                       </div>
-                    )
-                  })}
+                      
+                      {/* Images Grid for this Session */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {session.images.map((img, imgIdx) => {
+                          // Handle both string URLs and object structures
+                          const imageUrl = typeof img === 'string' 
+                            ? img 
+                            : (img?.image_url || img?.imageUrl || img?.url || img?.src || img?.link || img?.image || null)
+                          
+                          const imageId = typeof img === 'object' && img?.id 
+                            ? img.id 
+                            : `${selectedAspectRatio}-${session.sessionName}-${imgIdx}`
+                          
+                          const createdAt = typeof img === 'object' 
+                            ? (img?.created_at || img?.createdAt || img?.created || img?.timestamp)
+                            : null
+                          
+                          return (
+                            <div 
+                              key={imageId} 
+                              className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                            >
+                              {imageUrl ? (
+                                <div className="relative group">
+                                  <img 
+                                    src={imageUrl} 
+                                    alt={`${session.sessionName} - Image ${imgIdx + 1}`}
+                                    className="w-full h-auto object-cover"
+                                    style={{ 
+                                      aspectRatio: selectedAspectRatio === '9:16' ? '9/16' : selectedAspectRatio === '1:1' ? '1/1' : '16/9',
+                                      maxHeight: selectedAspectRatio === '9:16' ? '400px' : '300px'
+                                    }}
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      const errorDiv = e.target.nextElementSibling
+                                      if (errorDiv) errorDiv.style.display = 'flex'
+                                    }}
+                                  />
+                                  <div 
+                                    className="hidden absolute inset-0 bg-gray-100 items-center justify-center text-gray-500 text-sm"
+                                    style={{ display: 'none' }}
+                                  >
+                                    Image failed to load
+                                  </div>
+                                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                    <a 
+                                      href={imageUrl} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="px-4 py-2 bg-white rounded-lg text-[#13008B] font-medium text-sm hover:bg-gray-50 transition-colors"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      View Full
+                                    </a>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="w-full h-48 bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
+                                  No image URL
+                                </div>
+                              )}
+                              <div className="p-3 space-y-1">
+                                {createdAt && (
+                                  <div className="text-xs text-gray-500">
+                                    {formatValue(createdAt)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
