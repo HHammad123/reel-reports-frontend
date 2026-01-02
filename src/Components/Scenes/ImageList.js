@@ -1171,7 +1171,6 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
 
       if (brandAssetsResp.ok && brandAssetsData) {
         setBrandAssets(brandAssetsData);
-      } else {
       }
     } catch (error) {
     }
@@ -1284,53 +1283,60 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         
         return hasChanges ? updated : prev;
       });
-    } else if (!hasVideos && brandAssets) {
+    } else if (!hasVideos) {
       // If videos array is empty, use session assets API response
       const sessionVoiceUrl = sessionAssets.voice_url || (sessionAssets.voice_urls && Object.values(sessionAssets.voice_urls)[0]);
+      
       if (sessionVoiceUrl) {
         const normalizedSessionVoice = normalizeUrl(sessionVoiceUrl);
         
-        // Get brand voiceovers
-        const brandVoiceovers = Array.isArray(brandAssets.voiceover) 
-          ? brandAssets.voiceover 
-          : Array.isArray(brandAssets.voiceovers) 
-          ? brandAssets.voiceovers 
-          : [];
+        // Get brand voiceovers if available - these are the options shown in advanced options
+        let matchingVoiceover = null;
+        let matchedUrl = null;
         
-        // Find matching voiceover
-        const matchingVoiceover = brandVoiceovers.find(vo => {
-          const voUrl = typeof vo === 'string' ? vo : (vo?.url || vo?.link || '');
-          if (!voUrl) return false;
-          const normalizedVoUrl = normalizeUrl(voUrl);
-          return normalizedVoUrl === normalizedSessionVoice;
-        });
-        
-        // If match found, set voiceUrl for all scenes
-        if (matchingVoiceover) {
-          const matchedUrl = typeof matchingVoiceover === 'string' 
-            ? matchingVoiceover 
-            : (matchingVoiceover?.url || matchingVoiceover?.link || '');
+        if (brandAssets) {
+          const brandVoiceovers = Array.isArray(brandAssets.voiceover) 
+            ? brandAssets.voiceover 
+            : Array.isArray(brandAssets.voiceovers) 
+            ? brandAssets.voiceovers 
+            : [];
           
-          if (matchedUrl) {
-            setSceneAdvancedOptions(prev => {
-              const updated = { ...prev };
-              let hasChanges = false;
-              
-              sceneNumbers.forEach(sceneNum => {
-                const currentOptions = updated[sceneNum] || {};
-                if (currentOptions.voiceUrl !== matchedUrl) {
-                  updated[sceneNum] = {
-                    ...currentOptions,
-                    voiceUrl: matchedUrl,
-                    voiceOption: matchingVoiceover?.name || matchingVoiceover?.type || 'custom'
-                  };
-                  hasChanges = true;
-                }
-              });
-              
-              return hasChanges ? updated : prev;
-            });
+          // Find matching voiceover - compare with options that are shown in advanced options
+          matchingVoiceover = brandVoiceovers.find(vo => {
+            const voUrl = typeof vo === 'string' ? vo : (vo?.url || vo?.link || '');
+            if (!voUrl) return false;
+            const normalizedVoUrl = normalizeUrl(voUrl);
+            return normalizedVoUrl === normalizedSessionVoice || voUrl === sessionVoiceUrl;
+          });
+          
+          // Only set voiceUrl if a match is found with a displayed voiceover option
+          if (matchingVoiceover) {
+            matchedUrl = typeof matchingVoiceover === 'string' 
+              ? matchingVoiceover 
+              : (matchingVoiceover?.url || matchingVoiceover?.link || '');
           }
+        }
+        
+        // Set voiceUrl for all scenes only if there's a match with a displayed voiceover option
+        if (matchedUrl) {
+          setSceneAdvancedOptions(prev => {
+          const updated = { ...prev };
+          let hasChanges = false;
+          
+          sceneNumbers.forEach(sceneNum => {
+            const currentOptions = updated[sceneNum] || {};
+            if (currentOptions.voiceUrl !== matchedUrl) {
+              updated[sceneNum] = {
+                ...currentOptions,
+                voiceUrl: matchedUrl,
+                voiceOption: matchingVoiceover?.name || matchingVoiceover?.type || 'custom'
+              };
+              hasChanges = true;
+            }
+          });
+          
+          return hasChanges ? updated : prev;
+        });
         }
       }
     }
@@ -2357,7 +2363,9 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
               
               if (hasRelevantModel) {
                 // Call session assets API
-                const assetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`);
+                const sessionAssetsUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`;
+                
+                const assetsResp = await fetch(sessionAssetsUrl);
                 const assetsText = await assetsResp.text();
                 let assetsData;
                 try {
@@ -2600,7 +2608,9 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                   
                   if (hasRelevantModel) {
                     // Call session assets API
-                    const assetsResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`);
+                    const sessionAssetsUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`;
+                    
+                    const assetsResp = await fetch(sessionAssetsUrl);
                     const assetsText = await assetsResp.text();
                     let assetsData;
                     try {
@@ -2611,6 +2621,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                     if (assetsResp.ok && assetsData) {
                       setSessionAssets({
                         logo_url: assetsData.logo_url || '',
+                        voice_url: assetsData.voice_url || '', // Handle singular voice_url from API
                         voice_urls: assetsData.voice_urls || {}
                       });
                     }
@@ -9841,6 +9852,35 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     
                                     if (brandAssets && Array.isArray(brandAssets.voiceover)) {
                                       brandVoiceovers.push(...brandAssets.voiceover);
+                                    } else if (brandAssets && Array.isArray(brandAssets.voiceovers)) {
+                                      brandVoiceovers.push(...brandAssets.voiceovers);
+                                    }
+                                    
+                                    // Normalize URL for comparison
+                                    const normalizeUrl = (url) => {
+                                      if (!url || typeof url !== 'string') return '';
+                                      try {
+                                        const u = new URL(url);
+                                        return u.origin + u.pathname;
+                                      } catch {
+                                        return url.trim().split('?')[0].replace(/\/$/, '');
+                                      }
+                                    };
+                                    
+                                    // Get session voice_url to match with brand voiceovers
+                                    const sessionVoiceUrl = sessionAssets.voice_url || (sessionAssets.voice_urls && Object.values(sessionAssets.voice_urls)[0]);
+                                    const normalizedSessionVoice = sessionVoiceUrl ? normalizeUrl(sessionVoiceUrl) : '';
+                                    
+                                    // Find voiceover that matches session voice_url
+                                    let matchedBrandVoiceover = null;
+                                    if (normalizedSessionVoice && brandVoiceovers.length > 0) {
+                                      matchedBrandVoiceover = brandVoiceovers.find(vo => {
+                                        if (!vo || typeof vo !== 'object') return false;
+                                        const voUrl = vo.url || vo.link || '';
+                                        if (!voUrl) return false;
+                                        const normalizedVoUrl = normalizeUrl(voUrl);
+                                        return normalizedVoUrl === normalizedSessionVoice;
+                                      });
                                     }
                                     
                                     // Filter voiceovers that match the tone
@@ -9858,7 +9898,9 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                       });
                                       if (matchingVoiceovers.length === 0) {
                                       }
-                                    } else if (!scriptTone) {
+                                    } else if (!scriptTone && brandVoiceovers.length > 0) {
+                                      // If no scriptTone, show all brand voiceovers
+                                      matchingVoiceovers.push(...brandVoiceovers);
                                     }
                                     
                                     const hasSessionVoices = Object.keys(sessionAssets.voice_urls || {}).length > 0;
@@ -9870,16 +9912,26 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                         {/* Circular Button Style Voiceover Selection */}
                                         <div className="flex flex-wrap gap-4">
                                           {/* Brand Asset Voiceovers (filtered by tone) */}
-                                          {matchingVoiceovers.map((vo, idx) => (
+                                          {matchingVoiceovers.map((vo, idx) => {
+                                            const voUrl = vo.url || vo.link || '';
+                                            const currentVoiceUrl = sceneOptions.voiceUrl || '';
+                                            const normalizedVoUrl = voUrl ? normalizeUrl(voUrl) : '';
+                                            const normalizedCurrentUrl = currentVoiceUrl ? normalizeUrl(currentVoiceUrl) : '';
+                                            const isSelected = voUrl && currentVoiceUrl && (
+                                              normalizedVoUrl === normalizedCurrentUrl || 
+                                              voUrl === currentVoiceUrl
+                                            );
+                                            
+                                            return (
                                             <div key={`brand-match-${idx}`} className="flex flex-col items-center">
                                               <button
                                                 type="button"
                                                 onClick={() => {
-                                                  updateSceneOption('voiceUrl', vo.url);
+                                                  updateSceneOption('voiceUrl', voUrl);
                                                   updateSceneOption('voiceOption', vo.name || vo.type || 'custom');
                                                 }}
                                                 className={`w-16 h-16 rounded-full flex flex-col items-center justify-center transition-all ${
-                                                  sceneOptions.voiceUrl === vo.url
+                                                  isSelected
                                                     ? 'bg-[#4A90E2] text-white border-4 border-[#4A90E2] shadow-lg scale-105'
                                                     : 'bg-white text-[#4A90E2] border-2 border-[#4A90E2] hover:bg-blue-50 hover:scale-105'
                                                 }`}
@@ -9906,7 +9958,8 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                                 {vo.name || vo.type}
                                               </span>
                                             </div>
-                                          ))}
+                                            );
+                                          })}
                                           
                                           {/* Session Asset Voiceovers */}
                                           {hasSessionVoices && (

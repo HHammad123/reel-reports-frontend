@@ -297,6 +297,6 @@ export const LocalMediaPanel = () => {
         }
     }, [setOverlays, setSelectedOverlayId, clearMediaFiles]);
 
-    return (_jsx("div", { className: "flex flex-col gap-4 p-2 bg-white h-full", children: _jsx(LocalMediaGallery, { onSelectMedia: handleAddToTimeline, sessionMedia: sessionMedia, onClearAll: handleClearAll, aspectRatio: aspectRatio || '16:9' }) }));
+    return (_jsx("div", { className: "flex flex-col gap-4 p-2 bg-white h-full min-h-0 overflow-hidden", children: _jsx(LocalMediaGallery, { onSelectMedia: handleAddToTimeline, sessionMedia: sessionMedia, onClearAll: handleClearAll, aspectRatio: aspectRatio || '16:9' }) }));
 };
 export default LocalMediaPanel;

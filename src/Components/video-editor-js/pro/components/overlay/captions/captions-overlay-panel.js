@@ -317,7 +317,7 @@ export const CaptionsOverlayPanel = () => {
         const contentSection = _jsxs("div", { className: "shrink-0 space-y-4", children: [formSection] });
         const fragmentChildren = [errorDisplay, contentSection, alertDisplay].filter(Boolean);
         return _jsx("div", {
-            className: "flex flex-col gap-4 p-2 h-full [&_[data-radix-scroll-area-viewport]]:!scrollbar-none",
+            className: "flex flex-col gap-4 p-2 h-full min-h-0 overflow-hidden [&_[data-radix-scroll-area-viewport]]:!scrollbar-none",
             children: _jsxs(_Fragment, { children: fragmentChildren })
         });
     }

@@ -21,6 +21,7 @@ export const MediaGrid = ({
   loadingItemKey = null,
   hasAdaptors,
   hasSearched,
+  searchQuery = "",
   activeTab,
   sourceResults,
   mediaType,
@@ -205,7 +206,7 @@ export const MediaGrid = ({
                       "button",
                       {
                         className:
-                          "relative block w-full cursor-pointer border border-transparent rounded-sm overflow-hidden break-inside-avoid mb-3",
+                          "relative block w-full cursor-pointer border border-transparent hover:border-primary/30 rounded-sm overflow-hidden break-inside-avoid mb-3 transition-all duration-200 hover:shadow-md group",
                         onClick: () => !isItemLoading && onItemClick(item),
                         disabled: isItemLoading,
                         draggable: enableTimelineDrag && !isItemLoading,
@@ -219,10 +220,10 @@ export const MediaGrid = ({
                               shouldShowVideo
                                 ? _jsx("video", {
                                     src: videoUrl,
-                                    className: `absolute inset-0 w-full h-full rounded-sm object-cover ${
+                                    className: `absolute inset-0 w-full h-full rounded-sm object-cover transition-transform duration-200 ${
                                       isItemLoading
                                         ? "opacity-50"
-                                        : "hover:opacity-60"
+                                        : "group-hover:scale-105"
                                     }`,
                                     muted: true,
                                     playsInline: true,
@@ -238,10 +239,12 @@ export const MediaGrid = ({
                                     alt: `${mediaType.slice(0, -1)} from ${
                                       item._sourceDisplayName
                                     }`,
-                                    className: `absolute inset-0 w-full h-full rounded-sm object-cover ${
+                                    className: `absolute inset-0 w-full h-full rounded-sm ${
+                                      mediaType === "images" ? "object-contain bg-gray-50" : "object-cover"
+                                    } ${
                                       isItemLoading
                                         ? "opacity-50"
-                                        : "hover:opacity-60"
+                                        : ""
                                     }`,
                                     draggable: false,
                                   }),
@@ -257,7 +260,7 @@ export const MediaGrid = ({
                               !isItemLoading &&
                                 _jsx("div", {
                                   className:
-                                    "absolute inset-0 bg-background/20 opacity-0 hover:opacity-100 transition-opacity duration-200",
+                                    "absolute inset-0 bg-black/0 hover:bg-black/10 transition-all duration-200 rounded-sm",
                                 }),
                             ],
                           }),
@@ -323,7 +326,7 @@ export const MediaGrid = ({
           "button",
           {
             className:
-              "relative block w-full cursor-pointer border border-transparent rounded-sm overflow-hidden break-inside-avoid mb-3",
+              "relative block w-full cursor-pointer border border-transparent hover:border-primary/30 rounded-sm overflow-hidden break-inside-avoid mb-3 transition-all duration-200 hover:shadow-md group",
             onClick: () => !isItemLoading && onItemClick(item),
             disabled: isItemLoading,
             draggable: enableTimelineDrag && !isItemLoading,
@@ -337,8 +340,8 @@ export const MediaGrid = ({
                   shouldShowVideo
                     ? _jsx("video", {
                         src: videoUrl,
-                        className: `absolute inset-0 w-full h-full rounded-sm object-cover ${
-                          isItemLoading ? "opacity-50" : "hover:opacity-60"
+                        className: `absolute inset-0 w-full h-full rounded-sm object-cover transition-transform duration-200 ${
+                          isItemLoading ? "opacity-50" : "group-hover:scale-105"
                         }`,
                         muted: true,
                         playsInline: true,
@@ -354,8 +357,10 @@ export const MediaGrid = ({
                         alt: `${mediaType.slice(0, -1)} from ${
                           item._sourceDisplayName
                         }`,
-                        className: `absolute inset-0 w-full h-full rounded-sm object-cover ${
-                          isItemLoading ? "opacity-50" : "hover:opacity-60"
+                        className: `absolute inset-0 w-full h-full rounded-sm transition-transform duration-200 ${
+                          mediaType === "images" ? "object-contain bg-gray-50" : "object-cover"
+                        } ${
+                          isItemLoading ? "opacity-50" : "group-hover:scale-105"
                         }`,
                         draggable: false,
                       }),
@@ -371,7 +376,7 @@ export const MediaGrid = ({
                   !isItemLoading &&
                     _jsx("div", {
                       className:
-                        "absolute inset-0 bg-background/20 opacity-0 hover:opacity-100 transition-opacity duration-200",
+                        "absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-200 rounded-sm",
                     }),
                 ],
               }),
@@ -387,7 +392,18 @@ export const MediaGrid = ({
   if (!hasAdaptors)
     return _jsx(MediaEmptyState, { type: "no-adaptors", mediaType: mediaType });
 
-  if (hasSearched && sourceResults.length > 0) {
+  // Show "not found" if there's a search query but no results
+  // This handles both cases: when sourceResults exist but are empty, or when we have a search query but no items
+  const hasSearchQuery = searchQuery && searchQuery.trim().length > 0;
+  if (hasSearchQuery && items.length === 0 && !isLoading) {
+    return _jsx(MediaEmptyState, {
+      type: "no-results",
+      mediaType: mediaType,
+      activeTabName: activeTab !== "all" ? activeTabDisplayName : undefined,
+    });
+  }
+
+  if (hasSearched && sourceResults.length > 0 && items.length === 0) {
     return _jsx(MediaEmptyState, {
       type: "no-results",
       mediaType: mediaType,

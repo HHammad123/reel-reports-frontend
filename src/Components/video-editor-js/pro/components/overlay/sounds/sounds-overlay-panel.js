@@ -379,7 +379,7 @@ const SoundsOverlayPanel = () => {
         setIsOpen(true);
     };
     
-    return (_jsx("div", { className: "flex flex-col p-2 bg-background h-full overflow-hidden", children: !localOverlay ? (_jsxs(_Fragment, { children: [
+    return (_jsx("div", { className: "flex flex-col p-2 bg-background h-full min-h-0 overflow-hidden", children: !localOverlay ? (_jsxs(_Fragment, { children: [
         // Show existing audio overlays from timeline at the top
         audioOverlays.length > 0 && (_jsxs("div", { className: "shrink-0 mb-4 pb-4 border-b border-border", children: [
             _jsxs("div", { className: "flex items-center gap-2 mb-3", children: [
@@ -398,13 +398,7 @@ const SoundsOverlayPanel = () => {
             }, `audio-overlay-${overlay.id}`))) })
         ]})),
         // Show available audio tracks to add (without tabs)
-        _jsxs("div", { className: "flex-1 flex flex-col overflow-hidden", children: [
-            _jsxs("div", { className: "flex items-center gap-2 mb-3 shrink-0", children: [
-                _jsx(Music2, { className: "h-4 w-4 text-muted-foreground" }),
-                _jsx("h3", { className: "text-sm font-semibold", children: "Add Audio" })
-            ]}),
-            _jsx("div", { className: "flex-1 overflow-y-auto scrollbar-hide", children: isLoading ? (_jsx("div", { className: "space-y-3", children: Array.from({ length: 6 }).map((_, index) => (_jsxs("div", { className: "flex items-center gap-3 p-2.5 bg-accent/20 animate-pulse rounded-md", children: [_jsx("div", { className: "h-8 w-8 bg-accent rounded-full" }), _jsxs("div", { className: "flex-1 space-y-1", children: [_jsx("div", { className: "h-4 bg-accent rounded w-3/4" }), _jsx("div", { className: "h-3 bg-accent rounded w-1/2" })] })] }, `skeleton-${index}`))) })) : filteredAudioTracks.length > 0 ? (_jsx("div", { className: "space-y-2", children: filteredAudioTracks.map((sound) => (_jsx(SoundCard, { sound: sound, playingTrack: playingTrack, onTogglePlay: togglePlay, onAddToTimeline: handleAddToTimeline, showSourceBadge: false, enableTimelineDrag: !localOverlay }, `${sound._source}-${sound.id}`))) })) : audioAdaptors.length === 0 ? (_jsxs("div", { className: "flex flex-col items-center justify-center py-8 text-muted-foreground text-center", children: [_jsx(AlertCircle, { className: "h-8 w-8 mb-2" }), _jsx("p", { children: "No audio available" })] })) : (_jsxs("div", { className: "flex flex-col items-center justify-center py-8 text-muted-foreground text-center", children: [_jsx(AlertCircle, { className: "h-8 w-8 mb-2" }), _jsx("p", { children: "No audio tracks found" })] })) })
-        ]})
+        _jsx("div", { className: "flex-1 min-h-0 overflow-y-auto scrollbar-thin", children: isLoading ? (_jsx("div", { className: "space-y-3", children: Array.from({ length: 6 }).map((_, index) => (_jsxs("div", { className: "flex items-center gap-3 p-2.5 bg-accent/20 animate-pulse rounded-md", children: [_jsx("div", { className: "h-8 w-8 bg-accent rounded-full" }), _jsxs("div", { className: "flex-1 space-y-1", children: [_jsx("div", { className: "h-4 bg-accent rounded w-3/4" }), _jsx("div", { className: "h-3 bg-accent rounded w-1/2" })] })] }, `skeleton-${index}`))) })) : filteredAudioTracks.length > 0 ? (_jsx("div", { className: "space-y-2", children: filteredAudioTracks.map((sound) => (_jsx(SoundCard, { sound: sound, playingTrack: playingTrack, onTogglePlay: togglePlay, onAddToTimeline: handleAddToTimeline, showSourceBadge: false, enableTimelineDrag: !localOverlay }, `${sound._source}-${sound.id}`))) })) : audioAdaptors.length === 0 ? (_jsxs("div", { className: "flex flex-col items-center justify-center py-8 text-muted-foreground text-center", children: [_jsx(AlertCircle, { className: "h-8 w-8 mb-2" }), _jsx("p", { children: "No audio available" })] })) : (_jsxs("div", { className: "flex flex-col items-center justify-center py-8 text-muted-foreground text-center", children: [_jsx(AlertCircle, { className: "h-8 w-8 mb-2" }), _jsx("p", { children: "No audio tracks found" })] })) })
     ]})) : (_jsx(SoundDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay })) }));
 };
 export default SoundsOverlayPanel;

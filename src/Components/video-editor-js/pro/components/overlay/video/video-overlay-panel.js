@@ -1,5 +1,5 @@
 import { jsx as _jsx } from "react/jsx-runtime";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useEditorContext } from "../../../contexts/editor-context";
 import { useTimelinePositioning } from "../../../hooks/use-timeline-positioning";
 import { useAspectRatio } from "../../../hooks/use-aspect-ratio";
@@ -45,6 +45,8 @@ export const VideoOverlayPanel = () => {
     const { getAspectRatioDimensions } = useAspectRatio();
     const [localOverlay, setLocalOverlay] = useState(null);
     const hasLoadedInitialVideos = useRef(false);
+    const searchTimeoutRef = useRef(null);
+    const isInitialMount = useRef(true);
     
     // Fetch all videos from generate-base-video API for All tab
     useEffect(() => {
@@ -196,11 +198,11 @@ export const VideoOverlayPanel = () => {
             setLocalOverlay(selectedOverlay);
         }
     }, [selectedOverlayId, overlays]);
-    const handleSearch = async (e) => {
-        e.preventDefault();
-        
+    
+    // Extract search logic into a reusable function
+    const performSearch = useCallback(async (query) => {
         // If search query is empty, reload session videos
-        if (!searchQuery.trim()) {
+        if (!query.trim()) {
             const sessionVideosAdaptor = videoAdaptors.find(adaptor => adaptor.name === 'local-session-videos');
             if (sessionVideosAdaptor) {
                 setIsLoadingSessionVideos(true);
@@ -232,45 +234,103 @@ export const VideoOverlayPanel = () => {
         setIsLoading(true);
         try {
             const result = await searchVideos({
-                query: searchQuery,
+                query: query,
                 perPage: 50,
                 page: 1,
             });
             // Filter generated base videos by search query if provided
             let filteredGeneratedVideos = generatedBaseVideos;
-            if (searchQuery.trim()) {
-                const queryLower = searchQuery.toLowerCase();
+            if (query.trim()) {
+                const queryLower = query.toLowerCase();
                 filteredGeneratedVideos = generatedBaseVideos.filter(vid => 
                     (vid.alt && vid.alt.toLowerCase().includes(queryLower)) ||
                     (vid.title && vid.title.toLowerCase().includes(queryLower)) ||
                     (vid._sessionName && vid._sessionName.toLowerCase().includes(queryLower))
                 );
             }
+            // Filter session videos by session title if search query is provided
+            let filteredSessionVideos = result.items || [];
+            if (query.trim()) {
+                const queryLower = query.toLowerCase();
+                filteredSessionVideos = (result.items || []).filter(vid => {
+                    // Check if it's a session video and filter by session title
+                    if (vid._isSessionVideo || vid._source === 'local-session-videos') {
+                        const sessionTitle = (vid._sessionTitle || vid._sessionName || '').toLowerCase();
+                        const videoTitle = (vid.title || vid.name || '').toLowerCase();
+                        return sessionTitle.includes(queryLower) || videoTitle.includes(queryLower);
+                    }
+                    // For non-session videos, include them (they're already filtered by the adaptor)
+                    return true;
+                });
+            }
             // Combine search results with filtered generated base videos
-            const allVideos = [...(result.items || []), ...filteredGeneratedVideos];
+            const allVideos = [...filteredSessionVideos, ...filteredGeneratedVideos];
             setVideos(allVideos);
             setSourceResults(result.sourceResults || []);
         }
         catch (error) {
             console.error("Error searching videos:", error);
-            // On error, show generated base videos if search matches
-            if (searchQuery.trim()) {
-                const queryLower = searchQuery.toLowerCase();
-                const filtered = generatedBaseVideos.filter(vid => 
+            // On error, show generated base videos and session videos if search matches
+            if (query.trim()) {
+                const queryLower = query.toLowerCase();
+                // Filter generated base videos
+                const filteredGenerated = generatedBaseVideos.filter(vid => 
                     (vid.alt && vid.alt.toLowerCase().includes(queryLower)) ||
                     (vid.title && vid.title.toLowerCase().includes(queryLower)) ||
                     (vid._sessionName && vid._sessionName.toLowerCase().includes(queryLower))
                 );
-                setVideos(filtered);
+                // Filter session videos by session title
+                const filteredSession = sessionVideos.filter(vid => {
+                    const sessionTitle = (vid._sessionTitle || vid._sessionName || '').toLowerCase();
+                    const videoTitle = (vid.title || vid.name || '').toLowerCase();
+                    return sessionTitle.includes(queryLower) || videoTitle.includes(queryLower);
+                });
+                setVideos([...filteredSession, ...filteredGenerated]);
             } else {
-                setVideos(generatedBaseVideos);
+                setVideos([...sessionVideos, ...generatedBaseVideos]);
             }
             setSourceResults([]);
         }
         finally {
             setIsLoading(false);
         }
+    }, [searchVideos, videoAdaptors, generatedBaseVideos, sessionVideos]);
+    
+    // Debounced search on type
+    useEffect(() => {
+        // Skip on initial mount
+        if (isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
+        }
+        
+        // Clear existing timeout
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+        
+        // Set up debounced search (500ms delay)
+        searchTimeoutRef.current = setTimeout(() => {
+            performSearch(searchQuery);
+        }, 500);
+        
+        // Cleanup timeout on unmount or when searchQuery changes
+        return () => {
+            if (searchTimeoutRef.current) {
+                clearTimeout(searchTimeoutRef.current);
+            }
+        };
+    }, [searchQuery, performSearch]);
+    
+    const handleSearch = async (e) => {
+        e.preventDefault();
+        // Clear any pending debounced search
+        if (searchTimeoutRef.current) {
+            clearTimeout(searchTimeoutRef.current);
+        }
+        await performSearch(searchQuery);
     };
+    
     const handleAddClip = async (video) => {
         const itemKey = getItemKey(video);
         setIsDurationLoading(true);

@@ -79,7 +79,7 @@ export function StickersPanel() {
         return (_jsx("div", { className: "flex flex-col w-full gap-4 p-2 h-full", children: _jsx(StickerDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay }) }));
     }
     // Otherwise show the sticker selection panel with tabs at bottom
-    return (_jsx("div", { className: "flex flex-col w-full h-full overflow-hidden bg-white", children: _jsx(UnifiedTabs, { tabsAtBottom: true, defaultValue: stickerCategories[0], tabs: stickerCategories.map((category) => ({
+    return (_jsx("div", { className: "flex flex-col w-full h-full min-h-0 overflow-hidden bg-white", children: _jsx(UnifiedTabs, { tabsAtBottom: true, defaultValue: stickerCategories[0], tabs: stickerCategories.map((category) => ({
                 value: category,
                 label: category,
                 content: (_jsx("div", { className: "w-full", children: renderStickerContent(category) })),

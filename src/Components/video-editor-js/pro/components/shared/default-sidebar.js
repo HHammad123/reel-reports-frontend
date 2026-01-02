@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Film, Music, Type, Subtitles, ImageIcon, FolderOpen, Sticker, Layout, ChevronsLeft, Settings, Shapes } from "lucide-react";
+import { Film, Music, Type, Subtitles, ImageIcon, FolderOpen, Sticker, ChevronsLeft, Settings, Shapes } from "lucide-react";
 // Import OverlayType directly from types to avoid export issues
 import { OverlayType } from "../../types";
 // Import hooks and contexts directly
@@ -13,7 +13,6 @@ import { CaptionsOverlayPanel } from "../overlay/captions/captions-overlay-panel
 import { ImageOverlayPanel } from "../overlay/images/image-overlay-panel";
 import { LocalMediaPanel } from "../overlay/local-media/local-media-panel";
 import { StickersPanel } from "../overlay/stickers/stickers-panel";
-import { TemplateOverlayPanel } from "../overlay/templates/template-overlay-panel";
 import { ShapesOverlayPanel } from "../overlay/shapes/shapes-overlay-panel";
 import { SettingsPanel } from "../settings/settings-panel";
 // Import UI components directly
@@ -60,8 +59,6 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
                 return "Uploads";
             case OverlayType.STICKER:
                 return "Stickers";
-            case OverlayType.TEMPLATE:
-                return "Templates";
             case OverlayType.SETTINGS:
                 return "Settings";
             default:
@@ -126,13 +123,6 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
             type: OverlayType.LOCAL_DIR,
         },
         {
-            title: getPanelTitle(OverlayType.TEMPLATE),
-            url: "#",
-            icon: Layout,
-            panel: OverlayType.TEMPLATE,
-            type: OverlayType.TEMPLATE,
-        },
-        {
             title: getPanelTitle(OverlayType.SETTINGS),
             url: "#",
             icon: Settings,
@@ -162,8 +152,6 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
                 return _jsx(StickersPanel, {});
             case OverlayType.LOCAL_DIR:
                 return _jsx(LocalMediaPanel, {});
-            case OverlayType.TEMPLATE:
-                return _jsx(TemplateOverlayPanel, {});
             case OverlayType.SETTINGS:
                 return _jsx(SettingsPanel, {});
             default:
@@ -173,5 +161,5 @@ export const DefaultSidebar = ({ logo, disabledPanels = [], showIconTitles = tru
     return (_jsxs(Sidebar, { collapsible: "icon", className: "overflow-hidden *:data-[sidebar=sidebar]:flex-row", children: [_jsxs(Sidebar, { collapsible: "none", className: "w-[calc(var(--sidebar-width-icon)+1px)]! border-r border-border ", children: [_jsx(SidebarHeader, { children: _jsx(SidebarMenu, { children: _jsx(SidebarMenuItem, { children: _jsx(SidebarMenuButton, { size: "lg", asChild: true, className: "md:h-8 md:pb-4 md:pt-4 ", children: _jsx("a", { href: "#", children: _jsx("div", { className: "flex aspect-square size-9 items-center justify-center rounded-lg", children: logo || (_jsx("img", { src: "/icons/logo-rve.png", alt: "RVE Logo", width: 27, height: 27 })) }) }) }) }) }) }), _jsx(SidebarContent, { className: "border-t border-border", children: _jsx(SidebarGroup, { className: "pt-3", children: navigationItems.map((item) => (_jsx(TooltipProvider, { delayDuration: 0, children: _jsxs(Tooltip, { children: [_jsx(TooltipTrigger, { asChild: true, children: _jsxs(SidebarMenuButton, { onClick: () => {
                                                     setActivePanel(item.panel);
                                                     setIsOpen(true);
-                                                }, size: "lg", className: "flex flex-col items-center gap-2 px-1.5 py-2.5", "data-active": activePanel === item.panel, children: [_jsx(item.icon, { className: "h-4 w-4", strokeWidth: 1.25 }), showIconTitles && (_jsx("span", { className: "text-[8px] leading-none", children: item.title }))] }) }), _jsx(TooltipContent, { side: "right", children: item.title })] }) }, item.title))) }) })] }), _jsxs(Sidebar, { collapsible: "none", className: "hidden md:flex bg-background transition-all duration-300 ease-in-out", style: { width: 'var(--sidebar-width)', minWidth: 'var(--sidebar-width)', maxWidth: 'var(--sidebar-width)', transition: 'width 300ms ease-in-out, opacity 300ms ease-in-out, transform 300ms ease-in-out' }, children: [_jsx(SidebarHeader, { className: "gap-3.5 border-b border-border px-4 py-3", children: _jsx("div", { className: "flex w-full items-center justify-between", children: _jsxs("div", { className: "flex items-center justify-between w-full", children: [_jsx("h3", { className: "font-extralight text-sidebar-foreground", children: activePanel ? getPanelTitle(activePanel) : "" }), shouldShowBackButton && (_jsx(Button, { variant: "ghost", size: "icon", className: "h-6 w-6", onClick: () => setSelectedOverlayId(null), "aria-label": "Back", children: _jsx(ChevronsLeft, { className: "h-4 w-4" }) }))] }) }) }), _jsx(SidebarContent, { className: "bg-background px-2 pt-1", children: renderActivePanel() })] })] }));
+                                                }, size: "lg", className: "flex flex-col items-center gap-2 px-1.5 py-2.5", "data-active": activePanel === item.panel, children: [_jsx(item.icon, { className: "h-4 w-4", strokeWidth: 1.25 }), showIconTitles && (_jsx("span", { className: "text-[8px] leading-none", children: item.title }))] }) }), _jsx(TooltipContent, { side: "right", children: item.title })] }) }, item.title))) }) })] }), _jsxs(Sidebar, { collapsible: "none", className: "hidden md:flex bg-background transition-all duration-300 ease-in-out", style: { width: 'var(--sidebar-width)', minWidth: 'var(--sidebar-width)', maxWidth: 'var(--sidebar-width)', transition: 'width 300ms ease-in-out, opacity 300ms ease-in-out, transform 300ms ease-in-out' }, children: [_jsx(SidebarHeader, { className: "gap-3.5 border-b border-border px-4 py-3", children: _jsx("div", { className: "flex w-full items-center justify-between", children: _jsxs("div", { className: "flex items-center justify-between w-full", children: [_jsx("h3", { className: "font-extralight text-sidebar-foreground", children: activePanel ? getPanelTitle(activePanel) : "" }), shouldShowBackButton && (_jsx(Button, { variant: "ghost", size: "icon", className: "h-6 w-6", onClick: () => setSelectedOverlayId(null), "aria-label": "Back", children: _jsx(ChevronsLeft, { className: "h-4 w-4" }) }))] }) }) }), _jsx(SidebarContent, { className: "bg-background px-2 pt-1 min-h-0", children: renderActivePanel() })] })] }));
 };

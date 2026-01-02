@@ -37,7 +37,17 @@ export const createLocalSessionVideoAdaptor = () => ({
             const query = params.query.toLowerCase();
             videos = videos.filter(video => {
                 const name = (video.name || video.title || '').toLowerCase();
-                return name.includes(query);
+                // Also search by session title
+                const sessionTitle = (
+                    video.session_title || 
+                    video.sessionTitle || 
+                    video.scene_title || 
+                    video.sceneTitle ||
+                    video._sessionTitle ||
+                    video._sessionName ||
+                    ''
+                ).toLowerCase();
+                return name.includes(query) || sessionTitle.includes(query);
             });
         }
         
@@ -64,6 +74,15 @@ export const createLocalSessionVideoAdaptor = () => ({
                                  video.poster !== video.path &&
                                  video.poster !== video.url &&
                                  video.poster !== video.src;
+            // Extract session title from various possible properties
+            const sessionTitle = video.session_title || 
+                                video.sessionTitle || 
+                                video.scene_title || 
+                                video.sceneTitle ||
+                                video._sessionTitle ||
+                                video._sessionName ||
+                                '';
+            
             return {
                 id: video.id,
                 title: video.name || video.title || 'Untitled Video',
@@ -80,6 +99,9 @@ export const createLocalSessionVideoAdaptor = () => ({
                 // Flag to indicate this is a session video (for video element rendering)
                 _isSessionVideo: true,
                 _source: 'local-session-videos',
+                // Store session title for filtering
+                _sessionTitle: sessionTitle,
+                _sessionName: sessionTitle, // Also store as _sessionName for consistency
             };
         });
         

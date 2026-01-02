@@ -132,7 +132,7 @@ const SidebarSeparator = React.forwardRef(({ className, ...props }, ref) => {
 });
 SidebarSeparator.displayName = "SidebarSeparator";
 const SidebarContent = React.forwardRef(({ className, ...props }, ref) => {
-    return (_jsx("div", { ref: ref, "data-sidebar": "content", className: cn("flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-hide", className), ...props }));
+    return (_jsx("div", { ref: ref, "data-sidebar": "content", className: cn("flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin", className), ...props }));
 });
 SidebarContent.displayName = "SidebarContent";
 const SidebarGroup = React.forwardRef(({ className, ...props }, ref) => {
