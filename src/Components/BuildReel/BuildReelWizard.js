@@ -1,10 +1,12 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { FaPlus, FaAngleRight, FaEyeDropper, FaAngleUp, FaAngleDown, FaCheck, FaMicrophone } from 'react-icons/fa';
 import { HexColorPicker } from 'react-colorful';
+import { ChevronDown } from 'lucide-react';
 import useBrandAssets from '../../hooks/useBrandAssets';
 import { toast } from 'react-hot-toast';
 import ImageList from '../Scenes/ImageList';
 import VideosList from '../Scenes/VideosList';
+import ChartDataEditor from '../ChartDataEditor';
 
 // Helper to preserve ALL fields from session_data including nested structures
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
@@ -1453,6 +1455,23 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
       <div className='w-full mt-8 flex justify-center'>
         <button 
           onClick={() => { 
+            // Validate title and description are required
+            if (!videoTitle || !videoTitle.trim()) {
+              try {
+                toast.error('Video Title is required');
+              } catch (_) {
+                alert('Video Title is required');
+              }
+              return;
+            }
+            if (!videoDesc || !videoDesc.trim()) {
+              try {
+                toast.error('Video Description is required');
+              } catch (_) {
+                alert('Video Description is required');
+              }
+              return;
+            }
             syncUp(); 
             onCreateScenes && onCreateScenes(); 
           }} 
@@ -1701,18 +1720,193 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   );
 };
 
-const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
+const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   // Use centralized script state
-  const { script, setFromApi, updateScene: updateScriptScene, addSceneSimple, modelToType, typeToModel, computeTimelineForIndexByScript } = useScriptScenes(
+  const { script, setScript, setFromApi, updateScene: updateScriptScene, addSceneSimple, modelToType, typeToModel, computeTimelineForIndexByScript } = useScriptScenes(
     Array.isArray(values?.scripts?.[0]?.airesponse) ? values.scripts[0].airesponse : (Array.isArray(values?.script) ? values.script : [])
   );
+  
+  // Track last synced script to avoid unnecessary updates
+  const lastSyncedScriptRef = useRef(null);
+  const lastSavedScriptRef = useRef(null);
+  const isSyncingRef = useRef(false);
+
+  // Sync script when values.script changes (e.g., on session restore)
+  // This preserves all fields including scene description fields - same way as text_to_be_included
+  useEffect(() => {
+    // Prevent infinite loop - if we're already syncing, skip
+    if (isSyncingRef.current) return;
+    
+    const currentScript = Array.isArray(values?.script) ? values.script : [];
+    if (currentScript.length === 0) {
+      // If parent has no script but we have local script, keep local script
+      if (script.length > 0) return;
+      // Otherwise, clear script state
+      if (script.length === 0) return;
+      isSyncingRef.current = true;
+      setScript([]);
+      setTimeout(() => { isSyncingRef.current = false; }, 0);
+      return;
+    }
+    
+    const scriptKey = JSON.stringify(currentScript);
+    
+    // Always sync if script has changed or if local script is empty (initial load)
+    // This ensures scene descriptions are fetched the same way as text_to_be_included
+    if (scriptKey !== lastSyncedScriptRef.current || script.length === 0) {
+      lastSyncedScriptRef.current = scriptKey;
+      isSyncingRef.current = true;
+      // Directly set script state to preserve all fields (including scene description)
+      // Don't use setFromApi as it uses mapResponseToScenes which loses scene description fields
+      // Use spread operator to preserve ALL fields from the source, including scene description
+      // Merge with existing script state to preserve any local edits
+      setScript(prevScript => {
+        const syncedScript = currentScript.map((r, i) => {
+          if (!r || typeof r !== 'object') return r;
+          // Get existing scene from local state if it exists
+          const existingScene = prevScript[i] || {};
+          // Merge: use parent values as base, but preserve local scene description fields if they exist
+          const merged = { ...r };
+          // Always use parent values if they exist (they come from server/session)
+          // Only preserve local values if parent doesn't have them (for unsaved edits)
+          // Handle scene description fields the same way as text_to_be_included
+          const descriptionFields = ['subject', 'background', 'action', 'styleCard', 'cameraCard', 'ambiance', 'composition', 'focus_and_lens'];
+          descriptionFields.forEach(field => {
+            // Always prefer parent value if it exists (even if empty string, use parent's value)
+            // This ensures scene descriptions from server are always used
+            if (r && Object.prototype.hasOwnProperty.call(r, field)) {
+              merged[field] = r[field] ?? '';
+            } else if (existingScene[field] !== undefined) {
+              // Parent doesn't have this field, preserve local value
+              merged[field] = existingScene[field];
+            }
+          });
+          // Handle text_to_be_included the same way - always use parent if available
+          if (r && Object.prototype.hasOwnProperty.call(r, 'text_to_be_included')) {
+            merged.text_to_be_included = Array.isArray(r.text_to_be_included) ? r.text_to_be_included.slice() : [];
+          } else if (existingScene.text_to_be_included !== undefined) {
+            merged.text_to_be_included = existingScene.text_to_be_included;
+          }
+          // Preserve avatar and preset fields - always use parent if available
+          if (merged.avatar || (Array.isArray(merged.avatar_urls) && merged.avatar_urls.length > 0)) {
+            // Parent has avatar, use it
+          } else if (existingScene.avatar || (Array.isArray(existingScene.avatar_urls) && existingScene.avatar_urls.length > 0)) {
+            // Parent doesn't have avatar, preserve local
+            merged.avatar = existingScene.avatar;
+            merged.avatar_urls = existingScene.avatar_urls;
+          }
+          if (merged.presenter_options && Object.keys(merged.presenter_options).length > 0) {
+            // Parent has presenter_options, use it
+          } else if (existingScene.presenter_options && Object.keys(existingScene.presenter_options).length > 0) {
+            // Parent doesn't have presenter_options, preserve local
+            merged.presenter_options = existingScene.presenter_options;
+          }
+          // Preserve opening_frame and closing_frame - always use parent if available
+          if (r && Object.prototype.hasOwnProperty.call(r, 'opening_frame')) {
+            merged.opening_frame = r.opening_frame;
+          } else if (existingScene.opening_frame !== undefined) {
+            merged.opening_frame = existingScene.opening_frame;
+          }
+          if (r && Object.prototype.hasOwnProperty.call(r, 'closing_frame')) {
+            merged.closing_frame = r.closing_frame;
+          } else if (existingScene.closing_frame !== undefined) {
+            merged.closing_frame = existingScene.closing_frame;
+          }
+          return merged;
+        });
+        console.log('[BuildReel] StepTwo - Syncing script with scene description fields:', {
+          count: syncedScript.length,
+          firstSceneFields: syncedScript[0] ? {
+            subject: syncedScript[0].subject,
+            background: syncedScript[0].background,
+            action: syncedScript[0].action,
+            styleCard: syncedScript[0].styleCard,
+            cameraCard: syncedScript[0].cameraCard,
+            ambiance: syncedScript[0].ambiance,
+            composition: syncedScript[0].composition,
+            focus_and_lens: syncedScript[0].focus_and_lens,
+            avatar: syncedScript[0].avatar,
+            avatar_urls: syncedScript[0].avatar_urls,
+            presenter_options: syncedScript[0].presenter_options
+          } : null
+        });
+        return syncedScript;
+      });
+      // Reset syncing flag after state update
+      setTimeout(() => { isSyncingRef.current = false; }, 0);
+    }
+  }, [values?.script]);
   const [videoDurationSec, setVideoDurationSec] = useState(10);
   const [isAdding, setIsAdding] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [isSavingScenes, setIsSavingScenes] = useState(false);
   const imageFileInputRef = useRef(null);
   const [isUploadingSceneImage, setIsUploadingSceneImage] = useState(false);
   const [textIncludeInput, setTextIncludeInput] = useState('');
+
+  // Avatar selection state (matching Chat.js)
+  const [presetAvatars] = useState([
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png'
+  ]);
+  const presetAvatarNames = {
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Alex',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Sarah',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Tyler',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Fawad',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'David',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Olivia',
+    'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png': 'James'
+  };
+  const [brandAssetsAvatars, setBrandAssetsAvatars] = useState([]);
+  const [isLoadingAvatars, setIsLoadingAvatars] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
+  const [showAvatarUploadPopup, setShowAvatarUploadPopup] = useState(false);
+  const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
+  const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
+  const [avatarName, setAvatarName] = useState('');
+  const avatarUploadFileInputRef = useRef(null);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
+
+  // Presenter preset state (for Avatar Based videos)
+  const [presenterPresets, setPresenterPresets] = useState({
+    VEO3: [],
+    ANCHOR: []
+  });
+  const [selectedPresenterPreset, setSelectedPresenterPreset] = useState('');
+  const [presenterPresetOriginal, setPresenterPresetOriginal] = useState('');
+
+  // Opening and closing frame state (for Infographic and Financial videos)
+  const [openingFrameAccordionOpen, setOpeningFrameAccordionOpen] = useState(false);
+  const [closingFrameAccordionOpen, setClosingFrameAccordionOpen] = useState(false);
+  const [isEditingOpeningFrame, setIsEditingOpeningFrame] = useState(false);
+  const [isEditingClosingFrame, setIsEditingClosingFrame] = useState(false);
+  const [editedOpeningFrame, setEditedOpeningFrame] = useState({});
+  const [editedClosingFrame, setEditedClosingFrame] = useState({});
+  const [isSavingFrameData, setIsSavingFrameData] = useState(false);
+  const [presenterPresetDirty, setPresenterPresetDirty] = useState(false);
+  const [isLoadingPresenterPresets, setIsLoadingPresenterPresets] = useState(false);
+  const [presenterPresetsError, setPresenterPresetsError] = useState('');
+  const [showPresenterSaveConfirm, setShowPresenterSaveConfirm] = useState(false);
+  const [pendingPresenterPresetId, setPendingPresenterPresetId] = useState('');
+  const [pendingPresenterPresetLabel, setPendingPresenterPresetLabel] = useState('');
+  const [isSavingPresenterPreset, setIsSavingPresenterPreset] = useState(false);
+
+  // Validation error modal state
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validationErrors, setValidationErrors] = useState([]);
+
+  // Chart type state (for Financial/PLOTLY videos)
+  const [isChartTypeEditing, setIsChartTypeEditing] = useState(false);
+  const [pendingChartTypeValue, setPendingChartTypeValue] = useState('');
+  const [chartTypeSceneIndex, setChartTypeSceneIndex] = useState(null);
+  const [isRegeneratingChart, setIsRegeneratingChart] = useState(false);
 
   // Brand Assets modal state and helpers (scoped to StepTwo)
   const [showAssetsModal, setShowAssetsModal] = useState(false);
@@ -1812,12 +2006,118 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
     text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [],
     type: modelToType(r?.model),
     ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
-    folderLink: r?.folderLink || ''
+    folderLink: r?.folderLink || '',
+    // Scene Description fields
+    subject: r?.subject || '',
+    background: r?.background || '',
+    action: r?.action || '',
+    styleCard: r?.styleCard || '',
+    cameraCard: r?.cameraCard || '',
+    ambiance: r?.ambiance || '',
+    composition: r?.composition || '',
+    focus_and_lens: r?.focus_and_lens || ''
   })) : []), [script, modelToType]);
   const saveScenesToServer = async () => {
     const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
     if (!sessionId) throw new Error('Missing session_id');
-    const airesponse = Array.isArray(script) ? script : [];
+    
+    // Ensure we preserve ALL fields from script state - no data loss
+    // Map script to ensure all fields are included, preserving everything exactly as it is
+    const airesponse = Array.isArray(script) ? script.map((scene, index) => {
+      if (!scene || typeof scene !== 'object') return scene;
+      
+      // Preserve ALL fields from the scene object - no transformation, no data loss
+      const preservedScene = {
+        // Core fields
+        scene_number: scene.scene_number ?? (index + 1),
+        scene_title: scene.scene_title ?? '',
+        model: scene.model ?? '',
+        timeline: scene.timeline ?? '',
+        narration: scene.narration ?? '',
+        desc: scene.desc ?? scene.description ?? '',
+        description: scene.description ?? scene.desc ?? '',
+        text_to_be_included: Array.isArray(scene.text_to_be_included) ? scene.text_to_be_included.slice() : [],
+        ref_image: Array.isArray(scene.ref_image) ? scene.ref_image.slice() : [],
+        folderLink: scene.folderLink ?? '',
+        
+        // Scene Description fields - preserve all
+        subject: scene.subject ?? '',
+        background: scene.background ?? '',
+        action: scene.action ?? '',
+        styleCard: scene.styleCard ?? '',
+        cameraCard: scene.cameraCard ?? '',
+        ambiance: scene.ambiance ?? '',
+        composition: scene.composition ?? '',
+        focus_and_lens: scene.focus_and_lens ?? '',
+        
+        // Avatar fields
+        avatar: scene.avatar ?? null,
+        avatar_urls: Array.isArray(scene.avatar_urls) ? scene.avatar_urls.slice() : [],
+        
+        // Presenter options
+        presenter_options: scene.presenter_options ?? {},
+        presenterOptions: scene.presenterOptions ?? scene.presenter_options ?? {},
+        
+        // Background image
+        background_image: Array.isArray(scene.background_image) ? scene.background_image.slice() : [],
+        
+        // Opening and closing frames (for Infographic and Financial)
+        opening_frame: scene.opening_frame ?? null,
+        closing_frame: scene.closing_frame ?? null,
+        
+        // Chart fields
+        chart_type: scene.chart_type ?? '',
+        chart_data: scene.chart_data ?? null,
+        chartType: scene.chartType ?? scene.chart_type ?? '',
+        chartData: scene.chartData ?? scene.chart_data ?? null,
+        
+        // Preserve any other fields that might exist (spread operator to catch everything)
+        ...Object.keys(scene).reduce((acc, key) => {
+          // Only add if not already included above
+          const knownKeys = [
+            'scene_number', 'scene_title', 'model', 'timeline', 'narration', 'desc', 'description',
+            'text_to_be_included', 'ref_image', 'folderLink',
+            'subject', 'background', 'action', 'styleCard', 'cameraCard', 'ambiance', 'composition', 'focus_and_lens',
+            'avatar', 'avatar_urls', 'presenter_options', 'presenterOptions',
+            'background_image', 'chart_type', 'chart_data', 'chartType', 'chartData'
+          ];
+          if (!knownKeys.includes(key)) {
+            acc[key] = scene[key];
+          }
+          return acc;
+        }, {})
+      };
+      
+      return preservedScene;
+    }) : [];
+    
+    // Log first scene to verify all fields are included
+    if (airesponse.length > 0) {
+      console.log('[BuildReel] Saving scenes - First scene payload:', {
+        scene_number: airesponse[0].scene_number,
+        scene_title: airesponse[0].scene_title,
+        narration: airesponse[0].narration,
+        desc: airesponse[0].desc,
+        subject: airesponse[0].subject,
+        background: airesponse[0].background,
+        action: airesponse[0].action,
+        styleCard: airesponse[0].styleCard,
+        cameraCard: airesponse[0].cameraCard,
+        ambiance: airesponse[0].ambiance,
+        composition: airesponse[0].composition,
+        focus_and_lens: airesponse[0].focus_and_lens,
+        avatar: airesponse[0].avatar,
+        avatar_urls: airesponse[0].avatar_urls,
+        presenter_options: airesponse[0].presenter_options,
+        text_to_be_included: airesponse[0].text_to_be_included,
+        ref_image: airesponse[0].ref_image,
+        background_image: airesponse[0].background_image,
+        chart_type: airesponse[0].chart_type,
+        chart_data: airesponse[0].chart_data,
+        allKeys: Object.keys(airesponse[0])
+      });
+    }
+    
     let uq = [];
     try {
       const raw = localStorage.getItem('buildreel_userquery');
@@ -1835,6 +2135,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
       },
       action: 'save'
     };
+    
+    console.log('[BuildReel] Save payload - Total scenes:', airesponse.length);
+    
     const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
@@ -1871,15 +2174,160 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
     }
   };
 
-  // If values.script is provided (from parent), initialize/replace script state
+  // Load brand assets avatars on mount (matching Chat.js)
   useEffect(() => {
-    const scriptFromParent = Array.isArray(values?.script) ? values.script : [];
-    if (scriptFromParent.length > 0) setFromApi(scriptFromParent);
-  }, [values?.script]);
+    const loadAvatars = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        setIsLoadingAvatars(true);
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch(_) { data = text; }
+        if (resp.ok && data && typeof data === 'object') {
+          const avatarsObject = data?.avatars || {};
+          const avatarObjects = [];
+          Object.values(avatarsObject).forEach((profileAvatars) => {
+            if (Array.isArray(profileAvatars)) {
+              profileAvatars.forEach((avatar) => {
+                if (avatar && typeof avatar === 'object' && avatar.url) {
+                  avatarObjects.push({
+                    name: avatar.name || '',
+                    url: String(avatar.url).trim()
+                  });
+                }
+              });
+            }
+          });
+          setBrandAssetsAvatars(avatarObjects);
+        }
+      } catch(_) { /* noop */ }
+      finally { setIsLoadingAvatars(false); }
+    };
+    loadAvatars();
+  }, []);
+
+  // Note: We don't use setFromApi here because it strips scene description fields
+  // The sync logic at line 1734 handles syncing values.script to script state while preserving all fields
+
+  // Note: Auto-save removed - create-from-scratch is only called from the "+ scene" button
+
+  // Sync script changes back to parent form state
+  useEffect(() => {
+    // Prevent infinite loop - don't save if we're syncing from parent
+    if (isSyncingRef.current) return;
+    
+    if (script.length > 0 && onSave) {
+      // Convert script to scenes format for parent
+      const scenes = script.map((r) => ({
+        title: r?.scene_title || '',
+        description: r?.desc || r?.description || '',
+        narration: r?.narration || '',
+        text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [],
+        type: modelToType(r?.model),
+        ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
+        folderLink: r?.folderLink || '',
+        // Scene Description fields
+        subject: r?.subject || '',
+        background: r?.background || '',
+        action: r?.action || '',
+        styleCard: r?.styleCard || '',
+        cameraCard: r?.cameraCard || '',
+        ambiance: r?.ambiance || '',
+        composition: r?.composition || '',
+        focus_and_lens: r?.focus_and_lens || ''
+      }));
+      
+      // Only save if scenes have actually changed
+      const scenesKey = JSON.stringify(scenes);
+      if (scenesKey !== lastSavedScriptRef.current) {
+        lastSavedScriptRef.current = scenesKey;
+        onSave(scenes);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [script]);
 
   const addScene = async () => {
     try {
       if (isAdding) return;
+      
+      // Validation: Check if current scene has all required fields
+      const currentScene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+      if (!currentScene) {
+        setValidationErrors(['Please complete the current scene before adding a new one.']);
+        setShowValidationModal(true);
+        return;
+      }
+      
+      const errors = [];
+      
+      // 1. Scene Title - required
+      const sceneTitle = currentScene?.scene_title || '';
+      if (!sceneTitle || sceneTitle.trim() === '') {
+        errors.push('Scene Title is required');
+      }
+      
+      // 2. Video Type - required
+      const videoType = modelToType(currentScene?.model || '');
+      if (!videoType || videoType.trim() === '') {
+        errors.push('Video Type is required');
+      }
+      
+      // 3. Narration - required
+      const narration = currentScene?.narration || '';
+      if (!narration || narration.trim() === '') {
+        errors.push('Narration is required');
+      }
+      
+      // 4. All Scene Description fields - required
+      const descriptionFields = [
+        { key: 'subject', label: 'Subject' },
+        { key: 'background', label: 'Background' },
+        { key: 'action', label: 'Action' },
+        { key: 'styleCard', label: 'Style' },
+        { key: 'cameraCard', label: 'Camera' },
+        { key: 'ambiance', label: 'Ambiance' },
+        { key: 'composition', label: 'Composition' },
+        { key: 'focus_and_lens', label: 'Focus and Lens' }
+      ];
+      
+      descriptionFields.forEach(({ key, label }) => {
+        const value = currentScene?.[key] || '';
+        if (!value || value.trim() === '') {
+          errors.push(`${label} is required`);
+        }
+      });
+      
+      // 5. Avatar selection - required if Avatar Based
+      if (videoType === 'Avatar Based') {
+        const sceneAvatar = currentScene?.avatar || (Array.isArray(currentScene?.avatar_urls) && currentScene.avatar_urls.length > 0 ? currentScene.avatar_urls[0] : null);
+        if (!sceneAvatar || String(sceneAvatar).trim() === '') {
+          errors.push('Avatar selection is required for Avatar Based videos');
+        }
+        
+        // 6. Scene Settings (presenter preset) - required if Avatar Based
+        const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
+        if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+          const presenterOpts = currentScene?.presenter_options || currentScene?.presenterOptions || {};
+          // Check multiple possible fields for preset
+          const hasPreset = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId;
+          // Also check selectedPresenterPreset state as fallback (in case scene data hasn't updated yet)
+          const hasPresetInState = selectedPresenterPreset && String(selectedPresenterPreset).trim() !== '';
+          if ((!hasPreset || String(hasPreset).trim() === '') && !hasPresetInState) {
+            errors.push('Scene Settings (Presenter Preset) is required for Avatar Based videos');
+          }
+        }
+      }
+      
+      // Show errors if any
+      if (errors.length > 0) {
+        setValidationErrors(errors);
+        setShowValidationModal(true);
+        return;
+      }
+      
       setIsAdding(true);
       // 1) Load session id (frontend sends userquery + current scenes)
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
@@ -1902,7 +2350,28 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
         }
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
-      const body = {
+      
+      const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
+      
+      // 4) First, call create-from-scratch with action "save" to save current scenes
+      const saveBody = {
+        session_id: sessionId || '',
+        current_script: {
+          userquery: uq,
+          airesponse
+        },
+        action: 'save'
+      };
+      
+      console.log('[BuildReel] addScene - Step 1: Saving current scenes with action "save"');
+      const saveResp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(saveBody) });
+      const saveText = await saveResp.text();
+      let saveData; try { saveData = JSON.parse(saveText); } catch (_) { saveData = saveText; }
+      if (!saveResp.ok) throw new Error(`create-from-scratch(save) failed: ${saveResp.status} ${saveText}`);
+      console.log('[BuildReel] addScene - Step 1: Save successful');
+
+      // 5) Then, call create-from-scratch again with action "add" to add new scene
+      const addBody = {
         session_id: sessionId || '',
         current_script: {
           userquery: uq,
@@ -1910,15 +2379,15 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
         },
         action: 'add'
       };
-
-      // 4) Call create-from-scratch to append a new scene
-      const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
-      const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      
+      console.log('[BuildReel] addScene - Step 2: Adding new scene with action "add"');
+      const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(addBody) });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-      if (!resp.ok) throw new Error(`create-from-scratch failed: ${resp.status} ${text}`);
+      if (!resp.ok) throw new Error(`create-from-scratch(add) failed: ${resp.status} ${text}`);
+      console.log('[BuildReel] addScene - Step 2: Add successful');
 
-      // 5) Extract updated scenes from response and update UI
+      // 6) Extract updated scenes from response and update UI
       const aiArr = data?.session_patch?.append_message?.airesponse
         ?? data?.assistant_message?.airesponse
         ?? data?.airesponse
@@ -1967,6 +2436,60 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
     }
   };
 
+  // Helper function to save frame data (opening_frame, closing_frame) - similar to Chat.js
+  const saveFrameData = async (fieldName, fieldData) => {
+    if (isSavingFrameData) return;
+    setIsSavingFrameData(true);
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+
+      // Load session snapshot
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessionResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
+      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
+      const rawSession = sessJson?.session_data || sessJson?.session || {};
+      
+      // Get current scene
+      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+      if (!scene) throw new Error('Scene not found');
+      const targetSceneNumber = scene?.scene_number ?? (activeIndex + 1);
+
+      // Update the scene's frame data locally
+      updateScriptScene(activeIndex, { [fieldName]: fieldData });
+
+      // Also update via update-scene-visual API
+      const visualBody = {
+        user_id: token,
+        session_id: sessionId,
+        scene_number: targetSceneNumber,
+        [fieldName]: fieldData
+      };
+      
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(visualBody)
+      });
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`update-scene-visual failed: ${resp.status} ${text}`);
+      
+      try { toast.success(`${fieldName.replace('_', ' ')} saved successfully`); } catch(_) {}
+    } catch(e) {
+      console.error('saveFrameData failed:', e);
+      try { toast.error(`Failed to save ${fieldName}. Please try again.`); } catch(_) { alert(`Failed to save ${fieldName}. Please try again.`); }
+      throw e;
+    } finally {
+      setIsSavingFrameData(false);
+    }
+  };
+
   const types = ['Avatar Based', 'Infographic', 'Financial'];
 
   // Keep duration in sync with current scene type
@@ -1976,6 +2499,444 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
       setVideoDurationSec(getPerSceneDuration(currentType));
     } catch (_) { /* noop */ }
   }, [activeIndex, scenes]);
+
+  // Update selectedAvatar when switching scenes
+  useEffect(() => {
+    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+    if (scene) {
+      const sceneAvatar = scene?.avatar || (Array.isArray(scene?.avatar_urls) && scene.avatar_urls.length > 0 ? scene.avatar_urls[0] : null);
+      if (sceneAvatar) {
+        setSelectedAvatar(String(sceneAvatar).trim());
+      } else {
+        setSelectedAvatar(null);
+      }
+    } else {
+      setSelectedAvatar(null);
+    }
+  }, [activeIndex, script]);
+
+  // Update selectedPresenterPreset when switching scenes
+  useEffect(() => {
+    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+    if (scene) {
+      const presenterOpts = scene?.presenter_options || {};
+      const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+      if (presetId) {
+        setSelectedPresenterPreset(String(presetId).trim());
+        setPresenterPresetOriginal(String(presetId).trim());
+        setPresenterPresetDirty(false);
+      } else {
+        setSelectedPresenterPreset('');
+        setPresenterPresetOriginal('');
+        setPresenterPresetDirty(false);
+      }
+    } else {
+      setSelectedPresenterPreset('');
+      setPresenterPresetOriginal('');
+      setPresenterPresetDirty(false);
+    }
+  }, [activeIndex, script]);
+
+  // Fetch presenter presets when Avatar Based is selected
+  useEffect(() => {
+    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+    if (!scene) {
+      setPresenterPresets({ VEO3: [], ANCHOR: [] });
+      setPresenterPresetsError('');
+      setIsLoadingPresenterPresets(false);
+      return;
+    }
+    const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+    if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') {
+      setPresenterPresets({ VEO3: [], ANCHOR: [] });
+      setPresenterPresetsError('');
+      setIsLoadingPresenterPresets(false);
+      return;
+    }
+    let ignore = false;
+    const fetchPresenterPresets = async () => {
+      try {
+        setIsLoadingPresenterPresets(true);
+        setPresenterPresetsError('');
+        const token = localStorage.getItem('token') || '';
+        const sessionId = localStorage.getItem('session_id') || '';
+        if (!token || !sessionId) {
+          if (!ignore) {
+            setPresenterPresets({ VEO3: [], ANCHOR: [] });
+            setPresenterPresetsError('Missing authentication');
+            setIsLoadingPresenterPresets(false);
+          }
+          return;
+        }
+        // Get session data to extract aspect ratio
+        const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+        const sessionText = await sessionResp.text();
+        let sessionData;
+        try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = {}; }
+        const sd = sessionData?.session_data || sessionData?.session || {};
+        // Extract aspect ratio (simplified - use template_aspect or default)
+        const rawAspect = sd?.template_aspect || sd?.aspect_ratio || '16:9';
+        const normalizedAspect = rawAspect.replace(/[^0-9:]/g, '').toLowerCase() || '16:9';
+        const aspectParam = normalizedAspect;
+        const modeParam = modelUpper === 'VEO3' ? 'veo3_presets' : 'anchor_presets';
+        const params = new URLSearchParams();
+        params.set('user_id', String(token));
+        if (aspectParam) params.set('aspect_ratio', aspectParam);
+        params.set('mode', modeParam);
+        const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/presets?${params.toString()}`;
+        const resp = await fetch(url, { method: 'GET' });
+        const text = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = text;
+        }
+        if (!resp.ok) throw new Error(`presets request failed: ${resp.status}`);
+        const listSource = Array.isArray(data?.presets)
+          ? data.presets
+          : Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data)
+              ? data
+              : [];
+        const normalizedList = listSource
+          .map((item) => {
+            if (!item) return null;
+            if (typeof item === 'string') return { option: item, preset_id: String(item) };
+            if (typeof item === 'object') {
+              const option =
+                item.option ||
+                item.name ||
+                item.title ||
+                item.label ||
+                '';
+              if (!option) return null;
+              const presetId =
+                item.preset_id ||
+                item.presetId ||
+                item.id ||
+                item.value ||
+                item.option_id ||
+                item.optionId ||
+                option;
+              const rawPreviewUrl =
+                item.sample_video ||
+                item.sampleVideo ||
+                item.sample_video_url ||
+                item.sampleVideoUrl ||
+                item.sample_url ||
+                item.sampleUrl ||
+                item.sample_img ||
+                item.sampleImg ||
+                item.sample_image ||
+                item.sampleImage ||
+                item.sample_image_url ||
+                item.sampleImageUrl ||
+                item.preview_url ||
+                item.previewUrl ||
+                item.thumbnail ||
+                item.thumbnail_url ||
+                item.thumbnailUrl ||
+                item.image ||
+                item.image_url ||
+                item.imageUrl ||
+                '';
+              const rawPreviewType =
+                item.sample_video_type ||
+                item.sampleVideoType ||
+                item.sample_type ||
+                item.sampleType ||
+                item.preview_type ||
+                item.previewType ||
+                '';
+              const inferPreviewType = (url) => {
+                if (!url || typeof url !== 'string') return '';
+                const clean = url.split('?')[0].toLowerCase();
+                const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                return '';
+              };
+              const sampleVideoType =
+                rawPreviewType && typeof rawPreviewType === 'string'
+                  ? rawPreviewType.toLowerCase()
+                  : inferPreviewType(rawPreviewUrl);
+              const anchorId = item.anchor_id || item.anchorId || '';
+              const promptTemplate = item.prompt_template || item.promptTemplate || item.veo3_prompt_template || item.veo3PromptTemplate || '';
+              return {
+                option,
+                preset_id: String(presetId),
+                anchor_id: anchorId ? String(anchorId) : undefined,
+                sample_video: rawPreviewUrl || '',
+                sample_video_type: sampleVideoType,
+                prompt_template: promptTemplate
+              };
+            }
+            return null;
+          })
+          .filter(Boolean);
+        if (!ignore) {
+          setPresenterPresets((prev) => ({
+            ...prev,
+            [modelUpper]: normalizedList
+          }));
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.warn('Failed to load presenter presets:', err);
+          setPresenterPresets((prev) => ({
+            ...prev,
+            [modelUpper]: []
+          }));
+          setPresenterPresetsError(err?.message || 'Failed to load presets');
+        }
+      } finally {
+        if (!ignore) setIsLoadingPresenterPresets(false);
+      }
+    };
+    fetchPresenterPresets();
+    return () => {
+      ignore = true;
+    };
+  }, [script, activeIndex]);
+
+  // Initialize selected presenter preset from scene data - check preset_id from presenter_options
+  useEffect(() => {
+    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+    if (!scene) {
+      setSelectedPresenterPreset('');
+      setPresenterPresetOriginal('');
+      setPresenterPresetDirty(false);
+      return;
+    }
+    const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+    if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') {
+      setSelectedPresenterPreset('');
+      setPresenterPresetOriginal('');
+      setPresenterPresetDirty(false);
+      return;
+    }
+    const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+    const presenterOpts = scene?.presenter_options || scene?.presenterOptions || {};
+    // Check preset_id from presenter_options (primary check)
+    const scenePresetId = presenterOpts?.preset_id || presenterOpts?.presetId || '';
+    const sceneAnchorId = presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+    const scenePreset = presenterOpts?.preset || '';
+    
+    let resolvedValue = '';
+    
+    if (modelUpper === 'ANCHOR') {
+      // For ANCHOR, check anchor_id first, then preset_id
+      let valueToMatch = '';
+      if (sceneAnchorId) {
+        valueToMatch = String(sceneAnchorId).trim();
+      } else if (scenePresetId) {
+        valueToMatch = String(scenePresetId).trim();
+      } else if (scenePreset) {
+        valueToMatch = String(scenePreset).trim();
+      }
+      if (valueToMatch && list.length > 0) {
+        const match = list.find((item) => {
+          const itemAnchorId = String(item?.anchor_id || item?.anchorId || '').trim();
+          const itemPresetId = String(item?.preset_id || '').trim();
+          return itemAnchorId === valueToMatch || itemPresetId === valueToMatch;
+        });
+        if (match) {
+          resolvedValue = String(match.preset_id || match.option || '');
+        }
+      }
+    } else if (modelUpper === 'VEO3') {
+      // For VEO3, check preset_id from presenter_options
+      let valueToMatch = '';
+      if (scenePresetId) {
+        valueToMatch = String(scenePresetId).trim();
+      } else if (scenePreset) {
+        valueToMatch = String(scenePreset).trim();
+      }
+      if (valueToMatch && list.length > 0) {
+        const match = list.find((item) => {
+          const itemPresetId = String(item?.preset_id || '').trim();
+          return itemPresetId === valueToMatch;
+        });
+        if (match) {
+          resolvedValue = String(match.preset_id || match.option || '');
+        }
+      }
+    }
+    
+    console.log('[BuildReel] Presenter preset from scene data:', {
+      presenter_options: presenterOpts,
+      preset_id: scenePresetId,
+      preset: scenePreset,
+      anchor_id: sceneAnchorId,
+      resolvedValue: resolvedValue,
+      model: modelUpper,
+      availablePresets: list.length
+    });
+    
+    setSelectedPresenterPreset(resolvedValue);
+    setPresenterPresetOriginal(resolvedValue);
+    setPresenterPresetDirty(false);
+  }, [script, activeIndex, presenterPresets]);
+
+  // Handler for presenter preset change - update scene data only (no API call)
+  const handlePresenterPresetChange = (value) => {
+    const normalizedValue = value != null ? String(value) : '';
+    setSelectedPresenterPreset(normalizedValue);
+    setPresenterPresetDirty(normalizedValue !== presenterPresetOriginal);
+    
+    // Update preset selection in scene data immediately (no API call)
+    try {
+      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+      if (!scene) return;
+      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+      if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return;
+      
+      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+      const selectedPreset = list.find(
+        (item) => String(item?.preset_id || item?.option || '') === normalizedValue
+      ) || {};
+      
+      const presenterOpts = {
+        ...(scene.presenter_options || {}),
+        option: selectedPreset.option || '',
+        preset_id: normalizedValue
+      };
+      
+      // For VEO3 models, also save preset_id to the preset field
+      if (modelUpper === 'VEO3') {
+        presenterOpts.preset = normalizedValue;
+      }
+      
+      // For ANCHOR models, include anchor_id from the preset
+      if (modelUpper === 'ANCHOR' && selectedPreset?.anchor_id) {
+        presenterOpts.anchor_id = String(selectedPreset.anchor_id);
+      }
+      
+      // Update scene data with presenter_options and veo3_prompt_template
+      const updateData = { presenter_options: presenterOpts };
+      
+      // Add veo3_prompt_template from selected preset's prompt_template (for avatar based videos)
+      if (selectedPreset?.prompt_template) {
+        updateData.veo3_prompt_template = selectedPreset.prompt_template;
+      }
+      
+      // Update scene data immediately (no API call)
+      updateScriptScene(activeIndex, updateData);
+      
+      // Update state to reflect the change
+      setPresenterPresetOriginal(normalizedValue);
+      setPresenterPresetDirty(false);
+    } catch (err) {
+      console.error('Failed to update presenter preset:', err);
+    }
+  };
+
+  // Handler for saving presenter preset
+  const handleConfirmPresenterPresetSave = async () => {
+    if (!pendingPresenterPresetId) return;
+    setIsSavingPresenterPreset(true);
+    try {
+      const sessionId = localStorage.getItem('session_id') || '';
+      const token = localStorage.getItem('token') || '';
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+      const { user, sessionForBody } = await getSessionSnapshot();
+      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+      if (!scene) throw new Error('Scene not found');
+      const sceneNumber = scene?.scene_number ?? activeIndex + 1;
+      const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+      const selectedPreset =
+        list.find(
+          (item) =>
+            String(item?.preset_id || item?.option || '') === String(pendingPresenterPresetId)
+        ) || {};
+      // For ANCHOR models, use anchor_id as preset_id in the request body
+      const presetIdForRequest = modelUpper === 'ANCHOR' && selectedPreset?.anchor_id
+        ? String(selectedPreset.anchor_id)
+        : String(pendingPresenterPresetId || '');
+      const payload = {
+        user,
+        session: sessionForBody,
+        scene_number: sceneNumber,
+        preset_id: presetIdForRequest
+      };
+      const resp = await fetch(
+        'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-preset',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        }
+      );
+      const text = await resp.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+      if (!resp.ok) {
+        throw new Error(`scripts/update-preset failed: ${resp.status} ${text}`);
+      }
+      const savedPreset = selectedPreset;
+      const savedLabel = pendingPresenterPresetLabel || savedPreset.option || '';
+      if (scene) {
+        const rows = [...(script || [])];
+        const presenterOpts = {
+          ...(scene.presenter_options || {}),
+          option: savedLabel,
+          preset_id: pendingPresenterPresetId
+        };
+        // For VEO3 models, also save preset_id to the preset field
+        if (modelUpper === 'VEO3') {
+          presenterOpts.preset = String(pendingPresenterPresetId);
+        }
+        // For ANCHOR models, include anchor_id from the preset
+        if (modelUpper === 'ANCHOR' && savedPreset?.anchor_id) {
+          presenterOpts.anchor_id = String(savedPreset.anchor_id);
+        }
+        
+        // Add veo3_prompt_template from saved preset's prompt_template
+        const updateData = { presenter_options: presenterOpts };
+        if (savedPreset?.prompt_template) {
+          updateData.veo3_prompt_template = savedPreset.prompt_template;
+        }
+        
+        const updated = {
+          ...scene,
+          presenter_options: presenterOpts,
+          ...(savedPreset?.prompt_template ? { veo3_prompt_template: savedPreset.prompt_template } : {})
+        };
+        rows[activeIndex] = updated;
+        updateScriptScene(activeIndex, updateData);
+      }
+      try {
+        const stored = { option: savedLabel, preset_id: pendingPresenterPresetId };
+        if (sessionId) localStorage.setItem(`presenter_option:${sessionId}`, JSON.stringify(stored));
+        else localStorage.setItem('presenter_option', JSON.stringify(stored));
+      } catch (_) { /* noop */ }
+      const savedIdString = String(pendingPresenterPresetId || '');
+      setPresenterPresetOriginal(savedIdString);
+      setPresenterPresetDirty(false);
+      setSelectedPresenterPreset(savedIdString);
+      toast.success('Presenter preset saved');
+    } catch (e) {
+      console.error('scripts/update-preset failed:', e);
+      alert('Failed to update presenter preset. Please try again.');
+    } finally {
+      setIsSavingPresenterPreset(false);
+      setShowPresenterSaveConfirm(false);
+      setPendingPresenterPresetId('');
+      setPendingPresenterPresetLabel('');
+    }
+  };
 
   return (
     <div className='bg-white h-[100vh] w-full rounded-lg p-6 overflow-y-auto'>
@@ -1996,110 +2957,97 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
         <button onClick={addScene} className='ml-2 flex items-center gap-2 px-3 py-2 rounded-full bg-gray-100 border'>
           <FaPlus /> Scene
         </button>
+        <button 
+          onClick={async () => {
+            try {
+              setIsSavingScenes(true);
+              await saveScenesToServer();
+              toast.success('Scenes saved successfully');
+            } catch (error) {
+              console.error('Failed to save scenes:', error);
+              toast.error(error?.message || 'Failed to save scenes. Please try again.');
+            } finally {
+              setIsSavingScenes(false);
+            }
+          }}
+          disabled={isSavingScenes || script.length === 0}
+          className='ml-2 flex items-center gap-2 px-4 py-2 rounded-full bg-[#13008B] text-white border border-[#13008B] hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed'
+        >
+          {isSavingScenes ? (
+            <>
+              <div className='w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin' />
+              Saving...
+            </>
+          ) : (
+            <>
+              <FaCheck /> Save Scenes
+            </>
+          )}
+        </button>
       </div>
 
       {/* Scene Editor */}
-      <div className='grid grid-cols-12 gap-6'>
-        <div className='col-span-12 lg:col-span-9 space-y-6'>
-          {/* Scene Details */}
-          <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
-            <h3 className='text-lg font-semibold text-gray-900 mb-4'>Scene Details</h3>
-            <div className='grid grid-cols-1 md:grid-cols-3 gap-4 mb-4'>
-              <div className='bg-white border border-gray-200 rounded-lg p-3'>
-                <label className='text-xs font-semibold text-gray-600 block mb-1'>Scene Title</label>
-                <input
-                  value={scenes[activeIndex]?.title || ''}
-                  onChange={(e) => setScene(activeIndex, { title: e.target.value })}
-                  className='w-full px-3 py-2 border border-gray-300 rounded-lg'
-                  placeholder='Enter scene title'
-                />
-              </div>
-              <div className='bg-white border border-gray-200 rounded-lg p-3'>
-                <label className='text-xs font-semibold text-gray-600 block mb-2'>Video Type</label>
-                <div className='flex flex-wrap gap-2'>
-                  {types.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setScene(activeIndex, { type: t })}
-                      className={`px-3 py-2 rounded-full text-sm border transition-colors ${
-                        (scenes[activeIndex]?.type === t) ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      {t.replace('Based','').trim()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className='bg-white border border-gray-200 rounded-lg p-3'>
-                <label className='text-xs font-semibold text-gray-600 block mb-1'>Video Duration</label>
-                <div className='text-base text-gray-900'>
-                  {(() => {
-                    try { return computeTimelineForIndexByScript(activeIndex); }
-                    catch { return `${videoDurationSec} seconds`; }
-                  })()}
-                </div>
+      <div className='space-y-6'>
+        {/* Scene Details */}
+        <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
+          <h3 className='text-lg font-semibold text-gray-900 mb-4'>Scene Details</h3>
+          <div className='grid grid-cols-3 gap-4 mb-4'>
+            <div className='bg-white border border-gray-200 rounded-lg p-3'>
+              <label className='text-xs font-semibold text-gray-600 block mb-1'>Scene Title</label>
+              <input
+                value={scenes[activeIndex]?.title || ''}
+                onChange={(e) => setScene(activeIndex, { title: e.target.value })}
+                className='w-full px-3 py-2 border border-gray-300 rounded-lg'
+                placeholder='Enter scene title'
+              />
+            </div>
+            <div className='bg-white border border-gray-200 rounded-lg p-3'>
+              <label className='text-xs font-semibold text-gray-600 block mb-2'>Video Type</label>
+              <div className='flex flex-wrap gap-2'>
+                {types.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setScene(activeIndex, { type: t })}
+                    className={`px-3 py-2 rounded-full text-sm border transition-colors ${
+                      (scenes[activeIndex]?.type === t) ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {t.replace('Based','').trim()}
+                  </button>
+                ))}
               </div>
             </div>
             <div className='bg-white border border-gray-200 rounded-lg p-3'>
-              <div className='flex items-center justify-between mb-2'>
-                <label className='text-xs font-semibold text-gray-600'>Narration</label>
-                <span className='text-[11px] text-gray-500'>Double-click the narration to edit.</span>
+              <label className='text-xs font-semibold text-gray-600 block mb-1'>Video Duration</label>
+              <div className='text-base text-gray-900'>
+                {(() => {
+                  try { return computeTimelineForIndexByScript(activeIndex); }
+                  catch { return `${videoDurationSec} seconds`; }
+                })()}
               </div>
-              <textarea
-                rows={4}
-                value={scenes[activeIndex]?.narration || ''}
-                onChange={(e) => setScene(activeIndex, { narration: e.target.value })}
-                className='w-full p-3 border rounded-lg'
-                placeholder='Narration for this scene'
-              />
             </div>
           </div>
-
-          {/* Scene Description */}
-          <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
-            <div className='flex items-center justify-between mb-4'>
-              <h3 className='text-lg font-semibold text-gray-900'>Scene Description</h3>
-              <button
-                type='button'
-                onClick={async () => {
-                  if (isEnhancing) return;
-                  try {
-                    setIsEnhancing(true);
-                    const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-                    if (!sessionId) throw new Error('Missing session_id');
-                    const curIdx = activeIndex;
-                    const airesponse = Array.isArray(script) ? script : [];
-                    let uq = [];
-                    try {
-                      const raw = localStorage.getItem('buildreel_userquery');
-                      if (raw) { const parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery; }
-                    } catch (_) { /* noop */ }
-                    if (!Array.isArray(uq)) uq = [];
-                    const enhanceBody = { session_id: sessionId, current_script: { userquery: uq, airesponse }, scene_number: (curIdx + 1), action: 'desc' };
-                    const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/enhance-field';
-                    const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(enhanceBody) });
-                    const text = await resp.text();
-                    let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-                    if (!resp.ok) throw new Error(`enhance-field failed: ${resp.status} ${text}`);
-                    const updated = Array.isArray(data?.script) ? data.script : [];
-                    if (updated.length > 0) {
-                      const targetSn = curIdx + 1;
-                      const match = updated.find(s => Number(s?.scene_number) === targetSn) || updated[curIdx] || updated[0];
-                      if (match && typeof match.desc === 'string') {
-                        updateScriptScene(activeIndex, { desc: match.desc });
-                      }
-                    }
-                  } catch (e) {
-                    console.error('Enhance description failed:', e);
-                    alert('Failed to enhance description. Please try again.');
-                  } finally { setIsEnhancing(false); }
-                }}
-                className={`text-xs px-3 py-1 rounded-md border ${isEnhancing ? 'bg-gray-100 text-gray-500' : 'bg-white hover:bg-gray-50'}`}
-                title='Enhance description'
-                disabled={isEnhancing}
-              >{isEnhancing ? 'Enhancing…' : 'Edit'}</button>
+          <div className='bg-white border border-gray-200 rounded-lg p-3'>
+            <div className='flex items-center justify-between mb-2'>
+              <label className='text-xs font-semibold text-gray-600'>Narration</label>
+              <span className='text-[11px] text-gray-500'>Double-click the narration to edit.</span>
             </div>
-            <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+            <textarea
+              rows={4}
+              value={scenes[activeIndex]?.narration || ''}
+              onChange={(e) => setScene(activeIndex, { narration: e.target.value })}
+              className='w-full p-3 border rounded-lg'
+              placeholder='Narration for this scene'
+            />
+          </div>
+        </div>
+
+        {/* Scene Description */}
+        <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
+          <div className='mb-4'>
+            <h3 className='text-lg font-semibold text-gray-900'>Scene Description</h3>
+          </div>
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
               {[
                 { key: 'subject', label: 'Subject' },
                 { key: 'background', label: 'Background' },
@@ -2109,24 +3057,32 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                 { key: 'ambiance', label: 'Ambiance' },
                 { key: 'composition', label: 'Composition' },
                 { key: 'focus_and_lens', label: 'Focus and Lens' },
-              ].map(({ key, label }) => (
-                <div key={key} className='bg-white border border-gray-200 rounded-lg p-3'>
-                  <p className='text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide'>{label}</p>
-                  <textarea
-                    rows={2}
-                    value={scenes[activeIndex]?.[key] || ''}
-                    onChange={(e) => setScene(activeIndex, { [key]: e.target.value })}
-                    className='w-full p-2 border rounded-lg text-sm'
-                    placeholder={`Add ${label.toLowerCase()}...`}
-                  />
-                </div>
-              ))}
-            </div>
+              ].map(({ key, label }) => {
+                // Read directly from script to ensure we get the latest value
+                const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                const fieldValue = scene?.[key] || '';
+                return (
+                  <div key={key} className='bg-white border border-gray-200 rounded-lg p-3'>
+                    <p className='text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide'>{label}</p>
+                    <textarea
+                      rows={2}
+                      value={fieldValue}
+                      onChange={(e) => {
+                        const newValue = e.target.value;
+                        updateScriptScene(activeIndex, { [key]: newValue });
+                      }}
+                      className='w-full p-2 border rounded-lg text-sm'
+                      placeholder={`Add ${label.toLowerCase()}...`}
+                    />
+                  </div>
+                );
+              })}
           </div>
+        </div>
 
-          {/* Text To Be Included */}
-          <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
-            <h4 className='text-lg font-semibold text-gray-800 mb-2'>Text To Be Included</h4>
+        {/* Text To Be Included */}
+        <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+          <h4 className='text-lg font-semibold text-gray-800 mb-2'>Text To Be Included</h4>
             {(() => {
               const r = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
               const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
@@ -2166,118 +3122,1169 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
                 </div>
               );
             })()}
-          </div>
-          <div className='rounded-xl border p-4'>
-            <div className='grid grid-cols-12 gap-4 items-start'>
-              <div className='col-span-12 md:col-span-6'>
-                <div className='text-sm text-gray-600 mb-2'>Select a Video Type</div>
-                <div className='flex flex-wrap gap-2'>
-                  {types.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setScene(activeIndex, { type: t })}
-                      className={`px-4 py-2 rounded-full text-sm ${scenes[activeIndex]?.type === t ? 'bg-[#13008B] text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className='col-span-12 md:col-span-6'>
-                {((scenes[activeIndex]?.type || '') !== 'Financial') && (
-                  <div className='text-sm text-gray-600 mb-2'>
-                    { (scenes[activeIndex]?.type || '') === 'Avatar Based' ? 'Select an Avatar' : 'Select a Reference Image' }
-                  </div>
-                )}
-                <div className='flex items-center gap-3'>
-                  {/* When Financial, show Chart Type selector */}
-                  {((scenes[activeIndex]?.type || '') === 'Financial') && (
-                    <div className='flex items-center gap-2'>
-                      <label className='text-sm text-gray-600'>Chart Type</label>
-                      <select
-                        value={script?.[activeIndex]?.chart_type || script?.[activeIndex]?.chartType || ''}
-                        onChange={(e)=> updateScriptScene(activeIndex, { chart_type: e.target.value })}
-                        className='px-3 py-2 border rounded-lg text-sm'
-                      >
-                        <option value=''>Select</option>
-                        <option value='pie'>Pie</option>
-                        <option value='bar'>Bar</option>
-                        <option value='line'>Line</option>
-                      </select>
-                    </div>
-                  )}
-                  {/* Existing selected refs preview (hide for Financial) */}
-                  {(() => {
-                    const curType = (scenes[activeIndex]?.type || '');
-                    if (curType === 'Financial') return null;
-                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image : [];
-                    if (imgs.length > 0) {
-                      return imgs.slice(0,3).map((url, idx) => (
-                        <div key={idx} className='w-16 h-16 rounded-lg border overflow-hidden'>
-                          <img src={url} alt={`ref-${idx}`} className='w-full h-full object-cover' />
-                        </div>
-                      ));
-                    }
-                    return null;
-                  })()}
-                  {/* Choose from Brand Assets (Scenes Editor-like flow) for non-Avatar types */}
-                  {((scenes[activeIndex]?.type || '') !== 'Avatar Based' && (scenes[activeIndex]?.type || '') !== 'Financial') && (
-                    <button
-                      type='button'
-                      onClick={openAssetsModal}
-                      className='px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 text-sm'
-                      title='Choose from Brand Assets'
-                    >
-                      Choose from Assets
-                    </button>
-                  )}
-                  <input
-                    ref={imageFileInputRef}
-                    type='file'
-                    accept='image/*'
-                    className='hidden'
-                    onChange={async (e) => {
-                      try {
-                        const file = (e.target.files && e.target.files[0]) || null;
-                        if (!file) return;
-                        setIsUploadingSceneImage(true);
-                        const urls = await uploadSceneImage(file);
-                        if (urls.length > 0) {
-                          const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0,2) : [];
-                          updateScriptScene(activeIndex, { ref_image: [urls[0], ...curRefs] });
-                        }
-                      } finally {
-                        setIsUploadingSceneImage(false);
-                        if (imageFileInputRef.current) imageFileInputRef.current.value = '';
-                      }
-                    }}
-                  />
-                  {/* Removed inline upload + box per requirement */}
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
-
-        <div className='col-span-12 lg:col-span-3'>
-          <div className='border rounded-xl p-4'>
-            <div className='text-sm text-gray-600 mb-2'>Video Duration</div>
-            <div className='text-2xl font-semibold'>
+        {/* Avatar selection section - only show when Avatar Based */}
+        {((scenes[activeIndex]?.type || '') === 'Avatar Based') && (
+          <div>
+            <div className='w-full'>
               {(() => {
-                try {
-                  const tl = computeTimelineForIndexByScript(activeIndex);
-                  return tl.replace('seconds','sec');
-                } catch (_) { return `0 – ${videoDurationSec} sec`; }
+                const seenUrls = new Set();
+                const allAvatars = [];
+                const normalizeAvatar = (item) => {
+                  if (item && typeof item === 'object' && item.url) {
+                    return { name: item.name || '', url: String(item.url).trim() };
+                  }
+                  if (typeof item === 'string') {
+                    const trimmedUrl = item.trim();
+                    const presetName = presetAvatarNames[trimmedUrl];
+                    return { name: presetName || '', url: trimmedUrl };
+                  }
+                  return null;
+                };
+                const addIfNotSeen = (avatar) => {
+                  const normalized = normalizeAvatar(avatar);
+                  if (normalized && normalized.url && !seenUrls.has(normalized.url)) {
+                    seenUrls.add(normalized.url);
+                    allAvatars.push(normalized);
+                  }
+                };
+                presetAvatars.forEach(addIfNotSeen);
+                brandAssetsAvatars.forEach(addIfNotSeen);
+                const sceneAvatar = script?.[activeIndex]?.avatar || (Array.isArray(script?.[activeIndex]?.avatar_urls) && script[activeIndex].avatar_urls.length > 0 ? script[activeIndex].avatar_urls[0] : null);
+                const normalizedSceneAvatar = sceneAvatar ? String(sceneAvatar).trim() : null;
+                const normalizedSelectedAvatar = selectedAvatar ? String(selectedAvatar).trim() : null;
+                const isAvatarSelected = (avatarObj) => {
+                  if (!avatarObj || !avatarObj.url) return false;
+                  const normalizedUrl = String(avatarObj.url).trim();
+                  if (normalizedSelectedAvatar && normalizedSelectedAvatar === normalizedUrl) return true;
+                  if (normalizedSceneAvatar && normalizedSceneAvatar === normalizedUrl) return true;
+                  return false;
+                };
+                return (
+                  <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+                            <div className='mb-4'>
+                              <h4 className='text-lg font-semibold text-gray-800'>Select an Avatar</h4>
+                            </div>
+                            {isLoadingAvatars ? (
+                              <div className='flex items-center justify-center py-8'>
+                                <div className='w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
+                              </div>
+                            ) : (
+                              <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4'>
+                                {allAvatars.length === 0 ? (
+                                  <div className='col-span-full text-center py-8 text-gray-500'>
+                                    No avatars available. Click "Upload Avatar" to add one.
+                                  </div>
+                                ) : (
+                                  allAvatars.map((avatarObj, index) => {
+                                    const avatarUrl = avatarObj.url;
+                                    const avatarName = avatarObj.name || `Avatar ${index + 1}`;
+                                    const isSelected = isAvatarSelected(avatarObj);
+                                    return (
+                                      <div key={index} className='flex flex-col items-center gap-2'>
+                                        <button
+                                          type='button'
+                                          onClick={async () => {
+                                            try {
+                                              setSelectedAvatar(avatarUrl);
+                                              // Update local state only - no API call
+                                              updateScriptScene(activeIndex, { avatar: avatarUrl, avatar_urls: [avatarUrl] });
+                                            } catch (err) {
+                                              console.error('Failed to update avatar:', err);
+                                            }
+                                          }}
+                                          className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
+                                            isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
+                                          }`}
+                                          title={avatarName}
+                                        >
+                                          <img src={avatarUrl} alt={avatarName} className='w-full h-full object-cover' />
+                                        </button>
+                                        <span className='text-xs text-gray-600 text-center max-w-[80px] truncate' title={avatarName}>
+                                          {avatarName}
+                                        </span>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                                <button
+                                  type='button'
+                                  onClick={() => setShowAvatarUploadPopup(true)}
+                                  className='w-20 h-20 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-[#13008B] transition-colors'
+                                  title='Upload Avatar'
+                                >
+                                  <svg className='w-8 h-8 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 6v6m0 0v6m0-6h6m-6 0H6' />
+                                  </svg>
+                                </button>
+                              </div>
+                            )}
+                  </div>
+                );
               })()}
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Background Image selection section for Avatar Based - only show when Avatar Based */}
+        {((scenes[activeIndex]?.type || '') === 'Avatar Based') && (
+          <div>
+            <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+              <div className='flex items-center justify-between mb-4'>
+                <h4 className='text-lg font-semibold text-gray-800'>Select a Background Image</h4>
+              </div>
+              {(() => {
+                const scene = script?.[activeIndex];
+                const refs = (() => {
+                  const urls = [];
+                  // First try background_image array
+                  if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
+                    scene.background_image.forEach(item => {
+                      let url = '';
+                      if (typeof item === 'string' && item.trim()) {
+                        url = item.trim();
+                      } else if (item && typeof item === 'object') {
+                        url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || item?.image || '';
+                        if (url) url = url.trim();
+                      }
+                      if (url && typeof url === 'string' && url.length > 0 && !urls.includes(url)) {
+                        urls.push(url);
+                      }
+                    });
+                  }
+                  // Fallback to ref_image
+                  if (urls.length === 0) {
+                    const r = scene?.ref_image;
+                    if (Array.isArray(r) && r.length > 0) {
+                      r.forEach(url => {
+                        const trimmed = typeof url === 'string' ? url.trim() : url;
+                        if (trimmed && !urls.includes(trimmed)) {
+                          urls.push(trimmed);
+                        }
+                      });
+                    } else if (typeof r === 'string' && r.trim()) {
+                      const trimmed = r.trim();
+                      if (!urls.includes(trimmed)) urls.push(trimmed);
+                    }
+                  }
+                  // Fallback to background field
+                  if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
+                    const trimmed = scene.background.trim();
+                    if (!urls.includes(trimmed)) urls.push(trimmed);
+                  }
+                  return urls;
+                })();
+                const selectedRefs = refs;
+                return (
+                  <div>
+                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4'>
+                      {refs.length === 0 ? (
+                        <p className='text-sm text-gray-500 col-span-4'>No background images yet. Add one below.</p>
+                      ) : (
+                        refs.map((url, idx) => (
+                          <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${selectedRefs.includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300'} overflow-visible transition-colors cursor-pointer`} title={url} onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const currentSelected = selectedRefs || [];
+                              const exists = currentSelected.includes(url);
+                              let newSelected;
+                              if (exists) {
+                                newSelected = currentSelected.filter(u => u !== url);
+                              } else {
+                                const next = [...currentSelected, url];
+                                newSelected = next.length > 2 ? next.slice(-2) : next;
+                              }
+                              // Update scene with background images
+                              const backgroundImageArray = newSelected.map((u) => ({
+                                image_url: u,
+                                template_id: ''
+                              }));
+                              updateScriptScene(activeIndex, { 
+                                ref_image: newSelected,
+                                background_image: backgroundImageArray.length > 0 ? backgroundImageArray : []
+                              });
+                              await updateTextForSelected(activeIndex, { 
+                                genImage: false, 
+                                descriptionOverride: '', 
+                                refImagesOverride: newSelected 
+                              });
+                            } catch(_) {}
+                          }}>
+                            <img src={url} alt={`BG ${idx+1}`} className='w-full h-full object-cover' />
+                            <button className='pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity' title='View full size' onClick={(e)=>{ e.stopPropagation(); window.open(url, '_blank'); }}>
+                              <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17' /></svg>
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className='flex items-center gap-2'>
+                      <button
+                        onClick={openAssetsModal}
+                        className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                        title='Choose from templates'
+                      >
+                        <FaPlus className='w-4 h-4' /> Choose From Template
+                      </button>
+                      <input
+                        ref={imageFileInputRef}
+                        type='file'
+                        accept='image/*'
+                        className='hidden'
+                        onChange={async (e) => {
+                          try {
+                            const file = (e.target.files && e.target.files[0]) || null;
+                            if (!file) return;
+                            setIsUploadingSceneImage(true);
+                            const urls = await uploadSceneImage(file);
+                            if (urls.length > 0) {
+                              const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0,1) : [];
+                              const newRefs = [urls[0], ...curRefs].slice(0,2);
+                              const backgroundImageArray = newRefs.map((u) => ({
+                                image_url: u,
+                                template_id: ''
+                              }));
+                              updateScriptScene(activeIndex, { 
+                                ref_image: newRefs,
+                                background_image: backgroundImageArray
+                              });
+                              await updateTextForSelected(activeIndex, { 
+                                genImage: false, 
+                                descriptionOverride: '', 
+                                refImagesOverride: newRefs 
+                              });
+                            }
+                          } finally {
+                            setIsUploadingSceneImage(false);
+                            if (imageFileInputRef.current) imageFileInputRef.current.value = '';
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => imageFileInputRef.current?.click()}
+                        className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                        disabled={isUploadingSceneImage}
+                      >
+                        {isUploadingSceneImage ? 'Uploading...' : 'Upload Image'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Scene Settings section for Avatar Based - only show when Avatar Based */}
+        {((scenes[activeIndex]?.type || '') === 'Avatar Based') && (() => {
+          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+          if (!scene) return null;
+          const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return null;
+          const optionsList = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+          const selectedPreset =
+            optionsList.find(
+              (opt) =>
+                String(opt?.preset_id || opt?.option || '') ===
+                String(selectedPresenterPreset || '')
+            ) || null;
+          const canSave =
+            presenterPresetDirty &&
+            !!selectedPresenterPreset &&
+            !isLoadingPresenterPresets;
+          return (
+            <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+              <div className='mb-3'>
+                <h4 className='text-lg font-semibold text-gray-800'>Scene Settings</h4>
+              </div>
+              <div className='mt-3'>
+                {isLoadingPresenterPresets ? (
+                  <div className='flex items-center gap-2 text-sm text-gray-500'>
+                    <span className='inline-flex h-4 w-4 animate-spin rounded-full border-2 border-[#13008B] border-t-transparent' />
+                    Loading presenter presets…
+                  </div>
+                ) : optionsList.length === 0 ? (
+                  <div className='rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600'>
+                    No presenter presets available for this configuration.
+                  </div>
+                ) : (
+                  <div className='grid grid-cols-5 gap-3 pb-2'>
+                    {optionsList.map((po) => {
+                      const value =
+                        po?.preset_id != null
+                          ? String(po.preset_id)
+                          : String(po.option || '');
+                      // Check if preset_id from presenter_options matches this preset's preset_id
+                      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                      const presenterOpts = scene?.presenter_options || scene?.presenterOptions || {};
+                      const scenePresetId = String(presenterOpts?.preset_id || presenterOpts?.presetId || '').trim();
+                      const scenePreset = String(presenterOpts?.preset || '').trim();
+                      
+                      // Match based on preset_id from presenter_options (primary) or preset field (fallback)
+                      const matchesPresetId = scenePresetId && String(value).trim() === scenePresetId;
+                      const matchesPreset = scenePreset && String(value).trim() === scenePreset;
+                      const matchesState = String(selectedPresenterPreset || '').trim() === String(value).trim();
+                      
+                      const isSelected = matchesPresetId || matchesPreset || matchesState;
+                      
+                      // Debug log for first preset to help troubleshoot
+                      if (optionsList.indexOf(po) === 0) {
+                        console.log('[BuildReel] Preset selection check:', {
+                          presetValue: value,
+                          scenePresetId: scenePresetId,
+                          scenePreset: scenePreset,
+                          selectedPresenterPreset: selectedPresenterPreset,
+                          presenterOptions: presenterOpts,
+                          isSelected: isSelected,
+                          matchesPresetId: matchesPresetId,
+                          matchesPreset: matchesPreset,
+                          matchesState: matchesState
+                        });
+                      }
+                      const previewUrl = po.sample_video || '';
+                      const previewType = String(po.sample_video_type || '').toLowerCase();
+                      const inferPreviewType = (url) => {
+                        if (!url || typeof url !== 'string') return '';
+                        const clean = url.split('?')[0].toLowerCase();
+                        const videoExts = ['.mp4', '.mov', '.m4v', '.webm', '.ogg', '.ogv'];
+                        const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.avif'];
+                        if (videoExts.some((ext) => clean.endsWith(ext))) return 'video';
+                        if (imageExts.some((ext) => clean.endsWith(ext))) return 'image';
+                        return '';
+                      };
+                      const resolvedType = previewType || inferPreviewType(previewUrl);
+                      const isVideo = resolvedType === 'video';
+                      const isImage = resolvedType === 'image';
+                      return (
+                        <div key={value} className='relative'>
+                          <button
+                            type='button'
+                            onClick={() => handlePresenterPresetChange(value)}
+                            className={`relative flex flex-col overflow-hidden rounded-lg border transition-shadow w-full ${
+                              isSelected
+                                ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
+                                : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
+                            }`}
+                          >
+                            {isSelected && (
+                              <span className='absolute right-2 top-2 rounded-full bg-[#13008B] px-2.5 py-1 text-xs font-semibold text-white z-20 shadow-lg'>
+                                ✓ Selected
+                              </span>
+                            )}
+                            {isSelected && (
+                              <div className='absolute inset-0 border-4 border-[#13008B] rounded-lg z-10 pointer-events-none' />
+                            )}
+                            <div className='flex-1 bg-black/5 aspect-video'>
+                              {previewUrl ? (
+                                isVideo ? (
+                                  <video
+                                    className='h-full w-full object-cover'
+                                    muted
+                                    playsInline
+                                    loop
+                                  >
+                                    <source src={previewUrl} type='video/mp4' />
+                                  </video>
+                                ) : isImage ? (
+                                  <img
+                                    src={previewUrl}
+                                    alt={`${po.option} preview`}
+                                    className='h-full w-full object-cover'
+                                  />
+                                ) : (
+                                  <div className='flex h-full w-full items-center justify-center bg-gray-100 text-sm text-gray-500'>
+                                    Preview available
+                                  </div>
+                                )
+                              ) : (
+                                <div className='flex h-full w-full items-center justify-center bg-gray-100 text-sm text-gray-500'>
+                                  No preview available
+                                </div>
+                              )}
+                            </div>
+                            <div className='flex items-center px-3 py-2 text-left'>
+                              <span className='text-sm font-semibold text-gray-800'>
+                                {po.option}
+                              </span>
+                            </div>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {presenterPresetsError && (
+                <div className='mt-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600'>
+                  {presenterPresetsError}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Chart section for Financial/PLOTLY videos - only show when Financial */}
+        {((scenes[activeIndex]?.type || '') === 'Financial') && (() => {
+          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+          if (!scene) return null;
+          const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isPlotly = sceneModelUpper === 'PLOTLY';
+          if (!isPlotly) return null;
+          
+          const chartType = scene?.chart_type || scene?.chartType || '';
+          const chartData = scene?.chart_data || scene?.chartData || null;
+          
+          const handleChartTypeChange = (newChartType) => {
+            // Just update local state, don't call API
+            // Initialize default chart data structure if chart type is selected and no data exists
+            let newChartData = chartData;
+            if (newChartType && !chartData) {
+              // Initialize default structure based on chart type
+              if (newChartType === 'pie' || newChartType === 'donut') {
+                newChartData = {
+                  series: {
+                    labels: ['Category 1', 'Category 2'],
+                    data: [{ values: [10, 20] }]
+                  },
+                  formatting: {
+                    series_info: [
+                      { name: 'Category 1', color: '#000000' },
+                      { name: 'Category 2', color: '#000000' }
+                    ]
+                  }
+                };
+              } else {
+                newChartData = {
+                  series: {
+                    x: ['2021', '2022', '2023'],
+                    data: [
+                      { name: 'Series 1', y: [10, 20, 30] }
+                    ]
+                  },
+                  formatting: {
+                    series_info: [
+                      { name: 'Series 1', color: '#000000' }
+                    ]
+                  }
+                };
+              }
+            }
+            updateScriptScene(activeIndex, {
+              chart_type: newChartType,
+              chartType: newChartType,
+              chart_data: newChartData,
+              chartData: newChartData
+            });
+          };
+          
+          const handleChartDataChange = (newChartData) => {
+            // Update chart data in local state
+            updateScriptScene(activeIndex, {
+              chart_data: newChartData,
+              chartData: newChartData
+            });
+          };
+          
+          const handleChartDataSave = async (newChartData) => {
+            // Save chart data to scene
+            updateScriptScene(activeIndex, {
+              chart_data: newChartData,
+              chartData: newChartData
+            });
+            // Optionally call updateTextForSelected to persist to server
+            try {
+              await updateTextForSelected(activeIndex, { 
+                genImage: false, 
+                descriptionOverride: '', 
+                refImagesOverride: [] 
+              });
+              toast.success('Chart data saved');
+            } catch (e) {
+              console.error('Failed to save chart data:', e);
+            }
+          };
+          
+          return (
+            <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+              <h4 className='text-lg font-semibold text-gray-800 mb-4'>Chart</h4>
+              <div className='space-y-4'>
+                <div>
+                  <div className='mb-1'>
+                    <div className='text-sm font-medium text-gray-700'>Chart Type</div>
+                  </div>
+                  <select
+                    value={chartType || ''}
+                    onChange={(e) => handleChartTypeChange(e.target.value)}
+                    className='w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent'
+                  >
+                    <option value=''>Select</option>
+                    <option value='clustered_bar'>Clustered Bar</option>
+                    <option value='clustered_column'>Clustered Column</option>
+                    <option value='line'>Line</option>
+                    <option value='pie'>Pie</option>
+                    <option value='stacked_bar'>Stacked Bar</option>
+                    <option value='stacked_column'>Stacked Column</option>
+                    <option value='waterfall_bar'>Waterfall Bar</option>
+                    <option value='waterfall_column'>Waterfall Column</option>
+                    <option value='donut'>Donut</option>
+                  </select>
+                </div>
+                {chartType && (
+                  <div>
+                    <div className='mb-2'>
+                      <div className='text-sm font-medium text-gray-700'>Chart Data</div>
+                      <p className='text-xs text-gray-500'>Manually enter your chart data below</p>
+                    </div>
+                    <div className='border border-gray-200 rounded-lg bg-white p-4'>
+                      <ChartDataEditor
+                        chartType={chartType}
+                        chartData={chartData}
+                        onDataChange={handleChartDataChange}
+                        onSave={handleChartDataSave}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Background Image selection section - only show when Infographic (matching Chat.js) */}
+        {((scenes[activeIndex]?.type || '') === 'Infographic') && (
+          <div>
+            <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+              <div className='flex items-center justify-between mb-4'>
+                <h4 className='text-lg font-semibold text-gray-800'>Select a Background Image</h4>
+              </div>
+              {(() => {
+                  const scene = script?.[activeIndex];
+                  const refs = (() => {
+                    const urls = [];
+                    // First try background_image array
+                    if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
+                      scene.background_image.forEach(item => {
+                        let url = '';
+                        if (typeof item === 'string' && item.trim()) {
+                          url = item.trim();
+                        } else if (item && typeof item === 'object') {
+                          url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || item?.image || '';
+                          if (url) url = url.trim();
+                        }
+                        if (url && typeof url === 'string' && url.length > 0 && !urls.includes(url)) {
+                          urls.push(url);
+                        }
+                      });
+                    }
+                    // Fallback to ref_image
+                    if (urls.length === 0) {
+                      const r = scene?.ref_image;
+                      if (Array.isArray(r) && r.length > 0) {
+                        r.forEach(url => {
+                          const trimmed = typeof url === 'string' ? url.trim() : url;
+                          if (trimmed && !urls.includes(trimmed)) {
+                            urls.push(trimmed);
+                          }
+                        });
+                      } else if (typeof r === 'string' && r.trim()) {
+                        const trimmed = r.trim();
+                        if (!urls.includes(trimmed)) urls.push(trimmed);
+                      }
+                    }
+                    // Fallback to background field
+                    if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
+                      const trimmed = scene.background.trim();
+                      if (!urls.includes(trimmed)) urls.push(trimmed);
+                    }
+                    return urls;
+                  })();
+                  const selectedRefs = refs;
+                  return (
+                    <div>
+                      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4'>
+                        {refs.length === 0 ? (
+                          <p className='text-sm text-gray-500 col-span-4'>No background images yet. Add one below.</p>
+                        ) : (
+                          refs.map((url, idx) => (
+                            <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${selectedRefs.includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300'} overflow-visible transition-colors cursor-pointer`} title={url} onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const currentSelected = selectedRefs || [];
+                                const exists = currentSelected.includes(url);
+                                let newSelected;
+                                if (exists) {
+                                  newSelected = currentSelected.filter(u => u !== url);
+                                } else {
+                                  const next = [...currentSelected, url];
+                                  newSelected = next.length > 2 ? next.slice(-2) : next;
+                                }
+                                // Update scene with background images
+                                const backgroundImageArray = newSelected.map((u) => ({
+                                  image_url: u,
+                                  template_id: ''
+                                }));
+                                updateScriptScene(activeIndex, { 
+                                  ref_image: newSelected,
+                                  background_image: backgroundImageArray.length > 0 ? backgroundImageArray : []
+                                });
+                                await updateTextForSelected(activeIndex, { 
+                                  genImage: false, 
+                                  descriptionOverride: '', 
+                                  refImagesOverride: newSelected 
+                                });
+                              } catch(_) {}
+                            }}>
+                              <img src={url} alt={`BG ${idx+1}`} className='w-full h-full object-cover' />
+                              <button className='pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity' title='View full size' onClick={(e)=>{ e.stopPropagation(); window.open(url, '_blank'); }}>
+                                <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17' /></svg>
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <div className='flex items-center gap-2'>
+                        <button
+                          onClick={openAssetsModal}
+                          className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                          title='Choose from templates'
+                        >
+                          <FaPlus className='w-4 h-4' /> Choose From Template
+                        </button>
+                        <input
+                          ref={imageFileInputRef}
+                          type='file'
+                          accept='image/*'
+                          className='hidden'
+                          onChange={async (e) => {
+                            try {
+                              const file = (e.target.files && e.target.files[0]) || null;
+                              if (!file) return;
+                              setIsUploadingSceneImage(true);
+                              const urls = await uploadSceneImage(file);
+                              if (urls.length > 0) {
+                                const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0,1) : [];
+                                const newRefs = [urls[0], ...curRefs].slice(0,2);
+                                const backgroundImageArray = newRefs.map((u) => ({
+                                  image_url: u,
+                                  template_id: ''
+                                }));
+                                updateScriptScene(activeIndex, { 
+                                  ref_image: newRefs,
+                                  background_image: backgroundImageArray
+                                });
+                                await updateTextForSelected(activeIndex, { 
+                                  genImage: false, 
+                                  descriptionOverride: '', 
+                                  refImagesOverride: newRefs 
+                                });
+                              }
+                            } finally {
+                              setIsUploadingSceneImage(false);
+                              if (imageFileInputRef.current) imageFileInputRef.current.value = '';
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => imageFileInputRef.current?.click()}
+                          className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                          disabled={isUploadingSceneImage}
+                        >
+                          {isUploadingSceneImage ? 'Uploading...' : 'Upload Image'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Opening and Closing Frame sections for Infographic scenes (SORA) - matching Chat.js */}
+        {(() => {
+          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+          if (!scene) return false;
+          const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isSora = sceneModelUpper === 'SORA';
+          const sceneType = scenes[activeIndex]?.type || '';
+          return isSora || sceneType === 'Infographic';
+        })() && (
+          <div className='space-y-4 mt-6'>
+            <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+              <h4 className='text-lg font-semibold text-gray-800 mb-4'>Scene Visual</h4>
+              
+              {/* Opening Frame Accordion */}
+              <div className="bg-white rounded-lg border border-gray-200 mb-4">
+                <div className="flex items-center justify-between p-4">
+                  <button
+                    type="button"
+                    onClick={() => setOpeningFrameAccordionOpen(!openingFrameAccordionOpen)}
+                    className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
+                  >
+                    <span className="text-sm font-semibold text-gray-800">Opening Frame</span>
+                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${openingFrameAccordionOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {openingFrameAccordionOpen && (
+                    <div className="ml-2 flex items-center gap-2">
+                      {isEditingOpeningFrame ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsEditingOpeningFrame(false);
+                              setEditedOpeningFrame({});
+                            }}
+                            disabled={isSavingFrameData}
+                            className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await saveFrameData('opening_frame', editedOpeningFrame);
+                                setIsEditingOpeningFrame(false);
+                              } catch (e) {
+                                console.error('Failed to save opening frame:', e);
+                              }
+                            }}
+                            disabled={isSavingFrameData}
+                            className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                          >
+                            {isSavingFrameData ? (
+                              <>
+                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Saving...</span>
+                              </>
+                            ) : (
+                              'Save'
+                            )}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                            const openingData = scene?.opening_frame || scene?.openingFrame || scene?.opening || {};
+                            const normalized = typeof openingData === 'object' && !Array.isArray(openingData) ? { ...openingData } : {};
+                            // Initialize all fields with empty strings if they don't exist
+                            const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                            const initialized = {};
+                            allFields.forEach(field => {
+                              initialized[field] = normalized[field] || '';
+                            });
+                            setEditedOpeningFrame(initialized);
+                            setIsEditingOpeningFrame(true);
+                          }}
+                          className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {openingFrameAccordionOpen && (
+                  <div className="px-4 pb-4">
+                    {(() => {
+                      const normalizeOpeningData = (data) => {
+                        if (!data) return {};
+                        if (typeof data === 'string') {
+                          try {
+                            const parsed = JSON.parse(data);
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                          } catch (_) {
+                            return {};
+                          }
+                        }
+                        if (Array.isArray(data)) {
+                          const collected = {};
+                          data.forEach((item) => {
+                            if (item && typeof item === 'object') {
+                              Object.entries(item).forEach(([k, v]) => {
+                                if (collected[k] === undefined) collected[k] = v;
+                              });
+                            }
+                          });
+                          return collected;
+                        }
+                        return typeof data === 'object' ? data : {};
+                      };
+                      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                      const currentData = isEditingOpeningFrame ? editedOpeningFrame : normalizeOpeningData(scene?.opening_frame || scene?.openingFrame || scene?.opening);
+                      const formatTitle = (key) => {
+                        const cleaned = key.replace(/_/g, ' ').trim();
+                        if (!cleaned) return '';
+                        return cleaned
+                          .split(' ')
+                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                          .join(' ');
+                      };
+                      const formatValue = (val) => {
+                        if (val == null) return '';
+                        if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                        return String(val);
+                      };
+                      // Always show all fields for manual input, even if empty
+                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                      
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 gap-4">
+                            {allFields.map((key) => {
+                              const title = formatTitle(key);
+                              const currentValue = isEditingOpeningFrame 
+                                ? (editedOpeningFrame[key] || '') 
+                                : (currentData[key] || '');
+                              return (
+                                <div
+                                  key={key}
+                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                >
+                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                    {title}
+                                  </h5>
+                                  {isEditingOpeningFrame ? (
+                                    <textarea
+                                      value={currentValue}
+                                      onChange={(e) => {
+                                        const newData = { ...editedOpeningFrame };
+                                        newData[key] = e.target.value;
+                                        setEditedOpeningFrame(newData);
+                                      }}
+                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                      rows={3}
+                                      disabled={isSavingFrameData}
+                                      placeholder={`Enter ${title.toLowerCase()}...`}
+                                    />
+                                  ) : (
+                                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
+                                      {currentValue || <span className="text-gray-400 italic">No {title.toLowerCase()} entered</span>}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Closing Frame Accordion */}
+              <div className="bg-white rounded-lg border border-gray-200">
+                <div className="flex items-center justify-between p-4">
+                  <button
+                    type="button"
+                    onClick={() => setClosingFrameAccordionOpen(!closingFrameAccordionOpen)}
+                    className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
+                  >
+                    <span className="text-sm font-semibold text-gray-800">Closing Frame</span>
+                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${closingFrameAccordionOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {closingFrameAccordionOpen && (
+                    <div className="ml-2 flex items-center gap-2">
+                      {isEditingClosingFrame ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsEditingClosingFrame(false);
+                              setEditedClosingFrame({});
+                            }}
+                            disabled={isSavingFrameData}
+                            className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await saveFrameData('closing_frame', editedClosingFrame);
+                                setIsEditingClosingFrame(false);
+                              } catch (e) {
+                                console.error('Failed to save closing frame:', e);
+                              }
+                            }}
+                            disabled={isSavingFrameData}
+                            className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                          >
+                            {isSavingFrameData ? (
+                              <>
+                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Saving...</span>
+                              </>
+                            ) : (
+                              'Save'
+                            )}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                            const closingData = scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame || {};
+                            const normalized = typeof closingData === 'object' && !Array.isArray(closingData) ? { ...closingData } : {};
+                            // Initialize all fields with empty strings if they don't exist
+                            const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                            const initialized = {};
+                            allFields.forEach(field => {
+                              initialized[field] = normalized[field] || '';
+                            });
+                            setEditedClosingFrame(initialized);
+                            setIsEditingClosingFrame(true);
+                          }}
+                          className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {closingFrameAccordionOpen && (
+                  <div className="px-4 pb-4">
+                    {(() => {
+                      const normalizeClosingFrameData = (data) => {
+                        if (!data) return {};
+                        if (typeof data === 'string') {
+                          try {
+                            const parsed = JSON.parse(data);
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                          } catch (_) {
+                            return {};
+                          }
+                        }
+                        if (Array.isArray(data)) {
+                          const collected = {};
+                          data.forEach((item) => {
+                            if (item && typeof item === 'object') {
+                              Object.entries(item).forEach(([k, v]) => {
+                                if (collected[k] === undefined) collected[k] = v;
+                              });
+                            }
+                          });
+                          return collected;
+                        }
+                        return typeof data === 'object' ? data : {};
+                      };
+                      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                      const currentData = isEditingClosingFrame ? editedClosingFrame : normalizeClosingFrameData(scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame);
+                      const formatTitle = (key) => {
+                        const cleaned = key.replace(/_/g, ' ').trim();
+                        if (!cleaned) return '';
+                        return cleaned
+                          .split(' ')
+                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                          .join(' ');
+                      };
+                      const formatValue = (val) => {
+                        if (val == null) return '';
+                        if (typeof val === 'object') return JSON.stringify(val, null, 2);
+                        return String(val);
+                      };
+                      // Always show all fields for manual input, even if empty
+                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                      
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 gap-4">
+                            {allFields.map((key) => {
+                              const title = formatTitle(key);
+                              const currentValue = isEditingClosingFrame 
+                                ? (editedClosingFrame[key] || '') 
+                                : (currentData[key] || '');
+                              return (
+                                <div
+                                  key={key}
+                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                >
+                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                    {title}
+                                  </h5>
+                                  {isEditingClosingFrame ? (
+                                    <textarea
+                                      value={currentValue}
+                                      onChange={(e) => {
+                                        const newData = { ...editedClosingFrame };
+                                        newData[key] = e.target.value;
+                                        setEditedClosingFrame(newData);
+                                      }}
+                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                      rows={3}
+                                      disabled={isSavingFrameData}
+                                      placeholder={`Enter ${title.toLowerCase()}...`}
+                                    />
+                                  ) : (
+                                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
+                                      {currentValue || <span className="text-gray-400 italic">No {title.toLowerCase()} entered</span>}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className='flex justify-end gap-3 mt-8'>
-        <button onClick={onBack} className='px-5 py-2 rounded-lg border'>Back</button>
-        <button onClick={async () => { await onGenerate(script); }} className='px-5 py-2 rounded-lg bg-black text-white'>Generate</button>
+        <button 
+          type="button"
+          onClick={onBack} 
+          disabled={isGenerating} 
+          className='px-5 py-2 rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed'
+        >
+          Back
+        </button>
+        <button 
+          type="button"
+          onClick={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('Generate button clicked', { isGenerating, hasOnGenerate: !!onGenerate, hasScript: !!script, scriptLength: script?.length });
+            if (isGenerating) {
+              console.log('Already generating, ignoring click');
+              return;
+            }
+            if (!onGenerate) {
+              console.error('onGenerate is not defined');
+              return;
+            }
+            if (!script) {
+              console.error('script is not defined');
+              return;
+            }
+            try {
+              console.log('Calling onGenerate...');
+              await onGenerate(script);
+              console.log('onGenerate completed');
+            } catch (error) {
+              console.error('Error calling onGenerate:', error);
+            }
+          }} 
+          disabled={isGenerating}
+          className='px-5 py-2 rounded-lg bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 relative z-10 cursor-pointer'
+        >
+          {isGenerating ? (
+            <>
+              <svg className='animate-spin h-4 w-4' viewBox='0 0 24 24'>
+                <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4' fill='none' />
+                <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z' />
+              </svg>
+              Generating...
+            </>
+          ) : (
+            'Generate'
+          )}
+        </button>
       </div>
+      {/* Validation Error Modal */}
+      {showValidationModal && (
+        <div className='fixed inset-0 z-[90] flex items-center justify-center bg-black/50 backdrop-blur-sm'>
+          <div className='bg-white w-[90%] max-w-md rounded-lg shadow-xl p-6'>
+            <div className='flex items-center justify-between mb-4'>
+              <h3 className='text-lg font-semibold text-gray-900'>Validation Required</h3>
+              <button
+                onClick={() => {
+                  setShowValidationModal(false);
+                  setValidationErrors([]);
+                }}
+                className='text-gray-400 hover:text-gray-600 transition-colors'
+              >
+                <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
+                </svg>
+              </button>
+            </div>
+            <div className='mb-4'>
+              <p className='text-sm text-gray-700 mb-3'>Please complete all required fields before adding a new scene:</p>
+              <div className='bg-red-50 border border-red-200 rounded-lg p-4 max-h-64 overflow-y-auto'>
+                <ul className='space-y-2'>
+                  {validationErrors.map((error, index) => (
+                    <li key={index} className='text-sm text-red-700 flex items-start gap-2'>
+                      <span className='text-red-500 mt-0.5'>•</span>
+                      <span>{error}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div className='flex justify-end'>
+              <button
+                onClick={() => {
+                  setShowValidationModal(false);
+                  setValidationErrors([]);
+                }}
+                className='px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm font-medium hover:bg-blue-800 transition-colors'
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Presenter Preset Save Confirmation Modal */}
+      {showPresenterSaveConfirm && (
+        <div className='fixed inset-0 z-[80] flex items-center justify-center bg-black/50'>
+          <div className='w-[92%] max-w-md rounded-lg bg-white p-5 shadow-xl'>
+            <h3 className='text-lg font-semibold text-[#13008B]'>Save Presenter Option?</h3>
+            <div className='mt-3 space-y-1 text-sm text-gray-700'>
+              <p>
+                Selected preset:{' '}
+                <span className='font-medium text-gray-900'>
+                  {pendingPresenterPresetLabel || 'Unknown'}
+                </span>
+              </p>
+              <p>This will update the presenter preset for the current scene.</p>
+            </div>
+            <div className='mt-5 flex justify-end gap-3'>
+              <button
+                onClick={() => {
+                  if (isSavingPresenterPreset) return;
+                  setShowPresenterSaveConfirm(false);
+                  setPendingPresenterPresetId('');
+                  setPendingPresenterPresetLabel('');
+                }}
+                className='rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-70'
+                disabled={isSavingPresenterPreset}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmPresenterPresetSave}
+                className='rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-[#9aa0d0]'
+                disabled={isSavingPresenterPreset}
+              >
+                {isSavingPresenterPreset ? 'Saving…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isSavingPresenterPreset && !showPresenterSaveConfirm && (
+        <div className='fixed inset-0 z-[80] flex items-center justify-center bg-black/40'>
+          <div className='flex items-center gap-3 rounded-lg bg-white px-6 py-4 shadow-xl'>
+            <div className='h-6 w-6 animate-spin rounded-full border-4 border-[#13008B] border-t-transparent' />
+            <span className='text-sm font-medium text-gray-800'>Saving presenter option…</span>
+          </div>
+        </div>
+      )}
+
       {/* Brand Assets Modal (scoped to StepTwo) */}
       {showAssetsModal && (
         <div className='fixed inset-0 z-[70] flex items-center justify-center bg-black/50'>
@@ -2410,24 +4417,251 @@ const StepTwo = ({ values, onBack, onSave, onGenerate }) => {
           </div>
         </div>
       )}
+
+      {/* Upload Avatar Popup (matching Chat.js) */}
+      {showAvatarUploadPopup && (
+        <div className='fixed inset-0 z-[80] flex items-center justify-center bg-black/50'>
+          <div className='bg-white w-[90%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]'>
+            <div className='flex items-center justify-between p-4 border-b border-gray-200'>
+              <h3 className='text-lg font-semibold text-[#13008B]'>Upload Avatar</h3>
+              <button 
+                onClick={() => {
+                  setShowAvatarUploadPopup(false);
+                  setAvatarUploadFiles([]);
+                  setAvatarName('');
+                }}
+                className='px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50'
+              >
+                Close
+              </button>
+            </div>
+            
+            <div className='p-6 overflow-y-auto flex-1'>
+              <div className='mb-6'>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  Avatar Name <span className='text-red-500'>*</span>
+                </label>
+                <input
+                  type='text'
+                  value={avatarName}
+                  onChange={(e) => setAvatarName(e.target.value)}
+                  placeholder='Enter avatar name'
+                  className='w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent'
+                />
+              </div>
+              
+              <div className='mb-6'>
+                <label className='block text-sm font-medium text-gray-700 mb-2'>
+                  Select Avatar File
+                </label>
+                <input
+                  ref={avatarUploadFileInputRef}
+                  type='file'
+                  accept='image/*'
+                  className='hidden'
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) {
+                      setAvatarUploadFiles([files[0]]);
+                    }
+                    if (avatarUploadFileInputRef.current) {
+                      avatarUploadFileInputRef.current.value = '';
+                    }
+                  }}
+                />
+                <button
+                  type='button'
+                  onClick={() => avatarUploadFileInputRef.current?.click()}
+                  className='w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#13008B] hover:bg-gray-50 transition-colors'
+                >
+                  <div className='text-center'>
+                    <FaPlus className='w-8 h-8 text-gray-400 mx-auto mb-2' />
+                    <p className='text-sm text-gray-600'>Click to select avatar file</p>
+                    <p className='text-xs text-gray-500 mt-1'>Supported: JPG, PNG, WEBP</p>
+                  </div>
+                </button>
+              </div>
+
+              {avatarUploadFiles.length > 0 && (
+                <div className='mb-6'>
+                  <label className='block text-sm font-medium text-gray-700 mb-2'>
+                    Selected File
+                  </label>
+                  <div className='space-y-2'>
+                    {avatarUploadFiles.map((file, index) => (
+                      <div key={index} className='flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200'>
+                        <div className='flex items-center gap-3 flex-1 min-w-0'>
+                          <div className='w-10 h-10 bg-gray-200 rounded flex items-center justify-center flex-shrink-0'>
+                            <svg className='w-6 h-6 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' />
+                            </svg>
+                          </div>
+                          <div className='flex-1 min-w-0'>
+                            <p className='text-sm font-medium text-gray-900 truncate'>{file.name}</p>
+                            <p className='text-xs text-gray-500'>{(file.size / 1024).toFixed(2)} KB</p>
+                          </div>
+                        </div>
+                        <button
+                          type='button'
+                          onClick={() => {
+                            setAvatarUploadFiles([]);
+                          }}
+                          className='ml-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0'
+                          title='Remove file'
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className='flex justify-end gap-3 pt-4 border-t border-gray-200'>
+                <button
+                  type='button'
+                  onClick={() => {
+                    setShowAvatarUploadPopup(false);
+                    setAvatarUploadFiles([]);
+                    setAvatarName('');
+                  }}
+                  className='px-4 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                  disabled={isUploadingAvatarFiles}
+                >
+                  Cancel
+                </button>
+                <button
+                  type='button'
+                  onClick={async () => {
+                    try {
+                      if (!avatarName || !avatarName.trim()) {
+                        alert('Please enter an avatar name');
+                        return;
+                      }
+                      
+                      if (avatarUploadFiles.length === 0) {
+                        alert('Please select a file to upload');
+                        return;
+                      }
+                      
+                      const token = localStorage.getItem('token');
+                      if (!token) {
+                        alert('Missing user ID');
+                        return;
+                      }
+                      
+                      setIsUploadingAvatarFiles(true);
+                      
+                      const form = new FormData();
+                      form.append('user_id', token);
+                      form.append('name', avatarName.trim());
+                      form.append('file', avatarUploadFiles[0]);
+                      
+                      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
+                        method: 'POST',
+                        body: form
+                      });
+                      
+                      const text = await resp.text();
+                      if (!resp.ok) {
+                        throw new Error(`Upload failed: ${resp.status} ${text}`);
+                      }
+                      
+                      const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
+                      const getText = await getResp.text();
+                      let data;
+                      try { data = JSON.parse(getText); } catch(_) { data = getText; }
+                      
+                      if (getResp.ok && data && typeof data === 'object') {
+                        const avatarsObject = data?.avatars || {};
+                        const avatarObjects = [];
+                        Object.values(avatarsObject).forEach((profileAvatars) => {
+                          if (Array.isArray(profileAvatars)) {
+                            profileAvatars.forEach((avatar) => {
+                              if (avatar && typeof avatar === 'object' && avatar.url) {
+                                avatarObjects.push({
+                                  name: avatar.name || '',
+                                  url: String(avatar.url).trim()
+                                });
+                              }
+                            });
+                          }
+                        });
+                        setBrandAssetsAvatars(avatarObjects);
+                      }
+                      
+                      setShowAvatarUploadPopup(false);
+                      setAvatarUploadFiles([]);
+                      setAvatarName('');
+                      alert('Avatar uploaded successfully!');
+                    } catch (err) {
+                      alert(err?.message || 'Failed to upload avatar');
+                    } finally {
+                      setIsUploadingAvatarFiles(false);
+                    }
+                  }}
+                  disabled={isUploadingAvatarFiles}
+                  className={`px-4 py-2 rounded-lg text-sm text-white ${isUploadingAvatarFiles ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+                >
+                  {isUploadingAvatarFiles ? 'Uploading...' : 'Upload'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 const    BuildReelWizard = () => {
-  const [step, setStep] = useState(1);
+  // Restore step from localStorage on mount
+  const [step, setStep] = useState(() => {
+    try {
+      const stored = localStorage.getItem('buildreel_current_step');
+      const storedStep = stored ? parseInt(stored, 10) : 1;
+      
+      // Only restore to step 2+ if we have a valid session
+      if (storedStep > 1) {
+        const sessionId = localStorage.getItem('session_id');
+        const token = localStorage.getItem('token');
+        // If no session ID or token, reset to step 1
+        if (!sessionId || !token) {
+          console.log('[BuildReel] Step initialization - No session found, starting at step 1');
+          try {
+            localStorage.setItem('buildreel_current_step', '1');
+          } catch (_) {
+            // Ignore
+          }
+          return 1;
+        }
+      }
+      
+      return storedStep;
+    } catch (_) {
+      return 1;
+    }
+  });
   const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], userquery: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false);
   // Sub-flow: images and videos views similar to Home
-  const [subView, setSubView] = useState('editor'); // 'editor' | 'images' | 'videos'
+  const [subView, setSubView] = useState(() => {
+    try {
+      const stored = localStorage.getItem('buildreel_subview');
+      return stored || 'editor';
+    } catch (_) {
+      return 'editor';
+    }
+  });
   const [imagesJobId, setImagesJobId] = useState('');
   const [videosJobId, setVideosJobId] = useState('');
   const [hasVideosAvailable, setHasVideosAvailable] = useState(false);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const [showImagesPopup, setShowImagesPopup] = useState(false);
+  const [isRestoringSession, setIsRestoringSession] = useState(false);
 
   const handleChange = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -2435,15 +4669,403 @@ const    BuildReelWizard = () => {
     setForm((f) => ({ ...f, scenes }));
   };
 
-  const handleGenerate = async (script) => {
+  // Persist step changes to localStorage
+  useEffect(() => {
     try {
-      setIsGenerating(true);
-      // Validate all scenes have narration and description
-      const missing = (Array.isArray(script) ? script : []).some(s => !String(s?.narration || '').trim() || !String((s?.desc || s?.description || '')).trim());
-      if (missing) {
-        try { toast.error('Please fill narration and description for all scenes'); } catch(_) { alert('Please fill narration and description for all scenes'); }
+      localStorage.setItem('buildreel_current_step', String(step));
+    } catch (_) {
+      // Ignore localStorage errors
+    }
+  }, [step]);
+
+  // Persist subView changes to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('buildreel_subview', subView);
+    } catch (_) {
+      // Ignore localStorage errors
+    }
+  }, [subView]);
+
+  // Restore session data and scenes when step > 1 on mount
+  useEffect(() => {
+    const restoreSession = async () => {
+      // Only restore if we're on step 2 or 3 and haven't restored yet
+      if (step === 1 || isRestoringSession) return;
+      
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      
+      // If no session ID or token, reset to step 1
+      if (!sessionId || !token) {
+        console.log('[BuildReel] No session ID or token found, resetting to step 1');
+        setStep(1);
+        try {
+          localStorage.setItem('buildreel_current_step', '1');
+        } catch (_) {
+          // Ignore
+        }
         return;
       }
+
+      try {
+        setIsRestoringSession(true);
+        
+        // Load session data
+        const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+        const sessText = await sessResp.text();
+        let sessionData;
+        try {
+          sessionData = JSON.parse(sessText);
+        } catch (_) {
+          sessionData = sessText;
+        }
+        
+        if (!sessResp.ok) {
+          console.error('Failed to load session data:', sessText);
+          // If session data fetch fails, reset to step 1
+          console.log('[BuildReel] Session data fetch failed, resetting to step 1');
+          setStep(1);
+          try {
+            localStorage.setItem('buildreel_current_step', '1');
+          } catch (_) {
+            // Ignore
+          }
+          return;
+        }
+
+        const sd = sessionData?.session_data || sessionData?.session || {};
+        
+        // Extract scripts/airesponse from session data
+        // scripts[0] is the latest/current version
+        const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+        let currentScript = scripts[0] || null;
+        let airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
+        
+        // If scripts[0] doesn't have airesponse, try to find the latest script with airesponse
+        if (airesponse.length === 0 && scripts.length > 0) {
+          for (let i = 0; i < scripts.length; i++) {
+            const script = scripts[i];
+            if (Array.isArray(script?.airesponse) && script.airesponse.length > 0) {
+              currentScript = script;
+              airesponse = script.airesponse;
+              console.log(`[BuildReel] Found airesponse in scripts[${i}]`);
+              break;
+            }
+          }
+        }
+        
+        // If no scenes found in session, reset to step 1
+        if (airesponse.length === 0) {
+          console.log('[BuildReel] No scenes found in session, resetting to step 1');
+          setStep(1);
+          try {
+            localStorage.setItem('buildreel_current_step', '1');
+          } catch (_) {
+            // Ignore
+          }
+          return;
+        }
+        
+        // Check if scene description fields are populated
+        const hasSceneDescriptionFields = airesponse.length > 0 && airesponse.some(scene => {
+          return scene?.subject || scene?.background || scene?.action || scene?.styleCard || 
+                 scene?.cameraCard || scene?.ambiance || scene?.composition || scene?.focus_and_lens;
+        });
+        
+        // Debug logging to check what we're getting
+        console.log('[BuildReel] Session restore - scripts array:', scripts.length);
+        console.log('[BuildReel] Session restore - currentScript:', currentScript);
+        console.log('[BuildReel] Session restore - airesponse length:', airesponse.length);
+        console.log('[BuildReel] Session restore - hasSceneDescriptionFields:', hasSceneDescriptionFields);
+        if (airesponse.length > 0) {
+          console.log('[BuildReel] Session restore - first scene from airesponse:', {
+            scene_number: airesponse[0]?.scene_number,
+            scene_title: airesponse[0]?.scene_title,
+            subject: airesponse[0]?.subject,
+            background: airesponse[0]?.background,
+            action: airesponse[0]?.action,
+            styleCard: airesponse[0]?.styleCard,
+            cameraCard: airesponse[0]?.cameraCard,
+            ambiance: airesponse[0]?.ambiance,
+            composition: airesponse[0]?.composition,
+            focus_and_lens: airesponse[0]?.focus_and_lens
+          });
+        }
+        
+        // If scene description fields are not populated, retry fetching session data
+        if (airesponse.length > 0 && !hasSceneDescriptionFields) {
+          console.log('[BuildReel] Scene description fields not found, retrying session data fetch...');
+          let retryCount = 0;
+          const maxRetries = 5;
+          const retryDelay = 2000; // 2 seconds
+          
+          const retryFetch = async () => {
+            if (retryCount >= maxRetries) {
+              console.log('[BuildReel] Max retries reached, proceeding with available data');
+              return;
+            }
+            
+            retryCount++;
+            console.log(`[BuildReel] Retry attempt ${retryCount}/${maxRetries}`);
+            
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            
+            try {
+              const retryResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: token, session_id: sessionId })
+              });
+              const retryText = await retryResp.text();
+              let retryData;
+              try {
+                retryData = JSON.parse(retryText);
+              } catch (_) {
+                retryData = retryText;
+              }
+              
+              if (retryResp.ok && retryData) {
+                const retrySd = retryData?.session_data || retryData?.session || {};
+                const retryScripts = Array.isArray(retrySd?.scripts) ? retrySd.scripts : [];
+                const retryCurrentScript = retryScripts[0] || null;
+                const retryAiresponse = Array.isArray(retryCurrentScript?.airesponse) ? retryCurrentScript.airesponse : [];
+                
+                // Check if we now have scene description fields
+                const retryHasFields = retryAiresponse.length > 0 && retryAiresponse.some(scene => {
+                  return scene?.subject || scene?.background || scene?.action || scene?.styleCard || 
+                         scene?.cameraCard || scene?.ambiance || scene?.composition || scene?.focus_and_lens;
+                });
+                
+                if (retryHasFields && retryAiresponse.length > 0) {
+                  console.log('[BuildReel] Scene description fields found on retry!');
+                  // Update with the new data
+                  airesponse = retryAiresponse;
+                  currentScript = retryCurrentScript;
+                } else {
+                  // Continue retrying
+                  await retryFetch();
+                }
+              } else {
+                // Continue retrying
+                await retryFetch();
+              }
+            } catch (error) {
+              console.error('[BuildReel] Retry fetch error:', error);
+              // Continue retrying
+              await retryFetch();
+            }
+          };
+          
+          // Start retry process (don't await, let it run in background)
+          retryFetch().catch(err => console.error('[BuildReel] Retry process error:', err));
+        }
+        
+        // Restore userquery from session or localStorage
+        let uq = [];
+        try {
+          const raw = localStorage.getItem('buildreel_userquery');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
+          }
+        } catch (_) {
+          // Ignore
+        }
+
+        // If we have scenes in the session, restore them
+        if (airesponse.length > 0) {
+          // Map airesponse directly to preserve all fields including scene description
+          setForm((f) => {
+            const restoredScript = airesponse.map((r, i) => {
+              const sn = Number(r?.scene_number) || (i + 1);
+              const m = String(r?.model || '').toUpperCase();
+              const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : 
+                          (m === 'PLOTLY') ? 'Financial' : 
+                          (m.includes('SORA')) ? 'Infographic' : 
+                          (r?.type || 'Infographic');
+              const mappedScenes = mapResponseToScenes(airesponse);
+              
+              // Extract presenter preset from presenter_options (same as Chat.js)
+              const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
+              const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+              
+              const sceneObj = {
+                scene_number: sn,
+                scene_title: r?.scene_title ?? '',
+                model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' : 
+                       (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
+                timeline: computeTimelineForIndex(mappedScenes, i),
+                narration: r?.narration ?? '',
+                desc: r?.desc ?? r?.description ?? '',
+                text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
+                ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
+                folderLink: r?.folderLink ?? '',
+                // Restore scene description fields directly from airesponse - preserve all fields exactly as they are (same as Chat.js)
+                subject: r?.subject ?? '',
+                background: r?.background ?? '',
+                action: r?.action ?? '',
+                styleCard: r?.styleCard ?? '',
+                cameraCard: r?.cameraCard ?? '',
+                ambiance: r?.ambiance ?? '',
+                composition: r?.composition ?? '',
+                focus_and_lens: r?.focus_and_lens ?? '',
+                avatar: r?.avatar ?? (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0 ? r.avatar_urls[0] : null),
+                avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [],
+                presenter_options: presenterOpts,
+                veo3_prompt_template: r?.veo3_prompt_template ?? '',
+                background_image: Array.isArray(r?.background_image) ? r.background_image : [],
+                opening_frame: r?.opening_frame ?? null,
+                closing_frame: r?.closing_frame ?? null,
+                chart_type: r?.chart_type ?? '',
+                chart_data: r?.chart_data ?? null
+              };
+              
+              // Debug log for first scene (matching Chat.js approach)
+              if (i === 0) {
+                console.log('[BuildReel] Restored first scene from user-session-data:', {
+                  scene_number: sceneObj.scene_number,
+                  scene_title: sceneObj.scene_title,
+                  narration: sceneObj.narration,
+                  subject: sceneObj.subject,
+                  background: sceneObj.background,
+                  action: sceneObj.action,
+                  styleCard: sceneObj.styleCard,
+                  cameraCard: sceneObj.cameraCard,
+                  ambiance: sceneObj.ambiance,
+                  composition: sceneObj.composition,
+                  focus_and_lens: sceneObj.focus_and_lens,
+                  avatar: sceneObj.avatar,
+                  avatar_urls: sceneObj.avatar_urls,
+                  presenter_options: sceneObj.presenter_options,
+                  preset_id: presetId,
+                  model: sceneObj.model
+                });
+              }
+              // Debug log for second scene if it exists
+              if (i === 1) {
+                console.log('[BuildReel] Restored second scene from user-session-data:', {
+                  scene_number: sceneObj.scene_number,
+                  scene_title: sceneObj.scene_title,
+                  narration: sceneObj.narration,
+                  subject: sceneObj.subject,
+                  background: sceneObj.background,
+                  action: sceneObj.action,
+                  styleCard: sceneObj.styleCard,
+                  cameraCard: sceneObj.cameraCard,
+                  ambiance: sceneObj.ambiance,
+                  composition: sceneObj.composition,
+                  focus_and_lens: sceneObj.focus_and_lens,
+                  avatar: sceneObj.avatar,
+                  avatar_urls: sceneObj.avatar_urls,
+                  presenter_options: sceneObj.presenter_options,
+                  preset_id: presetId,
+                  model: sceneObj.model
+                });
+              }
+              
+              return sceneObj;
+            });
+            
+            console.log('[BuildReel] Total scenes restored:', restoredScript.length);
+            
+            // Restore presenter preset for the first scene if it's Avatar Based
+            const firstScene = restoredScript[0];
+            if (firstScene && (firstScene.model === 'VEO3' || firstScene.model === 'ANCHOR')) {
+              const presenterOpts = firstScene.presenter_options || {};
+              const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+              if (presetId) {
+                // This will be set in StepTwo's useEffect when it loads presets
+                console.log('[BuildReel] Found presenter preset in session:', presetId);
+              }
+            }
+            
+            return {
+              ...f,
+              script: restoredScript,
+              userquery: uq.length > 0 ? { userquery: uq } : f.userquery
+            };
+          });
+        }
+
+        // Restore job IDs if available
+        try {
+          const storedImagesJobId = localStorage.getItem('current_images_job_id');
+          if (storedImagesJobId) setImagesJobId(storedImagesJobId);
+          
+          const storedVideosJobId = localStorage.getItem('current_video_job_id');
+          if (storedVideosJobId) setVideosJobId(storedVideosJobId);
+          
+          const vids = Array.isArray(sd?.videos) ? sd.videos : [];
+          setHasVideosAvailable(vids.length > 0);
+        } catch (_) {
+          // Ignore
+        }
+      } catch (error) {
+        console.error('Failed to restore session:', error);
+      } finally {
+        setIsRestoringSession(false);
+      }
+    };
+
+    restoreSession();
+  }, []); // Only run on mount
+
+  const handleGenerate = async (script) => {
+    try {
+      console.log('[BuildReel] handleGenerate called, setting isGenerating to true');
+      setIsGenerating(true);
+      
+      // Small delay to ensure state update is processed
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
+      // Validate all scenes have narration (description is optional)
+      const scriptArray = Array.isArray(script) ? script : [];
+      console.log('[BuildReel] Validating script with', scriptArray.length, 'scenes');
+      console.log('[BuildReel] Script structure sample:', scriptArray[0] ? {
+        scene_number: scriptArray[0].scene_number,
+        scene_title: scriptArray[0].scene_title,
+        narration: scriptArray[0].narration,
+        desc: scriptArray[0].desc,
+        description: scriptArray[0].description,
+        hasNarration: !!scriptArray[0].narration,
+        hasDesc: !!(scriptArray[0].desc || scriptArray[0].description)
+      } : 'No scenes');
+      
+      const validationErrors = [];
+      
+      scriptArray.forEach((s, index) => {
+        const sceneNum = s?.scene_number || (index + 1);
+        const sceneTitle = s?.scene_title || `Scene ${sceneNum}`;
+        const narration = String(s?.narration || '').trim();
+        
+        // Only validate narration - description is optional
+        if (!narration) {
+          validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration is required`);
+        }
+      });
+      
+      if (validationErrors.length > 0) {
+        console.log('[BuildReel] Validation failed:', validationErrors);
+        const errorMessage = validationErrors.length === 1 
+          ? validationErrors[0]
+          : `Please fill narration for all scenes. Issues found:\n${validationErrors.join('\n')}`;
+        try { 
+          toast.error(errorMessage); 
+        } catch(_) { 
+          alert(errorMessage); 
+        }
+        setIsGenerating(false);
+        return;
+      }
+      
+      console.log('[BuildReel] Validation passed - all scenes have narration');
+      
+      console.log('[BuildReel] Validation passed, proceeding with generation');
       setForm((f) => ({ ...f, script }));
 
       // 1) Build save payload in the simplified format
@@ -2499,19 +5121,75 @@ const    BuildReelWizard = () => {
 
       // Persist job response (job_id, status, status_url, scenes_to_process)
       const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
-      if (jobId) {
-        try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
-        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
-        setImagesJobId(jobId);
+      if (!jobId) {
+        throw new Error('No job ID received from generate-images-queue');
       }
+      
+      try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
+      try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
+      setImagesJobId(jobId);
 
-      // Show popup for 5s and then open Images list
+      // Poll job status until percent is available, then navigate to images view
+      const pollJobStatus = async () => {
+        const maxAttempts = 200; // Maximum polling attempts (200 * 3s = 10 minutes)
+        let attempts = 0;
+        let pollInterval = null;
+        let isPolling = true;
+
+        const poll = async () => {
+          if (!isPolling) return; // Stop if polling was cancelled
+          
+          try {
+            attempts++;
+            if (attempts > maxAttempts) {
+              isPolling = false;
+              if (pollInterval) clearInterval(pollInterval);
+              try { toast.error('Job status polling timeout'); } catch(_) { alert('Job status polling timeout'); }
+              setIsGenerating(false);
+              return;
+            }
+
+            const statusResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(jobId)}`);
+            const statusText = await statusResp.text();
+            let statusData;
+            try { statusData = JSON.parse(statusText); } catch (_) { statusData = statusText; }
+
+            if (!statusResp.ok) {
+              console.warn(`job-status failed: ${statusResp.status} ${statusText}`);
+              return; // Continue polling on error
+            }
+
+            // Check if percent is available in the response
+            // Percent can be in progress.percent, percent, or progress_percent
+            const percent = statusData?.progress?.percent ?? statusData?.percent ?? statusData?.progress_percent;
+            const hasPercent = typeof percent === 'number' || (typeof percent === 'string' && percent.trim() !== '');
+
+            if (hasPercent) {
+              // Percent is available, stop polling and navigate to images view
+              isPolling = false;
+              if (pollInterval) clearInterval(pollInterval);
+              setShowImagesPopup(false);
+              await sendUserSessionData();
+              setSubView('images');
+              setIsGenerating(false);
+            }
+            // If percent is not available, continue polling
+          } catch (error) {
+            console.error('Error polling job status:', error);
+            // Continue polling on error
+          }
+        };
+
+        // Start polling immediately, then every 3 seconds
+        await poll();
+        if (isPolling) {
+          pollInterval = setInterval(poll, 3000);
+        }
+      };
+
+      // Show popup and start polling
       setShowImagesPopup(true);
-      setTimeout(async () => {
-        setShowImagesPopup(false);
-        await sendUserSessionData();
-        setSubView('images');
-      }, 5000);
+      await pollJobStatus();
     } catch (e) {
       console.error('Generate failed:', e);
       try { toast.error(e?.message || 'Failed to generate'); } catch(_) { alert(e?.message || 'Failed to generate'); }
@@ -2622,6 +5300,71 @@ const    BuildReelWizard = () => {
       setIsCreatingScenes(true);
       // Build request per new format
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
+      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
+      
+      if (!sessionId || !token) {
+        throw new Error('Missing session_id or token');
+      }
+      
+      // Step 1: First, call the title API with session_id and user_id
+      try {
+        const titleBody = {
+          session_id: sessionId,
+          user_id: token
+        };
+        console.log('[BuildReel] Step 1: Calling title API with:', titleBody);
+        const titleResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/title', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(titleBody)
+        });
+        const titleText = await titleResp.text();
+        let titleData;
+        try {
+          titleData = JSON.parse(titleText);
+        } catch (_) {
+          titleData = titleText;
+        }
+        if (!titleResp.ok) {
+          console.warn('[BuildReel] Title API call failed:', titleText);
+          // Continue anyway, don't block the flow
+        } else {
+          console.log('[BuildReel] Title API response:', titleData);
+        }
+      } catch (titleError) {
+        console.error('[BuildReel] Title API error:', titleError);
+        // Continue anyway, don't block the flow
+      }
+      
+      // Step 2: Call the sessions API with user_id
+      try {
+        const sessionsBody = {
+          user_id: token
+        };
+        console.log('[BuildReel] Step 2: Calling sessions API with:', sessionsBody);
+        const sessionsResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/v1/users/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sessionsBody)
+        });
+        const sessionsText = await sessionsResp.text();
+        let sessionsData;
+        try {
+          sessionsData = JSON.parse(sessionsText);
+        } catch (_) {
+          sessionsData = sessionsText;
+        }
+        if (!sessionsResp.ok) {
+          console.warn('[BuildReel] Sessions API call failed:', sessionsText);
+          // Continue anyway, don't block the flow
+        } else {
+          console.log('[BuildReel] Sessions API response:', sessionsData);
+        }
+      } catch (sessionsError) {
+        console.error('[BuildReel] Sessions API error:', sessionsError);
+        // Continue anyway, don't block the flow
+      }
+      
       // Userquery payload from form/localStorage
       let uq = [];
       try {
@@ -2640,7 +5383,6 @@ const    BuildReelWizard = () => {
       // Build user object from localStorage (fallbacks to blanks)
       let storedUser = {};
       try { const rawUser = localStorage.getItem('user'); if (rawUser) storedUser = JSON.parse(rawUser) || {}; } catch (_) { /* noop */ }
-      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
       const userPayload = {
         id: storedUser.id || token || '',
         email: storedUser.email || '',
@@ -2675,19 +5417,145 @@ const    BuildReelWizard = () => {
         ?? data?.script
         ?? [];
       const mapped = mapResponseToScenes(aiArr);
-      // Update form with script (canonical) and go to step 2
-      setForm((f) => ({ ...f, script: mapped.map((s, i) => ({
-        scene_number: i + 1,
-        scene_title: s.title || '',
-        model: (String(s.type || '').toLowerCase() === 'avatar based') ? 'VEO3' : 'SORA',
-        timeline: computeTimelineForIndex(mapped, i),
-        narration: s.narration || '',
-        desc: s.description || '',
-        text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
-        ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
-        folderLink: s.folderLink || ''
-      })) }));
+      
+      // Call user session data API to get updated session data
+      try {
+        const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+        const sessText = await sessResp.text();
+        let sessionData;
+        try {
+          sessionData = JSON.parse(sessText);
+        } catch (_) {
+          sessionData = sessText;
+        }
+        
+        if (sessResp.ok && sessionData) {
+          const sd = sessionData?.session_data || sessionData?.session || {};
+          // Extract updated scripts/airesponse from session data
+          // scripts[0] is the latest/current version
+          const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+          let currentScript = scripts[0] || null;
+          let updatedAiresponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : aiArr;
+          
+          // If scripts[0] doesn't have airesponse, try to find the latest script with airesponse
+          if (updatedAiresponse.length === 0 && scripts.length > 0) {
+            for (let i = 0; i < scripts.length; i++) {
+              const script = scripts[i];
+              if (Array.isArray(script?.airesponse) && script.airesponse.length > 0) {
+                currentScript = script;
+                updatedAiresponse = script.airesponse;
+                console.log(`[BuildReel] createFromScratch - Found airesponse in scripts[${i}]`);
+                break;
+              }
+            }
+          }
+          
+          // Debug logging
+          console.log('[BuildReel] createFromScratch - scripts array:', scripts.length);
+          console.log('[BuildReel] createFromScratch - currentScript:', currentScript);
+          console.log('[BuildReel] createFromScratch - updatedAiresponse length:', updatedAiresponse.length);
+          if (updatedAiresponse.length > 0) {
+            console.log('[BuildReel] createFromScratch - first scene from updatedAiresponse:', {
+              scene_number: updatedAiresponse[0]?.scene_number,
+              scene_title: updatedAiresponse[0]?.scene_title,
+              subject: updatedAiresponse[0]?.subject,
+              background: updatedAiresponse[0]?.background,
+              action: updatedAiresponse[0]?.action,
+              styleCard: updatedAiresponse[0]?.styleCard,
+              cameraCard: updatedAiresponse[0]?.cameraCard,
+              ambiance: updatedAiresponse[0]?.ambiance,
+              composition: updatedAiresponse[0]?.composition,
+              focus_and_lens: updatedAiresponse[0]?.focus_and_lens
+            });
+          }
+          
+          // Use updated airesponse if available, otherwise use the response from create-from-scratch
+          const finalAiresponse = updatedAiresponse.length > 0 ? updatedAiresponse : aiArr;
+          const mappedScenes = mapResponseToScenes(finalAiresponse);
+          
+          // Map directly from airesponse to preserve all fields including scene description (same as Chat.js)
+          setForm((f) => ({ ...f, script: finalAiresponse.map((r, i) => {
+            const sn = Number(r?.scene_number) || (i + 1);
+            const m = String(r?.model || '').toUpperCase();
+            const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : 
+                        (m === 'PLOTLY') ? 'Financial' : 
+                        (m.includes('SORA')) ? 'Infographic' : 
+                        (r?.type || 'Infographic');
+            
+            // Extract presenter preset from presenter_options (same as Chat.js)
+            const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
+            const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+            
+            // Preserve ALL fields from airesponse, including scene description fields (same as session restore)
+            return {
+              scene_number: sn,
+              scene_title: r?.scene_title ?? '',
+              model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' : 
+                     (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
+              timeline: computeTimelineForIndex(mappedScenes, i),
+              narration: r?.narration ?? '',
+              desc: r?.desc ?? r?.description ?? '',
+              text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
+              ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
+              folderLink: r?.folderLink ?? '',
+              // Restore scene description fields directly from airesponse - preserve all fields exactly as they are (same as Chat.js)
+              subject: r?.subject ?? '',
+              background: r?.background ?? '',
+              action: r?.action ?? '',
+              styleCard: r?.styleCard ?? '',
+              cameraCard: r?.cameraCard ?? '',
+              ambiance: r?.ambiance ?? '',
+              composition: r?.composition ?? '',
+              focus_and_lens: r?.focus_and_lens ?? '',
+              avatar: r?.avatar ?? (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0 ? r.avatar_urls[0] : null),
+              avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [],
+              presenter_options: presenterOpts,
+              background_image: Array.isArray(r?.background_image) ? r.background_image : [],
+              chart_type: r?.chart_type ?? '',
+              chart_data: r?.chart_data ?? null
+            };
+          }) }));
+        } else {
+          // Fallback to create-from-scratch response if session data fetch fails
+          setForm((f) => ({ ...f, script: mapped.map((s, i) => ({
+            scene_number: i + 1,
+            scene_title: s.title || '',
+            model: (String(s.type || '').toLowerCase() === 'avatar based') ? 'VEO3' : 'SORA',
+            timeline: computeTimelineForIndex(mapped, i),
+            narration: s.narration || '',
+            desc: s.description || '',
+            text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
+            ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
+            folderLink: s.folderLink || ''
+          })) }));
+        }
+      } catch (sessionError) {
+        console.error('Failed to fetch session data after create-from-scratch:', sessionError);
+        // Fallback to create-from-scratch response if session data fetch fails
+        setForm((f) => ({ ...f, script: mapped.map((s, i) => ({
+          scene_number: i + 1,
+          scene_title: s.title || '',
+          model: (String(s.type || '').toLowerCase() === 'avatar based') ? 'VEO3' : 'SORA',
+          timeline: computeTimelineForIndex(mapped, i),
+          narration: s.narration || '',
+          desc: s.description || '',
+          text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
+          ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
+          folderLink: s.folderLink || ''
+        })) }));
+      }
+      
       setStep(2);
+      // Persist step change
+      try {
+        localStorage.setItem('buildreel_current_step', '2');
+      } catch (_) {
+        // Ignore
+      }
     } catch (e) {
       console.error(e);
       alert('Failed to create scenes. Please try again.');
@@ -2701,7 +5569,14 @@ const    BuildReelWizard = () => {
           values={form}
           onChange={handleChange}
           onSetUserQuery={(uq) => setForm((f) => ({ ...f, ...uq }))}
-          onNext={() => setStep(2)}
+          onNext={() => {
+            setStep(2);
+            try {
+              localStorage.setItem('buildreel_current_step', '2');
+            } catch (_) {
+              // Ignore
+            }
+          }}
           onCreateScenes={createFromScratch}
         />
       ) : (
@@ -2709,9 +5584,17 @@ const    BuildReelWizard = () => {
           {subView === 'editor' && (
             <StepTwo
               values={form}
-              onBack={() => setStep(1)}
+              onBack={() => {
+                setStep(1);
+                try {
+                  localStorage.setItem('buildreel_current_step', '1');
+                } catch (_) {
+                  // Ignore
+                }
+              }}
               onSave={handleSaveScenes}
               onGenerate={handleGenerate}
+              isGenerating={isGenerating}
             />
           )}
           {subView === 'images' && (

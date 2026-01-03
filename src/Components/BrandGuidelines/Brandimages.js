@@ -3583,26 +3583,76 @@ const Brandimages = () => {
             <div className="text-sm text-red-600 py-4">{generatedAssetsError}</div>
           ) : (
             (() => {
-              const images = Array.isArray(generatedAssets.generated_images?.[selectedAspectRatio])
-                ? generatedAssets.generated_images[selectedAspectRatio]
-                : []
+              // Extract all images from the selected aspect ratio
+              // Structure: generated_images[aspectRatio][sessionName] = [url1, url2, ...]
+              const aspectRatioData = generatedAssets.generated_images?.[selectedAspectRatio]
               
-              if (images.length === 0) {
+              // Group images by session name
+              const sessionGroups = []
+              if (aspectRatioData && typeof aspectRatioData === 'object') {
+                Object.keys(aspectRatioData).forEach(sessionName => {
+                  const sessionImages = aspectRatioData[sessionName]
+                  if (Array.isArray(sessionImages) && sessionImages.length > 0) {
+                    const images = []
+                    sessionImages.forEach((imgUrl, idx) => {
+                      // Handle both string URLs and objects with url/image_url properties
+                      let imageUrl = ''
+                      if (typeof imgUrl === 'string') {
+                        imageUrl = imgUrl
+                      } else if (imgUrl && typeof imgUrl === 'object') {
+                        imageUrl = imgUrl.image_url || imgUrl.imageUrl || imgUrl.url || imgUrl.src || ''
+                      }
+                      if (imageUrl) {
+                        images.push({
+                          url: imageUrl,
+                          index: idx
+                        })
+                      }
+                    })
+                    if (images.length > 0) {
+                      sessionGroups.push({
+                        sessionName: sessionName,
+                        images: images
+                      })
+                    }
+                  }
+                })
+              }
+              
+              if (sessionGroups.length === 0) {
                 return <p className="text-sm text-gray-500">No images for {selectedAspectRatio} aspect ratio.</p>
               }
               
               return (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {images.map((url, idx) => (
-                    <div key={idx} className="relative group">
-                      <img
-                        src={url}
-                        alt={`Generated image ${idx + 1}`}
-                        className="w-full h-auto object-contain rounded border border-gray-200"
-                        onError={(e) => {
-                          e.target.style.display = 'none'
-                        }}
-                      />
+                <div className="flex flex-col gap-6">
+                  {sessionGroups.map((group, groupIdx) => (
+                    <div key={`session-${groupIdx}-${group.sessionName}`} className="flex flex-col gap-3">
+                      {/* Session Header */}
+                      <div className="flex flex-col gap-1">
+                        <h3 className="text-lg font-semibold text-gray-900">{group.sessionName}</h3>
+                        <p className="text-sm text-gray-500">{group.images.length} image{group.images.length !== 1 ? 's' : ''}</p>
+                      </div>
+                      {/* Images Grid */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {group.images.map((img, idx) => (
+                          <div key={`${group.sessionName}-${img.index}-${idx}`} className="relative group flex flex-col">
+                            <div className="relative aspect-video bg-gray-50 rounded border border-gray-200 hover:border-blue-400 transition-colors cursor-pointer overflow-hidden">
+                              <img
+                                src={img.url}
+                                alt={`Generated image from ${group.sessionName} - ${idx + 1}`}
+                                className="w-full h-full object-contain"
+                                onError={(e) => {
+                                  e.target.style.display = 'none'
+                                }}
+                                onClick={() => {
+                                  // Optional: open image in full screen or modal
+                                  window.open(img.url, '_blank')
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>

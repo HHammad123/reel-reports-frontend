@@ -1059,6 +1059,31 @@ const Guidlines = () => {
     } catch (_) { /* noop */ }
   }, [savedForm])
 
+  // Log selected voice URL when voice is selected
+  useEffect(() => {
+    try {
+      if (selectedVoice2 === 'yes' && selectedVoiceFromLibrary !== null && selectedVoiceFromLibrary !== undefined) {
+        // Find the selected voice from uniqueBrandVoiceOptions using the index
+        const selectedOption = uniqueBrandVoiceOptions.find(opt => opt.index === selectedVoiceFromLibrary);
+        if (selectedOption && selectedOption.originalVoice) {
+          const v = selectedOption.originalVoice;
+          const voiceUrl = typeof v === 'string' ? v : (v?.url || v?.voice_url || v?.voiceUrl || v?.file || '');
+          const voiceName = selectedOption.name;
+          console.log('🎤 Selected Voice URL:', voiceUrl);
+          console.log('🎤 Selected Voice Name:', voiceName);
+          console.log('🎤 Selected Voice Index:', selectedVoiceFromLibrary);
+          console.log('🎤 Full Voice Object:', v);
+        } else {
+          console.log('🎤 Voice option not found for index:', selectedVoiceFromLibrary);
+        }
+      } else if (selectedVoice2 === 'no' || selectedVoiceFromLibrary === null) {
+        console.log('🎤 No voice selected');
+      }
+    } catch (error) {
+      console.error('Error logging selected voice:', error);
+    }
+  }, [selectedVoice2, selectedVoiceFromLibrary, uniqueBrandVoiceOptions])
+
   // Save to Redux when any field changes
   useEffect(() => {
     try {
@@ -1906,12 +1931,19 @@ const Guidlines = () => {
                     <p className="text-sm text-gray-600 mb-2">Choose from your files:</p>
                     <div className="flex flex-wrap gap-4 items-start">
                       {uniqueBrandVoiceOptions.length > 0 ? (
-                        uniqueBrandVoiceOptions.map(({ name, index }) => {
+                        uniqueBrandVoiceOptions.map(({ name, index, originalVoice }) => {
                           const active = selectedVoiceFromLibrary === index
                           return (
                             <div key={`${name}-${index}`} className="flex flex-col items-center gap-1">
                               <button
-                                onClick={() => setSelectedVoiceFromLibrary(index)}
+                                onClick={() => {
+                                  setSelectedVoiceFromLibrary(index);
+                                  // Log the correct voice URL immediately when selected
+                                  const voiceUrl = typeof originalVoice === 'string' ? originalVoice : (originalVoice?.url || originalVoice?.voice_url || originalVoice?.voiceUrl || originalVoice?.file || '');
+                                  console.log('🎤 Voice Selected - URL:', voiceUrl);
+                                  console.log('🎤 Voice Selected - Name:', name);
+                                  console.log('🎤 Voice Selected - Full Object:', originalVoice);
+                                }}
                                 className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${
                                   active
                                     ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50'
@@ -2087,15 +2119,19 @@ const Guidlines = () => {
               // Resolve selected voice URL only if user explicitly selected a voice
               let selectedVoiceUrl = '';
               try {
-                const list = Array.isArray(brandVoices) ? brandVoices : [];
+                // Find the selected voice from uniqueBrandVoiceOptions using the index
                 if (
                   selectedVoice2 === 'yes' &&
-                  list.length > 0 &&
                   selectedVoiceFromLibrary !== null &&
-                  selectedVoiceFromLibrary !== undefined
+                  selectedVoiceFromLibrary !== undefined &&
+                  uniqueBrandVoiceOptions.length > 0
                 ) {
-                  const v = list[selectedVoiceFromLibrary];
-                  selectedVoiceUrl = typeof v === 'string' ? v : (v?.url || '');
+                  const selectedOption = uniqueBrandVoiceOptions.find(opt => opt.index === selectedVoiceFromLibrary);
+                  if (selectedOption && selectedOption.originalVoice) {
+                    const v = selectedOption.originalVoice;
+                    selectedVoiceUrl = typeof v === 'string' ? v : (v?.url || v?.voice_url || v?.voiceUrl || v?.file || '');
+                    console.log('🎤 Final Selected Voice URL (from uniqueBrandVoiceOptions):', selectedVoiceUrl);
+                  }
                 }
               } catch (_) { /* noop */ }
               const aspectValue = (() => {

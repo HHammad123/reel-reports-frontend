@@ -2246,7 +2246,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     () => ({
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Alex',
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Sarah',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Michael',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Tyler',
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Fawad',
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'David',
       'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Olivia',
