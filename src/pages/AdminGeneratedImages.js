@@ -4,6 +4,7 @@ import { Navigate, useParams, useNavigate } from 'react-router-dom'
 import Sidebar from '../Components/Sidebar'
 import Topbar from '../Components/Topbar'
 import { selectUser } from '../redux/slices/userSlice'
+import { normalizeGeneratedMediaResponse } from '../utils/generatedMediaUtils'
 
 const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
 
@@ -159,10 +160,10 @@ const AdminGeneratedImages = () => {
         console.log('Full API Response:', data)
         console.log('Generated Images Structure:', data?.generated_images)
         
-        // Store the raw generated_images structure
-        // Structure: generated_images[aspectRatio][sessionName] = [array of image URLs/objects]
-        const generatedImages = data?.generated_images || {}
-        setGeneratedImagesData(generatedImages)
+        // Normalize and sort the generated_images structure
+        const normalized = normalizeGeneratedMediaResponse(data);
+        const generatedImages = normalized.generated_images || {};
+        setGeneratedImagesData(generatedImages);
         
         // Log the structure for debugging
         console.log('=== ADMIN GENERATED IMAGES: STRUCTURE BY ASPECT RATIO ===')
@@ -178,10 +179,10 @@ const AdminGeneratedImages = () => {
           }
         })
         
-        // Also create flat array for backward compatibility
+        // Also create flat array for backward compatibility (using normalized data)
         let imagesData = []
-        if (data?.generated_images && typeof data.generated_images === 'object') {
-          Object.entries(data.generated_images).forEach(([aspectRatio, sessions]) => {
+        if (generatedImages && typeof generatedImages === 'object') {
+          Object.entries(generatedImages).forEach(([aspectRatio, sessions]) => {
             if (typeof sessions === 'object') {
               Object.entries(sessions).forEach(([sessionName, images]) => {
                 if (Array.isArray(images)) {

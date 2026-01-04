@@ -73,59 +73,110 @@ export const ImageOverlayPanel = () => {
                     data = text;
                 }
                 
-                const generatedImagesData = data?.generated_images || {};
                 const allGeneratedImages = [];
                 
-                // Transform all images from generate-media API (all sessions, all aspect ratios)
-                Object.keys(generatedImagesData).forEach((aspectRatio) => {
-                    const sessionsForRatio = generatedImagesData[aspectRatio];
-                    if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
-                        Object.entries(sessionsForRatio).forEach(([sessionName, images]) => {
-                            if (Array.isArray(images)) {
-                                images.forEach((imgUrl, idx) => {
-                                    let imageUrl = '';
-                                    let imageName = `${sessionName} - Image ${idx + 1}`;
-                                    
-                                    if (typeof imgUrl === 'string' && imgUrl) {
-                                        imageUrl = imgUrl;
-                                    } else if (imgUrl && typeof imgUrl === 'object') {
-                                        imageUrl = imgUrl.image_url || imgUrl.url || imgUrl.src || '';
-                                        imageName = imgUrl.name || imgUrl.title || imageName;
-                                    }
-                                    
-                                    if (imageUrl) {
-                                        allGeneratedImages.push({
-                                            id: `generated-img-${aspectRatio}-${sessionName}-${idx}`,
-                                            type: 'image',
-                                            width: 1920,
-                                            height: 1080,
-                                            thumbnail: imageUrl,
-                                            src: {
-                                                original: imageUrl,
-                                                large: imageUrl,
-                                                medium: imageUrl,
-                                                small: imageUrl,
+                // Check if the response is in the new flat format: { "images": [...], "updated_at": "..." }
+                if (data && typeof data === 'object' && Array.isArray(data.images)) {
+                    // New flat format - direct images array
+                    const images = data.images || [];
+                    images.forEach((imgUrl, idx) => {
+                        let imageUrl = '';
+                        let imageName = `Generated Image ${idx + 1}`;
+                        
+                        if (typeof imgUrl === 'string' && imgUrl) {
+                            imageUrl = imgUrl;
+                        } else if (imgUrl && typeof imgUrl === 'object') {
+                            imageUrl = imgUrl.image_url || imgUrl.url || imgUrl.src || '';
+                            imageName = imgUrl.name || imgUrl.title || imageName;
+                        }
+                        
+                        if (imageUrl) {
+                            allGeneratedImages.push({
+                                id: `generated-img-flat-${idx}`,
+                                type: 'image',
+                                width: 1920,
+                                height: 1080,
+                                thumbnail: imageUrl,
+                                src: {
+                                    original: imageUrl,
+                                    large: imageUrl,
+                                    medium: imageUrl,
+                                    small: imageUrl,
+                                    thumbnail: imageUrl,
+                                },
+                                alt: imageName,
+                                attribution: {
+                                    author: 'Generated',
+                                    source: 'Generated Media',
+                                    license: 'User Content',
+                                },
+                                _session: true,
+                                _generated: true,
+                                _sessionImage: true,
+                                _sessionName: 'Generated Media',
+                                _aspectRatio: '16:9',
+                                _source: 'session-images',
+                                _updatedAt: data.updated_at || null,
+                            });
+                        }
+                    });
+                } else {
+                    // Old nested format - normalize and sort
+                    const { normalizeGeneratedMediaResponse } = await import('../../../../../utils/generatedMediaUtils');
+                    const normalized = normalizeGeneratedMediaResponse(data);
+                    const generatedImagesData = normalized.generated_images || {};
+                    
+                    // Transform all images from generate-media API (all sessions, all aspect ratios)
+                    Object.keys(generatedImagesData).forEach((aspectRatio) => {
+                        const sessionsForRatio = generatedImagesData[aspectRatio];
+                        if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                            Object.entries(sessionsForRatio).forEach(([sessionName, images]) => {
+                                if (Array.isArray(images)) {
+                                    images.forEach((imgUrl, idx) => {
+                                        let imageUrl = '';
+                                        let imageName = `${sessionName} - Image ${idx + 1}`;
+                                        
+                                        if (typeof imgUrl === 'string' && imgUrl) {
+                                            imageUrl = imgUrl;
+                                        } else if (imgUrl && typeof imgUrl === 'object') {
+                                            imageUrl = imgUrl.image_url || imgUrl.url || imgUrl.src || '';
+                                            imageName = imgUrl.name || imgUrl.title || imageName;
+                                        }
+                                        
+                                        if (imageUrl) {
+                                            allGeneratedImages.push({
+                                                id: `generated-img-${aspectRatio}-${sessionName}-${idx}`,
+                                                type: 'image',
+                                                width: 1920,
+                                                height: 1080,
                                                 thumbnail: imageUrl,
-                                            },
-                                            alt: imageName,
-                                            attribution: {
-                                                author: 'Generated',
-                                                source: 'Generated Media',
-                                                license: 'User Content',
-                                            },
-                                            _session: true,
-                                            _generated: true,
-                                            _sessionImage: true,
-                                            _sessionName: sessionName,
-                                            _aspectRatio: aspectRatio,
-                                            _source: 'session-images',
-                                        });
-                                    }
-                                });
-                            }
-                        });
-                    }
-                });
+                                                src: {
+                                                    original: imageUrl,
+                                                    large: imageUrl,
+                                                    medium: imageUrl,
+                                                    small: imageUrl,
+                                                    thumbnail: imageUrl,
+                                                },
+                                                alt: imageName,
+                                                attribution: {
+                                                    author: 'Generated',
+                                                    source: 'Generated Media',
+                                                    license: 'User Content',
+                                                },
+                                                _session: true,
+                                                _generated: true,
+                                                _sessionImage: true,
+                                                _sessionName: sessionName,
+                                                _aspectRatio: aspectRatio,
+                                                _source: 'session-images',
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
                 
                 setGeneratedMediaImages(allGeneratedImages);
             } catch (error) {

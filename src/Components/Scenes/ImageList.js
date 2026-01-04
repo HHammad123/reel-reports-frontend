@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ChevronDown, Pencil, RefreshCw, Upload, File as FileIcon } from 'lucide-react';
+import { ChevronDown, Pencil, RefreshCw, Upload, File as FileIcon, X } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
@@ -7,6 +7,7 @@ import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
 import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
 import Loader from '../Loader';
+import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
 
 // Preset Voice Options
 const PRESET_VOICE_OPTIONS = {
@@ -218,13 +219,22 @@ const mergeDescriptionSections = (sections) => {
   }).join(' ').trim();
 };
 
+// Helper function to truncate text to max words
+const truncateText = (text, maxWords = 9) => {
+  if (!text || typeof text !== 'string') return text;
+  const words = text.trim().split(/\s+/);
+  if (words.length <= maxWords) return text;
+  return words.slice(0, maxWords).join(' ') + '...';
+};
+
 // Helper function to format description for display (hides ** marks, shows bold titles)
-const formatDescription = (description) => {
+const formatDescription = (description, truncate = false) => {
   const sections = parseDescription(description);
   
-  // If no sections found, return original
+  // If no sections found, return original (truncated if needed)
   if (sections.length === 0) {
-    return <div className="text-sm text-gray-600 whitespace-pre-wrap">{description}</div>;
+    const displayText = truncate ? truncateText(description) : description;
+    return <div className="text-sm text-gray-600 whitespace-pre-wrap">{displayText}</div>;
   }
   
   // Render formatted sections - each title and description in separate divs, one below another
@@ -232,19 +242,21 @@ const formatDescription = (description) => {
     <div className="space-y-4">
       {sections.map((section, index) => {
         if (section.type === 'section') {
+          const displayContent = truncate ? truncateText(section.content) : section.content;
           return (
             <div key={index} className="border-b border-gray-200 pb-3 last:border-b-0 last:pb-0">
               <div className="text-sm font-bold text-gray-800 mb-2">
                 {section.title}
               </div>
               <div className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed pl-0">
-                {section.content}
+                {displayContent}
               </div>
             </div>
           );
         } else {
+          const displayContent = truncate ? truncateText(section.content) : section.content;
           return (
-            <div key={index} className="text-sm text-gray-600 whitespace-pre-wrap">{section.content}</div>
+            <div key={index} className="text-sm text-gray-600 whitespace-pre-wrap">{displayContent}</div>
           );
         }
       })}
@@ -320,6 +332,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [managingAvatarSceneNumber, setManagingAvatarSceneNumber] = useState(null);
   const [avatarUrls, setAvatarUrls] = useState(['', '']); // Array of avatar URLs
   const [isUpdatingAvatars, setIsUpdatingAvatars] = useState(false);
+  const [brandAssetsAvatars, setBrandAssetsAvatars] = useState([]);
+  const [isLoadingAvatars, setIsLoadingAvatars] = useState(false);
+  const [showAvatarUploadPopup, setShowAvatarUploadPopup] = useState(false);
+  const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
+  const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
+  const [avatarName, setAvatarName] = useState('');
+  const avatarUploadFileInputRef = useRef(null);
   // Upload background state
   const [showUploadBackgroundPopup, setShowUploadBackgroundPopup] = useState(false);
   const [uploadedBackgroundFile, setUploadedBackgroundFile] = useState(null);
@@ -414,6 +433,34 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     [questionnaireAspectRatio]
   );
   const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
+  
+  // Preset avatars (same as Chat.js)
+  const presetAvatars = React.useMemo(
+    () => [
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png'
+    ],
+    []
+  );
+  
+  // Human names for preset avatars (same as Chat.js)
+  const presetAvatarNames = React.useMemo(
+    () => ({
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Noor',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Manal',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Natasha',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Dawood',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'Rajveer',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Nada',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png': 'Samir'
+    }),
+    []
+  );
   
   // Browser-based image storage (workaround for server temp folder)
   // Maps fileName -> Blob
@@ -1511,10 +1558,8 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         let data; try { data = JSON.parse(text); } catch(_) { data = null; }
         if (cancelled) return;
         if (!cancelled && data && typeof data === 'object') {
-          setGeneratedImagesData({
-            generated_images: data.generated_images || {},
-            generated_videos: data.generated_videos || {}
-          });
+          const normalized = normalizeGeneratedMediaResponse(data);
+          setGeneratedImagesData(normalized);
         }
       } catch (err) {
         console.error('Failed to load generated images:', err);
@@ -2730,6 +2775,53 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
       }
     };
   }, []);
+
+  // Load brand assets avatars when avatar manager opens
+  React.useEffect(() => {
+    if (!showAvatarManager) return;
+    
+    const loadAvatars = async () => {
+      try {
+        setIsLoadingAvatars(true);
+        const token = localStorage.getItem('token');
+        if (!token) {
+          setIsLoadingAvatars(false);
+          return;
+        }
+        
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch(_) { data = text; }
+        
+        if (resp.ok && data && typeof data === 'object') {
+          const avatarsObject = data?.avatars || {};
+          const avatarObjects = [];
+          
+          Object.values(avatarsObject).forEach((profileAvatars) => {
+            if (Array.isArray(profileAvatars)) {
+              profileAvatars.forEach((avatar) => {
+                if (avatar && typeof avatar === 'object' && avatar.url) {
+                  avatarObjects.push({
+                    name: avatar.name || '',
+                    url: String(avatar.url).trim()
+                  });
+                }
+              });
+            }
+          });
+          
+          setBrandAssetsAvatars(avatarObjects);
+        }
+      } catch (err) {
+        console.error('Failed to load avatars:', err);
+      } finally {
+        setIsLoadingAvatars(false);
+      }
+    };
+    
+    loadAvatars();
+  }, [showAvatarManager]);
 
   // Expose load function for refresh - recreate the load logic without cancellation
   const refreshLoad = React.useCallback(async (sceneNumberToSelect = null) => {
@@ -4006,13 +4098,17 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
 
       // Handle successful response
       if (data && data.success) {
+        // Store scene number before resetting state
+        const sceneNumberToRefresh = managingAvatarSceneNumber;
+        
         // Close popup
         setShowAvatarManager(false);
         setManagingAvatarSceneNumber(null);
         setAvatarUrls(['', '']);
         
-        // Reload the page after VEO3 avatar URL API completes
-        window.location.reload();
+        // Refresh images by calling user session data API instead of reloading
+        // Pass the scene number to maintain selection
+        await refreshLoad(sceneNumberToRefresh);
       } else {
         throw new Error('Avatar update API did not return success');
       }
@@ -8138,47 +8234,51 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                           )}
                         </div>
                         {isEditing ? (
-                          <div className="space-y-4">
-                            {Object.entries(editableVeo3Template).map(([key, value]) => {
-                              const displayValue = typeof value === 'string' 
-                                ? value 
-                                : (typeof value === 'object' && value !== null 
-                                    ? JSON.stringify(value, null, 2) 
-                                    : String(value || ''));
-                              
-                              // Format key: replace underscores with spaces and capitalize
-                              const formattedKey = key
-                                .replace(/_/g, ' ')
-                                .split(' ')
-                                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                                .join(' ');
-                              
-                              return (
-                                <div key={key} className="border border-gray-300 rounded-lg p-4 bg-white space-y-2">
-                                  <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                                    {formattedKey}
-                                  </label>
-                                  <textarea
-                                    value={displayValue}
-                                    onChange={(e) => {
-                                      const newValue = e.target.value;
-                                      // Try to parse as JSON if it looks like JSON, otherwise keep as string
-                                      try {
-                                        const parsed = JSON.parse(newValue);
-                                        updateVeo3TemplateField(key, parsed);
-                                      } catch {
-                                        updateVeo3TemplateField(key, newValue);
-                                      }
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
-                                    rows={typeof value === 'object' && value !== null ? 6 : 3}
-                                    placeholder={`Enter ${formattedKey.toLowerCase()}`}
-                                    disabled={isSavingVeo3Template}
-                                  />
-                                </div>
-                              );
-                            })}
-                            {Object.keys(editableVeo3Template).length === 0 && (
+                          <div className="w-full">
+                            {Object.keys(editableVeo3Template).length > 0 ? (
+                              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                {Object.entries(editableVeo3Template).map(([key, value]) => {
+                                  const displayValue = typeof value === 'string' 
+                                    ? value 
+                                    : (typeof value === 'object' && value !== null 
+                                        ? JSON.stringify(value, null, 2) 
+                                        : String(value || ''));
+                                  
+                                  // Format key: replace underscores with spaces and capitalize
+                                  const formattedKey = key
+                                    .replace(/_/g, ' ')
+                                    .split(' ')
+                                    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                                    .join(' ')
+                                    .toUpperCase();
+                                  
+                                  return (
+                                    <div key={key} className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 space-y-2">
+                                      <label className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                        {formattedKey}
+                                      </label>
+                                      <textarea
+                                        value={displayValue}
+                                        onChange={(e) => {
+                                          const newValue = e.target.value;
+                                          // Try to parse as JSON if it looks like JSON, otherwise keep as string
+                                          try {
+                                            const parsed = JSON.parse(newValue);
+                                            updateVeo3TemplateField(key, parsed);
+                                          } catch {
+                                            updateVeo3TemplateField(key, newValue);
+                                          }
+                                        }}
+                                        className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-800 bg-white resize-none"
+                                        rows={typeof value === 'object' && value !== null ? 6 : 3}
+                                        placeholder={`Enter ${formattedKey.toLowerCase()}`}
+                                        disabled={isSavingVeo3Template}
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
                               <div className="w-full border border-gray-200 rounded-lg bg-white px-4 py-3 text-sm text-gray-400 italic text-center">
                                 No fields available to edit
                               </div>
@@ -8212,7 +8312,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     {formattedKey}
                                   </p>
                                   <div className="text-sm text-gray-800 whitespace-pre-wrap">
-                                    {displayValue || <span className="text-gray-400 italic">-</span>}
+                                    {displayValue ? truncateText(displayValue) : <span className="text-gray-400 italic">-</span>}
                                   </div>
                                 </div>
                               );
@@ -9203,9 +9303,9 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                           className={`w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 min-h-[100px] cursor-pointer ${isSavingDescription ? 'opacity-60' : ''}`}
                         >
                           {sceneDescription ? (
-                            formatDescription(sceneDescription) || (
-                              <p className="text-sm text-gray-600 whitespace-pre-wrap">{sceneDescription}</p>
-                            )
+                            <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                              {truncateText(sceneDescription)}
+                            </p>
                           ) : (
                             <p className="text-sm text-gray-400 italic">Double-click to add description</p>
                           )}
@@ -9779,9 +9879,9 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                   className={`w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 min-h-[100px] cursor-pointer ${isSavingDescription ? 'opacity-60' : ''}`}
                                 >
                                   {sceneDescription ? (
-                                    formatDescription(sceneDescription) || (
-                                      <p className="text-sm text-gray-600 whitespace-pre-wrap">{sceneDescription}</p>
-                                    )
+                                    <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                                      {truncateText(sceneDescription)}
+                                    </p>
                                   ) : (
                                     <p className="text-sm text-gray-400 italic">Double-click to add description</p>
                                   )}
@@ -10949,63 +11049,112 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                 <label className="block text-sm font-medium text-gray-700 mb-3">
                   Available Avatars
                 </label>
-                <div className="grid grid-cols-3 gap-4">
-                  {[
-                    { id: 'avatar_1', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png', name: 'Avatar 1' },
-                    { id: 'avatar_2', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png', name: 'Avatar 2' },
-                    { id: 'avatar_3', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png', name: 'Avatar 3' },
-                    { id: 'avatar_4', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png', name: 'Avatar 4' },
-                    { id: 'avatar_5', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png', name: 'Avatar 5' },
-                    { id: 'avatar_6', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png', name: 'Avatar 6' },
-                    { id: 'avatar_7', url: 'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png', name: 'Avatar 7' }
-                  ].map((avatar) => {
-                    // Normalize both URLs for exact matching
-                    const normalizedAvatarUrl = normalizeImageUrl(avatar.url);
-                    const isSelected = avatarUrls.some(url => normalizeImageUrl(url) === normalizedAvatarUrl);
-                    return (
-                      <div
-                        key={avatar.id}
-                        onClick={() => {
-                          if (isUpdatingAvatars) return;
-                          if (isSelected) {
-                            // Deselect
-                            setAvatarUrls([]);
-                          } else {
-                            // Select only one (replace previous selection)
-                            setAvatarUrls([avatar.url]);
-                          }
-                        }}
-                        className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 ${
-                          isSelected 
-                            ? 'border-[#13008B] shadow-lg' 
-                            : 'border-gray-200 hover:border-gray-400'
-                        } ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <div className="bg-white p-2">
-                          <img 
-                            src={avatar.url} 
-                            alt={avatar.name}
-                            className="w-full h-32 object-contain"
-                            height={avatar?.image_dimensions?.height || avatar?.imageDimensions?.height || undefined}
-                          />
+                {isLoadingAvatars ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <>
+                    {(() => {
+                      // Helper to normalize avatar to object format {name, url}
+                      const normalizeAvatar = (item) => {
+                        if (item && typeof item === 'object' && item.url) {
+                          return { name: item.name || '', url: String(item.url).trim() };
+                        }
+                        if (typeof item === 'string') {
+                          const trimmedUrl = item.trim();
+                          const presetName = presetAvatarNames[trimmedUrl];
+                          return { name: presetName || '', url: trimmedUrl };
+                        }
+                        return null;
+                      };
+                      
+                      // Combine preset and brand assets avatars, removing duplicates
+                      const seenUrls = new Set();
+                      const allAvatars = [];
+                      
+                      const addIfNotSeen = (avatar) => {
+                        const normalized = normalizeAvatar(avatar);
+                        if (normalized && normalized.url && !seenUrls.has(normalized.url)) {
+                          seenUrls.add(normalized.url);
+                          allAvatars.push(normalized);
+                        }
+                      };
+                      
+                      // Add preset avatars first
+                      presetAvatars.forEach(addIfNotSeen);
+                      // Add brand assets avatars
+                      brandAssetsAvatars.forEach(addIfNotSeen);
+                      
+                      return (
+                        <div className="grid grid-cols-3 gap-4">
+                          {allAvatars.map((avatarObj, index) => {
+                            const avatarUrl = avatarObj.url;
+                            const avatarName = avatarObj.name || `Avatar ${index + 1}`;
+                            const normalizedAvatarUrl = normalizeImageUrl(avatarUrl);
+                            const isSelected = avatarUrls.some(url => normalizeImageUrl(url) === normalizedAvatarUrl);
+                            
+                            return (
+                              <div
+                                key={`avatar-${index}-${avatarUrl}`}
+                                onClick={() => {
+                                  if (isUpdatingAvatars) return;
+                                  if (isSelected) {
+                                    setAvatarUrls([]);
+                                  } else {
+                                    setAvatarUrls([avatarUrl]);
+                                  }
+                                }}
+                                className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 ${
+                                  isSelected 
+                                    ? 'border-[#13008B] shadow-lg' 
+                                    : 'border-gray-200 hover:border-gray-400'
+                                } ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                <div className="bg-white p-2">
+                                  <img 
+                                    src={avatarUrl} 
+                                    alt={avatarName}
+                                    className="w-full h-32 object-contain"
+                                  />
+                                </div>
+                                <div className="bg-gray-50 px-2 py-1 text-center border-t border-gray-200">
+                                  <p className="text-xs text-gray-600">{avatarName}</p>
+                                </div>
+                                {isSelected && (
+                                  <div className="absolute top-2 right-2 bg-[#13008B] text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                      <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {/* Upload Avatar Button */}
+                          <div
+                            onClick={() => {
+                              if (!isUpdatingAvatars) {
+                                setShowAvatarUploadPopup(true);
+                              }
+                            }}
+                            className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 border-dashed ${
+                              isUpdatingAvatars ? 'opacity-50 cursor-not-allowed border-gray-200' : 'border-gray-300 hover:border-[#13008B]'
+                            }`}
+                          >
+                            <div className="bg-gray-50 p-2 flex flex-col items-center justify-center h-32">
+                              <Upload className="w-8 h-8 text-gray-400 mb-2" />
+                              <p className="text-xs text-gray-600 text-center">Upload Avatar</p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="bg-gray-50 px-2 py-1 text-center border-t border-gray-200">
-                          <p className="text-xs text-gray-600">{avatar.name}</p>
-                        </div>
-                        {isSelected && (
-                          <div className="absolute top-2 right-2 bg-[#13008B] text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                              <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
-        </div>
-      )}
-    </div>
-  );
-                  })}
-                </div>
-                <p className="text-xs text-gray-500 mt-3">
-                  {avatarUrls.length > 0 ? '1 avatar selected' : 'No avatar selected'}
-                </p>
+                      );
+                    })()}
+                    <p className="text-xs text-gray-500 mt-3">
+                      {avatarUrls.length > 0 ? '1 avatar selected' : 'No avatar selected'}
+                    </p>
+                  </>
+                )}
               </div>
 
               {/* Error Message */}
@@ -11066,6 +11215,232 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                     </>
                   ) : (
                     'Update Avatars'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Avatar Popup */}
+      {showAvatarUploadPopup && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[90%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-[#13008B]">Upload Avatar</h3>
+              <button 
+                onClick={() => {
+                  setShowAvatarUploadPopup(false);
+                  setAvatarUploadFiles([]);
+                }}
+                className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50"
+                disabled={isUploadingAvatarFiles}
+              >
+                Close
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1">
+              {/* Avatar Name Input */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Avatar Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={avatarName}
+                  onChange={(e) => setAvatarName(e.target.value)}
+                  placeholder="Enter avatar name"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                  disabled={isUploadingAvatarFiles}
+                />
+              </div>
+              
+              {/* Upload Box */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Avatar File
+                </label>
+                <input
+                  ref={avatarUploadFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) {
+                      setAvatarUploadFiles([files[0]]);
+                    }
+                    if (avatarUploadFileInputRef.current) {
+                      avatarUploadFileInputRef.current.value = '';
+                    }
+                  }}
+                  disabled={isUploadingAvatarFiles}
+                />
+                <button
+                  type="button"
+                  onClick={() => avatarUploadFileInputRef.current?.click()}
+                  className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#13008B] hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isUploadingAvatarFiles}
+                >
+                  <div className="text-center">
+                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    <p className="text-sm text-gray-600">Click to select avatar file</p>
+                    <p className="text-xs text-gray-500 mt-1">Supported: JPG, PNG, WEBP</p>
+                  </div>
+                </button>
+              </div>
+
+              {/* File List */}
+              {avatarUploadFiles.length > 0 && (
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Selected File
+                  </label>
+                  <div className="space-y-2">
+                    {avatarUploadFiles.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center flex-shrink-0">
+                            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                            <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(2)} KB</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAvatarUploadFiles([]);
+                          }}
+                          className="ml-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                          title="Remove file"
+                          disabled={isUploadingAvatarFiles}
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Upload Button */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAvatarUploadPopup(false);
+                    setAvatarUploadFiles([]);
+                    setAvatarName('');
+                  }}
+                  className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                  disabled={isUploadingAvatarFiles}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      if (!avatarName || !avatarName.trim()) {
+                        alert('Please enter an avatar name');
+                        return;
+                      }
+                      
+                      if (avatarUploadFiles.length === 0) {
+                        alert('Please select a file to upload');
+                        return;
+                      }
+                      
+                      const token = localStorage.getItem('token');
+                      if (!token) {
+                        alert('Missing user ID');
+                        return;
+                      }
+                      
+                      setIsUploadingAvatarFiles(true);
+                      
+                      // Create FormData request body
+                      const form = new FormData();
+                      form.append('user_id', token);
+                      form.append('name', avatarName.trim());
+                      form.append('file', avatarUploadFiles[0]);
+                      
+                      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
+                        method: 'POST',
+                        body: form
+                      });
+                      
+                      const text = await resp.text();
+                      if (!resp.ok) {
+                        throw new Error(`Upload failed: ${resp.status} ${text}`);
+                      }
+                      
+                      // Re-call brand assets GET API to refresh the list
+                      const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
+                      const getText = await getResp.text();
+                      let data;
+                      try { data = JSON.parse(getText); } catch(_) { data = getText; }
+                      
+                      if (getResp.ok && data && typeof data === 'object') {
+                        const avatarsObject = data?.avatars || {};
+                        const avatarObjects = [];
+                        
+                        Object.values(avatarsObject).forEach((profileAvatars) => {
+                          if (Array.isArray(profileAvatars)) {
+                            profileAvatars.forEach((avatar) => {
+                              if (avatar && typeof avatar === 'object' && avatar.url) {
+                                avatarObjects.push({
+                                  name: avatar.name || '',
+                                  url: String(avatar.url).trim()
+                                });
+                              }
+                            });
+                          }
+                        });
+                        
+                        setBrandAssetsAvatars(avatarObjects);
+                        // Update cache (store both objects and URLs for backward compatibility)
+                        try {
+                          const cacheKey = `brand_assets_images:${token}`;
+                          const cached = localStorage.getItem(cacheKey);
+                          let cachedData = {};
+                          if (cached) {
+                            try { cachedData = JSON.parse(cached); } catch(_) {}
+                          }
+                          cachedData.avatars = avatarObjects;
+                          cachedData.avatar_urls = avatarObjects.map(a => a.url); // Keep URLs for backward compatibility
+                          localStorage.setItem(cacheKey, JSON.stringify(cachedData));
+                        } catch(_) {}
+                      }
+                      
+                      // Close popup and reset
+                      setShowAvatarUploadPopup(false);
+                      setAvatarUploadFiles([]);
+                      setAvatarName('');
+                      alert('Avatar uploaded successfully!');
+                    } catch (err) {
+                      console.error('Avatar upload failed:', err);
+                      alert('Failed to upload avatar: ' + (err?.message || 'Unknown error'));
+                    } finally {
+                      setIsUploadingAvatarFiles(false);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isUploadingAvatarFiles || avatarUploadFiles.length === 0 || !avatarName || !avatarName.trim()}
+                >
+                  {isUploadingAvatarFiles ? (
+                    <span className="flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Uploading...
+                    </span>
+                  ) : (
+                    'Upload Avatar'
                   )}
                 </button>
               </div>

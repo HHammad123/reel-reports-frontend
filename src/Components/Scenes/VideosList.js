@@ -1359,17 +1359,41 @@ if (videoElement.readyState >= 2) {
                 availableAspectRatios: responseData?.base_videos ? Object.keys(responseData.base_videos) : []
               });
               
+              // Normalize and sort base videos
+              const { normalizeGeneratedBaseVideosResponse } = await import('../../utils/generatedMediaUtils');
+              const normalized = normalizeGeneratedBaseVideosResponse(responseData);
+              const baseVideosData = normalized.base_videos || {};
+              
               // Extract videos based on aspect ratio structure
-              // API response structure: { base_videos: { "16:9": [...], "9:16": [...], "1:1": [] } }
+              // Normalized structure: { base_videos: { "16:9": { "Session Name": ["url1", "url2"] }, ... } }
               let videos = [];
               
-              if (responseData?.base_videos && typeof responseData.base_videos === 'object') {
-                // Get videos for current aspect ratio
-                const aspectRatioVideos = responseData.base_videos[normalizedAspectRatio];
+              if (baseVideosData && typeof baseVideosData === 'object') {
+                // Get sessions for current aspect ratio
+                const sessionsForRatio = baseVideosData[normalizedAspectRatio];
                 
-                if (Array.isArray(aspectRatioVideos)) {
-                  // If it's an array of URLs (strings), convert to objects
-                  videos = aspectRatioVideos.map((url, idx) => {
+                if (sessionsForRatio && typeof sessionsForRatio === 'object' && !Array.isArray(sessionsForRatio)) {
+                  // Iterate through sessions and collect all videos
+                  Object.entries(sessionsForRatio).forEach(([sessionName, sessionVideos]) => {
+                    if (Array.isArray(sessionVideos)) {
+                      sessionVideos.forEach((videoUrl, idx) => {
+                        if (typeof videoUrl === 'string') {
+                          videos.push({
+                            url: videoUrl,
+                            base_video_url: videoUrl,
+                            video_url: videoUrl,
+                            id: `generated-${normalizedAspectRatio}-${sessionName}-${idx}`,
+                            title: `${sessionName} - Video ${idx + 1}`
+                          });
+                        } else if (videoUrl && typeof videoUrl === 'object') {
+                          videos.push(videoUrl);
+                        }
+                      });
+                    }
+                  });
+                } else if (Array.isArray(sessionsForRatio)) {
+                  // Legacy format: array directly
+                  videos = sessionsForRatio.map((url, idx) => {
                     if (typeof url === 'string') {
                       return {
                         url: url,
@@ -1379,11 +1403,8 @@ if (videoElement.readyState >= 2) {
                         title: `Generated Video ${idx + 1} (${normalizedAspectRatio})`
                       };
                     }
-                    return url; // Already an object
+                    return url;
                   });
-                } else if (aspectRatioVideos) {
-                  // If it's a single object, wrap in array
-                  videos = [aspectRatioVideos];
                 }
                 
                 console.log('✅ [GENERATED-VIDEOS] Extracted videos for aspect ratio', {
@@ -1396,18 +1417,8 @@ if (videoElement.readyState >= 2) {
                   }))
                 });
               } else {
-                // Fallback: try to extract from other response formats
-                videos = Array.isArray(responseData) 
-                  ? responseData 
-                  : (Array.isArray(responseData?.videos) 
-                      ? responseData.videos 
-                      : (Array.isArray(responseData?.data) 
-                          ? responseData.data 
-                          : []));
-                
-                console.log('⚠️ [GENERATED-VIDEOS] Using fallback extraction (no base_videos structure)', {
-                  totalVideos: videos.length
-                });
+                // No videos found for this aspect ratio
+                videos = [];
               }
               
               console.log('✅ [GENERATED-VIDEOS] Final videos to process', {

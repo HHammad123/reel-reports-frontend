@@ -98,9 +98,10 @@ export const LocalMediaProvider = ({ children, }) => {
                     }
                 }
                 
-                // Transform generated images
-                // Structure: generated_images[aspectRatio][sessionName] = [array of image URLs]
-                const generatedImagesData = imagesJson?.generated_images || {};
+                // Normalize and sort generated images
+                const { normalizeGeneratedMediaResponse } = await import('../../../../utils/generatedMediaUtils');
+                const normalizedImages = normalizeGeneratedMediaResponse(imagesJson || {});
+                const generatedImagesData = normalizedImages.generated_images || {};
                 const transformedImages = [];
                 
                 console.log('[LocalMediaContext] Generated images structure:', generatedImagesData);
@@ -173,9 +174,10 @@ export const LocalMediaProvider = ({ children, }) => {
                 });
                 setGeneratedImages(transformedImages);
                 
-                // Transform generated videos
-                // Structure: base_videos[aspectRatio][sessionName] = [array of video URLs]
-                const generatedVideosData = videosJson?.base_videos || {};
+                // Normalize and sort generated videos
+                const { normalizeGeneratedBaseVideosResponse } = await import('../../../../utils/generatedMediaUtils');
+                const normalizedVideos = normalizeGeneratedBaseVideosResponse(videosJson || {});
+                const generatedVideosData = normalizedVideos.base_videos || {};
                 const transformedVideos = [];
                 
                 console.log('[LocalMediaContext] Generated videos structure:', generatedVideosData);

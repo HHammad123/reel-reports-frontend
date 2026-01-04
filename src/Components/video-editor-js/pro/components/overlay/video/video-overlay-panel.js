@@ -69,62 +69,123 @@ export const VideoOverlayPanel = () => {
                 let data;
                 try {
                     data = JSON.parse(text);
-                } catch (_) {
+                } catch (parseError) {
+                    console.error('[VideoOverlayPanel] Failed to parse response:', parseError, text);
                     data = text;
                 }
                 
-                const baseVideosData = data?.base_videos || {};
+                console.log('[VideoOverlayPanel] API response data:', data);
+                
                 const allGeneratedVideos = [];
                 
-                // Transform all videos from generate-base-video API (all sessions, all aspect ratios)
-                Object.keys(baseVideosData).forEach((aspectRatio) => {
-                    const sessionsForRatio = baseVideosData[aspectRatio];
-                    if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
-                        Object.entries(sessionsForRatio).forEach(([sessionName, videos]) => {
-                            if (Array.isArray(videos)) {
-                                videos.forEach((videoUrl, idx) => {
-                                    let videoUrlStr = '';
-                                    let videoName = `${sessionName} - Video ${idx + 1}`;
-                                    
-                                    if (typeof videoUrl === 'string' && videoUrl) {
-                                        videoUrlStr = videoUrl;
-                                    } else if (videoUrl && typeof videoUrl === 'object') {
-                                        videoUrlStr = videoUrl.video_url || videoUrl.url || videoUrl.src || '';
-                                        videoName = videoUrl.name || videoUrl.title || videoName;
-                                    }
-                                    
-                                    if (videoUrlStr) {
-                                        allGeneratedVideos.push({
-                                            id: `generated-video-${aspectRatio}-${sessionName}-${idx}`,
-                                            type: 'video',
-                                            width: 1920,
-                                            height: 1080,
-                                            thumbnail: videoUrlStr,
-                                            file: videoUrlStr,
-                                            src: videoUrlStr,
-                                            alt: videoName,
-                                            title: videoName,
-                                            attribution: {
-                                                author: 'Generated',
-                                                source: 'Generated Base Video',
-                                                license: 'User Content',
-                                            },
-                                            _session: true,
-                                            _generated: true,
-                                            _sessionVideo: true,
-                                            _sessionName: sessionName,
-                                            _aspectRatio: aspectRatio,
-                                            _source: 'local-session-videos',
-                                        });
-                                    }
-                                });
-                            }
-                        });
-                    }
-                });
+                // Check if the response is in the new flat format: { "videos": [...], "updated_at": "..." }
+                if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.videos)) {
+                    console.log('[VideoOverlayPanel] Detected flat format, videos count:', data.videos.length, 'videos:', data.videos);
+                    // New flat format - direct videos array
+                    const videos = data.videos || [];
+                    videos.forEach((videoUrl, idx) => {
+                        console.log('[VideoOverlayPanel] Processing video', idx, videoUrl);
+                        let videoUrlStr = '';
+                        let videoName = `Generated Video ${idx + 1}`;
+                        
+                        if (typeof videoUrl === 'string' && videoUrl) {
+                            videoUrlStr = videoUrl;
+                        } else if (videoUrl && typeof videoUrl === 'object') {
+                            videoUrlStr = videoUrl.video_url || videoUrl.url || videoUrl.src || '';
+                            videoName = videoUrl.name || videoUrl.title || videoName;
+                        }
+                        
+                        if (videoUrlStr) {
+                            const videoItem = {
+                                id: `generated-video-flat-${idx}`,
+                                type: 'video',
+                                width: 1920,
+                                height: 1080,
+                                thumbnail: videoUrlStr,
+                                file: videoUrlStr,
+                                src: videoUrlStr,
+                                alt: videoName,
+                                title: videoName,
+                                attribution: {
+                                    author: 'Generated',
+                                    source: 'Generated Base Video',
+                                    license: 'User Content',
+                                },
+                                _session: true,
+                                _generated: true,
+                                _sessionVideo: true,
+                                _sessionName: 'Generated Videos',
+                                _aspectRatio: '16:9',
+                                _source: 'generated-base-videos',
+                                _updatedAt: data.updated_at || null,
+                            };
+                            console.log('[VideoOverlayPanel] Added video item:', videoItem);
+                            allGeneratedVideos.push(videoItem);
+                        } else {
+                            console.warn('[VideoOverlayPanel] Skipping video with no URL:', videoUrl);
+                        }
+                    });
+                } else {
+                    // Old nested format - normalize and sort
+                    const { normalizeGeneratedBaseVideosResponse } = await import('../../../../../utils/generatedMediaUtils');
+                    const normalized = normalizeGeneratedBaseVideosResponse(data);
+                    const baseVideosData = normalized.base_videos || {};
+                    
+                    // Transform all videos from generate-base-video API (all sessions, all aspect ratios)
+                    Object.keys(baseVideosData).forEach((aspectRatio) => {
+                        const sessionsForRatio = baseVideosData[aspectRatio];
+                        if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                            Object.entries(sessionsForRatio).forEach(([sessionName, videos]) => {
+                                if (Array.isArray(videos)) {
+                                    videos.forEach((videoUrl, idx) => {
+                                        let videoUrlStr = '';
+                                        let videoName = `${sessionName} - Video ${idx + 1}`;
+                                        
+                                        if (typeof videoUrl === 'string' && videoUrl) {
+                                            videoUrlStr = videoUrl;
+                                        } else if (videoUrl && typeof videoUrl === 'object') {
+                                            videoUrlStr = videoUrl.video_url || videoUrl.url || videoUrl.src || '';
+                                            videoName = videoUrl.name || videoUrl.title || videoName;
+                                        }
+                                        
+                                        if (videoUrlStr) {
+                                            allGeneratedVideos.push({
+                                                id: `generated-video-${aspectRatio}-${sessionName}-${idx}`,
+                                                type: 'video',
+                                                width: 1920,
+                                                height: 1080,
+                                                thumbnail: videoUrlStr,
+                                                file: videoUrlStr,
+                                                src: videoUrlStr,
+                                                alt: videoName,
+                                                title: videoName,
+                                                attribution: {
+                                                    author: 'Generated',
+                                                    source: 'Generated Base Video',
+                                                    license: 'User Content',
+                                                },
+                                                _session: true,
+                                                _generated: true,
+                                                _sessionVideo: true,
+                                                _sessionName: sessionName,
+                                                _aspectRatio: aspectRatio,
+                                                _source: 'generated-base-videos',
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
                 
-                console.log('[VideoOverlayPanel] Fetched generated base videos:', allGeneratedVideos.length, 'videos from', Object.keys(baseVideosData).length, 'aspect ratios');
+                console.log('[VideoOverlayPanel] Fetched generated base videos:', allGeneratedVideos.length, 'videos', allGeneratedVideos);
                 setGeneratedBaseVideos(allGeneratedVideos);
+                
+                // If no session videos have loaded yet, show generated videos immediately
+                if (!hasLoadedInitialVideos.current) {
+                    setVideos(allGeneratedVideos);
+                }
             } catch (error) {
                 console.error('Failed to fetch generated base videos:', error);
             }
@@ -158,7 +219,15 @@ export const VideoOverlayPanel = () => {
                 
                 // For All tab: combine session videos with generated base videos
                 // For Session Videos tab: only show session videos (handled by MediaOverlayPanel filtering)
+                // Always combine with current generatedBaseVideos (even if empty, it will be updated later)
                 const allVideos = [...sessionVids, ...generatedBaseVideos];
+                console.log('[VideoOverlayPanel] Combined videos:', {
+                    sessionVids: sessionVids.length,
+                    generatedVideos: generatedBaseVideos.length,
+                    total: allVideos.length,
+                    sessionVidsList: sessionVids,
+                    generatedVideosList: generatedBaseVideos
+                });
                 setVideos(allVideos);
                 setSourceResults(results.sourceResults || []);
                 hasLoadedInitialVideos.current = true;
@@ -182,9 +251,15 @@ export const VideoOverlayPanel = () => {
         if (hasLoadedInitialVideos.current && generatedBaseVideos.length > 0) {
             // Combine with existing session videos
             const allVideos = [...sessionVideos, ...generatedBaseVideos];
+            console.log('[VideoOverlayPanel] Updated videos after generated videos loaded:', {
+                sessionVideos: sessionVideos.length,
+                generatedVideos: generatedBaseVideos.length,
+                total: allVideos.length
+            });
             setVideos(allVideos);
         } else if (!hasLoadedInitialVideos.current && generatedBaseVideos.length > 0) {
             // If generated videos load first, show them immediately
+            console.log('[VideoOverlayPanel] Showing generated videos immediately:', generatedBaseVideos.length);
             setVideos(generatedBaseVideos);
         }
     }, [generatedBaseVideos, sessionVideos]);
@@ -352,8 +427,14 @@ export const VideoOverlayPanel = () => {
             }
             else {
                 // Add mode: Create new overlay
-                const adaptor = videoAdaptors.find((a) => a.name === video._source);
-                const videoUrl = (adaptor === null || adaptor === void 0 ? void 0 : adaptor.getVideoUrl(video, "hd")) || "";
+                // For generated videos, use the file/src directly (no adaptor needed)
+                let videoUrl = "";
+                if (video._source === 'generated-base-videos') {
+                    videoUrl = video.file || video.src || video.thumbnail || "";
+                } else {
+                    const adaptor = videoAdaptors.find((a) => a.name === video._source);
+                    videoUrl = (adaptor === null || adaptor === void 0 ? void 0 : adaptor.getVideoUrl(video, "hd")) || "";
+                }
                 // Get actual video duration using media-parser
                 let durationInFrames = 200; // fallback
                 let mediaSrcDuration;
@@ -506,6 +587,16 @@ export const VideoOverlayPanel = () => {
     const filteredVideosForDisplay = useMemo(() => {
         // This will be filtered by MediaOverlayPanel based on activeTab
         // But we need to ensure session videos don't include generated base videos
+        const sessionVids = videos.filter(v => v._source === 'local-session-videos' && !v._generated);
+        const generatedVids = videos.filter(v => v._source === 'generated-base-videos');
+        const otherVids = videos.filter(v => v._source !== 'local-session-videos' && v._source !== 'generated-base-videos');
+        console.log('[VideoOverlayPanel] Videos being passed to MediaOverlayPanel:', {
+            total: videos.length,
+            sessionVideos: sessionVids.length,
+            generatedVideos: generatedVids.length,
+            otherVideos: otherVids.length,
+            allVideos: videos
+        });
         return videos;
     }, [videos]);
     

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronLeft, Plus, Mic, Play, Trash2, ZoomIn, Edit2, ImageIcon } from 'lucide-react'
 import useBrandAssets from '../../hooks/useBrandAssets'
 import CanvasImageEditor from '../ImageEdit/CanvasImageEditor'
+import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils'
 
 const resolveTemplateImageUrl = (item) => {
   if (!item) return ''
@@ -2939,16 +2940,14 @@ const Brandimages = () => {
           throw new Error(`generated-media failed: ${resp.status} ${text}`)
         }
 
-        const generatedImages = json?.generated_images || {}
-        const generatedVideos = json?.generated_videos || {}
-
+        const normalized = normalizeGeneratedMediaResponse(json);
         setGeneratedAssets({
-          generated_images: generatedImages,
-          generated_videos: generatedVideos
+          generated_images: normalized.generated_images,
+          generated_videos: normalized.generated_videos
         })
 
         // Set default aspect ratio if available
-        const availableRatios = Object.keys(generatedImages).concat(Object.keys(generatedVideos))
+        const availableRatios = Object.keys(normalized.generated_images).concat(Object.keys(normalized.generated_videos))
         if (availableRatios.length > 0 && !availableRatios.includes(selectedAspectRatio)) {
           if (availableRatios.includes('16:9')) {
             setSelectedAspectRatio('16:9')

@@ -142,7 +142,10 @@ export const sessionImagesAdaptor = {
                         generatedMediaData = generatedMediaText;
                     }
                     
-                    const generatedImagesData = generatedMediaData?.generated_images || {};
+                    // Normalize and sort generated images
+                    const { normalizeGeneratedMediaResponse } = await import('../../../../utils/generatedMediaUtils');
+                    const normalized = normalizeGeneratedMediaResponse(generatedMediaData || {});
+                    const generatedImagesData = normalized.generated_images || {};
                     
                     // Transform generated images to standard format
                     // Only include images from the current session

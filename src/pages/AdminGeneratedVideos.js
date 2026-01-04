@@ -4,6 +4,7 @@ import { Navigate, useParams, useNavigate } from 'react-router-dom'
 import Sidebar from '../Components/Sidebar'
 import Topbar from '../Components/Topbar'
 import { selectUser } from '../redux/slices/userSlice'
+import { normalizeGeneratedBaseVideosResponse } from '../utils/generatedMediaUtils'
 
 const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
 
@@ -144,10 +145,10 @@ const AdminGeneratedVideos = () => {
         console.log('Full API Response:', data)
         console.log('Base Videos Structure:', data?.base_videos)
         
-        // Store the raw base_videos structure
-        // Structure: base_videos[aspectRatio][sessionName] = [array of video URLs/objects]
-        const baseVideos = data?.base_videos || {}
-        setBaseVideosData(baseVideos)
+        // Normalize and sort the base_videos structure
+        const normalized = normalizeGeneratedBaseVideosResponse(data);
+        const baseVideos = normalized.base_videos || {};
+        setBaseVideosData(baseVideos);
         
         // Log the structure for debugging
         console.log('=== ADMIN GENERATED VIDEOS: STRUCTURE BY ASPECT RATIO ===')
@@ -163,10 +164,10 @@ const AdminGeneratedVideos = () => {
           }
         })
         
-        // Also create flat array for backward compatibility
+        // Also create flat array for backward compatibility (using normalized data)
         let videosData = []
-        if (data?.base_videos && typeof data.base_videos === 'object') {
-          Object.entries(data.base_videos).forEach(([aspectRatio, sessions]) => {
+        if (baseVideos && typeof baseVideos === 'object') {
+          Object.entries(baseVideos).forEach(([aspectRatio, sessions]) => {
             if (typeof sessions === 'object') {
               Object.entries(sessions).forEach(([sessionName, videos]) => {
                 if (Array.isArray(videos)) {

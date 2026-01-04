@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Upload, Paperclip, FileText, Camera, Send, File, X, GripVertical, Check, Maximize2, RefreshCcw, ChevronLeft, ChevronRight, ChevronDown, MoreHorizontal, Trash2 } from 'lucide-react';
 import { CiPen } from 'react-icons/ci';
 import { formatAIResponse } from '../utils/formatting';
+import { normalizeGeneratedMediaResponse } from '../utils/generatedMediaUtils';
 import ChartDataEditor from './ChartDataEditor';
 import LogoImage from '../asset/mainLogo.png';
 import LoadingAnimationVideo from '../asset/Loading animation.mp4';
@@ -42,6 +43,7 @@ const resolveTemplateAssetUrl = (entry) => {
       if (baseUrl) return baseUrl.trim();
     }
   }
+  
   const direct =
     entry.image_url ||
     entry.imageUrl ||
@@ -1361,10 +1363,8 @@ const [textEditorFormat, setTextEditorFormat] = useState({
           return;
         }
         if (!cancelled) {
-          setGeneratedImagesData({
-            generated_images: data.generated_images || {},
-            generated_videos: data.generated_videos || {}
-          });
+          const normalized = normalizeGeneratedMediaResponse(data);
+          setGeneratedImagesData(normalized);
           setIsLoadingGeneratedImages(false);
         }
       } catch (err) {
@@ -2244,13 +2244,13 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   // Human names for preset avatars
   const presetAvatarNames = useMemo(
     () => ({
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Alex',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Sarah',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Tyler',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Fawad',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'David',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Olivia',
-      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png': 'James'
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Noor',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Manal',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Natasha',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Dawood',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'Rajveer',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Nada',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png': 'Samir'
     }),
     []
   );
@@ -2261,7 +2261,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   };
   const scopedKey = (base) => {
     const sid = getSid();
-    return sid ? `${base}:${sid}` : base;
+    return sid ? `${base}:${sid}` : base; 
   };
 
   // Persist per-scene ref images across modal closes and reloads
