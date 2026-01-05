@@ -61,6 +61,8 @@ export const ShapeSettingsPanel = ({ localOverlay, handleStyleChange, onPosition
                 <PositionSettings
                     overlayWidth={localOverlay.width}
                     overlayHeight={localOverlay.height}
+                    overlayLeft={localOverlay.left}
+                    overlayTop={localOverlay.top}
                     onPositionChange={onPositionChange}
                 />
             )}

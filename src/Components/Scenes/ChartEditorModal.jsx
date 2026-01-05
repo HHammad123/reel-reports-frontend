@@ -638,10 +638,10 @@ const applyMargins = (fig, sections) => {
   const margins = getConfigDict(sections.margins ?? [])
   if (Object.keys(margins).length) {
     fig.layout.margin = {
-      l: margins.left ?? 80,
-      r: margins.right ?? 80,
-      t: margins.top ?? 100,
-      b: margins.bottom ?? 80
+      l: margins.left !== undefined ? margins.left : 80,
+      r: margins.right !== undefined ? margins.right : 80,
+      t: margins.top !== undefined ? margins.top : 100,
+      b: margins.bottom !== undefined ? margins.bottom : 80
     }
   }
 }
@@ -687,7 +687,9 @@ const applyTitle = (fig, sections) => {
         weight: fontWeight  // ✅ ADD THIS - Map to Plotly's font.weight
       },
       x: xAlign === 'center' ? 0.5 : (xAlign === 'right' ? 1 : 0),
-      xanchor: xAlign || 'left'
+      xanchor: xAlign || 'left',
+      automargin: true,  // Auto-expand margins to fit title
+      yref: 'container'  // Reference the container for better positioning
     }
   }
 }
@@ -818,7 +820,8 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
       if (Object.keys(xAxisDict).length > 0) {
         fig.layout.xaxis = {
           ...(fig.layout.xaxis || {}),
-          ...xAxisDict
+          ...xAxisDict,
+          automargin: true  // Auto-expand margins to fit axis labels and title
         }
       }
     }
@@ -913,7 +916,8 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
       if (Object.keys(yAxisDict).length > 0) {
         fig.layout.yaxis = {
           ...(fig.layout.yaxis || {}),
-          ...yAxisDict
+          ...yAxisDict,
+          automargin: true  // Auto-expand margins to fit axis labels and title
         }
       }
     }
@@ -927,7 +931,8 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
       fig.layout.xaxis = {
         ...(fig.layout.xaxis || {}),
         showline: false,
-        linewidth: 0
+        linewidth: 0,
+        automargin: true  // Always enable automargin for proper label display
       }
     }
 
@@ -935,7 +940,8 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
     if (!xAxisSection || getAxisConfig(sections, 'x_axis', 'grid', 'show') === null) {
       fig.layout.xaxis = {
         ...(fig.layout.xaxis || {}),
-        showgrid: false
+        showgrid: false,
+        automargin: true  // Always enable automargin for proper label display
       }
     }
 
@@ -944,21 +950,24 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
       fig.layout.yaxis = {
         ...(fig.layout.yaxis || {}),
         showline: false,
-        linewidth: 0
+        linewidth: 0,
+        automargin: true  // Always enable automargin for proper label display
       }
     }
 
     if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'grid', 'show') === null) {
       fig.layout.yaxis = {
         ...(fig.layout.yaxis || {}),
-        showgrid: false
+        showgrid: false,
+        automargin: true  // Always enable automargin for proper label display
       }
     }
 
     if (!yAxisSection || getAxisConfig(sections, 'y_axis', 'zeroline', 'show') === null) {
       fig.layout.yaxis = {
         ...(fig.layout.yaxis || {}),
-        zeroline: false
+        zeroline: false,
+        automargin: true  // Always enable automargin for proper label display
       }
     }
   }
@@ -1166,11 +1175,20 @@ const generateChart = (sceneData, sectionsOverride = null) => {
   const defaultSections = presetData?.preset_definitions?.[0]?.sections ?? {}
   const sections = sectionsOverride ?? defaultSections
 
+  // Get preset margins early to use as defaults
+  const presetMargins = getConfigDict(sections.margins ?? [])
+  const initialMargins = Object.keys(presetMargins).length > 0 ? {
+    l: presetMargins.left !== undefined ? presetMargins.left : 80,
+    r: presetMargins.right !== undefined ? presetMargins.right : 80,
+    t: presetMargins.top !== undefined ? presetMargins.top : 100,
+    b: presetMargins.bottom !== undefined ? presetMargins.bottom : 80
+  } : { l: 80, r: 80, t: 100, b: 80 }
+
   const fig = {
     data: [],
     layout: {
       autosize: true,
-      margin: { l: 80, r: 80, t: 100, b: 80 },
+      margin: initialMargins,
       paper_bgcolor: '#FFFFFF',
       plot_bgcolor: '#FFFFFF'
     },
@@ -1746,6 +1764,15 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
 
       // Adjust layout for aspect ratio
       const shouldUseVerticalLayout = isVertical
+
+      // Preserve margins from fig.layout, don't override with defaults unless vertical layout needs it
+      const preservedMargins = shouldUseVerticalLayout ? {
+        l: fig.layout.margin?.l !== undefined ? fig.layout.margin.l : 90,
+        r: fig.layout.margin?.r !== undefined ? fig.layout.margin.r : 40,
+        t: fig.layout.margin?.t !== undefined ? fig.layout.margin.t : 90,
+        b: fig.layout.margin?.b !== undefined ? fig.layout.margin.b : 60
+      } : fig.layout.margin
+
       const adjustedLayout = {
         ...fig.layout,
         ...layoutOverridesWithoutBg,
@@ -1763,15 +1790,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         // Remove any fixed width/height to let container control sizing
         width: undefined,
         height: undefined,
-        // Adjust margins for vertical layout if needed - increased left margin for Y-axis labels
-        ...(shouldUseVerticalLayout ? {
-          margin: {
-            l: fig.layout.margin?.l || 90,  // Increased from 50 to 90 for Y-axis labels
-            r: fig.layout.margin?.r || 40,
-            t: fig.layout.margin?.t || 90,
-            b: fig.layout.margin?.b || 60
-          }
-        } : {})
+        // Always preserve margins (either from preset or adjusted for vertical layout)
+        margin: preservedMargins
       }
 
       fig.layout = adjustedLayout
@@ -1813,6 +1833,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
 
         // ✅ Apply to Plotly's X-axis
         fig.layout.xaxis = fig.layout.xaxis || {}
+        fig.layout.xaxis.automargin = true  // CRITICAL: Enable automargin to prevent label cutoff
         const xAxisConfig = isHorizontalBar ? mergedSections[valueAxisKey] : mergedSections[categoryAxisKey]
         const xLineVisible = isHorizontalBar ? valueLineVisible : categoryLineVisible
         const xGridShow = isHorizontalBar ? valueGridShow : categoryGridShow
@@ -1849,6 +1870,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
 
         // ✅ Apply to Plotly's Y-axis
         fig.layout.yaxis = fig.layout.yaxis || {}
+        fig.layout.yaxis.automargin = true  // CRITICAL: Enable automargin to prevent label cutoff
         const yAxisConfig = isHorizontalBar ? mergedSections[categoryAxisKey] : mergedSections[valueAxisKey]
         const yLineVisible = isHorizontalBar ? categoryLineVisible : valueLineVisible
         const yGridShow = isHorizontalBar ? categoryGridShow : valueGridShow
@@ -1891,18 +1913,29 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           fig.layout.yaxis.zeroline = false
         }
 
+        // ⚠️ CRITICAL FIX: Re-apply automargin AFTER all axis modifications to ensure it's not lost
+        fig.layout.xaxis.automargin = true
+        fig.layout.yaxis.automargin = true
+
+        console.log('🚨🚨🚨 CODE UPDATED - AUTOMARGIN IS NOW BEING APPLIED 🚨🚨🚨')
         console.log('📊 Final axis config:', {
           xaxis: {
             showline: fig.layout.xaxis.showline,
             showgrid: fig.layout.xaxis.showgrid,
-            showticklabels: fig.layout.xaxis.showticklabels
+            showticklabels: fig.layout.xaxis.showticklabels,
+            automargin: fig.layout.xaxis.automargin
           },
           yaxis: {
             showline: fig.layout.yaxis.showline,
             showgrid: fig.layout.yaxis.showgrid,
-            showticklabels: fig.layout.yaxis.showticklabels
+            showticklabels: fig.layout.yaxis.showticklabels,
+            automargin: fig.layout.yaxis.automargin
           }
         })
+      } else {
+        // For pie/donut charts, still ensure automargin is set if axes exist
+        if (fig.layout.xaxis) fig.layout.xaxis.automargin = true
+        if (fig.layout.yaxis) fig.layout.yaxis.automargin = true
       }
       console.log('🔍 AFTER NUCLEAR FIX - Y-axis layout:', JSON.stringify(fig.layout.yaxis, null, 2))
 
@@ -1952,6 +1985,20 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           )
         }
       }
+      // ⚠️ FINAL SAFETY CHECK: Ensure automargin is set on all axes before rendering
+      if (fig.layout.xaxis) fig.layout.xaxis.automargin = true
+      if (fig.layout.yaxis) fig.layout.yaxis.automargin = true
+      if (fig.layout.title) {
+        fig.layout.title.automargin = true
+        fig.layout.title.yref = 'container'
+      }
+
+      console.log('🎨 Final figure before render:', {
+        margin: fig.layout.margin,
+        xaxis: { automargin: fig.layout.xaxis?.automargin, title: fig.layout.xaxis?.title },
+        yaxis: { automargin: fig.layout.yaxis?.automargin, title: fig.layout.yaxis?.title },
+        title: { text: fig.layout.title?.text, automargin: fig.layout.title?.automargin, yref: fig.layout.title?.yref }
+      })
       setFigure(fig)
       setError('')
     } catch (err) {
@@ -3753,8 +3800,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Left</label>
                     <input
                       type="number"
-                      value={getConfig(sectionsState, 'margins', 'left') || 100}
-                      onChange={(e) => updateSection('margins', 'left', parseInt(e.target.value) || 100)}
+                      value={getConfig(sectionsState, 'margins', 'left') !== undefined ? getConfig(sectionsState, 'margins', 'left') : 80}
+                      onChange={(e) => updateSection('margins', 'left', parseInt(e.target.value) || 0)}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
                   </div>
@@ -3762,8 +3809,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Right</label>
                     <input
                       type="number"
-                      value={getConfig(sectionsState, 'margins', 'right') || 160}
-                      onChange={(e) => updateSection('margins', 'right', parseInt(e.target.value) || 160)}
+                      value={getConfig(sectionsState, 'margins', 'right') !== undefined ? getConfig(sectionsState, 'margins', 'right') : 80}
+                      onChange={(e) => updateSection('margins', 'right', parseInt(e.target.value) || 0)}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
                   </div>
@@ -3771,8 +3818,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Top</label>
                     <input
                       type="number"
-                      value={getConfig(sectionsState, 'margins', 'top') || 100}
-                      onChange={(e) => updateSection('margins', 'top', parseInt(e.target.value) || 100)}
+                      value={getConfig(sectionsState, 'margins', 'top') !== undefined ? getConfig(sectionsState, 'margins', 'top') : 100}
+                      onChange={(e) => updateSection('margins', 'top', parseInt(e.target.value) || 0)}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
                   </div>
@@ -3780,8 +3827,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Bottom</label>
                     <input
                       type="number"
-                      value={getConfig(sectionsState, 'margins', 'bottom') || 80}
-                      onChange={(e) => updateSection('margins', 'bottom', parseInt(e.target.value) || 80)}
+                      value={getConfig(sectionsState, 'margins', 'bottom') !== undefined ? getConfig(sectionsState, 'margins', 'bottom') : 80}
+                      onChange={(e) => updateSection('margins', 'bottom', parseInt(e.target.value) || 0)}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
                   </div>

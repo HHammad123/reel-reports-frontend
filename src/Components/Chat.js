@@ -2043,20 +2043,6 @@ const [textEditorFormat, setTextEditorFormat] = useState({
               {(showSwitchAnchor || showSwitchAvatar || showSwitchInfographic || showSwitchFinancial) && (
                 <>
                   <div className="px-3 py-1 text-[11px] uppercase tracking-wide text-gray-500">Switch Model</div>
-                  {showSwitchAnchor && (
-                    <button
-                      onClick={() => {
-                        setOpen(false);
-                        onSwitchAnchor && onSwitchAnchor();
-                      }}
-                      disabled={isSwitching || !hasScenes}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${
-                        !hasScenes || isSwitching ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <span>Anchor (Beta)</span>
-                    </button>
-                  )}
                   {showSwitchAvatar && (
                     <button onClick={() => { setOpen(false); onSwitchAvatar && onSwitchAvatar(); }} disabled={isSwitching || !hasScenes} className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isSwitching) ? 'text-gray-400 cursor-not-allowed' : 'hover:bg-gray-50'}`}>
                       <span>Avatar Based</span>
