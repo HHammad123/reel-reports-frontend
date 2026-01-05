@@ -148,7 +148,7 @@ export const MediaGrid = ({
                     }),
                     _jsx("p", {
                       className: "text-xs text-gray-500 mt-0.5",
-                      children: `${sessionItems.length} image${
+                      children: `${sessionItems.length} ${mediaType === "videos" ? "video" : "image"}${
                         sessionItems.length !== 1 ? "s" : ""
                       }`,
                     }),

@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { FaPlus, FaAngleRight, FaEyeDropper, FaAngleUp, FaAngleDown, FaCheck, FaMicrophone } from 'react-icons/fa';
+import { ChevronLeft, ChevronRight, MoreHorizontal, RefreshCcw, Trash2 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 import useBrandAssets from '../../hooks/useBrandAssets';
 import { toast } from 'react-hot-toast';
 import ImageList from '../Scenes/ImageList';
@@ -65,6 +66,143 @@ const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') =
   return base;
 };
 
+// Helper to normalize user data (same as Chat.js)
+const normalizeUserSnapshot = (userData = {}, token = '') => {
+  const base =
+    userData && typeof userData === 'object' && !Array.isArray(userData)
+      ? { ...userData }
+      : {};
+  if (!base.id) base.id = base.user_id || base._id || token || '';
+  if (!base.display_name) base.display_name = base.displayName || base.name || '';
+  if (!base.email && base.Email) base.email = base.Email;
+  if (!base.created_at) base.created_at = new Date().toISOString();
+  if (!base.avatar_url && base.avatarUrl) base.avatar_url = base.avatarUrl;
+  if (!base.folder_url && base.folderUrl) base.folder_url = base.folderUrl;
+  if (!Array.isArray(base.templates)) base.templates = [];
+  if (!Array.isArray(base.voiceover)) {
+    base.voiceover = Array.isArray(base.voiceovers) ? base.voiceovers : [];
+  }
+  delete base.user_id;
+  delete base._id;
+  delete base.avatarUrl;
+  delete base.folderUrl;
+  delete base.voiceovers;
+  delete base.displayName;
+  delete base.Email;
+  return base;
+};
+
+// Helper to extract aspect ratio from session payload (same as Chat.js)
+const extractAspectRatioFromSessionPayload = (payload) => {
+  try {
+    if (!payload || typeof payload !== 'object') return '';
+    const visited = new Set();
+    const queue = [];
+    const enqueue = (node) => {
+      if (!node) return;
+      if (Array.isArray(node)) {
+        node.forEach(enqueue);
+        return;
+      }
+      if (typeof node !== 'object') return;
+      if (visited.has(node)) return;
+      visited.add(node);
+      queue.push(node);
+    };
+    const readAspectFromGuidelines = (obj) => {
+      if (!obj || typeof obj !== 'object') return '';
+      const guidelines =
+        obj.guidelines ||
+        obj.Guidelines ||
+        obj.guideLines;
+      if (!guidelines || typeof guidelines !== 'object') return '';
+      const technical =
+        guidelines.technical_and_formal_constraints ||
+        guidelines.technicalAndFormalConstraints ||
+        guidelines.technical_formal_constraints;
+      if (!technical || typeof technical !== 'object') return '';
+      const aspect =
+        technical.aspect_ratio ||
+        technical.aspectRatio ||
+        technical.aspectratio;
+      if (typeof aspect === 'string' && aspect.trim()) return aspect;
+      if (Array.isArray(aspect)) {
+        const found = aspect.find((item) => typeof item === 'string' && item.trim());
+        if (found) return found;
+      }
+      return '';
+    };
+    const readAspectFromScript = (script) => {
+      if (!script || typeof script !== 'object') return '';
+      const userQuery =
+        script.userquery ||
+        script.user_query ||
+        script.userQuery ||
+        script.UserQuery;
+      const candidates = [
+        readAspectFromGuidelines(userQuery),
+        readAspectFromGuidelines(script),
+        readAspectFromGuidelines(userQuery?.additionalProp1),
+        readAspectFromGuidelines(script?.additionalProp1),
+        readAspectFromGuidelines(userQuery?.additional_prop1),
+        readAspectFromGuidelines(script?.additional_prop1),
+        readAspectFromGuidelines(userQuery?.additionalProps),
+        readAspectFromGuidelines(script?.additionalProps),
+        readAspectFromGuidelines(userQuery?.additional_properties),
+        readAspectFromGuidelines(script?.additional_properties)
+      ];
+      for (const candidate of candidates) {
+        if (candidate) return candidate;
+      }
+      return '';
+    };
+
+    enqueue(payload?.session_data);
+    enqueue(payload?.session);
+    enqueue(payload);
+
+    while (queue.length > 0) {
+      const node = queue.shift();
+      if (!node || typeof node !== 'object') continue;
+
+      const aspectFromNode = readAspectFromGuidelines(node);
+      if (aspectFromNode) return aspectFromNode;
+
+      const scripts = node.scripts;
+      if (Array.isArray(scripts)) {
+        for (const script of scripts) {
+          const aspect = readAspectFromScript(script);
+          if (aspect) return aspect;
+          enqueue(script);
+        }
+      } else if (scripts && typeof scripts === 'object') {
+        const aspect = readAspectFromScript(scripts);
+        if (aspect) return aspect;
+        enqueue(scripts);
+      }
+
+      Object.values(node).forEach(enqueue);
+    }
+
+    return '';
+  } catch (_) {
+    return '';
+  }
+};
+
+// Helper to normalize template aspect label (same as Chat.js)
+const normalizeTemplateAspectLabel = (aspect) => {
+  if (!aspect || typeof aspect !== 'string') return 'Unspecified';
+  const trimmed = aspect.trim();
+  if (!trimmed) return 'Unspecified';
+  const normalized = trimmed.replace(/[xX_]/g, ':').replace(/\s+/g, '');
+  if (/^\d+:\d+$/.test(normalized)) return normalized;
+  const lower = normalized.toLowerCase();
+  if (lower.includes('portrait')) return '9:16';
+  if (lower.includes('landscape')) return '16:9';
+  return trimmed;
+};
+
 // Module-scope helpers so both StepOne (generate) and StepTwo can use them
 const getPerSceneDurationGlobal = (type) => (String(type).toLowerCase() === 'avatar based' ? 8 : 10);
 const computeTimelineForIndex = (arr, idx) => {
@@ -106,26 +244,61 @@ const useScriptScenes = (initial = []) => {
   };
 
   const setFromApi = (arr) => {
-    const normalized = mapResponseToScenes(arr);
+    const src = Array.isArray(arr) ? arr : [];
     let start = 0;
-    const out = normalized.map((s, i) => {
-      const model = typeToModel(s.type || '');
-      const end = start + perSceneDurationByModel(model);
-      const row = {
-        scene_number: i + 1,
-        scene_title: s.title || '',
-        model,
-        timeline: `${start} - ${end} seconds`,
-        narration: s.narration || '',
-        desc: s.description || '',
-        text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
-        ref_image: Array.isArray(s.ref_image) ? s.ref_image.slice() : [],
-        folderLink: s.folderLink || ''
-      };
-      start = end;
-      return row;
+    setScript(prev => {
+      // Merge API response with existing script to preserve all fields
+      return src.map((r, i) => {
+        const sn = Number(r?.scene_number) || (i + 1);
+        const m = String(r?.model || '').toUpperCase();
+        const model = typeToModel((m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : (m === 'PLOTLY') ? 'Financial' : (m.includes('SORA') ? 'Infographic' : (r?.type || 'Infographic')));
+        const end = start + perSceneDurationByModel(model);
+        start = end;
+        
+        // Find existing scene data to preserve fields not in API response
+        const existingScene = prev.find(s => (s?.scene_number || 0) === sn) || {};
+        
+        // Build new scene object, preserving existing fields and merging API response
+        const newScene = {
+          ...existingScene, // Preserve all existing fields first
+          // Override with API response data
+          scene_number: sn,
+          scene_title: r?.scene_title ?? r?.title ?? existingScene.scene_title ?? '',
+          model: model,
+          timeline: `${start - perSceneDurationByModel(model)} - ${end} seconds`,
+          narration: r?.narration ?? existingScene.narration ?? '',
+          desc: r?.desc ?? r?.description ?? existingScene.desc ?? existingScene.description ?? '',
+          text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : (Array.isArray(existingScene.text_to_be_included) ? existingScene.text_to_be_included : []),
+          ref_image: Array.isArray(r?.ref_image) ? r.ref_image.slice() : (Array.isArray(existingScene.ref_image) ? existingScene.ref_image : []),
+          folderLink: r?.folderLink ?? existingScene.folderLink ?? '',
+          // Preserve all other important fields from API response if present, otherwise keep existing
+          avatar: r?.avatar ?? existingScene.avatar ?? null,
+          avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls.slice() : (Array.isArray(existingScene.avatar_urls) ? existingScene.avatar_urls : []),
+          presenter_options: r?.presenter_options ?? existingScene.presenter_options ?? {},
+          veo3_prompt_template: r?.veo3_prompt_template ?? existingScene.veo3_prompt_template ?? null,
+          colors: Array.isArray(r?.colors) ? r.colors.slice() : (Array.isArray(existingScene.colors) ? existingScene.colors : []),
+          font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? existingScene.font_size ?? existingScene.fontsize ?? existingScene.fontSize ?? 16,
+          font_style: r?.font_style ?? r?.fontStyle ?? existingScene.font_style ?? existingScene.fontStyle ?? '',
+          opening_frame: r?.opening_frame ?? existingScene.opening_frame ?? null,
+          closing_frame: r?.closing_frame ?? existingScene.closing_frame ?? null,
+          background_frame: r?.background_frame ?? existingScene.background_frame ?? null,
+          animation_desc: r?.animation_desc ?? r?.animationDesc ?? existingScene.animation_desc ?? existingScene.animationDesc ?? null,
+          chart_type: r?.chart_type ?? existingScene.chart_type ?? '',
+          chart_data: r?.chart_data ?? existingScene.chart_data ?? null,
+          background_image: Array.isArray(r?.background_image) ? r.background_image.slice() : (Array.isArray(existingScene.background_image) ? existingScene.background_image : []),
+          // Preserve scene description fields
+          subject: r?.subject ?? existingScene.subject ?? '',
+          background: r?.background ?? existingScene.background ?? '',
+          action: r?.action ?? existingScene.action ?? '',
+          styleCard: r?.styleCard ?? existingScene.styleCard ?? '',
+          cameraCard: r?.cameraCard ?? existingScene.cameraCard ?? '',
+          ambiance: r?.ambiance ?? existingScene.ambiance ?? '',
+          composition: r?.composition ?? existingScene.composition ?? '',
+          focus_and_lens: r?.focus_and_lens ?? existingScene.focus_and_lens ?? ''
+        };
+        return newScene;
+      });
     });
-    setScript(out);
   };
 
   const updateScene = (idx, patch) => {
@@ -187,6 +360,127 @@ const mapResponseToScenes = (arr) => {
   });
   // Remove holes and return
   return bucket.filter(Boolean).map(s => ({ ...(s || {}) }));
+};
+
+// Helper function to filter scene to only include allowed fields (matching sample object)
+// This is used by both StepTwo (saveScenesToServer) and BuildReelWizard (handleGenerate)
+const filterSceneForAPI = (scene, index) => {
+  if (!scene || typeof scene !== 'object') {
+    // Return minimal valid scene structure if scene is invalid
+    return {
+      desc: '',
+      model: '',
+      colors: [],
+      duration: 0,
+      timeline: '',
+      font_size: 0,
+      gen_image: true,
+      narration: '',
+      folderLink: null,
+      font_style: '',
+      word_count: 0,
+      scene_title: '',
+      scene_number: index + 1,
+      background_image: [],
+      text_to_be_included: []
+    };
+  }
+  
+  // Determine video type from model
+  const model = String(scene.model || '').toUpperCase();
+  const isAvatarBased = model === 'VEO3' || model.includes('VEO');
+  const isFinancial = model === 'PLOTLY';
+  const isInfographic = model === 'SORA' || (!isAvatarBased && !isFinancial);
+  
+  // Common fields for all video types
+  const commonFields = {
+    desc: scene.desc ?? scene.description ?? '',
+    model: scene.model ?? '',
+    colors: Array.isArray(scene.colors) ? scene.colors.slice() : [],
+    duration: scene.duration ?? 0,
+    timeline: scene.timeline ?? '',
+    font_size: scene.font_size ?? 0,
+    gen_image: scene.gen_image ?? true,
+    narration: scene.narration ?? '',
+    folderLink: scene.folderLink ?? null,
+    font_style: scene.font_style ?? '',
+    word_count: scene.word_count ?? 0,
+    scene_title: scene.scene_title ?? '',
+    scene_number: scene.scene_number ?? (index + 1),
+    background_image: Array.isArray(scene.background_image) ? scene.background_image.slice() : [],
+    text_to_be_included: Array.isArray(scene.text_to_be_included) ? scene.text_to_be_included.slice() : []
+  };
+  
+  // Build object based on video type
+  if (isAvatarBased) {
+    // Avatar Based (VEO3) - only include these specific fields
+    return {
+      ...commonFields,
+      mode: scene.mode ?? 'presenter',
+      avatar_urls: Array.isArray(scene.avatar_urls) ? scene.avatar_urls.slice() : [],
+      regenerate_desc: scene.regenerate_desc ?? false,
+      presenter_options: scene.presenter_options && typeof scene.presenter_options === 'object' 
+        ? { ...scene.presenter_options } 
+        : {},
+      veo3_prompt_template: scene.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object'
+        ? { ...scene.veo3_prompt_template }
+        : null
+    };
+  } else if (isFinancial) {
+    // Financial (PLOTLY) - only include these specific fields
+    const financialScene = {
+      ...commonFields
+    };
+    
+    // Include chart fields if they exist
+    if (scene.chart_data !== undefined) {
+      financialScene.chart_data = scene.chart_data && typeof scene.chart_data === 'object'
+        ? { ...scene.chart_data }
+        : null;
+    }
+    if (scene.chart_type !== undefined) {
+      financialScene.chart_type = scene.chart_type ?? '';
+    }
+    if (scene.chart_title !== undefined) {
+      financialScene.chart_title = scene.chart_title ?? '';
+    }
+    if (scene.animation_desc !== undefined) {
+      financialScene.animation_desc = scene.animation_desc && typeof scene.animation_desc === 'object'
+        ? { ...scene.animation_desc }
+        : null;
+    }
+    if (scene.background_frame !== undefined) {
+      financialScene.background_frame = scene.background_frame && typeof scene.background_frame === 'object'
+        ? { ...scene.background_frame }
+        : null;
+    }
+    
+    return financialScene;
+  } else {
+    // Infographic (SORA) - only include these specific fields
+    const infographicScene = {
+      ...commonFields
+    };
+    
+    // Include frame fields if they exist
+    if (scene.closing_frame !== undefined) {
+      infographicScene.closing_frame = scene.closing_frame && typeof scene.closing_frame === 'object'
+        ? { ...scene.closing_frame }
+        : null;
+    }
+    if (scene.opening_frame !== undefined) {
+      infographicScene.opening_frame = scene.opening_frame && typeof scene.opening_frame === 'object'
+        ? { ...scene.opening_frame }
+        : null;
+    }
+    if (scene.animation_desc !== undefined) {
+      infographicScene.animation_desc = scene.animation_desc && typeof scene.animation_desc === 'object'
+        ? { ...scene.animation_desc }
+        : null;
+    }
+    
+    return infographicScene;
+  }
 };
 
 const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) => {
@@ -1722,6 +2016,29 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
 
 const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) => {
   const [activeIndex, setActiveIndex] = useState(0);
+  // Only show 5 scene tabs at a time without scroll
+  const [visibleStartIndex, setVisibleStartIndex] = useState(0);
+  // Undo/Redo state
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  // Delete scene state
+  const [isDeletingScene, setIsDeletingScene] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Kebab menu state
+  const [kebabMenuOpen, setKebabMenuOpen] = useState(false);
+  const kebabMenuRef = useRef(null);
+  
+  // Close kebab menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (kebabMenuOpen && kebabMenuRef.current && !kebabMenuRef.current.contains(e.target)) {
+        setKebabMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [kebabMenuOpen]);
+  
   // Use centralized script state
   const { script, setScript, setFromApi, updateScene: updateScriptScene, addSceneSimple, modelToType, typeToModel, computeTimelineForIndexByScript } = useScriptScenes(
     Array.isArray(values?.scripts?.[0]?.airesponse) ? values.scripts[0].airesponse : (Array.isArray(values?.script) ? values.script : [])
@@ -1890,6 +2207,16 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   const [editedOpeningFrame, setEditedOpeningFrame] = useState({});
   const [editedClosingFrame, setEditedClosingFrame] = useState({});
   const [isSavingFrameData, setIsSavingFrameData] = useState(false);
+  // Background frame state (for Financial/PLOTLY videos)
+  const [editedBackgroundFrame, setEditedBackgroundFrame] = useState({});
+  // Advanced Style Options state (for all video types)
+  const [advancedStyleColors, setAdvancedStyleColors] = useState([]);
+  const [advancedStyleFontSize, setAdvancedStyleFontSize] = useState(16);
+  const [advancedStyleFontStyle, setAdvancedStyleFontStyle] = useState('');
+  const [advancedOptionsOpen, setAdvancedOptionsOpen] = useState(true); // Always open by default
+  // Animation Description state (for Infographic and Financial)
+  const [editedAnimationDesc, setEditedAnimationDesc] = useState({});
+  const [animationDescAccordionOpen, setAnimationDescAccordionOpen] = useState(true); // Always open by default
   const [presenterPresetDirty, setPresenterPresetDirty] = useState(false);
   const [isLoadingPresenterPresets, setIsLoadingPresenterPresets] = useState(false);
   const [presenterPresetsError, setPresenterPresetsError] = useState('');
@@ -1932,10 +2259,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     let data; try { data = JSON.parse(text); } catch (_) { data = {}; }
     if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
     const sd = data?.session_data || data?.session || {};
-    const user = data?.user_data || sd?.user_data || sd?.user || {};
+    const rawUser = data?.user_data || sd?.user_data || sd?.user || {};
     // Preserve ALL fields from session_data, including nested structures
     const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
-    return { user, sessionForBody, sd };
+    const user = normalizeUserSnapshot(rawUser, token);
+    return { user, sessionForBody, sd, rawSession: sd, rawUser };
   };
 
   const buildAiresponseWithOverrides = (targetIdx, { genImage, descriptionOverride, refImagesOverride } = {}) => {
@@ -1956,7 +2284,21 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         ref_image: Array.isArray(refImagesOverride) && isTarget && refImagesOverride.length > 0
           ? refImagesOverride
           : (Array.isArray(r?.ref_image) ? r.ref_image : []) ,
-        folderLink: r?.folderLink ?? r?.folder_link ?? ''
+        folderLink: r?.folderLink ?? r?.folder_link ?? '',
+        // Preserve frame data
+        opening_frame: r?.opening_frame ?? null,
+        closing_frame: r?.closing_frame ?? null,
+        background_frame: r?.background_frame ?? null,
+        // Preserve Advanced Style Options
+        colors: Array.isArray(r?.colors) ? r.colors : [],
+        font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? 16,
+        font_style: r?.font_style ?? r?.fontStyle ?? '',
+        // Preserve Animation Description
+        animation_desc: r?.animation_desc ?? r?.animationDesc ?? null,
+        // Preserve veo3_prompt_template (contains Scene Description fields)
+        veo3_prompt_template: r?.veo3_prompt_template ?? null,
+        // Preserve presenter_options
+        presenter_options: r?.presenter_options ?? null
       };
     });
   };
@@ -2017,79 +2359,167 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     composition: r?.composition || '',
     focus_and_lens: r?.focus_and_lens || ''
   })) : []), [script, modelToType]);
+  // Validation function for all scenes
+  const validateAllScenes = () => {
+    const errors = [];
+    
+    if (!Array.isArray(script) || script.length === 0) {
+      errors.push('At least one scene is required');
+      return errors;
+    }
+    
+    script.forEach((currentScene, index) => {
+      if (!currentScene) {
+        errors.push(`Scene ${index + 1}: Scene data is missing`);
+        return;
+      }
+      
+      // 1. Scene Title - required
+      const sceneTitle = currentScene?.scene_title || '';
+      if (!sceneTitle || sceneTitle.trim() === '') {
+        errors.push(`Scene ${index + 1}: Scene Title is required`);
+      }
+      
+      // 2. Video Type - required
+      const videoType = modelToType(currentScene?.model || '');
+      if (!videoType || videoType.trim() === '') {
+        errors.push(`Scene ${index + 1}: Video Type is required`);
+      }
+      
+      // 3. Narration - required
+      const narration = currentScene?.narration || '';
+      if (!narration || narration.trim() === '') {
+        errors.push(`Scene ${index + 1}: Narration is required`);
+      }
+      
+      // 4. Scene Description fields - required only for Avatar Based scenes
+      if (videoType === 'Avatar Based') {
+        const descriptionFields = [
+          { key: 'subject', label: 'Subject' },
+          { key: 'background', label: 'Background' },
+          { key: 'action', label: 'Action' },
+          { key: 'styleCard', label: 'Style' },
+          { key: 'cameraCard', label: 'Camera' },
+          { key: 'ambiance', label: 'Ambiance' },
+          { key: 'composition', label: 'Composition' },
+          { key: 'focus_and_lens', label: 'Focus and Lens' }
+        ];
+        
+        // Check Scene Description fields from veo3_prompt_template first, then direct fields
+        descriptionFields.forEach(({ key, label }) => {
+          let value = '';
+          // Check veo3_prompt_template first
+          if (currentScene?.veo3_prompt_template && typeof currentScene.veo3_prompt_template === 'object') {
+            const promptTemplate = currentScene.veo3_prompt_template;
+            const promptKeyMap = {
+              'styleCard': 'style',
+              'action': 'action',
+              'cameraCard': 'camera',
+              'subject': 'subject',
+              'ambiance': 'ambiance',
+              'background': 'background',
+              'composition': 'composition',
+              'focus_and_lens': 'focus_and_lens'
+            };
+            const promptKey = promptKeyMap[key];
+            if (promptKey && promptTemplate[promptKey]) {
+              value = promptTemplate[promptKey];
+            }
+          }
+          // Fallback to direct field
+          if (!value) {
+            value = currentScene?.[key] || '';
+          }
+          if (!value || value.trim() === '') {
+            errors.push(`Scene ${index + 1}: ${label} is required`);
+          }
+        });
+      }
+      
+      // 5. Opening Frame and Closing Frame - required for Infographic scenes
+      if (videoType === 'Infographic') {
+        const openingFrame = currentScene?.opening_frame;
+        if (!openingFrame || typeof openingFrame !== 'object') {
+          errors.push(`Scene ${index + 1}: Opening Frame is required`);
+        } else {
+          const openingFrameFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+          openingFrameFields.forEach((key) => {
+            const value = openingFrame[key] || '';
+            if (!value || value.trim() === '') {
+              const label = key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+              errors.push(`Scene ${index + 1}: Opening Frame - ${label} is required`);
+            }
+          });
+        }
+        
+        const closingFrame = currentScene?.closing_frame;
+        if (!closingFrame || typeof closingFrame !== 'object') {
+          errors.push(`Scene ${index + 1}: Closing Frame is required`);
+        } else {
+          const closingFrameFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+          closingFrameFields.forEach((key) => {
+            const value = closingFrame[key] || '';
+            if (!value || value.trim() === '') {
+              const label = key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+              errors.push(`Scene ${index + 1}: Closing Frame - ${label} is required`);
+            }
+          });
+        }
+      }
+      
+      // 6. Background Frame - required for Financial scenes
+      if (videoType === 'Financial') {
+        const backgroundFrame = currentScene?.background_frame;
+        if (!backgroundFrame || typeof backgroundFrame !== 'object') {
+          errors.push(`Scene ${index + 1}: Background Frame is required`);
+        } else {
+          const backgroundFrameFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+          backgroundFrameFields.forEach((key) => {
+            const value = backgroundFrame[key] || '';
+            if (!value || value.trim() === '') {
+              const label = key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+              errors.push(`Scene ${index + 1}: Background Frame - ${label} is required`);
+            }
+          });
+        }
+      }
+      
+      // 7. Avatar selection - required if Avatar Based
+      if (videoType === 'Avatar Based') {
+        const sceneAvatar = currentScene?.avatar || (Array.isArray(currentScene?.avatar_urls) && currentScene.avatar_urls.length > 0 ? currentScene.avatar_urls[0] : null);
+        if (!sceneAvatar || String(sceneAvatar).trim() === '') {
+          errors.push(`Scene ${index + 1}: Avatar selection is required for Avatar Based videos`);
+        }
+        
+        // 8. Scene Settings (presenter preset) - required if Avatar Based
+        const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
+        if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
+          const presenterOpts = currentScene?.presenter_options || currentScene?.presenterOptions || {};
+          const hasPreset = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId;
+          if (!hasPreset || String(hasPreset).trim() === '') {
+            errors.push(`Scene ${index + 1}: Scene Settings (Presenter Preset) is required for Avatar Based videos`);
+          }
+        }
+      }
+    });
+    
+    return errors;
+  };
+
   const saveScenesToServer = async () => {
+    // Validate all scenes before saving
+    const validationErrors = validateAllScenes();
+    if (validationErrors.length > 0) {
+      setValidationErrors(validationErrors);
+      setShowValidationModal(true);
+      throw new Error('Validation failed');
+    }
+    
     const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
     if (!sessionId) throw new Error('Missing session_id');
     
-    // Ensure we preserve ALL fields from script state - no data loss
-    // Map script to ensure all fields are included, preserving everything exactly as it is
-    const airesponse = Array.isArray(script) ? script.map((scene, index) => {
-      if (!scene || typeof scene !== 'object') return scene;
-      
-      // Preserve ALL fields from the scene object - no transformation, no data loss
-      const preservedScene = {
-        // Core fields
-        scene_number: scene.scene_number ?? (index + 1),
-        scene_title: scene.scene_title ?? '',
-        model: scene.model ?? '',
-        timeline: scene.timeline ?? '',
-        narration: scene.narration ?? '',
-        desc: scene.desc ?? scene.description ?? '',
-        description: scene.description ?? scene.desc ?? '',
-        text_to_be_included: Array.isArray(scene.text_to_be_included) ? scene.text_to_be_included.slice() : [],
-        ref_image: Array.isArray(scene.ref_image) ? scene.ref_image.slice() : [],
-        folderLink: scene.folderLink ?? '',
-        
-        // Scene Description fields - preserve all
-        subject: scene.subject ?? '',
-        background: scene.background ?? '',
-        action: scene.action ?? '',
-        styleCard: scene.styleCard ?? '',
-        cameraCard: scene.cameraCard ?? '',
-        ambiance: scene.ambiance ?? '',
-        composition: scene.composition ?? '',
-        focus_and_lens: scene.focus_and_lens ?? '',
-        
-        // Avatar fields
-        avatar: scene.avatar ?? null,
-        avatar_urls: Array.isArray(scene.avatar_urls) ? scene.avatar_urls.slice() : [],
-        
-        // Presenter options
-        presenter_options: scene.presenter_options ?? {},
-        presenterOptions: scene.presenterOptions ?? scene.presenter_options ?? {},
-        
-        // Background image
-        background_image: Array.isArray(scene.background_image) ? scene.background_image.slice() : [],
-        
-        // Opening and closing frames (for Infographic and Financial)
-        opening_frame: scene.opening_frame ?? null,
-        closing_frame: scene.closing_frame ?? null,
-        
-        // Chart fields
-        chart_type: scene.chart_type ?? '',
-        chart_data: scene.chart_data ?? null,
-        chartType: scene.chartType ?? scene.chart_type ?? '',
-        chartData: scene.chartData ?? scene.chart_data ?? null,
-        
-        // Preserve any other fields that might exist (spread operator to catch everything)
-        ...Object.keys(scene).reduce((acc, key) => {
-          // Only add if not already included above
-          const knownKeys = [
-            'scene_number', 'scene_title', 'model', 'timeline', 'narration', 'desc', 'description',
-            'text_to_be_included', 'ref_image', 'folderLink',
-            'subject', 'background', 'action', 'styleCard', 'cameraCard', 'ambiance', 'composition', 'focus_and_lens',
-            'avatar', 'avatar_urls', 'presenter_options', 'presenterOptions',
-            'background_image', 'chart_type', 'chart_data', 'chartType', 'chartData'
-          ];
-          if (!knownKeys.includes(key)) {
-            acc[key] = scene[key];
-          }
-          return acc;
-        }, {})
-      };
-      
-      return preservedScene;
-    }) : [];
+    // Filter scenes to only include allowed fields (matching sample object structure)
+    const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
     
     // Log first scene to verify all fields are included
     if (airesponse.length > 0) {
@@ -2145,6 +2575,212 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     let data; try { data = JSON.parse(text); } catch (_) { data = text; }
     if (!resp.ok) throw new Error(`create-from-scratch(save) failed: ${resp.status} ${text}`);
     return data;
+  };
+
+  // Undo handler
+  const handleUndoScript = async () => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) return;
+      // 1) Fetch user-session-data to build user payload
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch (_) { sessJson = {}; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+      const sd = (sessJson?.session_data || sessJson?.session || {});
+      const userPayload = (sessJson?.user_data) || (sd?.user_data) || {};
+      // New undo schema: send user and session_id only
+      const reqBody = { user: userPayload, session_id: sd?.id || sd?.session_id || sessionId };
+      // 2) Call undo with user + session_id
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/undo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`scripts/undo failed: ${resp.status} ${text}`);
+      // Update script from response
+      if (data?.script) {
+        const scriptArray = Array.isArray(data.script) ? data.script : (Array.isArray(data.script?.airesponse) ? data.script.airesponse : []);
+        if (scriptArray.length > 0) {
+          setFromApi(scriptArray);
+          // Update activeIndex if needed
+          if (activeIndex >= scriptArray.length) {
+            setActiveIndex(Math.max(0, scriptArray.length - 1));
+          }
+        }
+      }
+      // Update undo/redo state
+      setCanUndo(data?.can_undo ?? false);
+      setCanRedo(data?.can_redo ?? false);
+      toast.success('Undo successful');
+    } catch (e) {
+      console.error('Undo failed:', e);
+      toast.error('Undo failed. Please try again.');
+    }
+  };
+
+  // Redo handler
+  const handleRedoScript = async () => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) return;
+      // 1) Fetch user-session-data to build user payload
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessResp.text();
+      let sessJson; try { sessJson = JSON.parse(sessText); } catch (_) { sessJson = {}; }
+      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+      const sd2 = (sessJson?.session_data || sessJson?.session || {});
+      const userPayload = (sessJson?.user_data) || (sd2?.user_data) || {};
+      // New redo schema: send user and session_id only
+      const reqBody = { user: userPayload, session_id: sd2?.id || sd2?.session_id || sessionId };
+      // 2) Call redo with user + session_id
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/redo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`scripts/redo failed: ${resp.status} ${text}`);
+      // Update script from response
+      if (data?.script) {
+        const scriptArray = Array.isArray(data.script) ? data.script : (Array.isArray(data.script?.airesponse) ? data.script.airesponse : []);
+        if (scriptArray.length > 0) {
+          setFromApi(scriptArray);
+          // Update activeIndex if needed
+          if (activeIndex >= scriptArray.length) {
+            setActiveIndex(Math.max(0, scriptArray.length - 1));
+          }
+        }
+      }
+      // Update undo/redo state
+      setCanUndo(data?.can_undo ?? false);
+      setCanRedo(data?.can_redo ?? false);
+      toast.success('Redo successful');
+    } catch (e) {
+      console.error('Redo failed:', e);
+      toast.error('Redo failed. Please try again.');
+    }
+  };
+
+  // Delete scene handler
+  const handleDeleteScene = async () => {
+    if (isDeletingScene) return;
+    setIsDeletingScene(true);
+    try {
+      if (!Array.isArray(script) || script.length === 0) return;
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      if (!sessionId || !token) throw new Error('Missing session_id or token');
+
+      // 1) Load session snapshot (source of truth for delete payload)
+      const sessionReqBody = { user_id: token, session_id: sessionId };
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
+      });
+      if (!sessionResp.ok) {
+        const text = await sessionResp.text();
+        throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
+      }
+      const sessionDataResponse = await sessionResp.json();
+      const sd = sessionDataResponse?.session_data || {};
+
+      // Current scene number
+      const cur = script[activeIndex];
+      const sceneNumber = cur?.scene_number ?? (activeIndex + 1);
+
+      // Use a unified delete endpoint regardless of video type
+      const deleteEndpointPath = 'scripts/delete-scene';
+
+      // 3) Build user payload EXACTLY from user-session-data.user_data
+      let userPayload = undefined;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userPayload = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userPayload = sd.user_data;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
+
+      // 4) Build delete payload with { user, session, scene_number }
+      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
+      const body = { user: userPayload, session: sessionForBody, scene_number: sceneNumber };
+      
+      // 5) Call unified delete endpoint
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${deleteEndpointPath}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`${deleteEndpointPath} failed: ${resp.status} ${text}`);
+
+      // Reload script from session after delete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const reloadResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const reloadText = await reloadResp.text();
+      let reloadData;
+      try { reloadData = JSON.parse(reloadText); } catch (_) { reloadData = reloadText; }
+      
+      if (reloadResp.ok && reloadData) {
+        const sessionDataObj = reloadData?.session_data || reloadData?.session || {};
+        const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0 
+          ? sessionDataObj.scripts 
+          : [];
+        
+        let scriptData = null;
+        if (sessionDataObj?.reordered_script) {
+          const reordered = sessionDataObj.reordered_script;
+          if (Array.isArray(reordered?.airesponse)) {
+            scriptData = reordered.airesponse;
+          } else if (Array.isArray(reordered)) {
+            scriptData = reordered;
+          }
+        }
+        if (!scriptData && sessionDataObj?.changed_script) {
+          const changed = sessionDataObj.changed_script;
+          if (Array.isArray(changed?.airesponse)) {
+            scriptData = changed.airesponse;
+          } else if (Array.isArray(changed)) {
+            scriptData = changed;
+          }
+        }
+        if (!scriptData && scripts.length > 0) {
+          for (let i = 0; i < scripts.length; i++) {
+            const currentScript = scripts[i];
+            if (Array.isArray(currentScript?.airesponse)) {
+              scriptData = currentScript.airesponse;
+              break;
+            }
+          }
+        }
+        if (!scriptData && Array.isArray(sessionDataObj?.airesponse)) {
+          scriptData = sessionDataObj.airesponse;
+        }
+        
+        if (scriptData && Array.isArray(scriptData) && scriptData.length > 0) {
+          setFromApi(scriptData);
+          // Adjust activeIndex if needed
+          if (activeIndex >= scriptData.length) {
+            setActiveIndex(Math.max(0, scriptData.length - 1));
+          }
+        }
+      }
+      
+      toast.success('Scene deleted successfully');
+    } catch (err) {
+      console.error('Delete scene failed:', err);
+      toast.error(err?.message || 'Failed to delete scene. Please try again.');
+    } finally {
+      setIsDeletingScene(false);
+    }
   };
 
   const getPerSceneDuration = (type) => (String(type).toLowerCase() === 'avatar based' ? 8 : 10);
@@ -2212,6 +2848,31 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   // The sync logic at line 1734 handles syncing values.script to script state while preserving all fields
 
   // Note: Auto-save removed - create-from-scratch is only called from the "+ scene" button
+
+  // Initialize opening_frame and closing_frame states when scene changes
+  useEffect(() => {
+    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+    if (scene) {
+      // Initialize opening_frame
+      if (scene.opening_frame && typeof scene.opening_frame === 'object') {
+        setEditedOpeningFrame({ ...scene.opening_frame });
+      } else {
+        setEditedOpeningFrame({});
+      }
+      // Initialize closing_frame
+      if (scene.closing_frame && typeof scene.closing_frame === 'object') {
+        setEditedClosingFrame({ ...scene.closing_frame });
+      } else {
+        setEditedClosingFrame({});
+      }
+      // Initialize background_frame
+      if (scene.background_frame && typeof scene.background_frame === 'object') {
+        setEditedBackgroundFrame({ ...scene.background_frame });
+      } else {
+        setEditedBackgroundFrame({});
+      }
+    }
+  }, [activeIndex, script]);
 
   // Sync script changes back to parent form state
   useEffect(() => {
@@ -2281,26 +2942,99 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         errors.push('Narration is required');
       }
       
-      // 4. All Scene Description fields - required
-      const descriptionFields = [
-        { key: 'subject', label: 'Subject' },
-        { key: 'background', label: 'Background' },
-        { key: 'action', label: 'Action' },
-        { key: 'styleCard', label: 'Style' },
-        { key: 'cameraCard', label: 'Camera' },
-        { key: 'ambiance', label: 'Ambiance' },
-        { key: 'composition', label: 'Composition' },
-        { key: 'focus_and_lens', label: 'Focus and Lens' }
-      ];
+      // 4. Scene Description fields - required only for Avatar Based scenes
+      if (videoType === 'Avatar Based') {
+        const descriptionFields = [
+          { key: 'subject', label: 'Subject' },
+          { key: 'background', label: 'Background' },
+          { key: 'action', label: 'Action' },
+          { key: 'styleCard', label: 'Style' },
+          { key: 'cameraCard', label: 'Camera' },
+          { key: 'ambiance', label: 'Ambiance' },
+          { key: 'composition', label: 'Composition' },
+          { key: 'focus_and_lens', label: 'Focus and Lens' }
+        ];
+        
+        // Check Scene Description fields from veo3_prompt_template first, then direct fields
+        descriptionFields.forEach(({ key, label }) => {
+          let value = '';
+          // Check veo3_prompt_template first
+          if (currentScene?.veo3_prompt_template && typeof currentScene.veo3_prompt_template === 'object') {
+            const promptTemplate = currentScene.veo3_prompt_template;
+            const promptKeyMap = {
+              'styleCard': 'style',
+              'action': 'action',
+              'cameraCard': 'camera',
+              'subject': 'subject',
+              'ambiance': 'ambiance',
+              'background': 'background',
+              'composition': 'composition',
+              'focus_and_lens': 'focus_and_lens'
+            };
+            const promptKey = promptKeyMap[key];
+            if (promptKey && promptTemplate[promptKey]) {
+              value = promptTemplate[promptKey];
+            }
+          }
+          // Fallback to direct field
+          if (!value) {
+            value = currentScene?.[key] || '';
+          }
+          if (!value || value.trim() === '') {
+            errors.push(`${label} is required`);
+          }
+        });
+      }
       
-      descriptionFields.forEach(({ key, label }) => {
-        const value = currentScene?.[key] || '';
-        if (!value || value.trim() === '') {
-          errors.push(`${label} is required`);
+      // 5. Opening Frame and Closing Frame - required for Infographic scenes
+      if (videoType === 'Infographic') {
+        const openingFrame = currentScene?.opening_frame;
+        if (!openingFrame || typeof openingFrame !== 'object') {
+          errors.push('Opening Frame is required');
+        } else {
+          const openingFrameFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+          openingFrameFields.forEach((key) => {
+            const value = openingFrame[key] || '';
+            if (!value || value.trim() === '') {
+              const label = key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+              errors.push(`Opening Frame: ${label} is required`);
+            }
+          });
         }
-      });
+        
+        const closingFrame = currentScene?.closing_frame;
+        if (!closingFrame || typeof closingFrame !== 'object') {
+          errors.push('Closing Frame is required');
+        } else {
+          const closingFrameFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+          closingFrameFields.forEach((key) => {
+            const value = closingFrame[key] || '';
+            if (!value || value.trim() === '') {
+              const label = key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+              errors.push(`Closing Frame: ${label} is required`);
+            }
+          });
+        }
+      }
       
-      // 5. Avatar selection - required if Avatar Based
+      // 6. Background Frame - required for Financial scenes
+      if (videoType === 'Financial') {
+        const backgroundFrame = currentScene?.background_frame;
+        if (!backgroundFrame || typeof backgroundFrame !== 'object') {
+          errors.push('Background Frame is required');
+        } else {
+          const backgroundFrameFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+          backgroundFrameFields.forEach((key) => {
+            const value = backgroundFrame[key] || '';
+            if (!value || value.trim() === '') {
+              const label = key.replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+              errors.push(`Background Frame: ${label} is required`);
+            }
+          });
+        }
+      }
+      
+      // 7. Avatar selection - required if Avatar Based
       if (videoType === 'Avatar Based') {
         const sceneAvatar = currentScene?.avatar || (Array.isArray(currentScene?.avatar_urls) && currentScene.avatar_urls.length > 0 ? currentScene.avatar_urls[0] : null);
         if (!sceneAvatar || String(sceneAvatar).trim() === '') {
@@ -2333,8 +3067,8 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
       if (!sessionId) throw new Error('Missing session_id');
 
-      // 2) Build airesponse from current UI scenes (include current scenes as-is)
-      const airesponse = Array.isArray(script) ? script : [];
+      // 2) Build airesponse from current UI scenes (filter to only include allowed fields)
+      const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
 
       // 3) Prepare request body per new schema — include userquery and current scenes from frontend
       let uq = [];
@@ -2436,49 +3170,153 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     }
   };
 
-  // Helper function to save frame data (opening_frame, closing_frame) - similar to Chat.js
-  const saveFrameData = async (fieldName, fieldData) => {
-    if (isSavingFrameData) return;
-    setIsSavingFrameData(true);
+  // State for AI enhancement loading
+  const [enhancingFields, setEnhancingFields] = useState({});
+
+  // Helper function to enhance field using AI
+  const enhanceField = async (fieldName) => {
+    if (enhancingFields[fieldName]) return; // Prevent duplicate calls
+    
+    setEnhancingFields(prev => ({ ...prev, [fieldName]: true }));
     try {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
       if (!sessionId || !token) throw new Error('Missing session_id or token');
 
-      // Load session snapshot
+      // 1) First call user-session-data API
       const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
-      const sessText = await sessionResp.text();
-      let sessJson; try { sessJson = JSON.parse(sessText); } catch(_) { sessJson = {}; }
-      if (!sessionResp.ok) throw new Error(`user-session/data failed: ${sessionResp.status} ${sessText}`);
-      const rawSession = sessJson?.session_data || sessJson?.session || {};
-      
-      // Get current scene
+      const sessionText = await sessionResp.text();
+      let sessionData;
+      try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = {}; }
+      if (!sessionResp.ok) throw new Error(`user-session-data failed: ${sessionResp.status} ${sessionText}`);
+      const sd = sessionData?.session_data || sessionData?.session || {};
+
+      // Get current scene - use the latest version from script state
       const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
       if (!scene) throw new Error('Scene not found');
       const targetSceneNumber = scene?.scene_number ?? (activeIndex + 1);
 
-      // Update the scene's frame data locally
-      updateScriptScene(activeIndex, { [fieldName]: fieldData });
+      // Build current_script object with filtered airesponse array - use latest script state
+      // Map over script array to get the latest version of all scenes
+      const currentScriptForApi = Array.isArray(script) ? script.map((sceneItem, index) => filterSceneForAPI(sceneItem, index)) : [];
 
-      // Also update via update-scene-visual API
-      const visualBody = {
-        user_id: token,
+      // Extract userquery from session data, with fallbacks
+      let userquery = [];
+      try {
+        // First try to get from session data
+        if (sd?.userquery && Array.isArray(sd.userquery)) {
+          userquery = sd.userquery;
+        } else if (sessionData?.userquery && Array.isArray(sessionData.userquery)) {
+          userquery = sessionData.userquery;
+        } else if (values && values.userquery && Array.isArray(values.userquery.userquery)) {
+          // Fallback to values prop
+          userquery = values.userquery.userquery;
+        } else {
+          // Fallback to localStorage
+          const raw = localStorage.getItem('buildreel_userquery');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Array.isArray(parsed.userquery)) {
+              userquery = parsed.userquery;
+            }
+          }
+        }
+      } catch (_) { /* noop */ }
+      if (!Array.isArray(userquery)) userquery = [];
+
+      const requestBody = {
         session_id: sessionId,
         scene_number: targetSceneNumber,
-        [fieldName]: fieldData
+        fields: [fieldName],
+        current_script: {
+          userquery: userquery,
+          airesponse: currentScriptForApi
+        }
       };
-      
-      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
+
+      // 2) Then call enhance-field API
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/enhance-field', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(visualBody)
+        body: JSON.stringify(requestBody)
       });
+
       const text = await resp.text();
       let data;
       try { data = JSON.parse(text); } catch (_) { data = text; }
-      if (!resp.ok) throw new Error(`update-scene-visual failed: ${resp.status} ${text}`);
+      if (!resp.ok) throw new Error(`enhance-field failed: ${resp.status} ${text}`);
+
+      // Extract the enhanced field from response
+      const enhancedScript = Array.isArray(data?.script) && data.script.length > 0 ? data.script[0] : null;
+      if (!enhancedScript) throw new Error('No script data in response');
+
+      // Update the specific field based on fieldName
+      if (fieldName === 'narration') {
+        const enhancedValue = enhancedScript.narration || '';
+        updateScriptScene(activeIndex, { narration: enhancedValue });
+        try { toast.success('Narration enhanced with AI'); } catch(_) {}
+      } else if (fieldName === 'desc' || fieldName === 'description') {
+        const enhancedValue = enhancedScript.desc || enhancedScript.description || '';
+        updateScriptScene(activeIndex, { desc: enhancedValue, description: enhancedValue });
+        try { toast.success('Description enhanced with AI'); } catch(_) {}
+      } else if (fieldName === 'opening_frame') {
+        const enhancedValue = enhancedScript.opening_frame || null;
+        if (enhancedValue) {
+          updateScriptScene(activeIndex, { opening_frame: enhancedValue });
+          setEditedOpeningFrame(enhancedValue);
+          setIsEditingOpeningFrame(true);
+          await saveFrameData('opening_frame', enhancedValue);
+        }
+        try { toast.success('Opening frame enhanced with AI'); } catch(_) {}
+      } else if (fieldName === 'closing_frame') {
+        const enhancedValue = enhancedScript.closing_frame || null;
+        if (enhancedValue) {
+          updateScriptScene(activeIndex, { closing_frame: enhancedValue });
+          setEditedClosingFrame(enhancedValue);
+          setIsEditingClosingFrame(true);
+          await saveFrameData('closing_frame', enhancedValue);
+        }
+        try { toast.success('Closing frame enhanced with AI'); } catch(_) {}
+      } else if (fieldName === 'background_frame') {
+        const enhancedValue = enhancedScript.background_frame || null;
+        if (enhancedValue) {
+          updateScriptScene(activeIndex, { background_frame: enhancedValue });
+          setEditedBackgroundFrame(enhancedValue);
+          await saveFrameData('background_frame', enhancedValue);
+        }
+        try { toast.success('Background frame enhanced with AI'); } catch(_) {}
+      } else if (fieldName === 'animation_desc') {
+        const enhancedValue = enhancedScript.animation_desc || null;
+        if (enhancedValue) {
+          updateScriptScene(activeIndex, { animation_desc: enhancedValue });
+          setEditedAnimationDesc(enhancedValue);
+          await saveFrameData('animation_desc', enhancedValue);
+        }
+        try { toast.success('Animation description enhanced with AI'); } catch(_) {}
+      }
+    } catch(e) {
+      console.error('enhanceField failed:', e);
+      try { toast.error(`Failed to enhance ${fieldName}. Please try again.`); } catch(_) { alert(`Failed to enhance ${fieldName}. Please try again.`); }
+    } finally {
+      setEnhancingFields(prev => ({ ...prev, [fieldName]: false }));
+    }
+  };
+
+  // Helper function to save frame data (opening_frame, closing_frame) - only updates local state
+  const saveFrameData = async (fieldName, fieldData) => {
+    if (isSavingFrameData) return;
+    setIsSavingFrameData(true);
+    try {
+      // Get current scene
+      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+      if (!scene) throw new Error('Scene not found');
+
+      // Update the scene's frame data locally only
+      updateScriptScene(activeIndex, { [fieldName]: fieldData });
       
       try { toast.success(`${fieldName.replace('_', ' ')} saved successfully`); } catch(_) {}
     } catch(e) {
@@ -2499,6 +3337,89 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       setVideoDurationSec(getPerSceneDuration(currentType));
     } catch (_) { /* noop */ }
   }, [activeIndex, scenes]);
+
+  // Initialize opening and closing frame fields when scene changes (for Infographic scenes - always open)
+  useEffect(() => {
+    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+    if (!scene) {
+      // Reset all state when no scene is available
+      setAdvancedStyleColors([]);
+      setAdvancedStyleFontSize(16);
+      setAdvancedStyleFontStyle('');
+      setEditedOpeningFrame({});
+      setEditedClosingFrame({});
+      setEditedBackgroundFrame({});
+      setEditedAnimationDesc({});
+      return;
+    }
+    const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+    const isSora = sceneModelUpper === 'SORA';
+    const isPlotly = sceneModelUpper === 'PLOTLY';
+    const sceneType = scenes[activeIndex]?.type || '';
+    
+    // Initialize for Infographic scenes (Scene Visual is always open for these)
+    if (isSora || sceneType === 'Infographic') {
+      // Initialize opening frame
+      const openingData = scene?.opening_frame || scene?.openingFrame || scene?.opening || {};
+      const normalizedOpening = typeof openingData === 'object' && !Array.isArray(openingData) ? { ...openingData } : {};
+      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+      const initializedOpening = {};
+      allFields.forEach(field => {
+        initializedOpening[field] = normalizedOpening[field] || '';
+      });
+      setEditedOpeningFrame(initializedOpening);
+      setIsEditingOpeningFrame(true);
+      
+      // Initialize closing frame
+      const closingData = scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame || {};
+      const normalizedClosing = typeof closingData === 'object' && !Array.isArray(closingData) ? { ...closingData } : {};
+      const initializedClosing = {};
+      allFields.forEach(field => {
+        initializedClosing[field] = normalizedClosing[field] || '';
+      });
+      setEditedClosingFrame(initializedClosing);
+      setIsEditingClosingFrame(true);
+    } else {
+      // Reset frame data for non-Infographic scenes
+      setEditedOpeningFrame({});
+      setEditedClosingFrame({});
+      setIsEditingOpeningFrame(false);
+      setIsEditingClosingFrame(false);
+    }
+    
+    // Initialize background frame for Financial scenes
+    if (isPlotly || sceneType === 'Financial') {
+      const backgroundData = scene?.background_frame || scene?.backgroundFrame || scene?.background || {};
+      const normalizedBackground = typeof backgroundData === 'object' && !Array.isArray(backgroundData) ? { ...backgroundData } : {};
+      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+      const initializedBackground = {};
+      allFields.forEach(field => {
+        initializedBackground[field] = normalizedBackground[field] || '';
+      });
+      setEditedBackgroundFrame(initializedBackground);
+    } else {
+      // Reset background frame for non-Financial scenes
+      setEditedBackgroundFrame({});
+    }
+    
+    // Initialize Advanced Style Options for all scenes - ALWAYS fetch from scene data
+    const colors = Array.isArray(scene?.colors) ? scene.colors : [];
+    const fontSize = scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16;
+    const fontStyle = scene?.font_style ?? scene?.fontStyle ?? '';
+    setAdvancedStyleColors(colors);
+    setAdvancedStyleFontSize(fontSize);
+    setAdvancedStyleFontStyle(fontStyle);
+    
+    // Initialize Animation Description for Infographic and Financial scenes
+    if (isSora || isPlotly || sceneType === 'Infographic' || sceneType === 'Financial') {
+      const animationData = scene?.animation_desc || scene?.animationDesc || {};
+      const normalizedAnimation = typeof animationData === 'object' && !Array.isArray(animationData) ? { ...animationData } : {};
+      setEditedAnimationDesc(normalizedAnimation);
+    } else {
+      // Reset animation description for non-Infographic/Financial scenes
+      setEditedAnimationDesc({});
+    }
+  }, [activeIndex, script, scenes]);
 
   // Update selectedAvatar when switching scenes
   useEffect(() => {
@@ -2537,7 +3458,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     }
   }, [activeIndex, script]);
 
-  // Fetch presenter presets when Avatar Based is selected
+  // Cache for presenter presets to avoid redundant API calls
+  const presenterPresetsCacheRef = useRef({});
+  const lastFetchedModelRef = useRef('');
+  const lastFetchedAspectRef = useRef('');
+  const aspectRatioCacheRef = useRef(null);
+
+  // Fetch presenter presets when Avatar Based is selected - only when model changes or switching scenes
   useEffect(() => {
     const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
     if (!scene) {
@@ -2553,38 +3480,46 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       setIsLoadingPresenterPresets(false);
       return;
     }
+
     let ignore = false;
     const fetchPresenterPresets = async () => {
       try {
         setIsLoadingPresenterPresets(true);
         setPresenterPresetsError('');
+        const { rawSession, rawUser } = await getSessionSnapshot();
+        if (ignore) return;
         const token = localStorage.getItem('token') || '';
-        const sessionId = localStorage.getItem('session_id') || '';
-        if (!token || !sessionId) {
-          if (!ignore) {
-            setPresenterPresets({ VEO3: [], ANCHOR: [] });
-            setPresenterPresetsError('Missing authentication');
-            setIsLoadingPresenterPresets(false);
+        const userId =
+          rawUser?.id ||
+          rawUser?.user_id ||
+          rawUser?._id ||
+          token;
+        // Extract aspect ratio from session_data.scripts[0].userquery[0].additonalprop1.technical_and_formal_constraints.aspect_ratio
+        let rawAspect = '';
+        try {
+          const scripts = Array.isArray(rawSession?.scripts) ? rawSession.scripts : [];
+          const primaryScript = scripts[0] || {};
+          const userquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+          const firstUserQuery = userquery[0] || {};
+          const additonalprop1 = firstUserQuery?.additonalprop1 || {};
+          const technicalConstraints = additonalprop1?.technical_and_formal_constraints || {};
+          rawAspect = technicalConstraints?.aspect_ratio || '';
+          
+          // Extract only the numeric ratio part (e.g., "16:9" from "16:9 (Standard widescreen)")
+          if (rawAspect && typeof rawAspect === 'string') {
+            const ratioMatch = rawAspect.match(/^(\d+:\d+)/);
+            if (ratioMatch) {
+              rawAspect = ratioMatch[1];
+            }
           }
-          return;
+        } catch (err) {
+          console.warn('Failed to extract aspect ratio from session data:', err);
         }
-        // Get session data to extract aspect ratio
-        const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: token, session_id: sessionId })
-        });
-        const sessionText = await sessionResp.text();
-        let sessionData;
-        try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = {}; }
-        const sd = sessionData?.session_data || sessionData?.session || {};
-        // Extract aspect ratio (simplified - use template_aspect or default)
-        const rawAspect = sd?.template_aspect || sd?.aspect_ratio || '16:9';
-        const normalizedAspect = rawAspect.replace(/[^0-9:]/g, '').toLowerCase() || '16:9';
-        const aspectParam = normalizedAspect;
+        const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
+        const aspectParam = (normalizedAspect && normalizedAspect !== 'Unspecified') ? normalizedAspect : '';
         const modeParam = modelUpper === 'VEO3' ? 'veo3_presets' : 'anchor_presets';
         const params = new URLSearchParams();
-        params.set('user_id', String(token));
+        if (userId) params.set('user_id', String(userId));
         if (aspectParam) params.set('aspect_ratio', aspectParam);
         params.set('mode', modeParam);
         const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/presets?${params.toString()}`;
@@ -2596,6 +3531,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         } catch (_) {
           data = text;
         }
+        console.log('[presenter] presets response', { url, data });
         if (!resp.ok) throw new Error(`presets request failed: ${resp.status}`);
         const listSource = Array.isArray(data?.presets)
           ? data.presets
@@ -2668,7 +3604,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                   ? rawPreviewType.toLowerCase()
                   : inferPreviewType(rawPreviewUrl);
               const anchorId = item.anchor_id || item.anchorId || '';
-              const promptTemplate = item.prompt_template || item.promptTemplate || item.veo3_prompt_template || item.veo3PromptTemplate || '';
+              const promptTemplate = item.prompt_template || item.promptTemplate || item.veo3_prompt_template || item.veo3PromptTemplate || null;
               return {
                 option,
                 preset_id: String(presetId),
@@ -2704,7 +3640,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     return () => {
       ignore = true;
     };
-  }, [script, activeIndex]);
+  }, [activeIndex]); // Only depend on activeIndex - don't refetch on script edits
 
   // Initialize selected presenter preset from scene data - check preset_id from presenter_options
   useEffect(() => {
@@ -2825,9 +3761,27 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       // Add veo3_prompt_template from selected preset's prompt_template (for avatar based videos)
       if (selectedPreset?.prompt_template) {
         updateData.veo3_prompt_template = selectedPreset.prompt_template;
+        
+        // Also populate Scene Description fields from prompt_template
+        const promptTemplate = selectedPreset.prompt_template;
+        if (promptTemplate && typeof promptTemplate === 'object') {
+          const sceneDescUpdates = {};
+          // Map prompt_template fields to Scene Description fields
+          if (promptTemplate.style) sceneDescUpdates.styleCard = promptTemplate.style;
+          if (promptTemplate.action) sceneDescUpdates.action = promptTemplate.action;
+          if (promptTemplate.camera) sceneDescUpdates.cameraCard = promptTemplate.camera;
+          if (promptTemplate.subject) sceneDescUpdates.subject = promptTemplate.subject;
+          if (promptTemplate.ambiance) sceneDescUpdates.ambiance = promptTemplate.ambiance;
+          if (promptTemplate.background) sceneDescUpdates.background = promptTemplate.background;
+          if (promptTemplate.composition) sceneDescUpdates.composition = promptTemplate.composition;
+          if (promptTemplate.focus_and_lens) sceneDescUpdates.focus_and_lens = promptTemplate.focus_and_lens;
+          
+          // Merge scene description updates
+          Object.assign(updateData, sceneDescUpdates);
+        }
       }
       
-      // Update scene data immediately (no API call)
+      // Update scene data immediately (no API call - only local update)
       updateScriptScene(activeIndex, updateData);
       
       // Update state to reflect the change
@@ -2846,7 +3800,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const sessionId = localStorage.getItem('session_id') || '';
       const token = localStorage.getItem('token') || '';
       if (!sessionId || !token) throw new Error('Missing session_id or token');
-      const { user, sessionForBody } = await getSessionSnapshot();
+      const { rawSession, rawUser } = await getSessionSnapshot();
+      const sanitizedSession = sanitizeSessionSnapshot(rawSession, sessionId, token);
+      const normalizedUser = normalizeUserSnapshot(rawUser, token);
       const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
       if (!scene) throw new Error('Scene not found');
       const sceneNumber = scene?.scene_number ?? activeIndex + 1;
@@ -2861,12 +3817,42 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const presetIdForRequest = modelUpper === 'ANCHOR' && selectedPreset?.anchor_id
         ? String(selectedPreset.anchor_id)
         : String(pendingPresenterPresetId || '');
+      
+      // Extract aspect ratio from session_data.scripts[0].userquery[0].additonalprop1.technical_and_formal_constraints.aspect_ratio
+      let rawAspect = '';
+      try {
+        const scripts = Array.isArray(rawSession?.scripts) ? rawSession.scripts : [];
+        const primaryScript = scripts[0] || {};
+        const userquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
+        const firstUserQuery = userquery[0] || {};
+        const additonalprop1 = firstUserQuery?.additonalprop1 || {};
+        const technicalConstraints = additonalprop1?.technical_and_formal_constraints || {};
+        rawAspect = technicalConstraints?.aspect_ratio || '';
+        
+        // Extract only the numeric ratio part (e.g., "16:9" from "16:9 (Standard widescreen)")
+        if (rawAspect && typeof rawAspect === 'string') {
+          const ratioMatch = rawAspect.match(/^(\d+:\d+)/);
+          if (ratioMatch) {
+            rawAspect = ratioMatch[1];
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to extract aspect ratio from session data:', err);
+      }
+      const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
+      const aspectRatio = normalizedAspect && normalizedAspect !== 'Unspecified' ? normalizedAspect : '';
+      
       const payload = {
-        user,
-        session: sessionForBody,
+        user: normalizedUser,
+        session: sanitizedSession,
         scene_number: sceneNumber,
         preset_id: presetIdForRequest
       };
+      
+      // Add aspect_ratio to payload if found (same as Chat.js pattern)
+      if (aspectRatio) {
+        payload.aspect_ratio = aspectRatio;
+      }
       const resp = await fetch(
         'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-preset',
         {
@@ -2944,19 +3930,87 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         <h2 className='text-[24px] font-semibold'>Add Your Scenes</h2>
       </div>
 
-      <div className='flex items-center gap-3 mb-5'>
-        {scenes.map((_, i) => (
-          <button
-            key={i}
-            className={`px-4 py-2 rounded-full text-sm ${i === activeIndex ? 'bg-[#13008B] text-white' : 'bg-gray-200 text-gray-700'}`}
-            onClick={() => setActiveIndex(i)}
-          >
-            Scene {i + 1}
-          </button>
-        ))}
-        <button onClick={addScene} className='ml-2 flex items-center gap-2 px-3 py-2 rounded-full bg-gray-100 border'>
-          <FaPlus /> Scene
+      <div className='flex items-center gap-2 mb-5'>
+        {/* Left arrow button */}
+        <button
+          onClick={() => {
+            setVisibleStartIndex(prev => Math.max(0, prev - 1));
+          }}
+          disabled={visibleStartIndex <= 0}
+          className={`w-6 h-6 rounded-full flex items-center justify-center border ${
+            visibleStartIndex <= 0
+              ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+              : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'
+          }`}
+          title="Previous scenes"
+        >
+          <ChevronLeft className="w-4 h-4" />
         </button>
+
+        {/* Scene tabs - show 5 at a time */}
+        {(() => {
+          const total = Array.isArray(script) ? script.length : 0;
+          const start = Math.max(0, Math.min(visibleStartIndex, Math.max(0, total - 5)));
+          const end = start + 5;
+          const slice = Array.isArray(script) ? script.slice(start, end) : [];
+          return slice.map((scene, idxLocal) => {
+            const index = start + idxLocal;
+            return (
+              <button
+                key={index}
+                onClick={() => {
+                  setActiveIndex(index);
+                  // Auto-scroll to keep selected scene visible
+                  if (index < visibleStartIndex) {
+                    setVisibleStartIndex(Math.max(0, index));
+                  } else if (index >= visibleStartIndex + 5) {
+                    setVisibleStartIndex(Math.max(0, index - 4));
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  activeIndex === index
+                    ? 'bg-[#13008B] text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Scene {index + 1}
+              </button>
+            );
+          });
+        })()}
+
+        {/* Right arrow button */}
+        <button
+          onClick={() => {
+            setVisibleStartIndex(prev => Math.min(Math.max(0, (Array.isArray(script) ? script.length : 0) - 5), prev + 1));
+          }}
+          disabled={(() => {
+            const total = Array.isArray(script) ? script.length : 0;
+            return visibleStartIndex >= Math.max(0, total - 5);
+          })()}
+          className={`w-6 h-6 rounded-full flex items-center justify-center border ${
+            (() => {
+              const total = Array.isArray(script) ? script.length : 0;
+              return visibleStartIndex >= Math.max(0, total - 5);
+            })()
+              ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+              : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'
+          }`}
+          title="Next scenes"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+
+        {/* Circular + button to add scene */}
+        <button
+          onClick={addScene}
+          className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800"
+          title="Add new scene"
+        >
+          +
+        </button>
+
+        {/* Save Scenes button */}
         <button 
           onClick={async () => {
             try {
@@ -2984,6 +4038,57 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             </>
           )}
         </button>
+
+        {/* Kebab Menu */}
+        <div ref={kebabMenuRef} className="relative">
+          <button 
+            onClick={() => setKebabMenuOpen(v => !v)} 
+            className="inline-flex items-center justify-center w-9 h-9 rounded-lg border bg-white hover:bg-gray-50 ml-2" 
+            title="More"
+          >
+            <MoreHorizontal className="w-5 h-5" />
+          </button>
+          {kebabMenuOpen && (
+            <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden">
+              <div className="py-1">
+                <button 
+                  onClick={() => {
+                    setKebabMenuOpen(false);
+                    handleUndoScript();
+                  }} 
+                  disabled={!canUndo} 
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canUndo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}
+                >
+                  <RefreshCcw className="w-4 h-4 rotate-180 text-[#13008B]" />
+                  <span>Undo</span>
+                </button>
+                <button 
+                  onClick={() => {
+                    setKebabMenuOpen(false);
+                    handleRedoScript();
+                  }} 
+                  disabled={!canRedo} 
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canRedo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}
+                >
+                  <RefreshCcw className="w-4 h-4 text-[#13008B]" />
+                  <span>Redo</span>
+                </button>
+                <div className="my-1 h-px bg-gray-100" />
+                <button 
+                  onClick={() => {
+                    setKebabMenuOpen(false);
+                    setShowDeleteConfirm(true);
+                  }} 
+                  disabled={isDeletingScene || script.length === 0} 
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!script.length || isDeletingScene) ? 'text-gray-400 cursor-not-allowed' : 'text-red-700 hover:bg-red-50'}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete Scene</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Scene Editor */}
@@ -3027,58 +4132,472 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
               </div>
             </div>
           </div>
-          <div className='bg-white border border-gray-200 rounded-lg p-3'>
-            <div className='flex items-center justify-between mb-2'>
-              <label className='text-xs font-semibold text-gray-600'>Narration</label>
-              <span className='text-[11px] text-gray-500'>Double-click the narration to edit.</span>
+          <div className={`grid ${(() => {
+            const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+            const sceneModelUpper = scene ? String(scene?.model || scene?.mode || '').toUpperCase() : '';
+            const sceneType = scenes[activeIndex]?.type || '';
+            const isInfographic = sceneModelUpper === 'SORA' || sceneType === 'Infographic';
+            const isFinancial = sceneModelUpper === 'PLOTLY' || sceneType === 'Financial';
+            return (isInfographic || isFinancial) ? 'grid-cols-1 md:grid-cols-2 gap-4' : 'grid-cols-1';
+          })()}`}>
+            <div className='bg-white border border-gray-200 rounded-lg p-3'>
+              <div className='flex items-center justify-between mb-2'>
+                <label className='text-xs font-semibold text-gray-600'>Narration <span className='text-red-500'>*</span></label>
+                <button
+                  type="button"
+                  onClick={() => enhanceField('narration')}
+                  disabled={enhancingFields['narration']}
+                  className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                  title='Enhance with AI'
+                >
+                  {enhancingFields['narration'] ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                      <span>AI...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className='w-3 h-3' />
+                      <span>AI</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <textarea
+                rows={4}
+                value={scenes[activeIndex]?.narration || ''}
+                onChange={(e) => setScene(activeIndex, { narration: e.target.value })}
+                className='w-full p-3 border rounded-lg'
+                placeholder='Narration for this scene'
+                required
+              />
             </div>
-            <textarea
-              rows={4}
-              value={scenes[activeIndex]?.narration || ''}
-              onChange={(e) => setScene(activeIndex, { narration: e.target.value })}
-              className='w-full p-3 border rounded-lg'
-              placeholder='Narration for this scene'
-            />
-          </div>
-        </div>
-
-        {/* Scene Description */}
-        <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
-          <div className='mb-4'>
-            <h3 className='text-lg font-semibold text-gray-900'>Scene Description</h3>
-          </div>
-          <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
-              {[
-                { key: 'subject', label: 'Subject' },
-                { key: 'background', label: 'Background' },
-                { key: 'action', label: 'Action' },
-                { key: 'styleCard', label: 'Style' },
-                { key: 'cameraCard', label: 'Camera' },
-                { key: 'ambiance', label: 'Ambiance' },
-                { key: 'composition', label: 'Composition' },
-                { key: 'focus_and_lens', label: 'Focus and Lens' },
-              ].map(({ key, label }) => {
-                // Read directly from script to ensure we get the latest value
-                const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                const fieldValue = scene?.[key] || '';
+            {(() => {
+              const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+              const sceneModelUpper = scene ? String(scene?.model || scene?.mode || '').toUpperCase() : '';
+              const sceneType = scenes[activeIndex]?.type || '';
+              const isInfographic = sceneModelUpper === 'SORA' || sceneType === 'Infographic';
+              const isFinancial = sceneModelUpper === 'PLOTLY' || sceneType === 'Financial';
+              if (isInfographic || isFinancial) {
                 return (
-                  <div key={key} className='bg-white border border-gray-200 rounded-lg p-3'>
-                    <p className='text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide'>{label}</p>
+                  <div className='bg-white border border-gray-200 rounded-lg p-3'>
+                    <div className='flex items-center justify-between mb-2'>
+                      <label className='text-xs font-semibold text-gray-600'>Description <span className='text-red-500'>*</span></label>
+                      <button
+                        type="button"
+                        onClick={() => enhanceField('desc')}
+                        disabled={enhancingFields['desc']}
+                        className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                        title='Enhance with AI'
+                      >
+                        {enhancingFields['desc'] ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                            <span>AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className='w-3 h-3' />
+                            <span>AI</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <textarea
-                      rows={2}
-                      value={fieldValue}
+                      rows={4}
+                      value={scenes[activeIndex]?.desc || scenes[activeIndex]?.description || ''}
                       onChange={(e) => {
-                        const newValue = e.target.value;
-                        updateScriptScene(activeIndex, { [key]: newValue });
+                        const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                        updateScriptScene(activeIndex, { 
+                          desc: e.target.value,
+                          description: e.target.value
+                        });
                       }}
-                      className='w-full p-2 border rounded-lg text-sm'
-                      placeholder={`Add ${label.toLowerCase()}...`}
+                      className='w-full p-3 border rounded-lg'
+                      placeholder='Description for this scene (required)'
+                      required
                     />
                   </div>
                 );
-              })}
+              }
+              return null;
+            })()}
           </div>
         </div>
+
+        {/* Scene Visual - Always open for Infographic scenes */}
+        {(() => {
+          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+          if (!scene) return null;
+          const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isSora = sceneModelUpper === 'SORA';
+          const sceneType = scenes[activeIndex]?.type || '';
+          if (!(isSora || sceneType === 'Infographic')) return null;
+          
+          return (
+            <div className='space-y-4 mt-6'>
+              <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+                <h4 className='text-lg font-semibold text-gray-800 mb-4'>Scene Visual</h4>
+                
+                {/* Opening Frame - Always Open */}
+               <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+ <div className="bg-white rounded-lg border border-gray-200 mb-4">
+                  <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                    <span className="text-sm font-semibold text-gray-800">Opening Frame</span>
+                    <button
+                      type="button"
+                      onClick={() => enhanceField('opening_frame')}
+                      disabled={enhancingFields['opening_frame']}
+                      className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                      title='Enhance with AI'
+                    >
+                      {enhancingFields['opening_frame'] ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                          <span>AI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className='w-3 h-3' />
+                          <span>AI</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="px-4 pb-4 pt-4">
+                    {(() => {
+                      const formatTitle = (key) => {
+                        const cleaned = key.replace(/_/g, ' ').trim();
+                        if (!cleaned) return '';
+                        return cleaned
+                          .split(' ')
+                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                          .join(' ');
+                      };
+                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                      
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 gap-4">
+                            {allFields.map((key) => {
+                              const title = formatTitle(key);
+                              const currentValue = editedOpeningFrame[key] || '';
+                              return (
+                                <div
+                                  key={key}
+                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                >
+                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                    {title}
+                                  </h5>
+                                  <textarea
+                                    value={currentValue}
+                                    onChange={(e) => {
+                                      const newData = { ...editedOpeningFrame };
+                                      newData[key] = e.target.value;
+                                      setEditedOpeningFrame(newData);
+                                      // Update local script state immediately
+                                      updateScriptScene(activeIndex, { opening_frame: newData });
+                                    }}
+                                    onBlur={async (e) => {
+                                      // Auto-save to backend on blur
+                                      try {
+                                        // Use the latest value from the event target to ensure we have the most current data
+                                        const latestData = { ...editedOpeningFrame };
+                                        latestData[key] = e.target.value;
+                                        setEditedOpeningFrame(latestData);
+                                        await saveFrameData('opening_frame', latestData);
+                                      } catch (err) {
+                                        console.error('Failed to auto-save opening frame:', err);
+                                      }
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                    rows={3}
+                                    disabled={isSavingFrameData}
+                                    placeholder={`Enter ${title.toLowerCase()}...`}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Closing Frame - Always Open */}
+                <div className="bg-white rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                    <span className="text-sm font-semibold text-gray-800">Closing Frame</span>
+                    <button
+                      type="button"
+                      onClick={() => enhanceField('closing_frame')}
+                      disabled={enhancingFields['closing_frame']}
+                      className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                      title='Enhance with AI'
+                    >
+                      {enhancingFields['closing_frame'] ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                          <span>AI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className='w-3 h-3' />
+                          <span>AI</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="px-4 pb-4 pt-4">
+                    {(() => {
+                      const formatTitle = (key) => {
+                        const cleaned = key.replace(/_/g, ' ').trim();
+                        if (!cleaned) return '';
+                        return cleaned
+                          .split(' ')
+                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                          .join(' ');
+                      };
+                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                      
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 gap-4">
+                            {allFields.map((key) => {
+                              const title = formatTitle(key);
+                              const currentValue = editedClosingFrame[key] || '';
+                              return (
+                                <div
+                                  key={key}
+                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                >
+                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                    {title}
+                                  </h5>
+                                  <textarea
+                                    value={currentValue}
+                                    onChange={(e) => {
+                                      const newData = { ...editedClosingFrame };
+                                      newData[key] = e.target.value;
+                                      setEditedClosingFrame(newData);
+                                      // Update local script state immediately
+                                      updateScriptScene(activeIndex, { closing_frame: newData });
+                                    }}
+                                    onBlur={async (e) => {
+                                      // Auto-save to backend on blur
+                                      try {
+                                        // Use the latest value from the event target to ensure we have the most current data
+                                        const latestData = { ...editedClosingFrame };
+                                        latestData[key] = e.target.value;
+                                        setEditedClosingFrame(latestData);
+                                        await saveFrameData('closing_frame', latestData);
+                                      } catch (err) {
+                                        console.error('Failed to auto-save closing frame:', err);
+                                      }
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                    rows={3}
+                                    disabled={isSavingFrameData}
+                                    placeholder={`Enter ${title.toLowerCase()}...`}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+               </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Scene Visual - Background Frame for Financial scenes */}
+        {(() => {
+          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+          if (!scene) return null;
+          const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isPlotly = sceneModelUpper === 'PLOTLY';
+          const sceneType = scenes[activeIndex]?.type || '';
+          if (!(isPlotly || sceneType === 'Financial')) return null;
+          
+          return (
+            <div className='space-y-4 mt-6'>
+              <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
+                <h4 className='text-lg font-semibold text-gray-800 mb-4'>Scene Visual</h4>
+                
+                {/* Background Frame - Always Open */}
+                <div className="bg-white rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                    <span className="text-sm font-semibold text-gray-800">Background Frame</span>
+                    <button
+                      type="button"
+                      onClick={() => enhanceField('background_frame')}
+                      disabled={enhancingFields['background_frame']}
+                      className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                      title='Enhance with AI'
+                    >
+                      {enhancingFields['background_frame'] ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                          <span>AI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className='w-3 h-3' />
+                          <span>AI</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="px-4 pb-4 pt-4">
+                    {(() => {
+                      const formatTitle = (key) => {
+                        const cleaned = key.replace(/_/g, ' ').trim();
+                        if (!cleaned) return '';
+                        return cleaned
+                          .split(' ')
+                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                          .join(' ');
+                      };
+                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+                      
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 gap-4">
+                            {allFields.map((key) => {
+                              const title = formatTitle(key);
+                              const currentValue = editedBackgroundFrame[key] || '';
+                              return (
+                                <div
+                                  key={key}
+                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                >
+                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                    {title}
+                                  </h5>
+                                  <textarea
+                                    value={currentValue}
+                                    onChange={(e) => {
+                                      const newData = { ...editedBackgroundFrame };
+                                      newData[key] = e.target.value;
+                                      setEditedBackgroundFrame(newData);
+                                      // Update local script state immediately
+                                      updateScriptScene(activeIndex, { background_frame: newData });
+                                    }}
+                                    onBlur={async (e) => {
+                                      // Auto-save to backend on blur
+                                      try {
+                                        // Use the latest value from the event target to ensure we have the most current data
+                                        const latestData = { ...editedBackgroundFrame };
+                                        latestData[key] = e.target.value;
+                                        setEditedBackgroundFrame(latestData);
+                                        await saveFrameData('background_frame', latestData);
+                                      } catch (err) {
+                                        console.error('Failed to auto-save background frame:', err);
+                                      }
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                    rows={3}
+                                    disabled={isSavingFrameData}
+                                    placeholder={`Enter ${title.toLowerCase()}...`}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Scene Description - Hidden for Infographic and Financial scenes */}
+        {(() => {
+          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+          if (!scene) return null;
+          const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isSora = sceneModelUpper === 'SORA';
+          const isPlotly = sceneModelUpper === 'PLOTLY';
+          const sceneType = scenes[activeIndex]?.type || '';
+          const isInfographic = isSora || sceneType === 'Infographic';
+          const isFinancial = isPlotly || sceneType === 'Financial';
+          
+          // Hide Scene Description for Infographic and Financial scenes
+          if (isInfographic || isFinancial) return null;
+          
+          return (
+            <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
+              <div className='mb-4'>
+                <h3 className='text-lg font-semibold text-gray-900'>Scene Description</h3>
+              </div>
+              <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+                  {[
+                    { key: 'subject', label: 'Subject' },
+                    { key: 'background', label: 'Background' },
+                    { key: 'action', label: 'Action' },
+                    { key: 'styleCard', label: 'Style' },
+                    { key: 'cameraCard', label: 'Camera' },
+                    { key: 'ambiance', label: 'Ambiance' },
+                    { key: 'composition', label: 'Composition' },
+                    { key: 'focus_and_lens', label: 'Focus and Lens' },
+                  ].map(({ key, label }) => {
+                    // Read directly from script to ensure we get the latest value
+                    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                    
+                    // Always prioritize veo3_prompt_template values over direct fields
+                    let fieldValue = '';
+                    if (scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object') {
+                      const promptTemplate = scene.veo3_prompt_template;
+                      // Map Scene Description keys to prompt_template keys
+                      const promptKeyMap = {
+                        'styleCard': 'style',
+                        'action': 'action',
+                        'cameraCard': 'camera',
+                        'subject': 'subject',
+                        'ambiance': 'ambiance',
+                        'background': 'background',
+                        'composition': 'composition',
+                        'focus_and_lens': 'focus_and_lens'
+                      };
+                      const promptKey = promptKeyMap[key];
+                      if (promptKey && promptTemplate[promptKey]) {
+                        fieldValue = promptTemplate[promptKey];
+                      }
+                    }
+                    
+                    // Fallback to direct field if not in prompt_template
+                    if (!fieldValue) {
+                      fieldValue = scene?.[key] || '';
+                    }
+                    
+                    return (
+                      <div key={key} className='bg-white border border-gray-200 rounded-lg p-3'>
+                        <p className='text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide'>{label}</p>
+                        <textarea
+                          rows={2}
+                          value={fieldValue}
+                          disabled={true}
+                          readOnly={true}
+                          className='w-full p-2 border rounded-lg text-sm bg-gray-100 cursor-not-allowed opacity-75'
+                          placeholder={`Add ${label.toLowerCase()}...`}
+                        />
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Text To Be Included */}
         <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
@@ -3799,345 +5318,311 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           </div>
         )}
 
-        {/* Opening and Closing Frame sections for Infographic scenes (SORA) - matching Chat.js */}
-        {(() => {
-          const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-          if (!scene) return false;
-          const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-          const isSora = sceneModelUpper === 'SORA';
-          const sceneType = scenes[activeIndex]?.type || '';
-          return isSora || sceneType === 'Infographic';
-        })() && (
-          <div className='space-y-4 mt-6'>
-            <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
-              <h4 className='text-lg font-semibold text-gray-800 mb-4'>Scene Visual</h4>
-              
-              {/* Opening Frame Accordion */}
-              <div className="bg-white rounded-lg border border-gray-200 mb-4">
-                <div className="flex items-center justify-between p-4">
-                  <button
-                    type="button"
-                    onClick={() => setOpeningFrameAccordionOpen(!openingFrameAccordionOpen)}
-                    className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
-                  >
-                    <span className="text-sm font-semibold text-gray-800">Opening Frame</span>
-                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${openingFrameAccordionOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  {openingFrameAccordionOpen && (
-                    <div className="ml-2 flex items-center gap-2">
-                      {isEditingOpeningFrame ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsEditingOpeningFrame(false);
-                              setEditedOpeningFrame({});
-                            }}
-                            disabled={isSavingFrameData}
-                            className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                await saveFrameData('opening_frame', editedOpeningFrame);
-                                setIsEditingOpeningFrame(false);
-                              } catch (e) {
-                                console.error('Failed to save opening frame:', e);
-                              }
-                            }}
-                            disabled={isSavingFrameData}
-                            className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                          >
-                            {isSavingFrameData ? (
-                              <>
-                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                <span>Saving...</span>
-                              </>
-                            ) : (
-                              'Save'
-                            )}
-                          </button>
-                        </>
-                      ) : (
+        {/* Advanced Style Options - At the bottom for all video types */}
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setAdvancedOptionsOpen((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-lg border border-[#D8D3FF] bg-white px-4 py-3 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#F6F4FF]"
+          >
+            <span>Advanced Style Options</span>
+            <ChevronDown className={`h-4 w-4 transition-transform ${advancedOptionsOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {advancedOptionsOpen && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 transition-all duration-300">
+              <div className="space-y-4 px-4 py-4 transition-all duration-300 w-full">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-gray-700">Style Controls</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Colors</label>
+                    <div className="flex flex-wrap gap-2">
+                      {advancedStyleColors.map((c, i) => (
                         <button
+                          key={`${c}-${i}`}
                           type="button"
                           onClick={() => {
-                            const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                            const openingData = scene?.opening_frame || scene?.openingFrame || scene?.opening || {};
-                            const normalized = typeof openingData === 'object' && !Array.isArray(openingData) ? { ...openingData } : {};
-                            // Initialize all fields with empty strings if they don't exist
-                            const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                            const initialized = {};
-                            allFields.forEach(field => {
-                              initialized[field] = normalized[field] || '';
-                            });
-                            setEditedOpeningFrame(initialized);
-                            setIsEditingOpeningFrame(true);
+                            const next = advancedStyleColors.filter((_, idx) => idx !== i);
+                            setAdvancedStyleColors(next);
+                            updateScriptScene(activeIndex, { colors: next });
                           }}
-                          className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                        >
-                          Edit
-                        </button>
+                          className="w-7 h-7 rounded border border-gray-300"
+                          style={{ background: c }}
+                          title={`Remove ${c}`}
+                        />
+                      ))}
+                      {(!advancedStyleColors || advancedStyleColors.length === 0) && (
+                        <span className="text-sm text-gray-500">-</span>
                       )}
                     </div>
-                  )}
-                </div>
-                {openingFrameAccordionOpen && (
-                  <div className="px-4 pb-4">
-                    {(() => {
-                      const normalizeOpeningData = (data) => {
-                        if (!data) return {};
-                        if (typeof data === 'string') {
-                          try {
-                            const parsed = JSON.parse(data);
-                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-                          } catch (_) {
-                            return {};
-                          }
-                        }
-                        if (Array.isArray(data)) {
-                          const collected = {};
-                          data.forEach((item) => {
-                            if (item && typeof item === 'object') {
-                              Object.entries(item).forEach(([k, v]) => {
-                                if (collected[k] === undefined) collected[k] = v;
-                              });
+                    <div className="flex items-center gap-2 mt-2">
+                      <input
+                        type="text"
+                        placeholder="#000000"
+                        className="flex-1 px-3 py-2 border rounded-lg border-gray-300"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const val = (e.currentTarget.value || '').trim();
+                            if (val) {
+                              const next = Array.from(new Set([...advancedStyleColors, val]));
+                              setAdvancedStyleColors(next);
+                              updateScriptScene(activeIndex, { colors: next });
+                              e.currentTarget.value = '';
                             }
-                          });
-                          return collected;
-                        }
-                        return typeof data === 'object' ? data : {};
-                      };
-                      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                      const currentData = isEditingOpeningFrame ? editedOpeningFrame : normalizeOpeningData(scene?.opening_frame || scene?.openingFrame || scene?.opening);
-                      const formatTitle = (key) => {
-                        const cleaned = key.replace(/_/g, ' ').trim();
-                        if (!cleaned) return '';
-                        return cleaned
-                          .split(' ')
-                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                          .join(' ');
-                      };
-                      const formatValue = (val) => {
-                        if (val == null) return '';
-                        if (typeof val === 'object') return JSON.stringify(val, null, 2);
-                        return String(val);
-                      };
-                      // Always show all fields for manual input, even if empty
-                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                      
-                      return (
-                        <>
-                          <div className="grid grid-cols-1 gap-4">
-                            {allFields.map((key) => {
-                              const title = formatTitle(key);
-                              const currentValue = isEditingOpeningFrame 
-                                ? (editedOpeningFrame[key] || '') 
-                                : (currentData[key] || '');
-                              return (
-                                <div
-                                  key={key}
-                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
-                                >
-                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
-                                    {title}
-                                  </h5>
-                                  {isEditingOpeningFrame ? (
-                                    <textarea
-                                      value={currentValue}
-                                      onChange={(e) => {
-                                        const newData = { ...editedOpeningFrame };
-                                        newData[key] = e.target.value;
-                                        setEditedOpeningFrame(newData);
-                                      }}
-                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
-                                      rows={3}
-                                      disabled={isSavingFrameData}
-                                      placeholder={`Enter ${title.toLowerCase()}...`}
-                                    />
-                                  ) : (
-                                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
-                                      {currentValue || <span className="text-gray-400 italic">No {title.toLowerCase()} entered</span>}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      );
-                    })()}
+                          }
+                        }}
+                      />
+                      <span className="text-xs text-gray-500">Press Enter to add</span>
+                    </div>
                   </div>
-                )}
-              </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Font Size</label>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.max(8, advancedStyleFontSize - 1);
+                          setAdvancedStyleFontSize(next);
+                          updateScriptScene(activeIndex, { font_size: next });
+                        }}
+                        className="h-9 w-9 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-lg font-semibold"
+                      >
+                        −
+                      </button>
+                      <input
+                        type="range"
+                        min={8}
+                        max={72}
+                        step={1}
+                        value={advancedStyleFontSize}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          setAdvancedStyleFontSize(next);
+                          updateScriptScene(activeIndex, { font_size: next });
+                        }}
+                        className="flex-1"
+                      />
+                      <input
+                        type="number"
+                        min={8}
+                        max={150}
+                        step={1}
+                        value={advancedStyleFontSize}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          if (Number.isFinite(next)) {
+                            setAdvancedStyleFontSize(next);
+                            updateScriptScene(activeIndex, { font_size: next });
+                          }
+                        }}
+                        className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                      />
+                      <span className="inline-block text-sm text-gray-700">px</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.min(150, advancedStyleFontSize + 1);
+                          setAdvancedStyleFontSize(next);
+                          updateScriptScene(activeIndex, { font_size: next });
+                        }}
+                        className="h-9 w-9 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-lg font-semibold"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Font Style</label>
+                    <select
+                      value={advancedStyleFontStyle}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAdvancedStyleFontStyle(val);
+                        updateScriptScene(activeIndex, { font_style: val });
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent border-gray-300"
+                    >
+                      <option value="">Select font</option>
+                      {['Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins', 'Source Sans Pro', 'Inter', 'Nunito', 'Raleway', 'Playfair Display', 'Merriweather', 'PT Sans', 'Oswald', 'Rubik', 'Work Sans', 'Fira Sans', 'Cabin', 'Karla', 'Libre Baskerville', 'Josefin Sans'].map((f) => (
+                        <option key={f} value={f} style={{ fontFamily: f }}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={advancedStyleFontStyle}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAdvancedStyleFontStyle(val);
+                        updateScriptScene(activeIndex, { font_style: val });
+                      }}
+                      className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                      placeholder="Enter custom font name"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Font Size</p>
+                    <p className="mt-1 text-sm text-gray-800">{advancedStyleFontSize ? `${advancedStyleFontSize}px` : '-'}</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Font Style</p>
+                    <p className="mt-1 text-sm text-gray-800 break-words">{advancedStyleFontStyle || '-'}</p>
+                  </div>
+                </div>
 
-              {/* Closing Frame Accordion */}
-              <div className="bg-white rounded-lg border border-gray-200">
-                <div className="flex items-center justify-between p-4">
-                  <button
-                    type="button"
-                    onClick={() => setClosingFrameAccordionOpen(!closingFrameAccordionOpen)}
-                    className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
-                  >
-                    <span className="text-sm font-semibold text-gray-800">Closing Frame</span>
-                    <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${closingFrameAccordionOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  {closingFrameAccordionOpen && (
-                    <div className="ml-2 flex items-center gap-2">
-                      {isEditingClosingFrame ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsEditingClosingFrame(false);
-                              setEditedClosingFrame({});
-                            }}
-                            disabled={isSavingFrameData}
-                            className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                await saveFrameData('closing_frame', editedClosingFrame);
-                                setIsEditingClosingFrame(false);
-                              } catch (e) {
-                                console.error('Failed to save closing frame:', e);
-                              }
-                            }}
-                            disabled={isSavingFrameData}
-                            className="px-3 py-1.5 rounded-md bg-[#13008B] text-white text-xs font-medium hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                          >
-                            {isSavingFrameData ? (
-                              <>
-                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                <span>Saving...</span>
-                              </>
-                            ) : (
-                              'Save'
-                            )}
-                          </button>
-                        </>
-                      ) : (
+                {/* Animation Description - Inside Advanced Style Options for Infographic and Financial scenes */}
+                {(() => {
+                  const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+                  if (!scene) return null;
+                  const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
+                  const isSora = sceneModelUpper === 'SORA';
+                  const isPlotly = sceneModelUpper === 'PLOTLY';
+                  const sceneType = scenes[activeIndex]?.type || '';
+                  if (!(isSora || isPlotly || sceneType === 'Infographic' || sceneType === 'Financial')) return null;
+                  
+                  const animationDesc = scene?.animation_desc || scene?.animationDesc || {};
+                  
+                  return (
+                    <div className="bg-white rounded-lg border border-gray-200 mt-4">
+                      <div className="flex items-center justify-between p-4">
                         <button
                           type="button"
-                          onClick={() => {
-                            const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                            const closingData = scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame || {};
-                            const normalized = typeof closingData === 'object' && !Array.isArray(closingData) ? { ...closingData } : {};
-                            // Initialize all fields with empty strings if they don't exist
-                            const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                            const initialized = {};
-                            allFields.forEach(field => {
-                              initialized[field] = normalized[field] || '';
-                            });
-                            setEditedClosingFrame(initialized);
-                            setIsEditingClosingFrame(true);
-                          }}
-                          className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                          onClick={() => setAnimationDescAccordionOpen(!animationDescAccordionOpen)}
+                          className="flex-1 flex items-center justify-between text-left hover:bg-gray-50 transition-colors -ml-4 -mr-4 px-4"
                         >
-                          Edit
+                          <span className="text-sm font-semibold text-gray-800">Animation description</span>
+                          <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${animationDescAccordionOpen ? 'rotate-180' : ''}`} />
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => enhanceField('animation_desc')}
+                          disabled={enhancingFields['animation_desc']}
+                          className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors ml-2'
+                          title='Enhance with AI'
+                        >
+                          {enhancingFields['animation_desc'] ? (
+                            <>
+                              <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                              <span>AI...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className='w-3 h-3' />
+                              <span>AI</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      {animationDescAccordionOpen && (
+                        <div className="px-4 pb-4">
+                          {(() => {
+                            const normalizeAnimationDescData = (data) => {
+                              if (!data) return {};
+                              if (typeof data === 'string') {
+                                try {
+                                  const parsed = JSON.parse(data);
+                                  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+                                } catch (_) {
+                                  return {};
+                                }
+                              }
+                              if (Array.isArray(data)) {
+                                const collected = {};
+                                data.forEach((item) => {
+                                  if (item && typeof item === 'object') {
+                                    Object.entries(item).forEach(([k, v]) => {
+                                      if (collected[k] === undefined) collected[k] = v;
+                                    });
+                                  }
+                                });
+                                return collected;
+                              }
+                              return typeof data === 'object' ? data : {};
+                            };
+                            const currentData = normalizeAnimationDescData(animationDesc);
+                            const formatTitle = (key) => {
+                              const cleaned = key.replace(/_/g, ' ').trim();
+                              if (!cleaned) return '';
+                              return cleaned
+                                .split(' ')
+                                .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                                .join(' ');
+                            };
+                            const priorityOrder = ['lighting', 'style_mood', 'transition_type', 'scene_description', 'subject_description', 'action_specification', 'content_modification', 'camera_specifications', 'geometric_preservation'];
+                            
+                            // Ensure all priority fields exist
+                            const allFields = priorityOrder;
+                            const finalData = { ...currentData };
+                            allFields.forEach(field => {
+                              if (!(field in finalData)) {
+                                finalData[field] = '';
+                              }
+                            });
+                            
+                            return allFields.length > 0 ? (
+                              <>
+                                <div className="grid grid-cols-1 gap-4">
+                                  {allFields.map((key) => {
+                                    const title = formatTitle(key);
+                                    const currentValue = finalData[key] || '';
+                                    return (
+                                      <div
+                                        key={key}
+                                        className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                      >
+                                        <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                          {title}
+                                        </h5>
+                                        <textarea
+                                          value={currentValue}
+                                          onChange={(e) => {
+                                            const newData = { ...editedAnimationDesc };
+                                            newData[key] = e.target.value;
+                                            setEditedAnimationDesc(newData);
+                                            // Update local script state immediately
+                                            updateScriptScene(activeIndex, { animation_desc: newData });
+                                          }}
+                                          onBlur={async (e) => {
+                                            // Auto-save to backend on blur
+                                            try {
+                                              const latestData = { ...editedAnimationDesc };
+                                              latestData[key] = e.target.value;
+                                              setEditedAnimationDesc(latestData);
+                                              await saveFrameData('animation_desc', latestData);
+                                            } catch (err) {
+                                              console.error('Failed to auto-save animation description:', err);
+                                            }
+                                          }}
+                                          className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                          rows={3}
+                                          disabled={isSavingFrameData}
+                                          placeholder={`Enter ${title.toLowerCase()}...`}
+                                        />
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-500">
+                                No animation description data available
+                              </div>
+                            );
+                          })()}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
-                {closingFrameAccordionOpen && (
-                  <div className="px-4 pb-4">
-                    {(() => {
-                      const normalizeClosingFrameData = (data) => {
-                        if (!data) return {};
-                        if (typeof data === 'string') {
-                          try {
-                            const parsed = JSON.parse(data);
-                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-                          } catch (_) {
-                            return {};
-                          }
-                        }
-                        if (Array.isArray(data)) {
-                          const collected = {};
-                          data.forEach((item) => {
-                            if (item && typeof item === 'object') {
-                              Object.entries(item).forEach(([k, v]) => {
-                                if (collected[k] === undefined) collected[k] = v;
-                              });
-                            }
-                          });
-                          return collected;
-                        }
-                        return typeof data === 'object' ? data : {};
-                      };
-                      const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                      const currentData = isEditingClosingFrame ? editedClosingFrame : normalizeClosingFrameData(scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame);
-                      const formatTitle = (key) => {
-                        const cleaned = key.replace(/_/g, ' ').trim();
-                        if (!cleaned) return '';
-                        return cleaned
-                          .split(' ')
-                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                          .join(' ');
-                      };
-                      const formatValue = (val) => {
-                        if (val == null) return '';
-                        if (typeof val === 'object') return JSON.stringify(val, null, 2);
-                        return String(val);
-                      };
-                      // Always show all fields for manual input, even if empty
-                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                      
-                      return (
-                        <>
-                          <div className="grid grid-cols-1 gap-4">
-                            {allFields.map((key) => {
-                              const title = formatTitle(key);
-                              const currentValue = isEditingClosingFrame 
-                                ? (editedClosingFrame[key] || '') 
-                                : (currentData[key] || '');
-                              return (
-                                <div
-                                  key={key}
-                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
-                                >
-                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
-                                    {title}
-                                  </h5>
-                                  {isEditingClosingFrame ? (
-                                    <textarea
-                                      value={currentValue}
-                                      onChange={(e) => {
-                                        const newData = { ...editedClosingFrame };
-                                        newData[key] = e.target.value;
-                                        setEditedClosingFrame(newData);
-                                      }}
-                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
-                                      rows={3}
-                                      disabled={isSavingFrameData}
-                                      placeholder={`Enter ${title.toLowerCase()}...`}
-                                    />
-                                  ) : (
-                                    <div className="px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-600 whitespace-pre-wrap min-h-[60px]">
-                                      {currentValue || <span className="text-gray-400 italic">No {title.toLowerCase()} entered</span>}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
       </div>
 
       <div className='flex justify-end gap-3 mt-8'>
@@ -4210,7 +5695,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
               </button>
             </div>
             <div className='mb-4'>
-              <p className='text-sm text-gray-700 mb-3'>Please complete all required fields before adding a new scene:</p>
+              <p className='text-sm text-gray-700 mb-3'>Please complete all required fields:</p>
               <div className='bg-red-50 border border-red-200 rounded-lg p-4 max-h-64 overflow-y-auto'>
                 <ul className='space-y-2'>
                   {validationErrors.map((error, index) => (
@@ -4391,14 +5876,6 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                     const { user, sessionForBody } = await getSessionSnapshot();
                     const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
                     const sceneNumber = scene?.scene_number ?? (activeIndex + 1);
-                    const model = String(scene?.model || '').toUpperCase();
-                    let reqBody = { user, session: sessionForBody, scene_number: sceneNumber };
-                    if (model === 'SORA') reqBody = { ...reqBody, image_links: [selectedAssetUrl] };
-                    if (model === 'PLOTLY') reqBody = { ...reqBody, chart_type: scene?.chart_type || scene?.chartType || '' };
-                    if (model === 'VEO3') reqBody = { ...reqBody, presenter_options: {} };
-                    await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reqBody)
-                    });
                     const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0,2) : [];
                     const next = [selectedAssetUrl, ...imgs].slice(0,3);
                     updateScriptScene(activeIndex, { ref_image: next });
@@ -4606,6 +6083,39 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                   {isUploadingAvatarFiles ? 'Uploading...' : 'Upload'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
+            <h3 className="text-lg font-semibold text-[#13008B]">Delete This Scene?</h3>
+            <p className="mt-2 text-sm text-gray-700">
+              Are you sure you want to delete Scene {Math.min(activeIndex + 1, Array.isArray(script) ? script.length : (activeIndex + 1))}? This action cannot be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { if (!isDeletingScene) setShowDeleteConfirm(false); }}
+                disabled={isDeletingScene}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${isDeletingScene ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (isDeletingScene) return;
+                  await handleDeleteScene();
+                  setShowDeleteConfirm(false);
+                }}
+                disabled={isDeletingScene}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white ${isDeletingScene ? 'bg-red-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+              >
+                {isDeletingScene && (<span className="w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />)}
+                Delete
+              </button>
             </div>
           </div>
         </div>
@@ -4919,11 +6429,18 @@ const    BuildReelWizard = () => {
                 presenter_options: presenterOpts,
                 veo3_prompt_template: r?.veo3_prompt_template ?? '',
                 background_image: Array.isArray(r?.background_image) ? r.background_image : [],
-                opening_frame: r?.opening_frame ?? null,
-                closing_frame: r?.closing_frame ?? null,
-                chart_type: r?.chart_type ?? '',
-                chart_data: r?.chart_data ?? null
-              };
+        opening_frame: r?.opening_frame ?? null,
+        closing_frame: r?.closing_frame ?? null,
+        background_frame: r?.background_frame ?? null,
+        chart_type: r?.chart_type ?? '',
+        chart_data: r?.chart_data ?? null,
+        // Advanced Style Options
+        colors: Array.isArray(r?.colors) ? r.colors : [],
+        font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? 16,
+        font_style: r?.font_style ?? r?.fontStyle ?? '',
+        // Animation Description
+        animation_desc: r?.animation_desc ?? r?.animationDesc ?? null
+      };
               
               // Debug log for first scene (matching Chat.js approach)
               if (i === 0) {
@@ -5023,7 +6540,7 @@ const    BuildReelWizard = () => {
       // Small delay to ensure state update is processed
       await new Promise(resolve => setTimeout(resolve, 0));
       
-      // Validate all scenes have narration (description is optional)
+      // Validate all scenes have narration (description is required for Infographic/Financial)
       const scriptArray = Array.isArray(script) ? script : [];
       console.log('[BuildReel] Validating script with', scriptArray.length, 'scenes');
       console.log('[BuildReel] Script structure sample:', scriptArray[0] ? {
@@ -5032,6 +6549,7 @@ const    BuildReelWizard = () => {
         narration: scriptArray[0].narration,
         desc: scriptArray[0].desc,
         description: scriptArray[0].description,
+        model: scriptArray[0].model,
         hasNarration: !!scriptArray[0].narration,
         hasDesc: !!(scriptArray[0].desc || scriptArray[0].description)
       } : 'No scenes');
@@ -5042,10 +6560,19 @@ const    BuildReelWizard = () => {
         const sceneNum = s?.scene_number || (index + 1);
         const sceneTitle = s?.scene_title || `Scene ${sceneNum}`;
         const narration = String(s?.narration || '').trim();
+        const description = String(s?.desc || s?.description || '').trim();
+        const sceneModelUpper = String(s?.model || s?.mode || '').toUpperCase();
+        const isInfographic = sceneModelUpper === 'SORA';
+        const isFinancial = sceneModelUpper === 'PLOTLY';
         
-        // Only validate narration - description is optional
+        // Narration is always required
         if (!narration) {
           validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration is required`);
+        }
+        
+        // Description is required for Infographic and Financial scenes
+        if ((isInfographic || isFinancial) && !description) {
+          validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Description is required for Infographic/Financial scenes`);
         }
       });
       
@@ -5081,7 +6608,8 @@ const    BuildReelWizard = () => {
         }
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
-      const airesponse = Array.isArray(script) ? script : [];
+      // Filter scenes to only include allowed fields (same as saveScenesToServer)
+      const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
       const body = {
         session_id: sessionId,
         current_script: { userquery: uq, airesponse },
@@ -5129,61 +6657,67 @@ const    BuildReelWizard = () => {
       try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
       setImagesJobId(jobId);
 
-      // Poll job status until percent is available, then navigate to images view
+      // Poll job status until status is succeeded, then navigate to images view
       const pollJobStatus = async () => {
-        const maxAttempts = 200; // Maximum polling attempts (200 * 3s = 10 minutes)
-        let attempts = 0;
-        let pollInterval = null;
-        let isPolling = true;
+        const jobsBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1';
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const isSuccess = (status) => {
+          const s = String(status || '').toLowerCase();
+          return ['succeeded', 'success', 'completed', 'done', 'finished'].includes(s);
+        };
 
-        const poll = async () => {
-          if (!isPolling) return; // Stop if polling was cancelled
-          
+        const maxAttempts = 120; // ~10 minutes at 5s interval
+        const intervalMs = 5000;
+        let lastAttempt = 0;
+        
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          lastAttempt = attempt;
           try {
-            attempts++;
-            if (attempts > maxAttempts) {
-              isPolling = false;
-              if (pollInterval) clearInterval(pollInterval);
-              try { toast.error('Job status polling timeout'); } catch(_) { alert('Job status polling timeout'); }
-              setIsGenerating(false);
-              return;
+            const jobsResp = await fetch(`${jobsBase}/job-status/${encodeURIComponent(jobId)}`, {
+              method: 'GET',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            const jobsText = await jobsResp.text();
+            let jobsData;
+            try { jobsData = JSON.parse(jobsText); } catch (_) { jobsData = jobsText; }
+            console.log(`[BuildReel] Job status polling (attempt ${attempt}):`, jobsData);
+
+            if (!jobsResp.ok) {
+              console.warn(`[BuildReel] job-status endpoint failed: ${jobsResp.status} ${jobsText}`);
+              await sleep(intervalMs);
+              continue; // Continue polling on error
             }
 
-            const statusResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(jobId)}`);
-            const statusText = await statusResp.text();
-            let statusData;
-            try { statusData = JSON.parse(statusText); } catch (_) { statusData = statusText; }
-
-            if (!statusResp.ok) {
-              console.warn(`job-status failed: ${statusResp.status} ${statusText}`);
-              return; // Continue polling on error
+            const status = jobsData?.status || jobsData?.job_status || jobsData?.state;
+            if (status) {
+              try { localStorage.setItem('job_status', status); } catch (_) { /* noop */ }
             }
 
-            // Check if percent is available in the response
-            // Percent can be in progress.percent, percent, or progress_percent
-            const percent = statusData?.progress?.percent ?? statusData?.percent ?? statusData?.progress_percent;
-            const hasPercent = typeof percent === 'number' || (typeof percent === 'string' && percent.trim() !== '');
-
-            if (hasPercent) {
-              // Percent is available, stop polling and navigate to images view
-              isPolling = false;
-              if (pollInterval) clearInterval(pollInterval);
+            if (isSuccess(status)) {
+              console.log('[BuildReel] Job status indicates success. Stopping polling.');
+              try { localStorage.setItem('job_result', JSON.stringify(jobsData)); } catch (_) { /* noop */ }
+              try { localStorage.removeItem('images_generate_pending'); } catch(_) {}
               setShowImagesPopup(false);
               await sendUserSessionData();
               setSubView('images');
               setIsGenerating(false);
+              try { toast.success('Images generated successfully'); } catch(_) {}
+              return; // Exit function on success
             }
-            // If percent is not available, continue polling
-          } catch (error) {
-            console.error('Error polling job status:', error);
-            // Continue polling on error
+          } catch (e) {
+            console.error('[BuildReel] Error polling job status:', e);
           }
-        };
-
-        // Start polling immediately, then every 3 seconds
-        await poll();
-        if (isPolling) {
-          pollInterval = setInterval(poll, 3000);
+          await sleep(intervalMs);
+        }
+        
+        // If we exhausted all attempts without success
+        if (lastAttempt >= maxAttempts) {
+          console.warn('[BuildReel] Job status polling timeout');
+          try { toast.error('Image generation is taking longer than expected. Please check the images list.'); } catch(_) { alert('Image generation is taking longer than expected. Please check the images list.'); }
+          setShowImagesPopup(false);
+          await sendUserSessionData();
+          setSubView('images');
+          setIsGenerating(false);
         }
       };
 
@@ -5306,13 +6840,68 @@ const    BuildReelWizard = () => {
         throw new Error('Missing session_id or token');
       }
       
-      // Step 1: First, call the title API with session_id and user_id
+      // Step 1: Fetch user_data from user-session-data API (same as Chat.js)
+      const sessionReqBody = { user_id: token, session_id: sessionId };
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
+      });
+      if (!sessionResp.ok) {
+        const text = await sessionResp.text();
+        throw new Error(`user-session-data failed: ${sessionResp.status} ${text}`);
+      }
+      const sessionDataResponse = await sessionResp.json();
+      const sd = sessionDataResponse?.session_data || {};
+      
+      // Extract user_data from response (same as Chat.js)
+      let userPayload = undefined;
+      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
+        userPayload = sessionDataResponse.user_data;
+      } else if (sd && typeof sd.user_data === 'object') {
+        userPayload = sd.user_data;
+      } else if (sd && typeof sd.user === 'object') {
+        userPayload = sd.user;
+      } else {
+        throw new Error('user_data missing in user-session-data response');
+      }
+      
+      // Userquery payload from form/localStorage
+      let uq = [];
+      try {
+        if (form && form.userquery && Array.isArray(form.userquery.userquery)) {
+          uq = form.userquery.userquery;
+        } else {
+          const raw = localStorage.getItem('buildreel_userquery');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
+          }
+        }
+      } catch (_) { /* noop */ }
+      if (!Array.isArray(uq)) uq = [];
+
+      // Step 2: First, call create-from-scratch API with user_data from session data
+      const body = {
+        user: userPayload,
+        session_id: sessionId || '',
+        current_script: { userquery: uq },
+        action: 'add',
+        model_type: 'SORA'
+      };
+      const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
+      console.log('[BuildReel] Step 1: Calling create-from-scratch API');
+      const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`create-from-scratch failed: ${resp.status} ${text}`);
+      console.log('[BuildReel] Step 1: create-from-scratch successful');
+      
+      // Step 3: Call title API after create-from-scratch
       try {
         const titleBody = {
           session_id: sessionId,
           user_id: token
         };
-        console.log('[BuildReel] Step 1: Calling title API with:', titleBody);
+        console.log('[BuildReel] Step 2: Calling title API');
         const titleResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5336,12 +6925,12 @@ const    BuildReelWizard = () => {
         // Continue anyway, don't block the flow
       }
       
-      // Step 2: Call the sessions API with user_id
+      // Step 4: Call sessions API after title API
       try {
         const sessionsBody = {
           user_id: token
         };
-        console.log('[BuildReel] Step 2: Calling sessions API with:', sessionsBody);
+        console.log('[BuildReel] Step 3: Calling sessions API');
         const sessionsResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/v1/users/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5364,51 +6953,6 @@ const    BuildReelWizard = () => {
         console.error('[BuildReel] Sessions API error:', sessionsError);
         // Continue anyway, don't block the flow
       }
-      
-      // Userquery payload from form/localStorage
-      let uq = [];
-      try {
-        if (form && form.userquery && Array.isArray(form.userquery.userquery)) {
-          uq = form.userquery.userquery;
-        } else {
-          const raw = localStorage.getItem('buildreel_userquery');
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
-          }
-        }
-      } catch (_) { /* noop */ }
-      if (!Array.isArray(uq)) uq = [];
-
-      // Build user object from localStorage (fallbacks to blanks)
-      let storedUser = {};
-      try { const rawUser = localStorage.getItem('user'); if (rawUser) storedUser = JSON.parse(rawUser) || {}; } catch (_) { /* noop */ }
-      const userPayload = {
-        id: storedUser.id || token || '',
-        email: storedUser.email || '',
-        display_name: storedUser.display_name || storedUser.name || '',
-        created_at: storedUser.created_at || '',
-        avatar_url: storedUser.avatar_url || '',
-        folder_url: storedUser.folder_url || '',
-        brand_identity: storedUser.brand_identity || {},
-        tone_and_voice: storedUser.tone_and_voice || {},
-        look_and_feel: storedUser.look_and_feel || {},
-        templates: Array.isArray(storedUser.templates) ? storedUser.templates : [],
-        voiceover: Array.isArray(storedUser.voiceover) ? storedUser.voiceover : [],
-      };
-
-      const body = {
-        user: userPayload,
-        session_id: sessionId || '',
-        current_script: { userquery: uq },
-        action: 'add',
-        model_type: 'SORA'
-      };
-      const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
-      const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const text = await resp.text();
-      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-      if (!resp.ok) throw new Error(`create-from-scratch failed: ${resp.status} ${text}`);
 
       // Extract scenes array from response; support both old airesponse and new script format
       const aiArr = data?.session_patch?.append_message?.airesponse

@@ -49,12 +49,19 @@ export const VideoOverlayPanel = () => {
     const isInitialMount = useRef(true);
     
     // Fetch all videos from generate-base-video API for All tab
+    // API endpoint: https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/{userId}/generated-base-videos
+    // Expected structure: { "16:9": { "Session Name": { videos: [...], updated_at: "..." } } }
+    // These videos are displayed in the "All" tab when activeTab === "all"
     useEffect(() => {
         const fetchGeneratedBaseVideos = async () => {
             try {
                 const userId = localStorage.getItem('token');
-                if (!userId) return;
+                if (!userId) {
+
+                    return;
+                }
                 
+
                 const response = await fetch(
                     `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(userId)}/generated-base-videos`,
                     {
@@ -70,21 +77,200 @@ export const VideoOverlayPanel = () => {
                 try {
                     data = JSON.parse(text);
                 } catch (parseError) {
-                    console.error('[VideoOverlayPanel] Failed to parse response:', parseError, text);
+
                     data = text;
                 }
-                
-                console.log('[VideoOverlayPanel] API response data:', data);
-                
                 const allGeneratedVideos = [];
                 
-                // Check if the response is in the new flat format: { "videos": [...], "updated_at": "..." }
-                if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.videos)) {
-                    console.log('[VideoOverlayPanel] Detected flat format, videos count:', data.videos.length, 'videos:', data.videos);
+                // PRIORITY 1: Check if the response has base_videos wrapper: base_videos["16:9"]["Session Name"].videos
+                // Structure: { base_videos: { "16:9": { "Session Name": { videos: [...], updated_at: "..." } } } }
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    // Check if response has base_videos key
+                    if (data.base_videos || data.baseVideos) {
+                        const baseVideosData = data.base_videos || data.baseVideos;
+
+                        
+                        // Process base_videos structure: base_videos["16:9"]["Session Name"].videos
+                        Object.keys(baseVideosData).forEach((aspectRatio) => {
+
+                            const sessionsForRatio = baseVideosData[aspectRatio];
+                            
+                            if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                                const sessionNames = Object.keys(sessionsForRatio);
+
+                                
+                                Object.entries(sessionsForRatio).forEach(([sessionName, sessionData]) => {
+                                    let videos = [];
+                                    let updatedAt = null;
+                                    
+                                    // Handle new format: { videos: [...], updated_at: "..." }
+                                    if (sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)) {
+                                        videos = sessionData.videos || sessionData.video || [];
+                                        updatedAt = sessionData.updated_at || sessionData.updatedAt || null;
+
+                                    } 
+                                    // Handle old format: array directly
+                                    else if (Array.isArray(sessionData)) {
+                                        videos = sessionData;
+                                        updatedAt = null;
+                                    }
+                                    
+                                    if (Array.isArray(videos) && videos.length > 0) {
+                                        videos.forEach((videoUrl, idx) => {
+                                            let videoUrlStr = '';
+                                            let videoName = `${sessionName} - Video ${idx + 1}`;
+                                            
+                                            if (typeof videoUrl === 'string' && videoUrl) {
+                                                videoUrlStr = videoUrl;
+                                            } else if (videoUrl && typeof videoUrl === 'object') {
+                                                videoUrlStr = videoUrl.video_url || videoUrl.url || videoUrl.src || videoUrl.video || '';
+                                                videoName = videoUrl.name || videoUrl.title || videoName;
+                                            }
+                                            
+                                            if (videoUrlStr) {
+                                                const videoItem = {
+                                                    id: `generated-video-${aspectRatio}-${sessionName}-${idx}`,
+                                                    type: 'video',
+                                                    width: 1920,
+                                                    height: 1080,
+                                                    thumbnail: videoUrlStr,
+                                                    file: videoUrlStr,
+                                                    src: videoUrlStr,
+                                                    alt: videoName,
+                                                    title: videoName,
+                                                    attribution: {
+                                                        author: 'Generated',
+                                                        source: 'Generated Base Video',
+                                                        license: 'User Content',
+                                                    },
+                                                    _session: true,
+                                                    _generated: true,
+                                                    _sessionVideo: true,
+                                                    _sessionName: sessionName,
+                                                    _aspectRatio: aspectRatio,
+                                                    _source: 'generated-base-videos',
+                                                    _updatedAt: updatedAt,
+                                                };
+                                                allGeneratedVideos.push(videoItem);
+
+                                            } else {
+
+                                            }
+                                        });
+                                    } else {
+
+                                    }
+                                });
+                            } else {
+                            }
+                        });
+                        
+                        // Log results after processing base_videos format
+                        if (allGeneratedVideos.length > 0) {
+
+                        } else {
+
+                        }
+                    }
+                    // PRIORITY 2: Check if aspect ratios are top-level keys (fallback for direct structure)
+                    else {
+                        const topLevelKeys = Object.keys(data);
+                        const hasAspectRatioKeys = topLevelKeys.some(key => key.includes(':'));
+                        
+                        if (hasAspectRatioKeys) {
+                            // Nested format - aspect ratios as top-level keys
+                            // Structure: data[aspectRatio][sessionName].videos
+                            Object.keys(data).forEach((aspectRatio) => {
+
+                                const sessionsForRatio = data[aspectRatio];
+                                
+                                if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
+                                    const sessionNames = Object.keys(sessionsForRatio);
+
+                                    
+                                    Object.entries(sessionsForRatio).forEach(([sessionName, sessionData]) => {
+                                        let videos = [];
+                                        let updatedAt = null;
+                                        
+                                        // Handle new format: { videos: [...], updated_at: "..." }
+                                        if (sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)) {
+                                            videos = sessionData.videos || sessionData.video || [];
+                                            updatedAt = sessionData.updated_at || sessionData.updatedAt || null;
+
+                                        } 
+                                        // Handle old format: array directly
+                                        else if (Array.isArray(sessionData)) {
+                                            videos = sessionData;
+                                            updatedAt = null;
+                                        }
+                                        
+                                        if (Array.isArray(videos) && videos.length > 0) {
+                                            videos.forEach((videoUrl, idx) => {
+                                                let videoUrlStr = '';
+                                                let videoName = `${sessionName} - Video ${idx + 1}`;
+                                                
+                                                if (typeof videoUrl === 'string' && videoUrl) {
+                                                    videoUrlStr = videoUrl;
+                                                } else if (videoUrl && typeof videoUrl === 'object') {
+                                                    videoUrlStr = videoUrl.video_url || videoUrl.url || videoUrl.src || videoUrl.video || '';
+                                                    videoName = videoUrl.name || videoUrl.title || videoName;
+                                                }
+                                                
+                                                if (videoUrlStr) {
+                                                    const videoItem = {
+                                                        id: `generated-video-${aspectRatio}-${sessionName}-${idx}`,
+                                                        type: 'video',
+                                                        width: 1920,
+                                                        height: 1080,
+                                                        thumbnail: videoUrlStr,
+                                                        file: videoUrlStr,
+                                                        src: videoUrlStr,
+                                                        alt: videoName,
+                                                        title: videoName,
+                                                        attribution: {
+                                                            author: 'Generated',
+                                                            source: 'Generated Base Video',
+                                                            license: 'User Content',
+                                                        },
+                                                        _session: true,
+                                                        _generated: true,
+                                                        _sessionVideo: true,
+                                                        _sessionName: sessionName,
+                                                        _aspectRatio: aspectRatio,
+                                                        _source: 'generated-base-videos',
+                                                        _updatedAt: updatedAt,
+                                                    };
+                                                    allGeneratedVideos.push(videoItem);
+
+                                                } else {
+
+                                                }
+                                            });
+                                        } else {
+
+                                        }
+                                    });
+                                } else {
+                                }
+                            });
+                            
+                            // Log results after processing nested format
+                            if (allGeneratedVideos.length > 0) {
+
+                            } else {
+
+                            }
+                        }
+                    }
+                }
+                
+                // PRIORITY 2: Check if the response is in the flat format: { "videos": [...], "updated_at": "..." }
+                if (allGeneratedVideos.length === 0 && data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.videos)) {
+
                     // New flat format - direct videos array
                     const videos = data.videos || [];
                     videos.forEach((videoUrl, idx) => {
-                        console.log('[VideoOverlayPanel] Processing video', idx, videoUrl);
+
                         let videoUrlStr = '';
                         let videoName = `Generated Video ${idx + 1}`;
                         
@@ -119,18 +305,19 @@ export const VideoOverlayPanel = () => {
                                 _source: 'generated-base-videos',
                                 _updatedAt: data.updated_at || null,
                             };
-                            console.log('[VideoOverlayPanel] Added video item:', videoItem);
+
                             allGeneratedVideos.push(videoItem);
                         } else {
-                            console.warn('[VideoOverlayPanel] Skipping video with no URL:', videoUrl);
+
                         }
                     });
-                } else {
-                    // Old nested format - normalize and sort
+                }
+                
+                // PRIORITY 4: Old nested format with wrapper - normalize and sort (fallback)
+                if (allGeneratedVideos.length === 0) {
                     const { normalizeGeneratedBaseVideosResponse } = await import('../../../../../utils/generatedMediaUtils');
                     const normalized = normalizeGeneratedBaseVideosResponse(data);
                     const baseVideosData = normalized.base_videos || {};
-                    
                     // Transform all videos from generate-base-video API (all sessions, all aspect ratios)
                     Object.keys(baseVideosData).forEach((aspectRatio) => {
                         const sessionsForRatio = baseVideosData[aspectRatio];
@@ -179,7 +366,7 @@ export const VideoOverlayPanel = () => {
                     });
                 }
                 
-                console.log('[VideoOverlayPanel] Fetched generated base videos:', allGeneratedVideos.length, 'videos', allGeneratedVideos);
+
                 setGeneratedBaseVideos(allGeneratedVideos);
                 
                 // If no session videos have loaded yet, show generated videos immediately
@@ -187,7 +374,7 @@ export const VideoOverlayPanel = () => {
                     setVideos(allGeneratedVideos);
                 }
             } catch (error) {
-                console.error('Failed to fetch generated base videos:', error);
+
             }
         };
         
@@ -221,18 +408,11 @@ export const VideoOverlayPanel = () => {
                 // For Session Videos tab: only show session videos (handled by MediaOverlayPanel filtering)
                 // Always combine with current generatedBaseVideos (even if empty, it will be updated later)
                 const allVideos = [...sessionVids, ...generatedBaseVideos];
-                console.log('[VideoOverlayPanel] Combined videos:', {
-                    sessionVids: sessionVids.length,
-                    generatedVideos: generatedBaseVideos.length,
-                    total: allVideos.length,
-                    sessionVidsList: sessionVids,
-                    generatedVideosList: generatedBaseVideos
-                });
                 setVideos(allVideos);
                 setSourceResults(results.sourceResults || []);
                 hasLoadedInitialVideos.current = true;
             } catch (error) {
-                console.error('Failed to load session videos:', error);
+
                 setSessionVideos([]);
                 // On error, still show generated base videos for All tab
                 setVideos(generatedBaseVideos);
@@ -251,15 +431,10 @@ export const VideoOverlayPanel = () => {
         if (hasLoadedInitialVideos.current && generatedBaseVideos.length > 0) {
             // Combine with existing session videos
             const allVideos = [...sessionVideos, ...generatedBaseVideos];
-            console.log('[VideoOverlayPanel] Updated videos after generated videos loaded:', {
-                sessionVideos: sessionVideos.length,
-                generatedVideos: generatedBaseVideos.length,
-                total: allVideos.length
-            });
             setVideos(allVideos);
         } else if (!hasLoadedInitialVideos.current && generatedBaseVideos.length > 0) {
             // If generated videos load first, show them immediately
-            console.log('[VideoOverlayPanel] Showing generated videos immediately:', generatedBaseVideos.length);
+
             setVideos(generatedBaseVideos);
         }
     }, [generatedBaseVideos, sessionVideos]);
@@ -291,7 +466,7 @@ export const VideoOverlayPanel = () => {
                     setVideos(allVideos);
                     setSourceResults(results.sourceResults || []);
                 } catch (error) {
-                    console.error('Failed to reload session videos:', error);
+
                     setSessionVideos([]);
                     // On error, still show generated base videos
                     setVideos(generatedBaseVideos);
@@ -344,7 +519,7 @@ export const VideoOverlayPanel = () => {
             setSourceResults(result.sourceResults || []);
         }
         catch (error) {
-            console.error("Error searching videos:", error);
+
             // On error, show generated base videos and session videos if search matches
             if (query.trim()) {
                 const queryLower = query.toLowerCase();
@@ -444,7 +619,7 @@ export const VideoOverlayPanel = () => {
                     mediaSrcDuration = result.durationInSeconds;
                 }
                 catch (error) {
-                    console.warn("Failed to get video duration, using fallback:", error);
+
                 }
                 const canvasDimensions = getAspectRatioDimensions();
                 const assetDimensions = getAssetDimensions(video);
@@ -546,7 +721,7 @@ export const VideoOverlayPanel = () => {
                 setOverlays(finalOverlays);
                 setSelectedOverlayId(overlayWithId.id);
                 
-                console.log('[VideoOverlayPanel] Added overlay with ID:', overlayWithId.id, 'Type:', overlayWithId.type);
+
             }
         }
         finally {
@@ -590,15 +765,8 @@ export const VideoOverlayPanel = () => {
         const sessionVids = videos.filter(v => v._source === 'local-session-videos' && !v._generated);
         const generatedVids = videos.filter(v => v._source === 'generated-base-videos');
         const otherVids = videos.filter(v => v._source !== 'local-session-videos' && v._source !== 'generated-base-videos');
-        console.log('[VideoOverlayPanel] Videos being passed to MediaOverlayPanel:', {
-            total: videos.length,
-            sessionVideos: sessionVids.length,
-            generatedVideos: generatedVids.length,
-            otherVideos: otherVids.length,
-            allVideos: videos
-        });
         return videos;
     }, [videos]);
     
-    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: filteredVideosForDisplay, isLoading: isLoading, isLoadingSessionImages: isLoadingSessionVideos, hasAdaptors: videoAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddClip, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "videos", searchPlaceholder: isReplaceMode ? "Search for replacement video" : "Search videos", showSourceBadge: false, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(VideoDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeVideo: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay, isDurationLoading: isDurationLoading, loadingItemKey: loadingItemKey, sessionImages: sessionVideos }));
+    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: filteredVideosForDisplay, isLoading: isLoading, isLoadingSessionImages: isLoadingSessionVideos, hasAdaptors: videoAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddClip, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "videos", searchPlaceholder: isReplaceMode ? "Search for replacement video" : "Search videos", showSourceBadge: false, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(VideoDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeVideo: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay, isDurationLoading: isDurationLoading, loadingItemKey: loadingItemKey, sessionVideos: sessionVideos }));
 };

@@ -10,7 +10,7 @@ import { Loader2 } from "lucide-react";
  * Provides consistent layout and behavior for all media overlay panels.
  * Handles search/edit mode switching, source tabs, and scrollable content area.
  */
-export const MediaOverlayPanel = ({ searchQuery, onSearchQueryChange, onSearch, items, isLoading, isLoadingSessionImages = false, isDurationLoading = false, loadingItemKey = null, hasAdaptors, sourceResults, onItemClick, getThumbnailUrl, getItemKey, mediaType, searchPlaceholder, showSourceBadge = false, isEditMode, editComponent, isReplaceMode = false, onCancelReplace, enableTimelineDrag = false, sessionImages = [], }) => {
+export const MediaOverlayPanel = ({ searchQuery, onSearchQueryChange, onSearch, items, isLoading, isLoadingSessionImages = false, isDurationLoading = false, loadingItemKey = null, hasAdaptors, sourceResults, onItemClick, getThumbnailUrl, getItemKey, mediaType, searchPlaceholder, showSourceBadge = false, isEditMode, editComponent, isReplaceMode = false, onCancelReplace, enableTimelineDrag = false, sessionImages = [], sessionVideos = [], }) => {
     const [activeTab, setActiveTab] = useState("all");
     // Filter items based on active tab
     // For Session Images/Videos tab: only show session items (exclude generated media with _generated flag)
