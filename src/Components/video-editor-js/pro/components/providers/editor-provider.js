@@ -355,6 +355,18 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                 return; // No audio element found
             }
             
+            // CRITICAL FIX: Always pause duplicate audio elements to prevent echo
+            // This must run EVERY time, not just when first selecting the audio element
+            // This prevents echo when captions are extended or other overlays change
+            audioElements.forEach((otherAudio) => {
+                if (otherAudio !== audio) {
+                    if (!otherAudio.paused) {
+                        otherAudio.pause();
+                        otherAudio.currentTime = 0;
+                    }
+                }
+            });
+            
                 // CRITICAL: If timeline is paused, ALWAYS pause audio (no exceptions)
                 if (!isPlaying) {
                     if (!audio.paused) {

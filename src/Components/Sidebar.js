@@ -351,16 +351,15 @@ const Sidebar = () => {
   const createSessionAndGoBuildReel = async () => {
     try {
       try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
-      const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
-      if (!token) {
-        alert('Please login to continue.');
+      const userToken = localStorage.getItem('token') || user?.id || user?.user_id || '';
+      if (!userToken) {
         navigate('/login');
         return;
       }
-      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: token })
+        body: JSON.stringify({ user_id: userToken })
       });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
@@ -431,7 +430,7 @@ const Sidebar = () => {
                   <span>Generate Reel</span>
                 </button>
                 <button
-                  onClick={() => navigate('/buildreel')}
+                  onClick={createSessionAndGoBuildReel}
                   className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
                 >
                   <FaThLarge className="h-5 w-5" />

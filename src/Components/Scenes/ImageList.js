@@ -8856,50 +8856,6 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                               return (
                                 <div className="space-y-3">
                                   <div>
-                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Lighting</label>
-                                    <input
-                                      type="text"
-                                      value={displayNotes?.lighting || ''}
-                                      onChange={(e) => {
-                                        if (isEditing) {
-                                          updateEditableAnimationDesc('lighting', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            lighting: e.target.value
-                                          });
-                                          if (e.target.value.trim().length > 0) {
-                                            updateSceneOption('transitionPreset', null);
-                                            updateSceneOption('transitionCustom', 'custom');
-                                          }
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Clean minimal lighting, flat graphic style"
-                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Style/Mood</label>
-                                    <input
-                                      type="text"
-                                      value={displayNotes?.style_mood || ''}
-                                      onChange={(e) => {
-                                        if (isEditing) {
-                                          updateEditableAnimationDesc('style_mood', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            style_mood: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Professional presentation mood"
-                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                    />
-                                  </div>
-                                  <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
                                     <textarea
                                       value={displayNotes?.subject_description || ''}
@@ -8957,26 +8913,6 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
-                                    <input
-                                      type="text"
-                                      value={displayNotes?.transition_type || ''}
-                                      onChange={(e) => {
-                                        if (isEditing) {
-                                          updateEditableAnimationDesc('transition_type', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            transition_type: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Whole-frame instant cut"
-                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                    />
-                                  </div>
-                                  <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
                                     <textarea
                                       value={displayNotes?.content_modification || ''}
@@ -8992,45 +8928,6 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                       }}
                                       disabled={!isEditing}
                                       placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
-                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Camera Specifications</label>
-                                    <input
-                                      type="text"
-                                      value={displayNotes?.camera_specifications || ''}
-                                      onChange={(e) => {
-                                        if (isEditing) {
-                                          updateEditableAnimationDesc('camera_specifications', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            camera_specifications: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Static camera with subtle slow push-in"
-                                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-sm font-medium text-gray-700 mb-1 block">Geometric Preservation</label>
-                                    <textarea
-                                      value={displayNotes?.geometric_preservation || ''}
-                                      onChange={(e) => {
-                                        if (isEditing) {
-                                          updateEditableAnimationDesc('geometric_preservation', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            geometric_preservation: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., All elements locked, frozen, preserved in exact positions"
                                       className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
                                     />
                                   </div>
@@ -10424,8 +10321,8 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                           </div>
                         )}
                         
-                        {/* Transition Advanced Accordion */}
-                        {modelUpper !== 'VEO3' && (
+                        {/* Transition Advanced Accordion - SORA only */}
+                        {modelUpper === 'SORA' && (
                           <div className="border rounded-lg p-4 bg-white">
                           <button
                             type="button"
@@ -10522,6 +10419,301 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                   </div>
                                 )}
                               </div>
+                              
+                              {/* Advanced Options Section */}
+                              {(() => {
+                                // Get animation_desc from the scene data (same pattern as Design Your Own)
+                                const currentRow = rows.find((r) => (r?.scene_number || r?.sceneNumber) === sceneNumber);
+                                
+                                // Try to get animation_desc from imageVersionData structure
+                                let animationDesc = {};
+                                if (currentRow?.imageVersionData) {
+                                  const imageVersionData = currentRow.imageVersionData;
+                                  const versionKey = getLatestVersionKey(imageVersionData);
+                                  const verObj = imageVersionData[versionKey] || {};
+                                  animationDesc = verObj?.animation_desc || {};
+                                }
+                                
+                                // Also check selected object
+                                if (Object.keys(animationDesc).length === 0 && selected?.imageVersionData) {
+                                  const imageVersionData = selected.imageVersionData;
+                                  const versionKey = getLatestVersionKey(imageVersionData);
+                                  const verObj = imageVersionData[versionKey] || {};
+                                  animationDesc = verObj?.animation_desc || {};
+                                }
+                                
+                                // Fallback to row or selected directly
+                                if (Object.keys(animationDesc).length === 0) {
+                                  animationDesc = currentRow?.animation_desc || selected?.animation_desc || {};
+                                }
+                                
+                                // Use animation_desc if available and has content, otherwise use customPreservationNotes
+                                const hasAnimationDesc = animationDesc && typeof animationDesc === 'object' && Object.keys(animationDesc).length > 0;
+                                const currentNotes = hasAnimationDesc ? animationDesc : (sceneOptions.customPreservationNotes || {});
+                                
+                                // Get editing state (using same state management as Design Your Own)
+                                const isEditing = isEditingAnimationDesc[sceneNumber] || false;
+                                const editableData = editableAnimationDesc[sceneNumber] || {};
+                                
+                                // Use editableData when editing, otherwise use currentNotes
+                                const displayNotes = isEditing 
+                                  ? editableData 
+                                  : currentNotes;
+                                
+                                // Update function for editable data
+                                const updateEditableAnimationDesc = (key, value) => {
+                                  setEditableAnimationDesc(prev => ({
+                                    ...prev,
+                                    [sceneNumber]: {
+                                      ...(prev[sceneNumber] || {}),
+                                      [key]: value
+                                    }
+                                  }));
+                                };
+                                
+                                // Start editing function
+                                const startEditingAnimationDesc = () => {
+                                  // Get current animation_desc data
+                                  const currentRow = rows.find((r) => (r?.scene_number || r?.sceneNumber) === sceneNumber);
+                                  let animationDescData = {};
+                                  if (currentRow?.imageVersionData) {
+                                    const imageVersionData = currentRow.imageVersionData;
+                                    const versionKey = getLatestVersionKey(imageVersionData);
+                                    const verObj = imageVersionData[versionKey] || {};
+                                    animationDescData = verObj?.animation_desc || {};
+                                  }
+                                  if (Object.keys(animationDescData).length === 0 && selected?.imageVersionData) {
+                                    const imageVersionData = selected.imageVersionData;
+                                    const versionKey = getLatestVersionKey(imageVersionData);
+                                    const verObj = imageVersionData[versionKey] || {};
+                                    animationDescData = verObj?.animation_desc || {};
+                                  }
+                                  if (Object.keys(animationDescData).length === 0) {
+                                    animationDescData = currentRow?.animation_desc || selected?.animation_desc || sceneOptions.customPreservationNotes || {};
+                                  }
+                                  
+                                  // Initialize editable data with current values
+                                  setEditableAnimationDesc(prev => ({
+                                    ...prev,
+                                    [sceneNumber]: { ...animationDescData }
+                                  }));
+                                  setIsEditingAnimationDesc(prev => ({
+                                    ...prev,
+                                    [sceneNumber]: true
+                                  }));
+                                };
+                                
+                                // Cancel editing function
+                                const cancelEditingAnimationDesc = () => {
+                                  setIsEditingAnimationDesc(prev => {
+                                    const updated = { ...prev };
+                                    delete updated[sceneNumber];
+                                    return updated;
+                                  });
+                                  setEditableAnimationDesc(prev => {
+                                    const updated = { ...prev };
+                                    delete updated[sceneNumber];
+                                    return updated;
+                                  });
+                                };
+                                
+                                // Save editing function
+                                const saveAnimationDesc = async () => {
+                                  setIsSavingAnimationDesc(true);
+                                  try {
+                                    const editableDataToSave = editableAnimationDesc[sceneNumber] || {};
+                                    const sessionId = localStorage.getItem('session_id');
+                                    const userId = localStorage.getItem('token');
+                                    
+                                    if (!sessionId || !sceneNumber || !userId) {
+                                      throw new Error('Missing required information');
+                                    }
+                                    
+                                    // Prepare the request body
+                                    const requestBody = {
+                                      session_id: sessionId,
+                                      scene_number: sceneNumber,
+                                      animation_desc: editableDataToSave
+                                    };
+                                    
+                                    const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/${userId}/scenes/${sceneNumber}/update-scene-field`, {
+                                      method: 'POST',
+                                      headers: {
+                                        'Content-Type': 'application/json',
+                                      },
+                                      body: JSON.stringify(requestBody)
+                                    });
+                                    
+                                    if (!response.ok) {
+                                      const errorText = await response.text();
+                                      throw new Error(`Failed to save: ${response.status} ${errorText}`);
+                                    }
+                                    
+                                    // Exit editing mode
+                                    setIsEditingAnimationDesc(prev => {
+                                      const updated = { ...prev };
+                                      delete updated[sceneNumber];
+                                      return updated;
+                                    });
+                                    
+                                    // Refresh the scene data
+                                    if (refreshLoad) {
+                                      await refreshLoad(sceneNumber);
+                                    }
+                                  } catch (error) {
+                                    console.error('Error saving animation_desc:', error);
+                                    alert('Failed to save changes: ' + (error?.message || 'Unknown error'));
+                                  } finally {
+                                    setIsSavingAnimationDesc(false);
+                                  }
+                                };
+                                
+                                return (
+                                  <div className="mt-4 space-y-3">
+                                    {/* Header with Edit Button */}
+                                    <div className="mb-3 flex items-center justify-between">
+                                      <span className="text-sm font-medium text-gray-700">Advanced Options</span>
+                                      {isEditing ? (
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={cancelEditingAnimationDesc}
+                                            disabled={isSavingAnimationDesc}
+                                            className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={saveAnimationDesc}
+                                            disabled={isSavingAnimationDesc}
+                                            className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-[#0f0069] disabled:opacity-50 disabled:cursor-not-allowed"
+                                          >
+                                            {isSavingAnimationDesc ? 'Saving...' : 'Save'}
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={startEditingAnimationDesc}
+                                          className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 flex items-center gap-1"
+                                        >
+                                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                          </svg>
+                                          Edit
+                                        </button>
+                                      )}
+                                    </div>
+                                    
+                                    <div className="space-y-3">
+                                      <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-1 block">Lighting</label>
+                                        <input
+                                          type="text"
+                                          value={displayNotes?.lighting || ''}
+                                          onChange={(e) => {
+                                            if (isEditing) {
+                                              updateEditableAnimationDesc('lighting', e.target.value);
+                                            } else {
+                                              updateSceneOption('customPreservationNotes', {
+                                                ...sceneOptions.customPreservationNotes,
+                                                lighting: e.target.value
+                                              });
+                                              if (e.target.value.trim().length > 0) {
+                                                updateSceneOption('transitionPreset', null);
+                                                updateSceneOption('transitionCustom', 'custom');
+                                              }
+                                            }
+                                          }}
+                                          disabled={!isEditing}
+                                          placeholder="e.g., Soft studio top-left light"
+                                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-1 block">Style/Mood</label>
+                                        <input
+                                          type="text"
+                                          value={displayNotes?.style_mood || ''}
+                                          onChange={(e) => {
+                                            if (isEditing) {
+                                              updateEditableAnimationDesc('style_mood', e.target.value);
+                                            } else {
+                                              updateSceneOption('customPreservationNotes', {
+                                                ...sceneOptions.customPreservationNotes,
+                                                style_mood: e.target.value
+                                              });
+                                            }
+                                          }}
+                                          disabled={!isEditing}
+                                          placeholder="e.g., Professional presentation mood"
+                                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
+                                        <input
+                                          type="text"
+                                          value={displayNotes?.transition_type || ''}
+                                          onChange={(e) => {
+                                            if (isEditing) {
+                                              updateEditableAnimationDesc('transition_type', e.target.value);
+                                            } else {
+                                              updateSceneOption('customPreservationNotes', {
+                                                ...sceneOptions.customPreservationNotes,
+                                                transition_type: e.target.value
+                                              });
+                                            }
+                                          }}
+                                          disabled={!isEditing}
+                                          placeholder="e.g., Whole-frame instant cut"
+                                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-1 block">Geometric Preservation</label>
+                                        <textarea
+                                          value={displayNotes?.geometric_preservation || ''}
+                                          onChange={(e) => {
+                                            if (isEditing) {
+                                              updateEditableAnimationDesc('geometric_preservation', e.target.value);
+                                            } else {
+                                              updateSceneOption('customPreservationNotes', {
+                                                ...sceneOptions.customPreservationNotes,
+                                                geometric_preservation: e.target.value
+                                              });
+                                            }
+                                          }}
+                                          disabled={!isEditing}
+                                          placeholder="e.g., All elements locked, frozen, preserved in exact positions"
+                                          className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-sm font-medium text-gray-700 mb-1 block">Camera Specifications</label>
+                                        <input
+                                          type="text"
+                                          value={displayNotes?.camera_specifications || ''}
+                                          onChange={(e) => {
+                                            if (isEditing) {
+                                              updateEditableAnimationDesc('camera_specifications', e.target.value);
+                                            } else {
+                                              updateSceneOption('customPreservationNotes', {
+                                                ...sceneOptions.customPreservationNotes,
+                                                camera_specifications: e.target.value
+                                              });
+                                            }
+                                          }}
+                                          disabled={!isEditing}
+                                          placeholder="e.g., Static camera with subtle slow push-in"
+                                          className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
