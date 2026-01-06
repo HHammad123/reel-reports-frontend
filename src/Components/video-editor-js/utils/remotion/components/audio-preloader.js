@@ -184,13 +184,6 @@ export const AudioPreloader = ({ overlays = [], baseUrl }) => {
             
             const handleCanPlay = () => {
                 // Ensure audio is buffered enough for smooth playback
-                if (audio.buffered.length > 0) {
-                    const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
-                    // Log buffering status for debugging
-                    if (bufferedEnd > 0) {
-                        console.log(`[AudioPreloader] Audio buffered: ${bufferedEnd.toFixed(2)}s / ${audio.duration.toFixed(2)}s`, finalAudioSrc.substring(0, 60));
-                    }
-                }
             };
             
             audio.addEventListener('error', handleError);

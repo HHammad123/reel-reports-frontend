@@ -355,18 +355,6 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                 return; // No audio element found
             }
             
-            // CRITICAL FIX: Always pause duplicate audio elements to prevent echo
-            // This must run EVERY time, not just when first selecting the audio element
-            // This prevents echo when captions are extended or other overlays change
-            audioElements.forEach((otherAudio) => {
-                if (otherAudio !== audio) {
-                    if (!otherAudio.paused) {
-                        otherAudio.pause();
-                        otherAudio.currentTime = 0;
-                    }
-                }
-            });
-            
                 // CRITICAL: If timeline is paused, ALWAYS pause audio (no exceptions)
                 if (!isPlaying) {
                     if (!audio.paused) {
@@ -431,8 +419,8 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                             }
                     } else if (!audio.paused) {
                             // Audio is already playing - let Remotion's Html5Audio handle sync automatically
-                            // Only check volume/mute state, don't manually sync currentTime unless drift is very large
-                            // This prevents interference with Remotion's built-in sync mechanism
+                            // Only check volume/mute state, don't manually sync currentTime
+                            // This prevents interference with Remotion's built-in sync mechanism and prevents glitches
                             
                             // Ensure volume and mute are correct
                             const targetVolume = overlay.styles?.volume || 1;
@@ -443,18 +431,9 @@ initialRows = 5, maxRows = 8, zoomConstraints = {
                                 audio.muted = false;
                             }
                             
-                            // OPTIMIZED: Only manually sync if drift is > 1.0 seconds (very large drift)
-                            // Increased threshold to reduce sync frequency and improve performance
-                            // Remotion's Html5Audio handles normal sync, we only correct major issues
-                        const framesIntoAudio = currentFrame - audioStartFrame;
-                        const secondsIntoAudio = framesIntoAudio / fps;
-                        const targetTime = Math.max(0, secondsIntoAudio);
-                            const drift = Math.abs(audio.currentTime - targetTime);
-                        
-                            // Only correct if drift is very large (1.0s, increased from 0.5s) - reduces sync operations
-                            if (drift > 1.0) {
-                            audio.currentTime = targetTime;
-                        }
+                            // CRITICAL: Do NOT manually sync currentTime when audio is already playing
+                            // Remotion's Html5Audio handles sync automatically, and manual sync causes glitches
+                            // Only allow Remotion to manage playback timing
                     }
                     } else if (isPlaying && !isWithinAudioRange) {
                         // Audio is outside its range, pause it

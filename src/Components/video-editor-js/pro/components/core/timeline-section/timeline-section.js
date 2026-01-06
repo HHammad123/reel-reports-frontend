@@ -118,27 +118,6 @@ export const TimelineSection = () => {
         // Find newly added overlays
         const newOverlays = overlays.filter(o => !prevIds.has(o.id));
         
-        // 🆕 LOG: Track new overlay layers
-        if (newOverlays.length > 0) {
-            console.log('🆕 [TIMELINE-SECTION] NEW OVERLAY LAYERS DETECTED:', {
-                totalNewOverlays: newOverlays.length,
-                newOverlayDetails: newOverlays.map(o => ({
-                    id: o.id,
-                    type: o.type,
-                    typeString: String(o.type),
-                    from: o.from,
-                    durationInFrames: o.durationInFrames,
-                    row: o.row,
-                    content: o.content || o.text || 'N/A',
-                    src: o.src || 'N/A',
-                    isInitialLoad: prevIds.size === 0
-                })),
-                previousOverlayCount: prevIds.size,
-                currentOverlayCount: currentIds.size,
-                allOverlayIds: Array.from(currentIds)
-            });
-        }
-        
         // Only scroll when items are added (not on initial load)
         if (newOverlays.length > 0 && prevIds.size > 0) {
             // Check if any of the new items are audio/sound type
@@ -171,18 +150,8 @@ export const TimelineSection = () => {
     React.useEffect(() => {
         const isUpdating = isUpdatingFromTimelineRef.current;
         if (!isUpdating) {
-            // 🆕 LOG: Track overlay changes
-            const overlayCountChanged = overlays.length !== lastProcessedOverlaysRef.current.length;
-            if (overlayCountChanged) {
-                console.log('🔄 [TIMELINE-SECTION] Overlay count changed:', {
-                    previousCount: lastProcessedOverlaysRef.current.length,
-                    currentCount: overlays.length,
-                    difference: overlays.length - lastProcessedOverlaysRef.current.length,
-                    isUpdating: isUpdating
-                });
-            }
-            
             // Only update if overlays have actually changed (deep comparison of key properties)
+            const overlayCountChanged = overlays.length !== lastProcessedOverlaysRef.current.length;
             const hasChanged = overlayCountChanged ||
                 overlays.some((overlay, index) => {
                     const lastOverlay = lastProcessedOverlaysRef.current[index];
@@ -265,33 +234,8 @@ export const TimelineSection = () => {
                     return false;
                 });
             if (hasChanged) {
-                // 🆕 LOG: Track when timeline tracks are updated
-                console.log('🔄 [TIMELINE-SECTION] Updating timeline tracks:', {
-                    overlayCount: overlays.length,
-                    hasChanged: hasChanged,
-                    isUpdating: isUpdating,
-                    overlayIds: overlays.map(o => ({ id: o.id, type: o.type, from: o.from })),
-                    previousOverlayCount: lastProcessedOverlaysRef.current.length
-                });
-                
                 lastProcessedOverlaysRef.current = [...overlays];
                 const newTracks = transformOverlaysToTracks(overlays);
-                
-                console.log('📋 [TIMELINE-SECTION] Transformed to tracks:', {
-                    trackCount: newTracks.length,
-                    tracks: newTracks.map((track, idx) => ({
-                        trackIndex: idx,
-                        trackId: track.id,
-                        itemCount: track.items.length,
-                        items: track.items.map(item => ({
-                            id: item.id,
-                            type: item.type,
-                            start: item.start,
-                            end: item.end
-                        }))
-                    }))
-                });
-                
                 setTimelineTracks(newTracks);
             }
         }

@@ -89,16 +89,8 @@ duration // in seconds
             catch (error) {
                 // Don't log AbortError as it's expected when component unmounts or dependencies change
                 if (error instanceof Error && error.name === 'AbortError') {
-                    console.debug('Waveform processing aborted (expected behavior):', { src, startTime, duration });
                     return;
                 }
-                console.error('Error processing audio waveform:', {
-                    error: error instanceof Error ? error.message : error,
-                    src,
-                    startTime,
-                    duration,
-                    errorType: error instanceof Error ? error.name : typeof error
-                });
                 if (!abortController.signal.aborted) {
                     setWaveformData(null);
                 }
@@ -122,5 +114,4 @@ duration // in seconds
 // Utility function to clear any cached data if needed
 export function clearWaveformCache() {
     waveformCache.clear();
-    console.debug('Waveform cache cleared');
 }

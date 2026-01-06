@@ -6197,11 +6197,17 @@ const    BuildReelWizard = () => {
     }
   }, [subView]);
 
+  // Removed auto-set subView to 'images' functionality to prevent infinite loop
+  // The subView is now controlled by Sidebar navigation and user actions only
+
+  // Track if we've already restored session to prevent multiple restores
+  const hasRestoredSessionRef = useRef(false);
+  
   // Restore session data and scenes when step > 1 on mount
   useEffect(() => {
     const restoreSession = async () => {
       // Only restore if we're on step 2 or 3 and haven't restored yet
-      if (step === 1 || isRestoringSession) return;
+      if (step === 1 || isRestoringSession || hasRestoredSessionRef.current) return;
       
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
@@ -6305,74 +6311,6 @@ const    BuildReelWizard = () => {
             composition: airesponse[0]?.composition,
             focus_and_lens: airesponse[0]?.focus_and_lens
           });
-        }
-        
-        // If scene description fields are not populated, retry fetching session data
-        if (airesponse.length > 0 && !hasSceneDescriptionFields) {
-          console.log('[BuildReel] Scene description fields not found, retrying session data fetch...');
-          let retryCount = 0;
-          const maxRetries = 5;
-          const retryDelay = 2000; // 2 seconds
-          
-          const retryFetch = async () => {
-            if (retryCount >= maxRetries) {
-              console.log('[BuildReel] Max retries reached, proceeding with available data');
-              return;
-            }
-            
-            retryCount++;
-            console.log(`[BuildReel] Retry attempt ${retryCount}/${maxRetries}`);
-            
-            await new Promise(resolve => setTimeout(resolve, retryDelay));
-            
-            try {
-              const retryResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: token, session_id: sessionId })
-              });
-              const retryText = await retryResp.text();
-              let retryData;
-              try {
-                retryData = JSON.parse(retryText);
-              } catch (_) {
-                retryData = retryText;
-              }
-              
-              if (retryResp.ok && retryData) {
-                const retrySd = retryData?.session_data || retryData?.session || {};
-                const retryScripts = Array.isArray(retrySd?.scripts) ? retrySd.scripts : [];
-                const retryCurrentScript = retryScripts[0] || null;
-                const retryAiresponse = Array.isArray(retryCurrentScript?.airesponse) ? retryCurrentScript.airesponse : [];
-                
-                // Check if we now have scene description fields
-                const retryHasFields = retryAiresponse.length > 0 && retryAiresponse.some(scene => {
-                  return scene?.subject || scene?.background || scene?.action || scene?.styleCard || 
-                         scene?.cameraCard || scene?.ambiance || scene?.composition || scene?.focus_and_lens;
-                });
-                
-                if (retryHasFields && retryAiresponse.length > 0) {
-                  console.log('[BuildReel] Scene description fields found on retry!');
-                  // Update with the new data
-                  airesponse = retryAiresponse;
-                  currentScript = retryCurrentScript;
-                } else {
-                  // Continue retrying
-                  await retryFetch();
-                }
-              } else {
-                // Continue retrying
-                await retryFetch();
-              }
-            } catch (error) {
-              console.error('[BuildReel] Retry fetch error:', error);
-              // Continue retrying
-              await retryFetch();
-            }
-          };
-          
-          // Start retry process (don't await, let it run in background)
-          retryFetch().catch(err => console.error('[BuildReel] Retry process error:', err));
         }
         
         // Restore userquery from session or localStorage
@@ -6522,10 +6460,41 @@ const    BuildReelWizard = () => {
         } catch (_) {
           // Ignore
         }
+
+        // Call video-type/update API after restoring session
+        try {
+          const updateVideoTypeBody = {
+            user_id: token,
+            session_id: sessionId,
+            videoType: 'custom'
+          };
+          console.log('[BuildReel] Calling video-type/update API after session restore');
+          const videoTypeResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/video-type/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updateVideoTypeBody)
+          });
+          const videoTypeText = await videoTypeResp.text();
+          let videoTypeData;
+          try {
+            videoTypeData = JSON.parse(videoTypeText);
+          } catch (_) {
+            videoTypeData = videoTypeText;
+          }
+          if (!videoTypeResp.ok) {
+            console.warn('[BuildReel] video-type/update API call failed:', videoTypeText);
+          } else {
+            console.log('[BuildReel] video-type/update API response:', videoTypeData);
+          }
+        } catch (videoTypeError) {
+          console.error('[BuildReel] video-type/update API error:', videoTypeError);
+          // Continue anyway, don't block the flow
+        }
       } catch (error) {
         console.error('Failed to restore session:', error);
       } finally {
         setIsRestoringSession(false);
+        hasRestoredSessionRef.current = true;
       }
     };
 
@@ -6840,7 +6809,7 @@ const    BuildReelWizard = () => {
         throw new Error('Missing session_id or token');
       }
       
-      // Step 1: Fetch user_data from user-session-data API (same as Chat.js)
+      // Step 1: Fetch user_data from user-session-data API
       const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
@@ -6852,7 +6821,7 @@ const    BuildReelWizard = () => {
       const sessionDataResponse = await sessionResp.json();
       const sd = sessionDataResponse?.session_data || {};
       
-      // Extract user_data from response (same as Chat.js)
+      // Extract user_data from response (use as-is, don't change anything)
       let userPayload = undefined;
       if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
         userPayload = sessionDataResponse.user_data;
@@ -6879,7 +6848,7 @@ const    BuildReelWizard = () => {
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
 
-      // Step 2: First, call create-from-scratch API with user_data from session data
+      // Step 2: Call create-from-scratch API first (this creates the title automatically in Swagger)
       const body = {
         user: userPayload,
         session_id: sessionId || '',
@@ -6888,20 +6857,51 @@ const    BuildReelWizard = () => {
         model_type: 'SORA'
       };
       const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
-      console.log('[BuildReel] Step 1: Calling create-from-scratch API');
+      console.log('[BuildReel] Step 2: Calling create-from-scratch API');
+      console.log('[BuildReel] create-from-scratch request body:', JSON.stringify(body, null, 2));
       const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const text = await resp.text();
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
       if (!resp.ok) throw new Error(`create-from-scratch failed: ${resp.status} ${text}`);
-      console.log('[BuildReel] Step 1: create-from-scratch successful');
+      console.log('[BuildReel] Step 2: create-from-scratch successful');
       
-      // Step 3: Call title API after create-from-scratch
+      // Step 3: Call video-type/update API after create-from-scratch
+      try {
+        const updateVideoTypeBody = {
+          user_id: token,
+          session_id: sessionId,
+          videoType: 'custom'
+        };
+        console.log('[BuildReel] Step 3: Calling video-type/update API');
+        const videoTypeResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/video-type/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updateVideoTypeBody)
+        });
+        const videoTypeText = await videoTypeResp.text();
+        let videoTypeData;
+        try {
+          videoTypeData = JSON.parse(videoTypeText);
+        } catch (_) {
+          videoTypeData = videoTypeText;
+        }
+        if (!videoTypeResp.ok) {
+          console.warn('[BuildReel] video-type/update API call failed:', videoTypeText);
+        } else {
+          console.log('[BuildReel] video-type/update API response:', videoTypeData);
+        }
+      } catch (videoTypeError) {
+        console.error('[BuildReel] video-type/update API error:', videoTypeError);
+        // Continue anyway, don't block the flow
+      }
+      
+      // Step 4: Call title API after video-type update to refresh sidebar
       try {
         const titleBody = {
           session_id: sessionId,
           user_id: token
         };
-        console.log('[BuildReel] Step 2: Calling title API');
+        console.log('[BuildReel] Step 4: Calling title API to refresh sidebar');
         const titleResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/title', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -6919,38 +6919,17 @@ const    BuildReelWizard = () => {
           // Continue anyway, don't block the flow
         } else {
           console.log('[BuildReel] Title API response:', titleData);
+          // Dispatch event to refresh sidebar sessions list (same as Generate Reel)
+          if (titleData && (titleData.title || titleData.updated)) {
+            try {
+              window.dispatchEvent(new CustomEvent('session-title-updated', { 
+                detail: { sessionId, title: titleData.title } 
+              }));
+            } catch (_) { /* noop */ }
+          }
         }
       } catch (titleError) {
         console.error('[BuildReel] Title API error:', titleError);
-        // Continue anyway, don't block the flow
-      }
-      
-      // Step 4: Call sessions API after title API
-      try {
-        const sessionsBody = {
-          user_id: token
-        };
-        console.log('[BuildReel] Step 3: Calling sessions API');
-        const sessionsResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/v1/users/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sessionsBody)
-        });
-        const sessionsText = await sessionsResp.text();
-        let sessionsData;
-        try {
-          sessionsData = JSON.parse(sessionsText);
-        } catch (_) {
-          sessionsData = sessionsText;
-        }
-        if (!sessionsResp.ok) {
-          console.warn('[BuildReel] Sessions API call failed:', sessionsText);
-          // Continue anyway, don't block the flow
-        } else {
-          console.log('[BuildReel] Sessions API response:', sessionsData);
-        }
-      } catch (sessionsError) {
-        console.error('[BuildReel] Sessions API error:', sessionsError);
         // Continue anyway, don't block the flow
       }
 
@@ -6962,136 +6941,48 @@ const    BuildReelWizard = () => {
         ?? [];
       const mapped = mapResponseToScenes(aiArr);
       
-      // Call user session data API to get updated session data
-      try {
-        const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: token, session_id: sessionId })
-        });
-        const sessText = await sessResp.text();
-        let sessionData;
-        try {
-          sessionData = JSON.parse(sessText);
-        } catch (_) {
-          sessionData = sessText;
-        }
+      // Use the response from create-from-scratch directly (no session API call)
+      setForm((f) => ({ ...f, script: aiArr.map((r, i) => {
+        const sn = Number(r?.scene_number) || (i + 1);
+        const m = String(r?.model || '').toUpperCase();
+        const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : 
+                    (m === 'PLOTLY') ? 'Financial' : 
+                    (m.includes('SORA')) ? 'Infographic' : 
+                    (r?.type || 'Infographic');
         
-        if (sessResp.ok && sessionData) {
-          const sd = sessionData?.session_data || sessionData?.session || {};
-          // Extract updated scripts/airesponse from session data
-          // scripts[0] is the latest/current version
-          const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
-          let currentScript = scripts[0] || null;
-          let updatedAiresponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : aiArr;
-          
-          // If scripts[0] doesn't have airesponse, try to find the latest script with airesponse
-          if (updatedAiresponse.length === 0 && scripts.length > 0) {
-            for (let i = 0; i < scripts.length; i++) {
-              const script = scripts[i];
-              if (Array.isArray(script?.airesponse) && script.airesponse.length > 0) {
-                currentScript = script;
-                updatedAiresponse = script.airesponse;
-                console.log(`[BuildReel] createFromScratch - Found airesponse in scripts[${i}]`);
-                break;
-              }
-            }
-          }
-          
-          // Debug logging
-          console.log('[BuildReel] createFromScratch - scripts array:', scripts.length);
-          console.log('[BuildReel] createFromScratch - currentScript:', currentScript);
-          console.log('[BuildReel] createFromScratch - updatedAiresponse length:', updatedAiresponse.length);
-          if (updatedAiresponse.length > 0) {
-            console.log('[BuildReel] createFromScratch - first scene from updatedAiresponse:', {
-              scene_number: updatedAiresponse[0]?.scene_number,
-              scene_title: updatedAiresponse[0]?.scene_title,
-              subject: updatedAiresponse[0]?.subject,
-              background: updatedAiresponse[0]?.background,
-              action: updatedAiresponse[0]?.action,
-              styleCard: updatedAiresponse[0]?.styleCard,
-              cameraCard: updatedAiresponse[0]?.cameraCard,
-              ambiance: updatedAiresponse[0]?.ambiance,
-              composition: updatedAiresponse[0]?.composition,
-              focus_and_lens: updatedAiresponse[0]?.focus_and_lens
-            });
-          }
-          
-          // Use updated airesponse if available, otherwise use the response from create-from-scratch
-          const finalAiresponse = updatedAiresponse.length > 0 ? updatedAiresponse : aiArr;
-          const mappedScenes = mapResponseToScenes(finalAiresponse);
-          
-          // Map directly from airesponse to preserve all fields including scene description (same as Chat.js)
-          setForm((f) => ({ ...f, script: finalAiresponse.map((r, i) => {
-            const sn = Number(r?.scene_number) || (i + 1);
-            const m = String(r?.model || '').toUpperCase();
-            const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : 
-                        (m === 'PLOTLY') ? 'Financial' : 
-                        (m.includes('SORA')) ? 'Infographic' : 
-                        (r?.type || 'Infographic');
-            
-            // Extract presenter preset from presenter_options (same as Chat.js)
-            const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
-            const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
-            
-            // Preserve ALL fields from airesponse, including scene description fields (same as session restore)
-            return {
-              scene_number: sn,
-              scene_title: r?.scene_title ?? '',
-              model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' : 
-                     (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
-              timeline: computeTimelineForIndex(mappedScenes, i),
-              narration: r?.narration ?? '',
-              desc: r?.desc ?? r?.description ?? '',
-              text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
-              ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
-              folderLink: r?.folderLink ?? '',
-              // Restore scene description fields directly from airesponse - preserve all fields exactly as they are (same as Chat.js)
-              subject: r?.subject ?? '',
-              background: r?.background ?? '',
-              action: r?.action ?? '',
-              styleCard: r?.styleCard ?? '',
-              cameraCard: r?.cameraCard ?? '',
-              ambiance: r?.ambiance ?? '',
-              composition: r?.composition ?? '',
-              focus_and_lens: r?.focus_and_lens ?? '',
-              avatar: r?.avatar ?? (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0 ? r.avatar_urls[0] : null),
-              avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [],
-              presenter_options: presenterOpts,
-              background_image: Array.isArray(r?.background_image) ? r.background_image : [],
-              chart_type: r?.chart_type ?? '',
-              chart_data: r?.chart_data ?? null
-            };
-          }) }));
-        } else {
-          // Fallback to create-from-scratch response if session data fetch fails
-          setForm((f) => ({ ...f, script: mapped.map((s, i) => ({
-            scene_number: i + 1,
-            scene_title: s.title || '',
-            model: (String(s.type || '').toLowerCase() === 'avatar based') ? 'VEO3' : 'SORA',
-            timeline: computeTimelineForIndex(mapped, i),
-            narration: s.narration || '',
-            desc: s.description || '',
-            text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
-            ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
-            folderLink: s.folderLink || ''
-          })) }));
-        }
-      } catch (sessionError) {
-        console.error('Failed to fetch session data after create-from-scratch:', sessionError);
-        // Fallback to create-from-scratch response if session data fetch fails
-        setForm((f) => ({ ...f, script: mapped.map((s, i) => ({
-          scene_number: i + 1,
-          scene_title: s.title || '',
-          model: (String(s.type || '').toLowerCase() === 'avatar based') ? 'VEO3' : 'SORA',
+        // Extract presenter preset from presenter_options (same as Chat.js)
+        const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
+        const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+        
+        // Preserve ALL fields from airesponse, including scene description fields
+        return {
+          scene_number: sn,
+          scene_title: r?.scene_title ?? '',
+          model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' : 
+                 (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
           timeline: computeTimelineForIndex(mapped, i),
-          narration: s.narration || '',
-          desc: s.description || '',
-          text_to_be_included: Array.isArray(s.text_to_be_included) ? s.text_to_be_included.slice() : [],
-          ref_image: Array.isArray(s.ref_image) ? s.ref_image : [],
-          folderLink: s.folderLink || ''
-        })) }));
-      }
+          narration: r?.narration ?? '',
+          desc: r?.desc ?? r?.description ?? '',
+          text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
+          ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
+          folderLink: r?.folderLink ?? '',
+          // Preserve scene description fields directly from airesponse
+          subject: r?.subject ?? '',
+          background: r?.background ?? '',
+          action: r?.action ?? '',
+          styleCard: r?.styleCard ?? '',
+          cameraCard: r?.cameraCard ?? '',
+          ambiance: r?.ambiance ?? '',
+          composition: r?.composition ?? '',
+          focus_and_lens: r?.focus_and_lens ?? '',
+          avatar: r?.avatar ?? (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0 ? r.avatar_urls[0] : null),
+          avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [],
+          presenter_options: presenterOpts,
+          background_image: Array.isArray(r?.background_image) ? r.background_image : [],
+          chart_type: r?.chart_type ?? '',
+          chart_data: r?.chart_data ?? null
+        };
+      }) }));
       
       setStep(2);
       // Persist step change
@@ -7113,12 +7004,45 @@ const    BuildReelWizard = () => {
           values={form}
           onChange={handleChange}
           onSetUserQuery={(uq) => setForm((f) => ({ ...f, ...uq }))}
-          onNext={() => {
+          onNext={async () => {
             setStep(2);
             try {
               localStorage.setItem('buildreel_current_step', '2');
             } catch (_) {
               // Ignore
+            }
+            // Call video-type/update API when navigating to step 2
+            try {
+              const sessionId = localStorage.getItem('session_id');
+              const token = localStorage.getItem('token');
+              if (sessionId && token) {
+                const updateVideoTypeBody = {
+                  user_id: token,
+                  session_id: sessionId,
+                  videoType: 'custom'
+                };
+                console.log('[BuildReel] Calling video-type/update API on step 2 navigation');
+                const videoTypeResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/video-type/update', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(updateVideoTypeBody)
+                });
+                const videoTypeText = await videoTypeResp.text();
+                let videoTypeData;
+                try {
+                  videoTypeData = JSON.parse(videoTypeText);
+                } catch (_) {
+                  videoTypeData = videoTypeText;
+                }
+                if (!videoTypeResp.ok) {
+                  console.warn('[BuildReel] video-type/update API call failed:', videoTypeText);
+                } else {
+                  console.log('[BuildReel] video-type/update API response:', videoTypeData);
+                }
+              }
+            } catch (videoTypeError) {
+              console.error('[BuildReel] video-type/update API error:', videoTypeError);
+              // Continue anyway, don't block the flow
             }
           }}
           onCreateScenes={createFromScratch}

@@ -8854,11 +8854,11 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                 : (hasAnimationDescContent ? animationDesc : (sceneOptions.customPreservationNotes || {}));
                               
                               return (
-                                <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
                                     <textarea
-                                      value={displayNotes?.subject_description || ''}
+                                      value={isEditing ? (displayNotes?.subject_description || '') : (truncateText(displayNotes?.subject_description || '', 8))}
                                       onChange={(e) => {
                                         if (isEditing) {
                                           updateEditableAnimationDesc('subject_description', e.target.value);
@@ -8871,13 +8871,13 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                       }}
                                       disabled={!isEditing}
                                       placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
-                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                      className={`w-full ${isEditing ? 'h-20' : 'h-12'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
                                     />
                                   </div>
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
                                     <textarea
-                                      value={displayNotes?.scene_description || ''}
+                                      value={isEditing ? (displayNotes?.scene_description || '') : (truncateText(displayNotes?.scene_description || '', 8))}
                                       onChange={(e) => {
                                         if (isEditing) {
                                           updateEditableAnimationDesc('scene_description', e.target.value);
@@ -8890,13 +8890,13 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                       }}
                                       disabled={!isEditing}
                                       placeholder="e.g., Flat graphic layouts displayed in sequence"
-                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                      className={`w-full ${isEditing ? 'h-20' : 'h-0'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
                                     />
                                   </div>
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
                                     <textarea
-                                      value={displayNotes?.action_specification || ''}
+                                      value={isEditing ? (displayNotes?.action_specification || '') : (truncateText(displayNotes?.action_specification || '', 8))}
                                       onChange={(e) => {
                                         if (isEditing) {
                                           updateEditableAnimationDesc('action_specification', e.target.value);
@@ -8909,13 +8909,13 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                       }}
                                       disabled={!isEditing}
                                       placeholder="e.g., Instant cut transition between static compositions"
-                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                      className={`w-full ${isEditing ? 'h-20' : 'h-12'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
                                     />
                                   </div>
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
                                     <textarea
-                                      value={displayNotes?.content_modification || ''}
+                                      value={isEditing ? (displayNotes?.content_modification || '') : (truncateText(displayNotes?.content_modification || '', 8))}
                                       onChange={(e) => {
                                         if (isEditing) {
                                           updateEditableAnimationDesc('content_modification', e.target.value);
@@ -8928,7 +8928,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                       }}
                                       disabled={!isEditing}
                                       placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
-                                      className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                      className={`w-full ${isEditing ? 'h-20' : 'h-12'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
                                     />
                                   </div>
                                 </div>
@@ -9398,9 +9398,10 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                   )}
                 </div>
                 <textarea
-                  className={`w-full h-32 border rounded-lg px-3 py-2 text-sm ${editingField === 'narration' ? 'bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]' : 'bg-gray-50'}`}
+                  className={`w-full ${editingField === 'narration' ? 'h-32' : 'h-16'} border rounded-lg px-3 py-2 text-sm ${editingField === 'narration' ? 'bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]' : 'bg-gray-50'}`}
                   readOnly={editingField !== 'narration'}
-                  value={editingField === 'narration' ? editedNarration : (selected?.narration || '')}
+                  rows={editingField === 'narration' ? 4 : 1}
+                  value={editingField === 'narration' ? editedNarration : (truncateText(selected?.narration || '', 12))}
                   onChange={(e) => editingField === 'narration' && setEditedNarration(e.target.value)}
                 />
               </div>
@@ -10201,41 +10202,55 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
                                               />
                                             </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
-                                              <textarea
-                                            value={currentNotes?.subject_description || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  subject_description: e.target.value
-                                                })}
-                                                placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
-                                              <textarea
-                                            value={currentNotes?.scene_description || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  scene_description: e.target.value
-                                                })}
-                                                placeholder="e.g., Flat graphic layouts displayed in sequence"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
-                                              <textarea
-                                            value={currentNotes?.action_specification || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  action_specification: e.target.value
-                                                })}
-                                                placeholder="e.g., Instant cut transition between static compositions"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
-                                              />
+                                            <div className="grid grid-cols-2 gap-3">
+                                              <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
+                                                <textarea
+                                              value={currentNotes?.subject_description || ''}
+                                                  onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                    ...sceneOptions.customPreservationNotes,
+                                                    subject_description: e.target.value
+                                                  })}
+                                                  placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
+                                                  className="w-full h-12 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
+                                                <textarea
+                                              value={currentNotes?.scene_description || ''}
+                                                  onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                    ...sceneOptions.customPreservationNotes,
+                                                    scene_description: e.target.value
+                                                  })}
+                                                  placeholder="e.g., Flat graphic layouts displayed in sequence"
+                                                  className="w-full h-12 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
+                                                <textarea
+                                              value={currentNotes?.action_specification || ''}
+                                                  onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                    ...sceneOptions.customPreservationNotes,
+                                                    action_specification: e.target.value
+                                                  })}
+                                                  placeholder="e.g., Instant cut transition between static compositions"
+                                                  className="w-full h-12 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
+                                                <textarea
+                                              value={currentNotes?.content_modification || ''}
+                                                  onChange={(e) => updateSceneOption('customPreservationNotes', {
+                                                    ...sceneOptions.customPreservationNotes,
+                                                    content_modification: e.target.value
+                                                  })}
+                                                  placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
+                                                  className="w-full h-12 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                                />
+                                              </div>
                                             </div>
                                             <div>
                                               <label className="text-sm font-medium text-gray-700 mb-1 block">Transition Type</label>
@@ -10248,18 +10263,6 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                                 })}
                                                 placeholder="e.g., Whole-frame instant cut"
                                                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
-                                              <textarea
-                                            value={currentNotes?.content_modification || ''}
-                                                onChange={(e) => updateSceneOption('customPreservationNotes', {
-                                                  ...sceneOptions.customPreservationNotes,
-                                                  content_modification: e.target.value
-                                                })}
-                                                placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
-                                                className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none"
                                               />
                                             </div>
                                             <div>

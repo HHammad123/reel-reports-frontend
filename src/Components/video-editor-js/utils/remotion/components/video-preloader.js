@@ -164,13 +164,6 @@ export const VideoPreloader = ({ overlays = [], baseUrl }) => {
             
             const handleCanPlay = () => {
                 // Ensure video is buffered enough for smooth playback
-                if (video.buffered.length > 0) {
-                    const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-                    // Log buffering status for debugging
-                    if (bufferedEnd > 0 && process.env.NODE_ENV === 'development') {
-                        console.log(`[VideoPreloader] Video buffered: ${bufferedEnd.toFixed(2)}s / ${video.duration.toFixed(2)}s`, finalVideoSrc.substring(0, 60));
-                    }
-                }
             };
             
             video.addEventListener('error', handleError);

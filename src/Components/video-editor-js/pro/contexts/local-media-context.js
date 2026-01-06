@@ -29,7 +29,6 @@ export const LocalMediaProvider = ({ children, }) => {
         if (cleanPath.startsWith("http://") || 
             cleanPath.startsWith("https://") || 
             cleanPath.startsWith("blob:")) {
-            console.log('[LocalMediaContext] Preserving external URL:', cleanPath);
             return cleanPath;
         }
         
@@ -56,7 +55,6 @@ export const LocalMediaProvider = ({ children, }) => {
         const fetchGeneratedMedia = async () => {
             const token = localStorage.getItem('token') || userId;
             if (!token) {
-                console.warn('[LocalMediaContext] No userId/token found, skipping generated media fetch');
                 return;
             }
             
@@ -103,8 +101,6 @@ export const LocalMediaProvider = ({ children, }) => {
                 const normalizedImages = normalizeGeneratedMediaResponse(imagesJson || {});
                 const generatedImagesData = normalizedImages.generated_images || {};
                 const transformedImages = [];
-                
-                console.log('[LocalMediaContext] Generated images structure:', generatedImagesData);
                 
                 Object.keys(generatedImagesData).forEach((aspectRatio) => {
                     const sessionsForRatio = generatedImagesData[aspectRatio];
@@ -180,8 +176,6 @@ export const LocalMediaProvider = ({ children, }) => {
                 const generatedVideosData = normalizedVideos.base_videos || {};
                 const transformedVideos = [];
                 
-                console.log('[LocalMediaContext] Generated videos structure:', generatedVideosData);
-                
                 Object.keys(generatedVideosData).forEach((aspectRatio) => {
                     const sessionsForRatio = generatedVideosData[aspectRatio];
                     if (typeof sessionsForRatio === 'object' && sessionsForRatio !== null && !Array.isArray(sessionsForRatio)) {
@@ -249,13 +243,7 @@ export const LocalMediaProvider = ({ children, }) => {
                     }
                 });
                 setGeneratedVideos(transformedVideos);
-                
-                console.log('[LocalMediaContext] Fetched generated media:', {
-                    images: transformedImages.length,
-                    videos: transformedVideos.length
-                });
             } catch (error) {
-                console.error('[LocalMediaContext] Error fetching generated media:', error);
                 setGeneratedImages([]);
                 setGeneratedVideos([]);
             } finally {
@@ -273,17 +261,8 @@ export const LocalMediaProvider = ({ children, }) => {
         try {
             // Upload file with hybrid approach (server upload with blob fallback)
             const mediaItem = await uploadMediaFile(file);
-            console.log('[LocalMediaContext] Media item from upload:', {
-                id: mediaItem.id,
-                name: mediaItem.name,
-                originalServerPath: mediaItem.serverPath,
-            });
             // Convert to LocalMediaFile format
             const sanitizedPath = sanitizePath(mediaItem.serverPath);
-            console.log('[LocalMediaContext] Sanitized path:', {
-                original: mediaItem.serverPath,
-                sanitized: sanitizedPath,
-            });
             const newMediaFile = {
                 id: mediaItem.id,
                 name: mediaItem.name,
@@ -294,7 +273,6 @@ export const LocalMediaProvider = ({ children, }) => {
                 thumbnail: mediaItem.thumbnail || "",
                 duration: mediaItem.duration || 0,
             };
-            console.log('[LocalMediaContext] Final media file object:', newMediaFile);
             // Update state with the new media file
             setLocalMediaFiles((prev) => {
                 // Check if file with same ID already exists
@@ -309,7 +287,6 @@ export const LocalMediaProvider = ({ children, }) => {
             return newMediaFile;
         }
         catch (error) {
-            console.error("Error adding media file:", error);
             throw error;
         }
         finally {
@@ -332,7 +309,7 @@ export const LocalMediaProvider = ({ children, }) => {
             }
         }
         catch (error) {
-            console.error("Error removing media file:", error);
+            // Error removing media file
         }
     }, [localMediaFiles, userId]);
     /**
@@ -350,7 +327,7 @@ export const LocalMediaProvider = ({ children, }) => {
             setLocalMediaFiles([]);
         }
         catch (error) {
-            console.error("Error clearing media files:", error);
+            // Error clearing media files
         }
     }, [localMediaFiles, userId]);
     const value = {

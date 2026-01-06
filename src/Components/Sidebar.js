@@ -341,10 +341,17 @@ const Sidebar = () => {
       const newId = data?.session?.session_id || data?.session_id || data?.id;
       if (!newId) throw new Error('Session ID missing in response');
       try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
-      navigate(`/chat/${newId}`);
+      try {
+        navigate(`/chat/${newId}`);
+      } catch (navError) {
+        console.error('Navigation error, using window.location:', navError);
+        window.location.href = `/chat/${newId}`;
+      }
     } catch (e) {
       console.error('Failed to create new session:', e);
       alert('Unable to start a new chat. Please try again.');
+    } finally {
+      try { localStorage.removeItem('is_creating_session'); } catch(_){}
     }
   };
 
@@ -367,10 +374,17 @@ const Sidebar = () => {
       const newId = data?.session?.session_id || data?.session_id || data?.id;
       if (!newId) throw new Error('Session ID missing in response');
       try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
-      navigate(`/buildreel/${newId}`);
+      try {
+        navigate(`/buildreel/${newId}`);
+      } catch (navError) {
+        console.error('Navigation error, using window.location:', navError);
+        window.location.href = `/buildreel/${newId}`;
+      }
     } catch (e) {
       console.error('Failed to create build reel session:', e);
       alert('Unable to open Build Reel. Please try again.');
+    } finally {
+      try { localStorage.removeItem('is_creating_session'); } catch(_){}
     }
   };
 
@@ -437,7 +451,16 @@ const Sidebar = () => {
                   <span>Build Reel</span>
                 </button>
                 <button
-                  onClick={() => navigate('/media')}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try {
+                      navigate('/media');
+                    } catch (err) {
+                      console.error('Navigation error:', err);
+                      window.location.href = '/media';
+                    }
+                  }}
                   className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
                 >
                   <FaImage className="h-5 w-5" />
@@ -511,7 +534,7 @@ const Sidebar = () => {
                             <button
                               type="button"
                               className="flex-1 truncate text-left"
-                              onClick={() => {
+                              onClick={async () => {
                                 if (!id) return;
                                 
                                 // Check user validation status before navigating
@@ -555,7 +578,94 @@ const Sidebar = () => {
                                 }
                                 
                                 try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
-                                navigate(`/chat/${id}`);
+                                
+                                // Call user-session-data API to check videoType
+                                try {
+                                  const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
+                                  if (token) {
+                                    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ user_id: token, session_id: id })
+                                    });
+                                    const sessionText = await sessionResp.text();
+                                    let sessionData;
+                                    try {
+                                      sessionData = JSON.parse(sessionText);
+                                    } catch (_) {
+                                      sessionData = sessionText;
+                                    }
+                                    
+                                    if (sessionResp.ok && sessionData) {
+                                      const sd = sessionData?.session_data || sessionData?.session || {};
+                                      const videoType = sd?.videoType || sd?.video_type || '';
+                                      
+                                      // If videoType is 'custom', navigate to buildreel
+                                      if (videoType === 'custom') {
+                                        // Check what exists in the session
+                                        const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+                                        const airesponse = scripts.length > 0 && Array.isArray(scripts[0]?.airesponse) ? scripts[0].airesponse : [];
+                                        const hasScript = airesponse.length > 0;
+                                        
+                                        // Check for images in session_data.images array
+                                        const images = Array.isArray(sd?.images) ? sd.images : [];
+                                        // Also check for ref_image in scenes
+                                        const hasRefImages = airesponse.some(scene => {
+                                          const refImages = Array.isArray(scene?.ref_image) ? scene.ref_image : [];
+                                          return refImages.length > 0 && refImages.some(img => img && String(img).trim() !== '');
+                                        });
+                                        const hasImages = images.length > 0 || hasRefImages;
+                                        
+                                        // Check for videos
+                                        const videos = Array.isArray(sd?.videos) ? sd.videos : [];
+                                        const hasVideos = videos.length > 0;
+                                        
+                                        // Determine step and subView
+                                        let targetStep = 1;
+                                        let targetSubView = 'editor';
+                                        
+                                        if (hasVideos) {
+                                          targetStep = 2;
+                                          targetSubView = 'videos';
+                                        } else if (hasImages) {
+                                          targetStep = 2;
+                                          targetSubView = 'images';
+                                        } else if (hasScript) {
+                                          targetStep = 2;
+                                          targetSubView = 'editor';
+                                        } else {
+                                          targetStep = 1;
+                                          targetSubView = 'editor';
+                                        }
+                                        
+                                        // Set step and subView in localStorage before navigating
+                                        try {
+                                          localStorage.setItem('buildreel_current_step', String(targetStep));
+                                          localStorage.setItem('buildreel_subview', targetSubView);
+                                        } catch (_) { /* noop */ }
+                                        
+                                        try {
+                                          navigate(`/buildreel/${id}`);
+                                        } catch (navError) {
+                                          console.error('Navigation error, using window.location:', navError);
+                                          window.location.href = `/buildreel/${id}`;
+                                        }
+                                        return;
+                                      }
+                                    }
+                                  }
+                                } catch (sessionError) {
+                                  console.error('Failed to fetch session data:', sessionError);
+                                  // Continue to default chat navigation if session data fetch fails
+                                }
+                                
+                                // Default: navigate to chat
+                                try {
+                                  navigate(`/chat/${id}`);
+                                } catch (navError) {
+                                  console.error('Navigation error, using window.location:', navError);
+                                  window.location.href = `/chat/${id}`;
+                                }
                               }}
                               title={label}
                             >
