@@ -8,6 +8,8 @@ import { toast } from 'react-hot-toast';
 import ImageList from '../Scenes/ImageList';
 import VideosList from '../Scenes/VideosList';
 import ChartDataEditor from '../ChartDataEditor';
+import Loader from '../Loader';
+import { useProgressLoader } from '../../hooks/useProgressLoader';
 
 // Helper to preserve ALL fields from session_data including nested structures
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
@@ -1593,7 +1595,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                       </div>
                     </div>
 
-                    {(voicePreviewUrl || voiceLink) && (
+                    {(voicePreviewUrl || voiceLink) && audioAnswer !== 'Yes' && (
                       <div className="mt-3">
                         <audio ref={audioPreviewRef} className="w-full" controls src={voicePreviewUrl || voiceLink} />
                       </div>
@@ -2158,6 +2160,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   const [isAdding, setIsAdding] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isSavingScenes, setIsSavingScenes] = useState(false);
+  
+  // Progress bars for scene save and add operations
+  const savingScenesProgress = useProgressLoader(isSavingScenes, 95, 30000);
+  const addingSceneProgress = useProgressLoader(isAdding, 95, 30000);
+  
   const imageFileInputRef = useRef(null);
   const [isUploadingSceneImage, setIsUploadingSceneImage] = useState(false);
   const [textIncludeInput, setTextIncludeInput] = useState('');
@@ -2507,16 +2514,19 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   };
 
   const saveScenesToServer = async () => {
-    // Validate all scenes before saving
-    const validationErrors = validateAllScenes();
-    if (validationErrors.length > 0) {
-      setValidationErrors(validationErrors);
-      setShowValidationModal(true);
-      throw new Error('Validation failed');
-    }
-    
-    const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-    if (!sessionId) throw new Error('Missing session_id');
+    try {
+      setIsSavingScenes(true);
+      
+      // Validate all scenes before saving
+      const validationErrors = validateAllScenes();
+      if (validationErrors.length > 0) {
+        setValidationErrors(validationErrors);
+        setShowValidationModal(true);
+        throw new Error('Validation failed');
+      }
+      
+      const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
+      if (!sessionId) throw new Error('Missing session_id');
     
     // Filter scenes to only include allowed fields (matching sample object structure)
     const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
@@ -2575,6 +2585,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     let data; try { data = JSON.parse(text); } catch (_) { data = text; }
     if (!resp.ok) throw new Error(`create-from-scratch(save) failed: ${resp.status} ${text}`);
     return data;
+    } finally {
+      setIsSavingScenes(false);
+    }
   };
 
   // Undo handler
@@ -3463,9 +3476,16 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   const lastFetchedModelRef = useRef('');
   const lastFetchedAspectRef = useRef('');
   const aspectRatioCacheRef = useRef(null);
+  const presetJustSelectedRef = useRef(false); // Track if preset was just selected to prevent API re-call
 
   // Fetch presenter presets when Avatar Based is selected - only when model changes or switching scenes
   useEffect(() => {
+    // Don't re-call API if preset was just selected
+    if (presetJustSelectedRef.current) {
+      presetJustSelectedRef.current = false;
+      return;
+    }
+    
     const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
     if (!scene) {
       setPresenterPresets({ VEO3: [], ANCHOR: [] });
@@ -3474,7 +3494,8 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       return;
     }
     const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-    if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') {
+    const isAvatarBased = modelUpper === 'VEO3' || modelUpper.includes('VEO') || modelUpper === 'ANCHOR';
+    if (!isAvatarBased) {
       setPresenterPresets({ VEO3: [], ANCHOR: [] });
       setPresenterPresetsError('');
       setIsLoadingPresenterPresets(false);
@@ -3517,7 +3538,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         }
         const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
         const aspectParam = (normalizedAspect && normalizedAspect !== 'Unspecified') ? normalizedAspect : '';
-        const modeParam = modelUpper === 'VEO3' ? 'veo3_presets' : 'anchor_presets';
+        const modeParam = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'veo3_presets' : 'anchor_presets';
         const params = new URLSearchParams();
         if (userId) params.set('user_id', String(userId));
         if (aspectParam) params.set('aspect_ratio', aspectParam);
@@ -3618,17 +3639,21 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           })
           .filter(Boolean);
         if (!ignore) {
+          // Normalize the key to 'VEO3' if it contains 'VEO', otherwise keep as is (for ANCHOR)
+          const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : modelUpper;
           setPresenterPresets((prev) => ({
             ...prev,
-            [modelUpper]: normalizedList
+            [presetKey]: normalizedList
           }));
         }
       } catch (err) {
         if (!ignore) {
           console.warn('Failed to load presenter presets:', err);
+          // Normalize the key to 'VEO3' if it contains 'VEO', otherwise keep as is (for ANCHOR)
+          const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : modelUpper;
           setPresenterPresets((prev) => ({
             ...prev,
-            [modelUpper]: []
+            [presetKey]: []
           }));
           setPresenterPresetsError(err?.message || 'Failed to load presets');
         }
@@ -3640,7 +3665,8 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     return () => {
       ignore = true;
     };
-  }, [activeIndex]); // Only depend on activeIndex - don't refetch on script edits
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, script, script?.[activeIndex]?.model, script?.[activeIndex]?.mode]); // Depend on activeIndex and scene model to refetch when video type changes (e.g., Infographic to Avatar Based)
 
   // Initialize selected presenter preset from scene data - check preset_id from presenter_options
   useEffect(() => {
@@ -3652,13 +3678,16 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       return;
     }
     const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-    if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') {
+    const isAvatarBased = modelUpper === 'VEO3' || modelUpper.includes('VEO') || modelUpper === 'ANCHOR';
+    if (!isAvatarBased) {
       setSelectedPresenterPreset('');
       setPresenterPresetOriginal('');
       setPresenterPresetDirty(false);
       return;
     }
-    const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+    // Normalize the key to 'VEO3' if it contains 'VEO', otherwise keep as is (for ANCHOR)
+    const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : modelUpper;
+    const list = Array.isArray(presenterPresets[presetKey]) ? presenterPresets[presetKey] : [];
     const presenterOpts = scene?.presenter_options || scene?.presenterOptions || {};
     // Check preset_id from presenter_options (primary check)
     const scenePresetId = presenterOpts?.preset_id || presenterOpts?.presetId || '';
@@ -3724,6 +3753,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   // Handler for presenter preset change - update scene data only (no API call)
   const handlePresenterPresetChange = (value) => {
     const normalizedValue = value != null ? String(value) : '';
+    
+    // Set flag to prevent API re-call
+    presetJustSelectedRef.current = true;
+    
     setSelectedPresenterPreset(normalizedValue);
     setPresenterPresetDirty(normalizedValue !== presenterPresetOriginal);
     
@@ -3732,9 +3765,12 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
       if (!scene) return;
       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-      if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return;
+      const isAvatarBased = modelUpper === 'VEO3' || modelUpper.includes('VEO') || modelUpper === 'ANCHOR';
+      if (!isAvatarBased) return;
       
-      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+      // Normalize the key to 'VEO3' if it contains 'VEO', otherwise keep as is (for ANCHOR)
+      const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : modelUpper;
+      const list = Array.isArray(presenterPresets[presetKey]) ? presenterPresets[presetKey] : [];
       const selectedPreset = list.find(
         (item) => String(item?.preset_id || item?.option || '') === normalizedValue
       ) || {};
@@ -3781,6 +3817,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         }
       }
       
+      // Clear background_image when preset is selected
+      updateData.background_image = [];
+      updateData.ref_image = [];
+      
       // Update scene data immediately (no API call - only local update)
       updateScriptScene(activeIndex, updateData);
       
@@ -3807,7 +3847,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       if (!scene) throw new Error('Scene not found');
       const sceneNumber = scene?.scene_number ?? activeIndex + 1;
       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-      const list = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+      // Normalize the key to 'VEO3' if it contains 'VEO', otherwise keep as is (for ANCHOR)
+      const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : modelUpper;
+      const list = Array.isArray(presenterPresets[presetKey]) ? presenterPresets[presetKey] : [];
       const selectedPreset =
         list.find(
           (item) =>
@@ -3926,8 +3968,40 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
 
   return (
     <div className='bg-white h-[100vh] w-full rounded-lg p-6 overflow-y-auto'>
-      <div className='flex flex-col gap-1 mb-6'>
+      <div className='flex items-center justify-between mb-6'>
         <h2 className='text-[24px] font-semibold'>Add Your Scenes</h2>
+        {/* Generate Storyboard button - top right */}
+        <button
+          onClick={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (isGenerating) return;
+            if (!onGenerate) {
+              console.error('onGenerate is not defined');
+              return;
+            }
+            if (!script) {
+              console.error('script is not defined');
+              return;
+            }
+            try {
+              await onGenerate(script);
+            } catch (error) {
+              console.error('Error calling onGenerate:', error);
+            }
+          }}
+          disabled={isGenerating || !script || script.length === 0}
+          className='px-5 py-2 rounded-lg bg-[#13008B] text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:bg-gray-800 transition-colors'
+        >
+          {isGenerating ? (
+            <>
+              <div className='w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin' />
+              Generating Storyboard...
+            </>
+          ) : (
+            'Generate Storyboard'
+          )}
+        </button>
       </div>
 
       <div className='flex items-center gap-2 mb-5'>
@@ -4014,14 +4088,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         <button 
           onClick={async () => {
             try {
-              setIsSavingScenes(true);
               await saveScenesToServer();
               toast.success('Scenes saved successfully');
             } catch (error) {
               console.error('Failed to save scenes:', error);
               toast.error(error?.message || 'Failed to save scenes. Please try again.');
-            } finally {
-              setIsSavingScenes(false);
             }
           }}
           disabled={isSavingScenes || script.length === 0}
@@ -4754,8 +4825,22 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
               </div>
               {(() => {
                 const scene = script?.[activeIndex];
+                // Check if preset is selected - if so, don't show any background images
+                const presenterOpts = scene?.presenter_options || {};
+                const hasPreset = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId;
+                
+                // If preset is selected, show empty state
+                if (hasPreset) {
+                  return (
+                    <div>
+                      <p className='text-sm text-gray-500'>Background images are not available when a preset is selected.</p>
+                    </div>
+                  );
+                }
+                
                 const refs = (() => {
                   const urls = [];
+                  // Only show background images if they were explicitly selected (not from preset)
                   // First try background_image array
                   if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
                     scene.background_image.forEach(item => {
@@ -4786,11 +4871,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                       if (!urls.includes(trimmed)) urls.push(trimmed);
                     }
                   }
-                  // Fallback to background field
-                  if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
-                    const trimmed = scene.background.trim();
-                    if (!urls.includes(trimmed)) urls.push(trimmed);
-                  }
+                  // Don't use fallback to background field - only show explicitly selected images
                   return urls;
                 })();
                 const selectedRefs = refs;
@@ -4899,8 +4980,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
           if (!scene) return null;
           const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
-          if (modelUpper !== 'VEO3' && modelUpper !== 'ANCHOR') return null;
-          const optionsList = Array.isArray(presenterPresets[modelUpper]) ? presenterPresets[modelUpper] : [];
+          const isAvatarBased = modelUpper === 'VEO3' || modelUpper.includes('VEO') || modelUpper === 'ANCHOR';
+          if (!isAvatarBased) return null;
+          const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : 'ANCHOR';
+          const optionsList = Array.isArray(presenterPresets[presetKey]) ? presenterPresets[presetKey] : [];
           const selectedPreset =
             optionsList.find(
               (opt) =>
@@ -5634,47 +5717,6 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         >
           Back
         </button>
-        <button 
-          type="button"
-          onClick={async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('Generate button clicked', { isGenerating, hasOnGenerate: !!onGenerate, hasScript: !!script, scriptLength: script?.length });
-            if (isGenerating) {
-              console.log('Already generating, ignoring click');
-              return;
-            }
-            if (!onGenerate) {
-              console.error('onGenerate is not defined');
-              return;
-            }
-            if (!script) {
-              console.error('script is not defined');
-              return;
-            }
-            try {
-              console.log('Calling onGenerate...');
-              await onGenerate(script);
-              console.log('onGenerate completed');
-            } catch (error) {
-              console.error('Error calling onGenerate:', error);
-            }
-          }} 
-          disabled={isGenerating}
-          className='px-5 py-2 rounded-lg bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 relative z-10 cursor-pointer'
-        >
-          {isGenerating ? (
-            <>
-              <svg className='animate-spin h-4 w-4' viewBox='0 0 24 24'>
-                <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4' fill='none' />
-                <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z' />
-              </svg>
-              Generating...
-            </>
-          ) : (
-            'Generate'
-          )}
-        </button>
       </div>
       {/* Validation Error Modal */}
       {showValidationModal && (
@@ -6120,6 +6162,30 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           </div>
         </div>
       )}
+
+      {/* Loader for saving scenes */}
+      {isSavingScenes && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Saving Scenes…"
+          description="Please wait while we save your scenes..."
+          progress={savingScenesProgress}
+        />
+      )}
+
+      {/* Loader for adding new scene */}
+      {isAdding && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Creating Scene…"
+          description="Please wait while we create your new scene..."
+          progress={addingSceneProgress}
+        />
+      )}
     </div>
   );
 };
@@ -6155,6 +6221,13 @@ const    BuildReelWizard = () => {
   const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], userquery: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
+  const [isSavingStoryboard, setIsSavingStoryboard] = useState(false);
+  const [isGeneratingImagesQueue, setIsGeneratingImagesQueue] = useState(false);
+  
+  // Progress bars for loaders
+  const creatingScriptProgress = useProgressLoader(isCreatingScenes, 95, 60000);
+  const savingStoryboardProgress = useProgressLoader(isSavingStoryboard, 95, 30000);
+  const generatingImagesQueueProgress = useProgressLoader(isGeneratingImagesQueue, 95, 20000);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false);
   // Sub-flow: images and videos views similar to Home
   const [subView, setSubView] = useState(() => {
@@ -6503,7 +6576,7 @@ const    BuildReelWizard = () => {
 
   const handleGenerate = async (script) => {
     try {
-      console.log('[BuildReel] handleGenerate called, setting isGenerating to true');
+      console.log('[BuildReel] handleGenerateStoryboard called, setting isGenerating to true');
       setIsGenerating(true);
       
       // Small delay to ensure state update is processed
@@ -6560,143 +6633,87 @@ const    BuildReelWizard = () => {
       }
       
       console.log('[BuildReel] Validation passed - all scenes have narration');
-      
-      console.log('[BuildReel] Validation passed, proceeding with generation');
       setForm((f) => ({ ...f, script }));
 
-      // 1) Build save payload in the simplified format
-      const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
-      if (!sessionId) throw new Error('Missing session_id');
-      let uq = [];
+      // Step 1: Save scenes with create-from-scratch
+      setIsSavingStoryboard(true);
       try {
-        if (form && form.userquery && Array.isArray(form.userquery.userquery)) {
-          uq = form.userquery.userquery;
-        } else {
-          const raw = localStorage.getItem('buildreel_userquery');
-          if (raw) { const parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery; }
-        }
-      } catch (_) { /* noop */ }
-      if (!Array.isArray(uq)) uq = [];
-      // Filter scenes to only include allowed fields (same as saveScenesToServer)
-      const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
-      const body = {
-        session_id: sessionId,
-        current_script: { userquery: uq, airesponse },
-        action: 'save'
-      };
-      console.log('[BuildReel] create-from-scratch(save) request:', body);
-      const saveResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-      });
-      const saveText = await saveResp.text();
-      let saveData; try { saveData = JSON.parse(saveText); } catch(_) { saveData = saveText; }
-      if (!saveResp.ok) throw new Error(`create-from-scratch(save) failed: ${saveResp.status} ${saveText}`);
-      console.log('[BuildReel] create-from-scratch(save) response:', saveData);
-
-      // 2) Load current session snapshot (as per Home flow) and kick off images generation
-      const token = localStorage.getItem('token');
-      if (!token) throw new Error('Missing login token');
-      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-      });
-      const sessText = await sessResp.text();
-      let sessionData; try { sessionData = JSON.parse(sessText); } catch (_) { sessionData = sessText; }
-      if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
-
-      // Call queue endpoint with minimal payload
-      const sd = sessionData?.session_data || {};
-      const queueBody = {
-        user_id: token,
-        session_id: sessionId
-      };
-      const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queueBody)
-      });
-      const imgText = await imgResp.text();
-      let imgData; try { imgData = JSON.parse(imgText); } catch (_) { imgData = imgText; }
-      if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
-
-      // Persist job response (job_id, status, status_url, scenes_to_process)
-      const jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
-      if (!jobId) {
-        throw new Error('No job ID received from generate-images-queue');
-      }
-      
-      try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
-      try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
-      setImagesJobId(jobId);
-
-      // Poll job status until status is succeeded, then navigate to images view
-      const pollJobStatus = async () => {
-        const jobsBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1';
-        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        const isSuccess = (status) => {
-          const s = String(status || '').toLowerCase();
-          return ['succeeded', 'success', 'completed', 'done', 'finished'].includes(s);
-        };
-
-        const maxAttempts = 120; // ~10 minutes at 5s interval
-        const intervalMs = 5000;
-        let lastAttempt = 0;
-        
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-          lastAttempt = attempt;
-          try {
-            const jobsResp = await fetch(`${jobsBase}/job-status/${encodeURIComponent(jobId)}`, {
-              method: 'GET',
-              headers: { 'Content-Type': 'application/json' }
-            });
-            const jobsText = await jobsResp.text();
-            let jobsData;
-            try { jobsData = JSON.parse(jobsText); } catch (_) { jobsData = jobsText; }
-            console.log(`[BuildReel] Job status polling (attempt ${attempt}):`, jobsData);
-
-            if (!jobsResp.ok) {
-              console.warn(`[BuildReel] job-status endpoint failed: ${jobsResp.status} ${jobsText}`);
-              await sleep(intervalMs);
-              continue; // Continue polling on error
-            }
-
-            const status = jobsData?.status || jobsData?.job_status || jobsData?.state;
-            if (status) {
-              try { localStorage.setItem('job_status', status); } catch (_) { /* noop */ }
-            }
-
-            if (isSuccess(status)) {
-              console.log('[BuildReel] Job status indicates success. Stopping polling.');
-              try { localStorage.setItem('job_result', JSON.stringify(jobsData)); } catch (_) { /* noop */ }
-              try { localStorage.removeItem('images_generate_pending'); } catch(_) {}
-              setShowImagesPopup(false);
-              await sendUserSessionData();
-              setSubView('images');
-              setIsGenerating(false);
-              try { toast.success('Images generated successfully'); } catch(_) {}
-              return; // Exit function on success
-            }
-          } catch (e) {
-            console.error('[BuildReel] Error polling job status:', e);
+        const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
+        if (!sessionId) throw new Error('Missing session_id');
+        let uq = [];
+        try {
+          if (form && form.userquery && Array.isArray(form.userquery.userquery)) {
+            uq = form.userquery.userquery;
+          } else {
+            const raw = localStorage.getItem('buildreel_userquery');
+            if (raw) { const parsed = JSON.parse(raw); if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery; }
           }
-          await sleep(intervalMs);
+        } catch (_) { /* noop */ }
+        if (!Array.isArray(uq)) uq = [];
+        // Filter scenes to only include allowed fields (same as saveScenesToServer)
+        const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
+        const body = {
+          session_id: sessionId,
+          current_script: { userquery: uq, airesponse },
+          action: 'save'
+        };
+        console.log('[BuildReel] create-from-scratch(save) request:', body);
+        const saveResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const saveText = await saveResp.text();
+        let saveData; try { saveData = JSON.parse(saveText); } catch(_) { saveData = saveText; }
+        if (!saveResp.ok) throw new Error(`create-from-scratch(save) failed: ${saveResp.status} ${saveText}`);
+        console.log('[BuildReel] create-from-scratch(save) response:', saveData);
+      } finally {
+        setIsSavingStoryboard(false);
+      }
+
+      // Step 2: Call generate-images-queue
+      setIsGeneratingImagesQueue(true);
+      let jobId = null;
+      try {
+        const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
+        const token = localStorage.getItem('token');
+        if (!token) throw new Error('Missing login token');
+        const queueBody = {
+          user_id: token,
+          session_id: sessionId
+        };
+        const imgResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(queueBody)
+        });
+        const imgText = await imgResp.text();
+        let imgData; try { imgData = JSON.parse(imgText); } catch (_) { imgData = imgText; }
+        if (!imgResp.ok) throw new Error(`generate-images-queue failed: ${imgResp.status} ${imgText}`);
+
+        // Get job ID
+        jobId = imgData?.job_id || imgData?.jobId || imgData?.id || (Array.isArray(imgData) && imgData[0]?.job_id);
+        if (!jobId) {
+          throw new Error('No job ID received from generate-images-queue');
         }
         
-        // If we exhausted all attempts without success
-        if (lastAttempt >= maxAttempts) {
-          console.warn('[BuildReel] Job status polling timeout');
-          try { toast.error('Image generation is taking longer than expected. Please check the images list.'); } catch(_) { alert('Image generation is taking longer than expected. Please check the images list.'); }
-          setShowImagesPopup(false);
-          await sendUserSessionData();
-          setSubView('images');
-          setIsGenerating(false);
-        }
-      };
+        try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
+        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
+        setImagesJobId(jobId);
+      } finally {
+        setIsGeneratingImagesQueue(false);
+      }
 
-      // Show popup and start polling
-      setShowImagesPopup(true);
-      await pollJobStatus();
+      // Step 3: Navigate to images subview immediately (ImageList will handle job polling)
+      await sendUserSessionData();
+      setSubView('images');
+      
+      // ImageList component will automatically poll job-status API using the jobId from localStorage
+      setIsGenerating(false);
+      
     } catch (e) {
-      console.error('Generate failed:', e);
-      try { toast.error(e?.message || 'Failed to generate'); } catch(_) { alert(e?.message || 'Failed to generate'); }
-    } finally { setIsGenerating(false); }
+      console.error('Generate Storyboard failed:', e);
+      try { toast.error(e?.message || 'Failed to generate storyboard'); } catch(_) { alert(e?.message || 'Failed to generate storyboard'); }
+      setIsSavingStoryboard(false);
+      setIsGeneratingImagesQueue(false);
+      setIsGenerating(false);
+    }
   };
 
   // Session helper used in sub-views
@@ -7108,15 +7125,42 @@ const    BuildReelWizard = () => {
           </div>
         </div>
       )}
-      {showImagesPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <h4 className="text-lg font-semibold text-gray-900">Generating Images…</h4>
-            <p className="mt-1 text-sm text-gray-600">Opening Images list…</p>
-          </div>
-        </div>
+      {/* Loader for creating script when transitioning from step 1 to step 2 */}
+      {isCreatingScenes && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Creating Script…"
+          description="Please wait while we create your script..."
+          progress={creatingScriptProgress}
+        />
       )}
+
+      {/* Loader for saving storyboard */}
+      {isSavingStoryboard && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Saving Storyboard…"
+          description="Please wait while we save your storyboard..."
+          progress={savingStoryboardProgress}
+        />
+      )}
+
+      {/* Loader for generating images queue */}
+      {isGeneratingImagesQueue && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Generating Images Queue…"
+          description="Please wait while we queue your image generation..."
+          progress={generatingImagesQueueProgress}
+        />
+      )}
+
     </>
   );
 };
