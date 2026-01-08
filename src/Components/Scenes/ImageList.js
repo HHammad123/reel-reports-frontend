@@ -1257,28 +1257,9 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
       }
     };
     
-    // Set logo needed based on whether logo_url exists
-    const sessionLogoUrl = sessionAssets.logo_url;
-    const hasLogo = sessionLogoUrl && typeof sessionLogoUrl === 'string' && sessionLogoUrl.trim().length > 0;
-    
-    setSceneAdvancedOptions(prev => {
-      const updated = { ...prev };
-      let hasChanges = false;
-      
-      sceneNumbers.forEach(sceneNum => {
-        const currentOptions = updated[sceneNum] || {};
-        // Only update if the value is different to avoid unnecessary re-renders
-        if (currentOptions.logoNeeded !== hasLogo) {
-          updated[sceneNum] = {
-            ...currentOptions,
-            logoNeeded: hasLogo
-          };
-          hasChanges = true;
-        }
-      });
-      
-      return hasChanges ? updated : prev;
-    });
+    // Set logo needed based on brand_identity.logo[0] from brand assets (not sessionAssets.logo_url)
+    // Logo Needed is now always available for user to select Yes/No
+    // We don't auto-set logoNeeded based on sessionAssets anymore
     
     // Check voiceover: First check videos array, then fallback to session assets
     const hasVideos = Array.isArray(videosData) && videosData.length > 0;
@@ -2311,20 +2292,43 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
         
         // Extract tone from script for matching voiceovers
-        // Path: userquery[0].guidelines.purpose_and_audience.tone
+        // Path: userquery[0].additonalprop1.purpose_and_audience.tone
         const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
         const firstUserQuery = userQueryArr[0] || {};
         
-        // Check both paths: direct and under guidelines
-        const guidelines = firstUserQuery?.guidelines || {};
+        // Check additonalprop1 path first (BuildReel path)
+        const additonalprop1 = firstUserQuery?.additonalprop1 || firstUserQuery?.additionalprop1 || {};
+        const purposeAndAudienceFromAddProp = additonalprop1?.purpose_and_audience || additonalprop1?.purposeAndAudience || {};
         
-        const purposeAndAudience = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
-                                   firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
+        // Fallback to guidelines path (legacy)
+        const guidelines = firstUserQuery?.guidelines || {};
+        const purposeAndAudienceFromGuidelines = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
+                                                 firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
+        
+        // Prioritize additonalprop1, fallback to guidelines
+        const purposeAndAudience = purposeAndAudienceFromAddProp?.tone 
+          ? purposeAndAudienceFromAddProp 
+          : purposeAndAudienceFromGuidelines;
         
         const tone = (purposeAndAudience?.tone || '').toLowerCase().trim();
         
         if (tone) {
           setScriptTone(tone);
+        }
+        
+        // Extract voice_link from session data for auto-selection
+        // Path: userquery[0].additonalprop1.audio_and_effects[0].voice_link
+        const audioAndEffects = Array.isArray(additonalprop1?.audio_and_effects) 
+          ? additonalprop1.audio_and_effects 
+          : Array.isArray(additonalprop1?.audioAndEffects) 
+          ? additonalprop1.audioAndEffects 
+          : [];
+        const firstAudioEffect = audioAndEffects[0] || {};
+        const sessionVoiceLink = firstAudioEffect?.voice_link || firstAudioEffect?.voiceLink || '';
+        
+        // Store session voice_link for matching with brand assets
+        if (sessionVoiceLink) {
+          try { localStorage.setItem('session_voice_link', sessionVoiceLink); } catch (_) {}
         }
         // Index ALL script scenes from airesponse by scene number for description/narration
         // Also index VEO3 scenes separately for avatar_urls
@@ -2550,15 +2554,23 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                     const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
                 
                 // Extract tone from script for matching voiceovers
-                // Path: userquery[0].guidelines.purpose_and_audience.tone
+                // Path: userquery[0].additonalprop1.purpose_and_audience.tone
                 const userQueryArr = Array.isArray(currentScript?.userquery) ? currentScript.userquery : [];
                 const firstUserQuery = userQueryArr[0] || {};
                 
-                // Check both paths: direct and under guidelines
-                const guidelines = firstUserQuery?.guidelines || {};
+                // Check additonalprop1 path first (BuildReel path)
+                const additonalprop1 = firstUserQuery?.additonalprop1 || firstUserQuery?.additionalprop1 || {};
+                const purposeAndAudienceFromAddProp = additonalprop1?.purpose_and_audience || additonalprop1?.purposeAndAudience || {};
                 
-                const purposeAndAudience = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
-                                   firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
+                // Fallback to guidelines path (legacy)
+                const guidelines = firstUserQuery?.guidelines || {};
+                const purposeAndAudienceFromGuidelines = guidelines?.purpose_and_audience || guidelines?.purposeAndAudience || 
+                                                         firstUserQuery?.purpose_and_audience || firstUserQuery?.purposeAndAudience || {};
+                
+                // Prioritize additonalprop1, fallback to guidelines
+                const purposeAndAudience = purposeAndAudienceFromAddProp?.tone 
+                  ? purposeAndAudienceFromAddProp 
+                  : purposeAndAudienceFromGuidelines;
                 
                 const tone = (purposeAndAudience?.tone || '').toLowerCase().trim();
                 
@@ -2774,6 +2786,39 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
     load();
     return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };
   }, [jobId]);
+
+  // Call session-assets API on mount (especially for BuildReel flow)
+  useEffect(() => {
+    const fetchSessionAssets = async () => {
+      try {
+        const session_id = localStorage.getItem('session_id');
+        const user_id = localStorage.getItem('token');
+        if (!session_id || !user_id) return;
+
+        const sessionAssetsUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/session-assets/${encodeURIComponent(session_id)}?user_id=${encodeURIComponent(user_id)}`;
+        
+        const assetsResp = await fetch(sessionAssetsUrl);
+        const assetsText = await assetsResp.text();
+        let assetsData;
+        try {
+          assetsData = JSON.parse(assetsText);
+        } catch (_) {
+          assetsData = { logo_url: '', voice_url: '', voice_urls: {} };
+        }
+        if (assetsResp.ok && assetsData) {
+          setSessionAssets({
+            logo_url: assetsData.logo_url || '',
+            voice_url: assetsData.voice_url || '',
+            voice_urls: assetsData.voice_urls || {}
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch session assets:', error);
+      }
+    };
+
+    fetchSessionAssets();
+  }, []); // Run once on mount
 
   useEffect(() => {
     return () => {
@@ -9487,7 +9532,13 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                 customPresetName: ''
               };
 
-              const hasLogoAsset = !!sessionAssets.logo_url;
+              // Get logo from brand_identity.logo[0] from brand assets
+              const brandIdentityLogo = brandAssets?.brand_identity?.logo?.[0] 
+                || brandAssets?.brandIdentity?.logo?.[0]
+                || brandAssets?.brand_identity?.logo?.[0]?.url
+                || brandAssets?.brand_identity?.logo?.[0]?.link
+                || '';
+              const hasLogoAsset = !!brandIdentityLogo;
               const hasVoiceAssets = Object.keys(sessionAssets.voice_urls || {}).length > 0;
 
               const customNotes = sceneOptions.customPreservationNotes || {};
@@ -9793,9 +9844,8 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     <input
                                       type="radio"
                                       name={`logo-${sceneNumber}`}
-                                      checked={hasLogoAsset && sceneOptions.logoNeeded === true}
+                                      checked={sceneOptions.logoNeeded === true}
                                       onChange={() => updateSceneOption('logoNeeded', true)}
-                                      disabled={!hasLogoAsset}
                                       className="w-4 h-4 text-[#13008B]"
                                     />
                                     <span className="text-sm text-gray-700">Yes</span>
@@ -9804,28 +9854,57 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     <input
                                       type="radio"
                                       name={`logo-${sceneNumber}`}
-                                      checked={!hasLogoAsset || sceneOptions.logoNeeded === false}
+                                      checked={sceneOptions.logoNeeded === false}
                                       onChange={() => updateSceneOption('logoNeeded', false)}
                                       className="w-4 h-4 text-[#13008B]"
                                     />
                                     <span className="text-sm text-gray-700">No</span>
                                   </label>
                                 </div>
-                                {sceneOptions.logoNeeded && sessionAssets.logo_url && (
-                                  <div className="mt-2">
-                                    <img 
-                                      src={sessionAssets.logo_url} 
-                                      alt="Logo preview" 
-                                      style={{ width: '200px', height: '100px', objectFit: 'contain' }}
-                                      className="border border-gray-300 rounded"
-                                    />
-                                  </div>
-                                )}
+                                {sceneOptions.logoNeeded && (() => {
+                                  // Get logo from brand_identity.logo[0] from brand assets
+                                  const brandIdentityLogo = brandAssets?.brand_identity?.logo?.[0] 
+                                    || brandAssets?.brandIdentity?.logo?.[0]
+                                    || brandAssets?.brand_identity?.logo?.[0]?.url
+                                    || brandAssets?.brand_identity?.logo?.[0]?.link
+                                    || '';
+                                  
+                                  const logoUrl = brandIdentityLogo || '';
+                                  
+                                  if (logoUrl) {
+                                    return (
+                                      <div className="mt-2">
+                                        <img 
+                                          src={logoUrl} 
+                                          alt="Logo preview" 
+                                          style={{ width: '200px', height: '100px', objectFit: 'contain' }}
+                                          className="border border-gray-300 rounded"
+                                        />
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </div>
                               
                               {/* Voice URL Selection */}
                               <div>
-                                <label className="text-sm font-medium text-gray-700 mb-2 block">Voice URL</label>
+                                <div className="flex items-center justify-between mb-2">
+                                  <label className="text-sm font-medium text-gray-700">Voice URL</label>
+                                  {sceneOptions.voiceUrl && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateSceneOption('voiceUrl', '');
+                                        updateSceneOption('voiceOption', '');
+                                      }}
+                                      className="text-xs text-red-600 hover:text-red-700 underline"
+                                      title="Clear Voice URL to enable Voice Option"
+                                    >
+                                      Clear
+                                    </button>
+                                  )}
+                                </div>
                                 <div className="space-y-2">
                                   {(() => {
                                     // Get all voiceovers from brand assets
@@ -9849,10 +9928,22 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     };
                                     
                                     // Get session voice_url to match with brand voiceovers
-                                    const sessionVoiceUrl = sessionAssets.voice_url || (sessionAssets.voice_urls && Object.values(sessionAssets.voice_urls)[0]);
+                                    // Priority: 1) session_voice_link from additonalprop1, 2) sessionAssets.voice_url
+                                    let sessionVoiceUrl = null;
+                                    try {
+                                      const sessionVoiceLink = localStorage.getItem('session_voice_link');
+                                      if (sessionVoiceLink) {
+                                        sessionVoiceUrl = sessionVoiceLink;
+                                      }
+                                    } catch (_) {}
+                                    
+                                    if (!sessionVoiceUrl) {
+                                      sessionVoiceUrl = sessionAssets.voice_url || (sessionAssets.voice_urls && Object.values(sessionAssets.voice_urls)[0]);
+                                    }
+                                    
                                     const normalizedSessionVoice = sessionVoiceUrl ? normalizeUrl(sessionVoiceUrl) : '';
                                     
-                                    // Find voiceover that matches session voice_url
+                                    // Find voiceover that matches session voice_url or session_voice_link
                                     let matchedBrandVoiceover = null;
                                     if (normalizedSessionVoice && brandVoiceovers.length > 0) {
                                       matchedBrandVoiceover = brandVoiceovers.find(vo => {
@@ -9860,7 +9951,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                         const voUrl = vo.url || vo.link || '';
                                         if (!voUrl) return false;
                                         const normalizedVoUrl = normalizeUrl(voUrl);
-                                        return normalizedVoUrl === normalizedSessionVoice;
+                                        return normalizedVoUrl === normalizedSessionVoice || voUrl === sessionVoiceUrl;
                                       });
                                     }
                                     
@@ -9868,17 +9959,16 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                     const matchingVoiceovers = [];
                                     
                                     if (scriptTone && brandVoiceovers.length > 0) {
+                                      const tone = String(scriptTone || '').toLowerCase().trim();
                                       brandVoiceovers.forEach(vo => {
                                         if (!vo || typeof vo !== 'object') return;
                                         const voType = String(vo.type || '').toLowerCase().trim();
-                                        const tone = String(scriptTone || '').toLowerCase().trim();
                                         
+                                        // Match tone exactly (e.g., "professional" tone shows only "professional" type voices)
                                         if (voType === tone) {
                                           matchingVoiceovers.push(vo);
                                         }
                                       });
-                                      if (matchingVoiceovers.length === 0) {
-                                      }
                                     } else if (!scriptTone && brandVoiceovers.length > 0) {
                                       // If no scriptTone, show all brand voiceovers
                                       matchingVoiceovers.push(...brandVoiceovers);
@@ -9896,11 +9986,21 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                           {matchingVoiceovers.map((vo, idx) => {
                                             const voUrl = vo.url || vo.link || '';
                                             const currentVoiceUrl = sceneOptions.voiceUrl || '';
+                                            
+                                            // Also check session_voice_link for auto-selection
+                                            let sessionVoiceLink = '';
+                                            try {
+                                              sessionVoiceLink = localStorage.getItem('session_voice_link') || '';
+                                            } catch (_) {}
+                                            
                                             const normalizedVoUrl = voUrl ? normalizeUrl(voUrl) : '';
                                             const normalizedCurrentUrl = currentVoiceUrl ? normalizeUrl(currentVoiceUrl) : '';
-                                            const isSelected = voUrl && currentVoiceUrl && (
-                                              normalizedVoUrl === normalizedCurrentUrl || 
-                                              voUrl === currentVoiceUrl
+                                            const normalizedSessionVoiceLink = sessionVoiceLink ? normalizeUrl(sessionVoiceLink) : '';
+                                            
+                                            // Voice is selected if it matches currentVoiceUrl OR session_voice_link
+                                            const isSelected = voUrl && (
+                                              (currentVoiceUrl && (normalizedVoUrl === normalizedCurrentUrl || voUrl === currentVoiceUrl)) ||
+                                              (sessionVoiceLink && (normalizedVoUrl === normalizedSessionVoiceLink || voUrl === sessionVoiceLink))
                                             );
                                             
                                             return (
@@ -10005,8 +10105,28 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                               
                               {/* Voice Option - Preset Voices */}
                                 <div>
-                                  <label className="text-sm font-medium text-gray-700 mb-2 block">Voice Option</label>
+                                  <label className={`text-sm font-medium mb-2 block ${
+                                    sceneOptions.voiceUrl ? 'text-gray-400' : 'text-gray-700'
+                                  }`}>
+                                    Voice Option
+                                    {sceneOptions.voiceUrl && (
+                                      <span className="ml-2 text-xs text-gray-500">(Disabled when Voice URL is selected)</span>
+                                    )}
+                                  </label>
                                   {(() => {
+                                    // Disable voice option if voiceUrl is selected
+                                    const isVoiceUrlSelected = !!sceneOptions.voiceUrl;
+                                    
+                                    if (isVoiceUrlSelected) {
+                                      return (
+                                        <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                                          <p className="text-sm text-gray-500 text-center">
+                                            Voice Option is disabled because a Voice URL has been selected. Clear the Voice URL to enable preset voice options.
+                                          </p>
+                                        </div>
+                                      );
+                                    }
+                                    
                                     const currentKey = sceneOptions.voiceOption || '';
                                     let selectedGender = 'male';
                                     
