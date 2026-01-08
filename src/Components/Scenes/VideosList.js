@@ -15,6 +15,7 @@ import LogoImage from '../../asset/mainLogo.png';
 import LoadingAnimationGif from '../../asset/loading.gif';
 import { uploadBlobUrl } from '../../utils/uploadAssets';
 import Loader from '../Loader';
+import { useProgressLoader } from '../../hooks/useProgressLoader';
 import { sessionImagesAdaptor } from '../video-editor-js/pro/adaptors/session-images-adaptor';
 
 // FFmpeg xfade filter transition types
@@ -273,6 +274,17 @@ if (videoElement.readyState >= 2) {
   const [uploadBaseVideoFile, setUploadBaseVideoFile] = useState(null);
   const [isUploadingBaseVideo, setIsUploadingBaseVideo] = useState(false);
   const [uploadBaseVideoError, setUploadBaseVideoError] = useState('');
+  
+  // Progress bars for loaders using useProgressLoader hook (must be after all state declarations)
+  const savingLayersProgress = useProgressLoader(isSavingLayers, 95, 15000);
+  const uploadingBaseVideoProgress = useProgressLoader(isUploadingBaseVideo, 95, 30000);
+  // Use jobProgress.percent if available, otherwise fall back to simulated progress
+  const simulatedVideoLoaderProgress = useProgressLoader(showVideoLoader || isLoading, 95, 60000);
+  const videoLoaderProgress = jobProgress.percent > 0 ? jobProgress.percent : simulatedVideoLoaderProgress;
+  // Use renderProgress.percent if available, otherwise fall back to simulated progress
+  const simulatedRenderProgress = useProgressLoader(showRenderModal && renderJobId, 95, 120000);
+  const renderingVideoProgress = renderProgress.percent > 0 ? renderProgress.percent : simulatedRenderProgress;
+  
   const editorOverlaysRef = useRef([]); // Store current overlays from editor
   const initialOverlaysLoadedRef = useRef(false); // Track if initial overlays have been loaded
   const jobVideoResultsFetchedRef = useRef(false); // Track if video results have been fetched from job API
@@ -8240,7 +8252,7 @@ return () => {
                     ? 'Refreshing video list...'
                 : 'This may take a few moments. Please keep this tab open while we finish.'
             }
-            progress={jobProgress.percent > 0 ? jobProgress.percent : null}
+            progress={videoLoaderProgress > 0 ? videoLoaderProgress : null}
           >
                 {jobProgress.phase && jobProgress.percent > 0 && (
                   <p className="text-xs text-gray-500 mt-2">
@@ -8261,6 +8273,7 @@ return () => {
             overlayBg="bg-black/40 backdrop-blur-sm"
             title="Saving Layers"
             description="Please wait while we save your layer changes..."
+            progress={savingLayersProgress > 0 ? savingLayersProgress : null}
           />
         </>
       )}
@@ -8378,6 +8391,7 @@ return () => {
             overlayBg="bg-black/40 backdrop-blur-sm"
             title="Uploading Base Video"
             description="Please wait while we upload and update your scene..."
+            progress={uploadingBaseVideoProgress > 0 ? uploadingBaseVideoProgress : null}
           />
         </>
       )}
@@ -8396,7 +8410,7 @@ return () => {
                     ? 'Redirecting to media page...'
                 : 'This may take a few moments. Please keep this tab open while we finish.'
             }
-            progress={renderProgress.percent > 0 ? renderProgress.percent : null}
+            progress={renderingVideoProgress > 0 ? renderingVideoProgress : null}
           >
                 {renderProgress.phase && renderProgress.percent > 0 && (
                   <p className="text-xs text-gray-500 mt-2">

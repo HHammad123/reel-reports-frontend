@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, CheckCircle, Circle, ArrowLeft } from 'lucide-react';
 import Loader from './Loader';
+import { useProgressLoader } from '../hooks/useProgressLoader';
 
 const deriveLastUserQuery = (messages = []) => {
   if (!Array.isArray(messages)) return ''
@@ -20,6 +21,9 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
   const [error, setError] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
+  
+  // Progress bar for script generation using useProgressLoader hook
+  const generatingScriptProgress = useProgressLoader(isGenerating, 95, 60000);
   const [hasGeneratedScript, setHasGeneratedScript] = useState(() => {
     try {
       return (
@@ -210,7 +214,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
 
       console.log('Generate Script request:', scriptEndpoint, fullPayload);
       setIsGenerating(true);
-      setProgress(20); // Start at 20%
+      setProgress(10); // Start at 10% immediately to show progress bar
       try {
         const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${scriptEndpoint}`, {
           method: 'POST',
@@ -243,14 +247,14 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
               // Ensure progress is at least 60% when receiving data
               setProgress(Math.max(60, calculatedProgress));
             } else {
-              setProgress(60); // Set to 60% when streaming without total
+              setProgress(70); // Set to 70% when streaming without total
             }
           }
         }
         // flush decoder
         textSoFar += decoder.decode();
 
-        setProgress(80); // Processing response
+        setProgress(85); // Processing response
 
         let data;
         try {
@@ -581,7 +585,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           overlayBg="bg-black/30"
           title="Generating Script…"
           description="Please wait while we generate your script..."
-          progress={progress}
+          progress={progress > 0 ? progress : generatingScriptProgress}
         />
       )}
     </div>

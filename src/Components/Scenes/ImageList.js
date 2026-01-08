@@ -7,6 +7,7 @@ import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
 import Loader from '../Loader';
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
+import { useProgressLoader } from '../../hooks/useProgressLoader';
 
 // Preset Voice Options
 const PRESET_VOICE_OPTIONS = {
@@ -431,6 +432,18 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     () => normalizeAspectRatioValue(questionnaireAspectRatio || '16:9') === '9:16',
     [questionnaireAspectRatio]
   );
+  
+  // Progress bars for loaders using useProgressLoader hook
+  const generatingStoryboardProgress = useProgressLoader(isLoading && isPolling, 95, 60000);
+  const regeneratingProgress = useProgressLoader(isRegenerating, 95, 45000);
+  const generatingFromReferenceProgress = useProgressLoader(isGeneratingFromReference, 95, 45000);
+  const uploadingBackgroundProgress = useProgressLoader(isUploadingBackground, 95, 30000);
+  const uploadingAvatarFilesProgress = useProgressLoader(isUploadingAvatarFiles, 95, 25000);
+  const savingFieldProgress = useProgressLoader(isSavingField, 95, 10000);
+  const savingVeo3TemplateProgress = useProgressLoader(isSavingVeo3Template, 95, 15000);
+  const sceneUpdatingProgress = useProgressLoader(isSceneUpdating, 95, 15000);
+  const savingAnimationDescProgress = useProgressLoader(isSavingAnimationDesc, 95, 15000);
+  const savingDescriptionProgress = useProgressLoader(isSavingDescription, 95, 10000);
   const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
   
   // Preset avatars (same as Chat.js)
@@ -6166,6 +6179,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
             overlayBg="bg-black/40 backdrop-blur-sm"
             title="Generating Storyboard"
             description="This may take a few moments. Please keep this tab open while we finish."
+            progress={generatingStoryboardProgress > 0 ? generatingStoryboardProgress : null}
           />
         </>
       )}
@@ -8154,6 +8168,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                               title="Updating Scene Field"
                               description="Please wait while we save your changes..."
                               containerClass="!max-w-xs !p-4"
+                              progress={savingVeo3TemplateProgress > 0 ? savingVeo3TemplateProgress : null}
                             />
                           </div>
                         )}
@@ -8747,6 +8762,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                                   title="Saving Animation Description"
                                   description="Please wait while we save your changes..."
                                   containerClass="!max-w-xs !p-4"
+                                  progress={savingAnimationDescProgress > 0 ? savingAnimationDescProgress : null}
                                 />
                               </div>
                             )}
@@ -9066,6 +9082,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                             title="Updating Description"
                             description="Please wait..."
                             containerClass="!max-w-xs !p-4"
+                            progress={savingDescriptionProgress > 0 ? savingDescriptionProgress : null}
                           />
                         </div>
                       )}
@@ -11129,6 +11146,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                     title="Regenerating Storyboard"
                     description="Please wait while we create your new image..."
                     containerClass="!max-w-sm"
+                    progress={regeneratingProgress > 0 ? regeneratingProgress : null}
                   />
                 </div>
               )}
@@ -12114,6 +12132,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                     title="Uploading Background..."
                     description="Please wait while we upload your background image..."
                     containerClass="!max-w-xs"
+                    progress={uploadingBackgroundProgress > 0 ? uploadingBackgroundProgress : null}
                   />
                 </div>
               )}
