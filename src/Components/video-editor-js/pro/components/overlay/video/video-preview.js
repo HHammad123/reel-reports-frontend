@@ -19,7 +19,10 @@ export const VideoPreview = ({ overlay, className = "", onChangeVideo, }) => {
     if (!overlay.content) {
         return null;
     }
-    return (_jsxs("div", { className: `relative aspect-16/5 overflow-hidden rounded-sm border border-border bg-transparent group ${className}`, onMouseEnter: () => setIsHovered(true), onMouseLeave: () => setIsHovered(false), children: [_jsx("img", { src: overlay.content, alt: "Video preview", className: "absolute inset-0 w-full h-full object-contain transition-transform duration-200 group-hover:scale-105", style: {
+    var _d;
+    // Get background color from styles, default to white
+    const backgroundColor = ((_d = overlay.styles) === null || _d === void 0 ? void 0 : _d.backgroundColor) || "white";
+    return (_jsxs("div", { className: `relative aspect-16/5 overflow-hidden rounded-sm border border-border group ${className}`, style: { backgroundColor: backgroundColor }, onMouseEnter: () => setIsHovered(true), onMouseLeave: () => setIsHovered(false), children: [_jsx("img", { src: overlay.content, alt: "Video preview", className: "absolute inset-0 w-full h-full object-contain transition-transform duration-200 group-hover:scale-105", style: {
                     filter: ((_a = overlay.styles) === null || _a === void 0 ? void 0 : _a.filter) || 'none',
                     opacity: (_c = (_b = overlay.styles) === null || _b === void 0 ? void 0 : _b.opacity) !== null && _c !== void 0 ? _c : 1,
                 } }), onChangeVideo && (_jsx("div", { className: `absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`, children: _jsxs(Button, { onClick: onChangeVideo, variant: "secondary", size: "sm", className: "bg-white/90 hover:bg-white text-gray-900", children: [_jsx(RefreshCw, { className: "w-3 h-3" }), "Change Video"] }) }))] }));

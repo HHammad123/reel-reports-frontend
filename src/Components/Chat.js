@@ -5,7 +5,7 @@ import { formatAIResponse } from '../utils/formatting';
 import { normalizeGeneratedMediaResponse } from '../utils/generatedMediaUtils';
 import ChartDataEditor from './ChartDataEditor';
 import LogoImage from '../asset/mainLogo.png';
-import LoadingAnimationVideo from '../asset/Loading animation.mp4';
+import LoadingAnimationGif from '../asset/loading.gif';
 import Loader from './Loader';
 
 const GOOGLE_FONT_OPTIONS = [
@@ -962,6 +962,13 @@ useEffect(() => {
   const [pendingChartType, setPendingChartType] = useState('');
   const [isUpdatingChartType, setIsUpdatingChartType] = useState(false);
   const [isApplyingChartType, setIsApplyingChartType] = useState(false);
+  // Progress states for loaders
+  const [questionnaireProgress, setQuestionnaireProgress] = useState(0);
+  const [chartTypeProgress, setChartTypeProgress] = useState(0);
+  const [enhancingProgress, setEnhancingProgress] = useState(0);
+  const [applyingProgress, setApplyingProgress] = useState(0);
+  const [updatingProgress, setUpdatingProgress] = useState(0);
+  const [switchingModelProgress, setSwitchingModelProgress] = useState(0);
 const [isEditingAnchorOptions, setIsEditingAnchorOptions] = useState(false);
 const [isEditingAnchorPrompt, setIsEditingAnchorPrompt] = useState(false);
 const [isEditingAdvancedStyles, setIsEditingAdvancedStyles] = useState(false);
@@ -2621,6 +2628,13 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     const handler = (e) => {
       const flag = !!(e?.detail?.isGenerating);
       setIsGeneratingQuestionnaire(flag);
+      // Update progress if provided in event detail
+      if (e?.detail?.progress !== undefined) {
+        setQuestionnaireProgress(e.detail.progress);
+      } else if (!flag) {
+        // Reset progress when generation finishes
+        setQuestionnaireProgress(0);
+      }
     };
     window.addEventListener('questionnaire-generating', handler);
     return () => window.removeEventListener('questionnaire-generating', handler);
@@ -6358,9 +6372,11 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       if (isSwitchingModel) return;
       // Turn on overlay immediately; keep it until we finish or error
       setIsSwitchingModel(true);
+      setSwitchingModelProgress(20);
       if (!Array.isArray(scriptRows) || !scriptRows[currentSceneIndex]) {
         console.warn('Cannot update video type: invalid scene index');
         setIsSwitchingModel(false);
+        setSwitchingModelProgress(0);
         return;
       }
       const scene = scriptRows[currentSceneIndex];
@@ -6485,12 +6501,17 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       console.log('scripts/switch-model request body:', requestBody);
 
       // 3) Call switch-model API
+      setSwitchingModelProgress(80);
       const switchResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/switch-model', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
       });
       const switchText = await switchResp.text();
       let switchData; try { switchData = JSON.parse(switchText); } catch (_) { switchData = switchText; }
-      if (!switchResp.ok) throw new Error(`scripts/switch-model failed: ${switchResp.status} ${switchText}`);
+      if (!switchResp.ok) {
+        setSwitchingModelProgress(0);
+        throw new Error(`scripts/switch-model failed: ${switchResp.status} ${switchText}`);
+      }
+      setSwitchingModelProgress(100);
       console.log('scripts/switch-model response:', switchData);
 
       // Reflect new selection in UI and close confirm
@@ -6714,8 +6735,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     } catch (e) {
       console.error('Video type switch failed:', e);
       alert('Failed to switch video type. Please try again.');
+      setSwitchingModelProgress(0);
     } finally {
       setIsSwitchingModel(false);
+      setTimeout(() => setSwitchingModelProgress(0), 500);
     }
   };
 
@@ -6733,12 +6756,17 @@ const [textEditorFormat, setTextEditorFormat] = useState({
   const saveEditedScriptText = async () => {
     if (isUpdatingText) return;
     setIsUpdatingText(true);
+    setUpdatingProgress(20);
     try {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
-      if (!sessionId || !token) throw new Error('Missing session_id or token');
+      if (!sessionId || !token) {
+        setUpdatingProgress(0);
+        throw new Error('Missing session_id or token');
+      }
 
       // 1) Load current session data
+      setUpdatingProgress(40);
       const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessionResp = await fetch(
         'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data',
@@ -6746,8 +6774,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       );
       if (!sessionResp.ok) {
         const text = await sessionResp.text();
+        setUpdatingProgress(0);
         throw new Error(`user-session/data failed: ${sessionResp.status} ${text}`);
       }
+      setUpdatingProgress(60);
       const sessionDataResponse = await sessionResp.json();
       const sd = (sessionDataResponse?.session_data || sessionDataResponse?.session || {});
       // Build session object to match required schema
@@ -6911,6 +6941,7 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       console.log('scripts/update-text request body:', requestBody);
 
       // 3) Use unified update-text endpoint (no video-type branching)
+      setUpdatingProgress(80);
       const updateResp = await fetch(
         `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-text`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }
@@ -6918,8 +6949,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
       const updateText = await updateResp.text();
       let updateData; try { updateData = JSON.parse(updateText); } catch (_) { updateData = updateText; }
       if (!updateResp.ok) {
+        setUpdatingProgress(0);
         throw new Error(`scripts/update-text failed: ${updateResp.status} ${updateText}`);
       }
+      setUpdatingProgress(100);
       console.log('scripts/update-text response:', updateData);
 
       // 4) Extract updated script array from response
@@ -6967,8 +7000,10 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     } catch (e) {
       console.error('Failed to update script text:', e);
       alert('Failed to update scene text. Please try again.');
+      setUpdatingProgress(0);
     } finally {
       setIsUpdatingText(false);
+      setTimeout(() => setUpdatingProgress(0), 500);
     }
   };
   // Helper: Update a single scene's gen_image flag (and optional description) via update-text API
@@ -7664,9 +7699,11 @@ const [textEditorFormat, setTextEditorFormat] = useState({
     } catch(e) {
       console.error('updateTextToBeIncluded failed:', e);
       alert('Failed to update text to be included. Please try again.');
+      setUpdatingProgress(0);
       throw e;
     } finally {
       setIsUpdatingText(false);
+      setTimeout(() => setUpdatingProgress(0), 500);
     }
   };
 
@@ -8669,6 +8706,7 @@ const saveAnchorPromptTemplate = async () => {
           zIndex="z-[100]"
           overlayBg="bg-black/20"
           title={`Loading ${loadingVideoType}...`}
+          progress={switchingModelProgress > 0 ? switchingModelProgress : null}
         />
       )}
       {/* Add Scene Modal */}
@@ -11614,12 +11652,9 @@ const saveAnchorPromptTemplate = async () => {
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
                                     <div className="w-16 h-16 mx-auto">
-                                      <video
-                                        src={LoadingAnimationVideo}
-                                        autoPlay
-                                        loop
-                                        muted
-                                        playsInline
+                                      <img
+                                        src={LoadingAnimationGif}
+                                        alt="Loading..."
                                         className="w-full h-full object-contain"
                                       />
                                     </div>
@@ -11922,12 +11957,9 @@ const saveAnchorPromptTemplate = async () => {
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
                                   <div className="bg-white shadow-lg rounded-lg px-6 py-4 text-center space-y-3">
                                     <div className="w-16 h-16 mx-auto">
-                                      <video
-                                        src={LoadingAnimationVideo}
-                                        autoPlay
-                                        loop
-                                        muted
-                                        playsInline
+                                      <img
+                                        src={LoadingAnimationGif}
+                                        alt="Loading..."
                                         className="w-full h-full object-contain"
                                       />
                                     </div>
@@ -13758,14 +13790,16 @@ const saveAnchorPromptTemplate = async () => {
                   try {
                     setIsUpdatingChartType(true);
                     setIsApplyingChartType(true);
-                    const sel = pendingChartType; if (!sel) { setShowChartTypeConfirm(false); return; }
+                    setChartTypeProgress(20);
+                    const sel = pendingChartType; if (!sel) { setShowChartTypeConfirm(false); setChartTypeProgress(0); return; }
                     const r = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
                     const token = localStorage.getItem('token');
                     const sessionId = localStorage.getItem('session_id');
-                    if (!token || !sessionId || !r) { setShowChartTypeConfirm(false); return; }
+                    if (!token || !sessionId || !r) { setShowChartTypeConfirm(false); setChartTypeProgress(0); return; }
                     // Update local immediately
                     handleSceneUpdate(currentSceneIndex,'chart_type', sel);
                     // Load user/session
+                    setChartTypeProgress(40);
                     const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user_id: token, session_id: sessionId }) });
                     const st = await sessionResp.text(); let sjson; try { sjson = JSON.parse(st); } catch(_) { sjson = st; }
                     const sd = (sjson?.session_data || sjson?.session || {});
@@ -13775,14 +13809,18 @@ const saveAnchorPromptTemplate = async () => {
                     const sceneNumber = r?.scene_number ?? (currentSceneIndex + 1);
                     const visualBody = { user, session: sessionForBody, scene_number: sceneNumber, chart_type: sel };
                     // 1) Update scene visual for Plotly chart type change
+                    setChartTypeProgress(60);
                     await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-visual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(visualBody) });
+                    setChartTypeProgress(100);
                   } catch(err) {
                     console.warn('Chart type update failed:', err);
+                    setChartTypeProgress(0);
                   } finally {
                     setIsUpdatingChartType(false);
                     setIsApplyingChartType(false);
                     setShowChartTypeConfirm(false);
                     setPendingChartType('');
+                    setTimeout(() => setChartTypeProgress(0), 500);
                   }
                 }}
                 disabled={isUpdatingChartType}
@@ -13802,6 +13840,7 @@ const saveAnchorPromptTemplate = async () => {
           title="Applying chart type…"
           videoSize="w-16 h-16"
           containerClass="!max-w-xs"
+          progress={chartTypeProgress > 0 ? chartTypeProgress : null}
         />
       )}
 
@@ -14655,6 +14694,7 @@ const saveAnchorPromptTemplate = async () => {
           overlayBg="bg-black/40"
           title="Generating scene…"
           description="Applying selected image to scene."
+          progress={enhancingProgress > 0 ? enhancingProgress : null}
         />
       )}
       {isApplyingKeepDefault && (
@@ -14664,6 +14704,7 @@ const saveAnchorPromptTemplate = async () => {
           overlayBg="bg-black/40"
           title="Applying changes…"
           description="Updating scene with selected image."
+          progress={applyingProgress > 0 ? applyingProgress : null}
         />
       )}
       {/* Regenerate Scene Modal */}
@@ -14991,13 +15032,13 @@ const saveAnchorPromptTemplate = async () => {
         </div>
       )}
       {showShortGenPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[90%] max-w-sm rounded-lg shadow-xl p-6 text-center">
-            <div className="mx-auto mb-4 w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <h4 className="text-lg font-semibold text-[#13008B]">Starting image generation…</h4>
-            <p className="mt-1 text-sm text-gray-600">Redirecting to Images in a moment.</p>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-50"
+          overlayBg="bg-black/50"
+          title="Starting image generation…"
+          description="Redirecting to Images in a moment."
+        />
       )}
       {showMissingAvatarPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -15055,6 +15096,7 @@ const saveAnchorPromptTemplate = async () => {
           zIndex="z-40"
           overlayBg="bg-black/30"
           title="Generating Questionnaire…"
+          progress={questionnaireProgress > 0 ? questionnaireProgress : null}
         />
       )}
       {(isUpdatingText || isSavingReorder || isUploadingAvatar || isUploadingSceneImages) && (
@@ -15069,6 +15111,7 @@ const saveAnchorPromptTemplate = async () => {
             isUploadingSceneImages && !isUpdatingText && !isSavingReorder && !isUploadingAvatar && 'Uploading images…' ||
             'Loading…'
           }
+          progress={updatingProgress > 0 ? updatingProgress : null}
         />
       )}
       {/* Full-screen loader while switching reel/video type */}
@@ -15086,6 +15129,7 @@ const saveAnchorPromptTemplate = async () => {
             else if (vt.includes('hybrid')) label = 'Hybrid';
             return `Loading ${label}`;
           })()}
+          progress={switchingModelProgress > 0 ? switchingModelProgress : null}
         />
       )}
       {/* Inject CSS for thinking dots animation */}

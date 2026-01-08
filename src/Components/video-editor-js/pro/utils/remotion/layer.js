@@ -28,8 +28,11 @@ export const Layer = ({ overlay, baseUrl, fontInfos }) => {
         const row = overlay.row ?? 0;
         // Calculate base zIndex from row
         let zIndex = 100 - row * 10;
-        // If styles.zIndex is explicitly set and higher, use it (for chart videos on top)
-        if (overlay.styles?.zIndex && typeof overlay.styles.zIndex === 'number' && overlay.styles.zIndex > zIndex) {
+        // If styles.zIndex is explicitly set, use it (for chart videos on top, or base videos on bottom)
+        // Higher z-index for overlays on top, lower z-index for base videos in background
+        if (overlay.styles?.zIndex && typeof overlay.styles.zIndex === 'number') {
+            // Use explicit zIndex if it's significantly different from row-based calculation
+            // This allows base videos to stay in background (z-50) even at lower rows
             zIndex = overlay.styles.zIndex;
         }
         return {

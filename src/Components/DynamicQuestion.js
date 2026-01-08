@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, CheckCircle, Circle, ArrowLeft } from 'lucide-react';
+import Loader from './Loader';
 
 const deriveLastUserQuery = (messages = []) => {
   if (!Array.isArray(messages)) return ''
@@ -209,7 +210,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
 
       console.log('Generate Script request:', scriptEndpoint, fullPayload);
       setIsGenerating(true);
-      setProgress(0);
+      setProgress(20); // Start at 20%
       try {
         const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${scriptEndpoint}`, {
           method: 'POST',
@@ -219,6 +220,8 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
         if (!resp.ok || !resp.body) {
           throw new Error(`HTTP error! status: ${resp.status}`);
         }
+
+        setProgress(40); // API call started, receiving response
 
         // Stream the response and update progress
         const contentLengthHeader = resp.headers.get('Content-Length') || resp.headers.get('content-length');
@@ -233,16 +236,21 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           if (done) break;
           if (value) {
             received += value.length;
-            if (total && total > 0) {
-              setProgress(Math.min(99, Math.floor((received / total) * 100)));
-            } else {
-              setProgress(prev => Math.min(95, prev + 1));
-            }
             textSoFar += decoder.decode(value, { stream: true });
+            // Update progress based on received data
+            if (total && total > 0) {
+              const calculatedProgress = Math.min(95, Math.floor((received / total) * 100));
+              // Ensure progress is at least 60% when receiving data
+              setProgress(Math.max(60, calculatedProgress));
+            } else {
+              setProgress(60); // Set to 60% when streaming without total
+            }
           }
         }
         // flush decoder
         textSoFar += decoder.decode();
+
+        setProgress(80); // Processing response
 
         let data;
         try {
@@ -250,7 +258,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
         } catch (_) {
           data = textSoFar;
         }
-        setProgress(100);
+        setProgress(100); // Complete
         console.log('Generated script response:', data);
         try { localStorage.setItem('last_generated_script', JSON.stringify(data)); } catch (_) { /* noop */ }
         try { localStorage.setItem('has_generated_script', 'true'); } catch (_) { /* noop */ }
@@ -567,20 +575,14 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
       </div>
 
       {isGenerating && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="bg-white/95 max-w-sm w-[90%] rounded-lg shadow p-4 text-center">
-            <div className="mx-auto mb-3 w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <div className="text-sm font-medium text-gray-800">Generating Script…</div>
-            {progress > 0 && (
-              <div className="mt-3">
-                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                  <div className="bg-[#9333ea] h-2 rounded-full transition-all duration-200" style={{ width: `${Math.max(5, Math.min(progress, 100))}%` }} />
-                </div>
-                <div className="text-xs text-gray-600 mt-1">{progress}%</div>
-              </div>
-            )}
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Generating Script…"
+          description="Please wait while we generate your script..."
+          progress={progress}
+        />
       )}
     </div>
   );

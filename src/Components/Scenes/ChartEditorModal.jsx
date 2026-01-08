@@ -109,20 +109,52 @@ const getAxisConfig = (sections, axis, subsection, configName) => {
   return config ? config.value : null
 }
 
-const formatNumber = (value, format, prefix = '', suffix = '') => {
+const formatNumber = (value, format = '', prefix = '', suffix = '') => {
   if (value == null) return ''
 
   let formatted = value.toString()
-  if (format === '.0f') {
-    formatted = Math.round(value).toString()
-  } else if (format === '.1f') {
-    formatted = value.toFixed(1)
-  } else if (format === '.2f') {
-    formatted = value.toFixed(2)
-  } else if (format === '.0%') {
-    formatted = Math.round(value * 100).toString() + '%'
-  } else if (format === '.1%') {
-    formatted = (value * 100).toFixed(1) + '%'
+
+  if (format) {
+    try {
+      // Check if comma is requested in format
+      if (format.includes(',')) {
+        // Comma format requested
+        if (format === ',.0f') {
+          formatted = Math.round(value).toLocaleString('en-US')
+        } else if (format === ',.1f') {
+          formatted = value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+        } else if (format === ',.2f') {
+          formatted = value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        } else if (format.startsWith(',') && format.endsWith('f')) {
+          // Handle any ,.Xf format
+          const decimals = parseInt(format.substring(2, format.length - 1))
+          formatted = value.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+        } else {
+          formatted = value.toString()
+        }
+      } else {
+        // No comma format
+        if (format === '.0f') {
+          formatted = Math.round(value).toString()
+        } else if (format === '.1f') {
+          formatted = value.toFixed(1)
+        } else if (format === '.2f') {
+          formatted = value.toFixed(2)
+        } else if (format === '.0%') {
+          formatted = Math.round(value * 100).toString() + '%'
+        } else if (format === '.1%') {
+          formatted = (value * 100).toFixed(1) + '%'
+        } else if (format.startsWith('.') && format.endsWith('f')) {
+          // Handle any .Xf format
+          const decimals = parseInt(format.substring(1, format.length - 1))
+          formatted = value.toFixed(decimals)
+        } else {
+          formatted = value.toString()
+        }
+      }
+    } catch (e) {
+      formatted = value.toString()
+    }
   }
 
   return `${prefix}${formatted}${suffix}`

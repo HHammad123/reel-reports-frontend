@@ -5,7 +5,6 @@ import ImageEdit from '../../pages/ImageEdit';
 import html2canvas from 'html2canvas';
 import ChartEditorModal from './ChartEditorModal';
 import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval';
-import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
 import Loader from '../Loader';
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
 
@@ -5794,7 +5793,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
     setIsPreparingDownloads(true);
     setVideoGenProgress({
       visible: true,
-      percent: 5,
+      percent: 20,
       status: 'saving',
       step: 'saving_images',
       jobId: null,
@@ -5833,7 +5832,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         setVideoGenProgress((prev) => ({
           ...prev,
           visible: true,
-          percent: 10,
+          percent: 20,
           status: 'saving',
           step: 'saving_images',
           message: 'Saving images to memory...'
@@ -5926,7 +5925,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         setVideoGenProgress((prev) => ({
           ...prev,
           visible: true,
-          percent: 30,
+          percent: 40,
           status: 'uploading',
           step: 'uploading_frames',
           message: 'Uploading frames to server...'
@@ -5937,7 +5936,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
           setVideoGenProgress((prev) => ({
             ...prev,
             visible: true,
-            percent: Math.max(prev.percent, 70),
+            percent: 40,
             status: 'uploading',
             step: 'uploading_frames',
             message: 'Frames uploaded successfully'
@@ -5960,7 +5959,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
         setVideoGenProgress((prev) => ({
           ...prev,
           visible: true,
-          percent: Math.max(prev.percent, 80),
+          percent: 60,
           status: 'queueing',
           step: 'queueing',
           message: 'Queueing video generation...'
@@ -5987,7 +5986,7 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
             setVideoGenProgress((prev) => ({
               ...prev,
               visible: true,
-              percent: Math.max(prev.percent, 80),
+              percent: 60,
               status: 'queued',
               step: 'queued',
               message: 'Job queued but no job ID returned'
@@ -6126,55 +6125,22 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
       </div>
 
       {videoGenProgress.visible && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
-          <div className="bg-white shadow-2xl rounded-2xl px-8 py-10 max-w-md w-full text-center">
-            <div className="flex flex-col items-center space-y-4">
-              <div className="relative w-20 h-20">
-                <svg className="w-20 h-20" viewBox="0 0 100 100">
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="45"
-                    stroke="#E5E7EB"
-                    strokeWidth="8"
-                    fill="none"
-                  />
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="45"
-                    stroke="#13008B"
-                    strokeWidth="8"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeDasharray="283"
-                    strokeDashoffset={`${283 - (283 * Math.min(videoGenProgress.percent, 100)) / 100}`}
-                    style={{ transformOrigin: '50% 50%', transform: 'rotate(-90deg)' }}
-                  />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center text-xl font-semibold text-[#13008B]">
-                  {Math.min(100, Math.max(0, Math.round(videoGenProgress.percent)))}%
-                </div>
-              </div>
-              <div>
-                <p className="text-lg font-semibold text-gray-900">
-                  {videoGenProgress.step === 'saving_images' && 'Saving images to workspace'}
-                  {videoGenProgress.step === 'uploading_frames' && 'Uploading frames'}
-                  {videoGenProgress.step === 'queueing' && 'Submitting video job'}
-                  {videoGenProgress.step === 'queued' && 'Waiting for job to start'}
-                  {videoGenProgress.step === 'regenerating_videos' && 'Generating videos'}
-                  {videoGenProgress.step === 'completed' && 'Finalizing'}
-                  {(!videoGenProgress.step || videoGenProgress.step === '') && 'Processing'}
-                </p>
-                {videoGenProgress.message ? (
-                  <p className="text-sm text-gray-600 mt-2">{videoGenProgress.message}</p>
-                ) : (
-                  <p className="text-sm text-gray-600 mt-2">This may take a moment. Please keep this tab open.</p>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-white/90 backdrop-blur-sm"
+          title={
+            videoGenProgress.step === 'saving_images' ? 'Saving images to workspace' :
+            videoGenProgress.step === 'uploading_frames' ? 'Uploading frames' :
+            videoGenProgress.step === 'queueing' ? 'Submitting video job' :
+            videoGenProgress.step === 'queued' ? 'Waiting for job to start' :
+            videoGenProgress.step === 'regenerating_videos' ? 'Generating videos' :
+            videoGenProgress.step === 'completed' ? 'Finalizing' :
+            'Processing'
+          }
+          description={videoGenProgress.message || 'This may take a moment. Please keep this tab open.'}
+          progress={videoGenProgress.percent > 0 ? videoGenProgress.percent : null}
+        />
       )}
 
       {showVideoRedirectPopup && (

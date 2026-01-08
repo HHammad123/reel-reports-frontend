@@ -12,7 +12,7 @@ import { Zap, ChevronRight, X, Menu } from 'lucide-react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import LogoImage from '../../asset/mainLogo.png';
-import LoadingAnimationVideo from '../../asset/Loading animation.mp4';
+import LoadingAnimationGif from '../../asset/loading.gif';
 import { uploadBlobUrl } from '../../utils/uploadAssets';
 import Loader from '../Loader';
 import { sessionImagesAdaptor } from '../video-editor-js/pro/adaptors/session-images-adaptor';
@@ -8240,10 +8240,11 @@ return () => {
                     ? 'Refreshing video list...'
                 : 'This may take a few moments. Please keep this tab open while we finish.'
             }
+            progress={jobProgress.percent > 0 ? jobProgress.percent : null}
           >
                 {jobProgress.phase && jobProgress.percent > 0 && (
-                  <p className="text-xs text-gray-500">
-                    {jobProgress.phase.toUpperCase()} • {Math.min(100, Math.max(0, Math.round(jobProgress.percent)))}%
+                  <p className="text-xs text-gray-500 mt-2">
+                    {jobProgress.phase.toUpperCase()}
                   </p>
                 )}
           </Loader>
@@ -8395,10 +8396,11 @@ return () => {
                     ? 'Redirecting to media page...'
                 : 'This may take a few moments. Please keep this tab open while we finish.'
             }
+            progress={renderProgress.percent > 0 ? renderProgress.percent : null}
           >
                 {renderProgress.phase && renderProgress.percent > 0 && (
-                  <p className="text-xs text-gray-500">
-                    {renderProgress.phase.toUpperCase()} • {Math.min(100, Math.max(0, Math.round(renderProgress.percent)))}%
+                  <p className="text-xs text-gray-500 mt-2">
+                    {renderProgress.phase.toUpperCase()}
                   </p>
                 )}
           </Loader>
@@ -9206,12 +9208,9 @@ isolation: isolate !important;
                     <div className="w-full h-full flex items-center justify-center text-white">
                       <div className="text-center">
                         <div className="w-16 h-16 mx-auto mb-4">
-                          <video
-                            src={LoadingAnimationVideo}
-                            autoPlay
-                            loop
-                            muted
-                            playsInline
+                          <img
+                            src={LoadingAnimationGif}
+                            alt="Loading..."
                             className="w-full h-full object-contain"
                           />
                         </div>

@@ -1,21 +1,22 @@
 import React from 'react';
-import LoadingAnimationVideo from '../asset/Loading animation.mp4';
+import LoadingAnimationGif from '../asset/loading.gif';
 
 /**
  * Reusable Loader Component
  * 
- * Displays a consistent loading animation with the Loading animation.mp4 video at the top
+ * Displays a consistent loading animation with the loading.gif at the top
  * and customizable content below.
  * 
  * @param {Object} props
- * @param {string} props.title - Main title text displayed below the video
+ * @param {string} props.title - Main title text displayed below the animation
  * @param {string} props.description - Optional description text below the title
  * @param {string|React.ReactNode} props.children - Optional custom content to display
  * @param {boolean} props.fullScreen - If true, displays as full-screen overlay (default: false)
  * @param {string} props.overlayBg - Background color for overlay (default: 'bg-black/30')
  * @param {string} props.zIndex - Z-index for full-screen overlay (default: 'z-50')
- * @param {string} props.videoSize - Size of the video (default: 'w-20 h-20')
+ * @param {string} props.videoSize - Size of the animation (default: 'w-20 h-20')
  * @param {string} props.containerClass - Additional classes for the container
+ * @param {number} props.progress - Progress percentage (0-100) to display in progress bar
  */
 const Loader = ({
   title,
@@ -26,30 +27,41 @@ const Loader = ({
   zIndex = 'z-50',
   videoSize = 'w-20 h-20',
   containerClass = '',
+  progress = null,
 }) => {
   const content = (
     <div className={`bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 flex flex-col items-center text-center space-y-4 ${containerClass}`}>
-      {/* Loading Animation Video at the top */}
+      {/* Loading Animation GIF at the top */}
       <div className={`relative ${videoSize} flex items-center justify-center`}>
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
+        <img
+          src={LoadingAnimationGif}
+          alt="Loading..."
           className="w-full h-full object-contain"
-        >
-          <source src={LoadingAnimationVideo} type="video/mp4" />
-        </video>
+        />
       </div>
       
-      {/* Content below the video */}
-      <div className="space-y-2">
+      {/* Content below the animation */}
+      <div className="space-y-2 w-full">
         {title && (
           <p className="text-lg font-semibold text-[#13008B]">{title}</p>
         )}
         {description && (
           <p className="text-sm text-gray-600">{description}</p>
         )}
+        
+        {/* Progress Bar - appears below title/description */}
+        {progress !== null && (
+          <div className="w-full max-w-xs mx-auto mt-3">
+            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-[#13008B] h-2 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-600 mt-1">{Math.min(100, Math.max(0, Math.round(progress)))}%</p>
+          </div>
+        )}
+        
         {children}
       </div>
     </div>

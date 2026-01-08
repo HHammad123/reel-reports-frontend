@@ -644,6 +644,11 @@ const Home = () => {
       };
 
       // Call the questionnaire generate API with new payload
+      // Progress: 20% - API call starting
+      try {
+        window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: true, progress: 20 } }));
+      } catch (e) { /* noop */ }
+      
       const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${qEndpoint}`, {
         method: 'POST',
         headers: {
@@ -652,11 +657,21 @@ const Home = () => {
         body: JSON.stringify(questionnairePayload)
       });
       
+      // Progress: 50% - API call successful, processing response
+      try {
+        window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: true, progress: 50 } }));
+      } catch (e) { /* noop */ }
+      
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
       const questionnaireResponse = await response.json();
+      
+      // Progress: 100% - Response received and processed
+      try {
+        window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: true, progress: 100 } }));
+      } catch (e) { /* noop */ }
       console.log('Questionnaire generated successfully:', questionnaireResponse);
       try {
         setQuestionnaireData(questionnaireResponse);

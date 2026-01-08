@@ -30,6 +30,7 @@ export const ImageOverlayPanel = () => {
     const [images, setImages] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingSessionImages, setIsLoadingSessionImages] = useState(false);
+    const [isLoadingGeneratedMediaImages, setIsLoadingGeneratedMediaImages] = useState(false);
     const [sourceResults, setSourceResults] = useState([]);
     const [generatedMediaImages, setGeneratedMediaImages] = useState([]);
     const [sessionImages, setSessionImages] = useState([]);
@@ -51,9 +52,13 @@ export const ImageOverlayPanel = () => {
     // Fetch all images from generate-media API for All tab
     useEffect(() => {
         const fetchGeneratedMediaImages = async () => {
+            setIsLoadingGeneratedMediaImages(true);
             try {
                 const userId = localStorage.getItem('token');
-                if (!userId) return;
+                if (!userId) {
+                    setIsLoadingGeneratedMediaImages(false);
+                    return;
+                }
                 
                 const response = await fetch(
                     `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(userId)}/generated-media`,
@@ -329,6 +334,8 @@ export const ImageOverlayPanel = () => {
                 setGeneratedMediaImages(allGeneratedImages);
             } catch (error) {
                 console.error('Failed to fetch generated media images:', error);
+            } finally {
+                setIsLoadingGeneratedMediaImages(false);
             }
         };
         
@@ -660,5 +667,5 @@ export const ImageOverlayPanel = () => {
         return images;
     }, [images]);
     
-    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: filteredImagesForDisplay, isLoading: isLoading, isLoadingSessionImages: isLoadingSessionImages, hasAdaptors: imageAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddImage, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "images", searchPlaceholder: isReplaceMode ? "Search for replacement image" : "Search images", showSourceBadge: true, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(ImageDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeImage: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay, sessionImages: sessionImages }));
+    return (_jsx(MediaOverlayPanel, { searchQuery: searchQuery, onSearchQueryChange: setSearchQuery, onSearch: handleSearch, items: filteredImagesForDisplay, isLoading: isLoading, isLoadingSessionImages: isLoadingSessionImages, isLoadingGeneratedMediaImages: isLoadingGeneratedMediaImages, hasAdaptors: imageAdaptors.length > 0, sourceResults: sourceResults, onItemClick: handleAddImage, getThumbnailUrl: getThumbnailUrl, getItemKey: getItemKey, mediaType: "images", searchPlaceholder: isReplaceMode ? "Search for replacement image" : "Search images", showSourceBadge: true, isEditMode: !!localOverlay && !isReplaceMode, editComponent: localOverlay ? (_jsx(ImageDetails, { localOverlay: localOverlay, setLocalOverlay: handleUpdateOverlay, onChangeImage: startReplaceMode })) : null, isReplaceMode: isReplaceMode, onCancelReplace: handleCancelReplace, enableTimelineDrag: !isReplaceMode && !localOverlay, sessionImages: sessionImages }));
 };

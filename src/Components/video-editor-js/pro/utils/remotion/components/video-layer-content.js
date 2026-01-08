@@ -234,7 +234,10 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     }, [processVideoFrame]);
     
     // Debug logging for chart videos
-    const isChartVideo = overlay.id?.includes('chart') || overlay.src?.includes('chart') || overlay.needsChromaKey === true || overlay.has_background === false;
+    // Ensure id and src are strings before calling .includes()
+    const overlayIdStr = overlay.id != null ? String(overlay.id) : '';
+    const overlaySrcStr = overlay.src != null ? String(overlay.src) : '';
+    const isChartVideo = overlayIdStr.includes('chart') || overlaySrcStr.includes('chart') || overlay.needsChromaKey === true || overlay.has_background === false;
     if (isChartVideo && frame === 0) {
         console.log('🎬 VideoLayerContent rendering chart video:', {
             overlayId: overlay.id,
@@ -252,13 +255,39 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
     
     // Safety check - don't render Video if src is missing
     if (!overlay.src || overlay.src.trim() === '') {
-        if (isChartVideo) {
-            console.error('❌ VideoLayerContent: Chart video overlay missing src:', {
+        // Log ALL videos missing src, not just chart videos
+        if (frame === 0) { // Only log once per render cycle
+            console.error('❌ VideoLayerContent: Video overlay missing src:', {
                 overlayId: overlay.id,
-                overlay: overlay
+                overlayType: overlay.type,
+                hasSrc: !!overlay.src,
+                srcValue: overlay.src,
+                overlayKeys: Object.keys(overlay),
+                isChartVideo: isChartVideo,
             });
         }
         return null;
+    }
+    
+    // Log video rendering for all videos (not just chart videos) at frame 0
+    if (frame === 0) {
+        console.log('🎥 VideoLayerContent rendering video:', {
+            overlayId: overlay.id,
+            overlayType: overlay.type,
+            src: overlay.src ? overlay.src.substring(0, 80) : 'MISSING',
+            videoSrc: videoSrc ? videoSrc.substring(0, 80) : 'MISSING',
+            from: overlay.from,
+            durationInFrames: overlay.durationInFrames,
+            width: overlay.width,
+            height: overlay.height,
+            left: overlay.left,
+            top: overlay.top,
+            zIndex: overlay.styles?.zIndex,
+            row: overlay.row,
+            has_background: overlay.has_background,
+            needsChromaKey: overlay.needsChromaKey,
+            objectFit: overlay.styles?.objectFit,
+        });
     }
     
     // Log final video source for chart videos
@@ -294,11 +323,13 @@ export const VideoLayerContent = ({ overlay, baseUrl, }) => {
         ...(isExitPhase ? exitAnimation : enterAnimation),
     };
     // Create a container style that includes padding and background color
+    // Use backgroundColor (main background) if provided, otherwise use paddingBackgroundColor
+    const mainBackgroundColor = overlay.styles?.backgroundColor || overlay.styles?.paddingBackgroundColor || "transparent";
     const containerStyle = {
         width: "100%",
         height: "100%",
         padding: overlay.styles.padding || "0px",
-        backgroundColor: overlay.styles.paddingBackgroundColor || "transparent",
+        backgroundColor: mainBackgroundColor,
         display: "flex", // Use flexbox for centering
         alignItems: "center",
         justifyContent: "center",
