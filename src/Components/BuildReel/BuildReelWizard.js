@@ -3983,7 +3983,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             if (!script) {
               console.error('script is not defined');
               return;
-            }
+            }           
             try {
               await onGenerate(script);
             } catch (error) {
