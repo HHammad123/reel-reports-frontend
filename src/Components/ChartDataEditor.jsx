@@ -8,6 +8,50 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
   const [hoveredCol, setHoveredCol] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Validate waterfall chart data
+const validateWaterfallData = (data) => {
+  if (!data || !data.series || !data.series.data || !data.series.data[0]) {
+    return 'Invalid waterfall data structure';
+  }
+  
+  const seriesData = data.series.data[0];
+  const y = seriesData.y || [];
+  const measure = seriesData.measure || [];
+  
+  // Check exactly one series
+  if (data.series.data.length !== 1) {
+    return 'Waterfall charts must have exactly ONE data series';
+  }
+  
+  // Check measure array exists
+  if (!Array.isArray(measure) || measure.length === 0) {
+    return 'Waterfall charts must have a measure array';
+  }
+  
+  // Check measure matches y length
+  if (measure.length !== y.length) {
+    return 'Measure array must have the same length as Y values';
+  }
+  
+  // Check first measure is absolute
+  if (measure[0] !== 'absolute') {
+    return 'First measure must be "absolute"';
+  }
+  
+  // Check last measure is total
+  if (measure[measure.length - 1] !== 'total') {
+    return 'Last measure must be "total"';
+  }
+  
+  // Check middle measures are relative
+  for (let i = 1; i < measure.length - 1; i++) {
+    if (measure[i] !== 'relative') {
+      return `Measure at position ${i + 1} must be "relative" (found "${measure[i]}")`;
+    }
+  }
+  
+  return null; // Valid
+};
   // Deep comparison function
   const deepEqual = (obj1, obj2) => {
     if (obj1 === obj2) return true;
@@ -329,10 +373,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Add series/column (at the end)
   const addColumn = () => {
-    if (chartType === 'pie' || chartType === 'donut') {
-      alert('Cannot add series to pie/donut charts');
-      return;
-    }
+    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    alert('Waterfall charts can only have one series');
+    return;
+  }
+  
+  if (chartType === 'pie' || chartType === 'donut') {
+    alert('Cannot add series to pie/donut charts');
+    return;
+  }
     
     if (!localChartData) return;
     
@@ -360,10 +409,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Insert column at specific index
   const insertColumn = (colIndex) => {
-    if (chartType === 'pie' || chartType === 'donut') {
-      alert('Cannot add series to pie/donut charts');
-      return;
-    }
+    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    alert('Waterfall charts can only have one series');
+    return;
+  }
+  
+  if (chartType === 'pie' || chartType === 'donut') {
+    alert('Cannot add series to pie/donut charts');
+    return;
+  }
     
     if (!localChartData) return;
     
@@ -391,10 +445,15 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Remove column
   const removeColumn = (colIndex) => {
-    if (chartType === 'pie' || chartType === 'donut') {
-      alert('Cannot remove series from pie/donut charts');
-      return;
-    }
+    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    alert('Cannot remove the only series from waterfall charts');
+    return;
+  }
+  
+  if (chartType === 'pie' || chartType === 'donut') {
+    alert('Cannot remove series from pie/donut charts');
+    return;
+  }
     
     if (!localChartData) return;
     
@@ -427,7 +486,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     }
 
     const isPieDonut = chartType === 'pie' || chartType === 'donut';
-    const isWaterfall = chartType.includes('waterfall') && !chartType.includes('waterfall_stacked');
+    const isWaterfall = chartType === 'waterfall_bar' || chartType === 'waterfall_column';
     const isWaterfallStacked = chartType.includes('waterfall_stacked');
 
     if (isPieDonut) {
@@ -703,33 +762,55 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                       type="number"
                       value={values[idx] ?? ''}
                       onChange={(e) => {
-                        const inputValue = e.target.value;
-                        if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-                        
-                        const newData = JSON.parse(JSON.stringify(localChartData));
-                        if (!newData.series.data[0]) {
-                          newData.series.data[0] = { values: [] };
-                        }
-                        
-                        // Ensure values array exists
-                        if (!Array.isArray(newData.series.data[0].values)) {
-                          newData.series.data[0].values = [];
-                        }
-                        
-                        // Ensure array is long enough
-                        while (newData.series.data[0].values.length <= idx) {
-                          newData.series.data[0].values.push(0);
-                        }
-                        
-                        // Update the specific cell
-                        const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
-                        newData.series.data[0].values[idx] = isNaN(numValue) ? 0 : numValue;
-                        
-                        setLocalChartData(newData);
-                        if (onDataChange) {
-                          onDataChange(newData);
-                        }
-                      }}
+  const inputValue = e.target.value;
+  if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+  
+  const newData = JSON.parse(JSON.stringify(localChartData));
+  if (!newData.series.data[0]) {
+    newData.series.data[0] = { y: [], measure: [] };
+  }
+  
+  // Ensure measure array exists
+  if (!Array.isArray(newData.series.data[0].measure)) {
+    newData.series.data[0].measure = [];
+  }
+  
+  // Ensure array is long enough
+  while (newData.series.data[0].measure.length <= idx) {
+    newData.series.data[0].measure.push('absolute');
+  }
+  
+  // ✅ ADD THIS VALIDATION
+  const measureArray = newData.series.data[0].measure;
+  const isFirst = idx === 0;
+  const isLast = idx === measureArray.length - 1;
+  
+  // Force first to be absolute
+  if (isFirst && inputValue !== 'absolute') {
+    alert('First measure must be "absolute"');
+    return;
+  }
+  
+  // Force last to be total
+  if (isLast && inputValue !== 'total') {
+    alert('Last measure must be "total"');
+    return;
+  }
+  
+  // Force middle to be relative
+  if (!isFirst && !isLast && inputValue !== 'relative') {
+    alert('Middle measures must be "relative"');
+    return;
+  }
+  
+  // Update the specific cell
+  newData.series.data[0].measure[idx] = inputValue;
+  
+  setLocalChartData(newData);
+  if (onDataChange) {
+    onDataChange(newData);
+  }
+}}
                       style={inputStyle}
                     />
                   </td>
@@ -883,6 +964,8 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                   <td style={cellStyle}>
                     <select
                       value={measure[idx] ?? 'absolute'}
+                        disabled={idx === 0 || idx === measure.length - 1} // ✅ ADD THIS
+
                       onChange={(e) => {
                         const inputValue = e.target.value;
                         if (!localChartData || !localChartData.series || !localChartData.series.data) return;
@@ -910,7 +993,12 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                           onDataChange(newData);
                         }
                       }}
-                      style={selectStyle}
+                        style={{
+    ...selectStyle,
+    backgroundColor: (idx === 0 || idx === measure.length - 1) ? '#f3f4f6' : 'transparent', // ✅ ADD THIS
+    cursor: (idx === 0 || idx === measure.length - 1) ? 'not-allowed' : 'pointer' // ✅ ADD THIS
+  }}
+
                     >
                       <option value="absolute">absolute</option>
                       <option value="relative">relative</option>
@@ -1389,35 +1477,29 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
         {onSave && (
           <button
             onClick={async () => {
-              if (onSave && !isSaving) {
-                setIsSaving(true);
-                try {
-                  await onSave(localChartData);
-                  // Update original data after successful save
-                  setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
-                } catch (err) {
-                  console.error('Error saving chart data:', err);
-                  // Error is already handled by onSave callback
-                } finally {
-                  setIsSaving(false);
-                }
-              }
-            }}
-            disabled={isSaving}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: isSaving ? '#9ca3af' : '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: isSaving ? 'not-allowed' : 'pointer',
-              fontWeight: '600',
-              fontSize: '14px',
-              opacity: isSaving ? 0.7 : 1,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}
+  if (onSave && !isSaving) {
+    // ✅ ADD VALIDATION HERE
+    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+      const validationError = validateWaterfallData(localChartData);
+      if (validationError) {
+        alert('Validation Error: ' + validationError);
+        return;
+      }
+    }
+    
+    setIsSaving(true);
+    try {
+      await onSave(localChartData);
+      // Update original data after successful save
+      setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
+    } catch (err) {
+      console.error('Error saving chart data:', err);
+      // Error is already handled by onSave callback
+    } finally {
+      setIsSaving(false);
+    }
+  }
+}}
           >
             {isSaving ? (
               <>

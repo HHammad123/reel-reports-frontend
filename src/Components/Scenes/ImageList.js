@@ -9425,13 +9425,21 @@ const pickFieldWithPath = (fieldName, sceneNumber, sources = []) => {
                     </div>
                   )}
                 </div>
-                <textarea
-                  className={`w-full ${editingField === 'narration' ? 'h-32' : 'h-16'} border rounded-lg px-3 py-2 text-sm ${editingField === 'narration' ? 'bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]' : 'bg-gray-50'}`}
-                  readOnly={editingField !== 'narration'}
-                  rows={editingField === 'narration' ? 4 : 1}
-                  value={editingField === 'narration' ? editedNarration : (truncateText(selected?.narration || '', 12))}
-                  onChange={(e) => editingField === 'narration' && setEditedNarration(e.target.value)}
-                />
+                {editingField === 'narration' ? (
+                  <textarea
+                    className="w-full h-32 border rounded-lg px-3 py-2 text-sm bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]"
+                    rows={4}
+                    value={editedNarration}
+                    onChange={(e) => setEditedNarration(e.target.value)}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg px-3 py-2 text-sm bg-gray-50"
+                    readOnly
+                    value={truncateText(selected?.narration || '', 12)}
+                  />
+                )}
               </div>
             </div>
              {/* {(() => {

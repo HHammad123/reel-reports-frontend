@@ -18,21 +18,21 @@ const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') =
     sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)
       ? JSON.parse(JSON.stringify(sessionData)) // Deep copy to preserve all nested fields
       : {};
-  
+
   // Only normalize/transform specific fields, preserve everything else
   if (base.id && !base.session_id) base.session_id = base.id;
   delete base.id;
   base.session_id = base.session_id || sessionId || '';
   base.user_id = base.user_id || token || '';
-  
+
   // Normalize video_duration but preserve if already exists
   if (base.videoduration && !base.video_duration) base.video_duration = base.videoduration;
   base.video_duration = String(base.video_duration || '60');
-  
+
   // Ensure dates exist
   if (!base.created_at) base.created_at = new Date().toISOString();
   if (!base.updated_at) base.updated_at = new Date().toISOString();
-  
+
   // Ensure arrays exist (but preserve their contents including all nested fields)
   if (!Array.isArray(base.content)) base.content = [];
   if (!Array.isArray(base.document_summary)) base.document_summary = [];
@@ -44,18 +44,18 @@ const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') =
   if (!Array.isArray(base.scripts)) base.scripts = [];
   if (!Array.isArray(base.videos)) base.videos = [];
   if (!Array.isArray(base.images)) base.images = [];
-  
+
   // Preserve final_link if it exists
   if (base.final_link === undefined || base.final_link === null) base.final_link = '';
-  
+
   // Normalize videoType
   if (!base.videoType && base.video_type) base.videoType = base.video_type;
-  
+
   // Ensure brand_style_interpretation is an object
   if (!base.brand_style_interpretation || typeof base.brand_style_interpretation !== 'object') {
     base.brand_style_interpretation = {};
   }
-  
+
   // Remove unwanted fields but preserve all others (including opening_frame, closing_frame, background_frame, animation_desc in scripts)
   if ('additionalProp1' in base) delete base.additionalProp1;
   if ('user_data' in base) delete base.user_data;
@@ -63,7 +63,7 @@ const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') =
   delete base.videoduration;
   delete base.video_type;
   delete base.totalsummary;
-  
+
   // All other fields (including nested structures in scripts/scenes) are preserved
   return base;
 };
@@ -256,10 +256,10 @@ const useScriptScenes = (initial = []) => {
         const model = typeToModel((m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : (m === 'PLOTLY') ? 'Financial' : (m.includes('SORA') ? 'Infographic' : (r?.type || 'Infographic')));
         const end = start + perSceneDurationByModel(model);
         start = end;
-        
+
         // Find existing scene data to preserve fields not in API response
         const existingScene = prev.find(s => (s?.scene_number || 0) === sn) || {};
-        
+
         // Build new scene object, preserving existing fields and merging API response
         const newScene = {
           ...existingScene, // Preserve all existing fields first
@@ -320,7 +320,7 @@ const useScriptScenes = (initial = []) => {
   const addSceneSimple = () => {
     setScript(prev => {
       const idx = prev.length;
-      const start = (() => { let s = 0; for (let i = 0; i < idx; i++) s += perSceneDurationByModel(prev[i]?.model||''); return s; })();
+      const start = (() => { let s = 0; for (let i = 0; i < idx; i++) s += perSceneDurationByModel(prev[i]?.model || ''); return s; })();
       const model = 'SORA';
       const end = start + perSceneDurationByModel(model);
       return [...prev, {
@@ -387,13 +387,13 @@ const filterSceneForAPI = (scene, index) => {
       text_to_be_included: []
     };
   }
-  
+
   // Determine video type from model
   const model = String(scene.model || '').toUpperCase();
   const isAvatarBased = model === 'VEO3' || model.includes('VEO');
   const isFinancial = model === 'PLOTLY';
   const isInfographic = model === 'SORA' || (!isAvatarBased && !isFinancial);
-  
+
   // Common fields for all video types
   const commonFields = {
     desc: scene.desc ?? scene.description ?? '',
@@ -412,7 +412,7 @@ const filterSceneForAPI = (scene, index) => {
     background_image: Array.isArray(scene.background_image) ? scene.background_image.slice() : [],
     text_to_be_included: Array.isArray(scene.text_to_be_included) ? scene.text_to_be_included.slice() : []
   };
-  
+
   // Build object based on video type
   if (isAvatarBased) {
     // Avatar Based (VEO3) - only include these specific fields
@@ -421,8 +421,8 @@ const filterSceneForAPI = (scene, index) => {
       mode: scene.mode ?? 'presenter',
       avatar_urls: Array.isArray(scene.avatar_urls) ? scene.avatar_urls.slice() : [],
       regenerate_desc: scene.regenerate_desc ?? false,
-      presenter_options: scene.presenter_options && typeof scene.presenter_options === 'object' 
-        ? { ...scene.presenter_options } 
+      presenter_options: scene.presenter_options && typeof scene.presenter_options === 'object'
+        ? { ...scene.presenter_options }
         : {},
       veo3_prompt_template: scene.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object'
         ? { ...scene.veo3_prompt_template }
@@ -433,7 +433,7 @@ const filterSceneForAPI = (scene, index) => {
     const financialScene = {
       ...commonFields
     };
-    
+
     // Include chart fields if they exist
     if (scene.chart_data !== undefined) {
       financialScene.chart_data = scene.chart_data && typeof scene.chart_data === 'object'
@@ -456,14 +456,14 @@ const filterSceneForAPI = (scene, index) => {
         ? { ...scene.background_frame }
         : null;
     }
-    
+
     return financialScene;
   } else {
     // Infographic (SORA) - only include these specific fields
     const infographicScene = {
       ...commonFields
     };
-    
+
     // Include frame fields if they exist
     if (scene.closing_frame !== undefined) {
       infographicScene.closing_frame = scene.closing_frame && typeof scene.closing_frame === 'object'
@@ -480,7 +480,7 @@ const filterSceneForAPI = (scene, index) => {
         ? { ...scene.animation_desc }
         : null;
     }
-    
+
     return infographicScene;
   }
 };
@@ -544,7 +544,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     { id: 'no', label: 'No' },
   ];
   const fontOptions = [
-    'Poppins','Inter','Roboto','Open Sans','Lato','Montserrat','Nunito','Source Sans Pro','Merriweather','Playfair Display','Raleway','Oswald','Ubuntu','PT Sans','Noto Sans','Fira Sans','Rubik','Mulish','Josefin Sans','Work Sans','Karla','Quicksand','Barlow','Heebo','Hind','Manrope','IBM Plex Sans','IBM Plex Serif','Archivo','Catamaran','DM Sans','DM Serif Display','Cabin','Titillium Web','Bebas Neue','Anton','Inconsolata','Space Mono','Arial','Helvetica','Times New Roman','Georgia','Verdana','Tahoma','Trebuchet MS','Courier New','Segoe UI'
+    'Poppins', 'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Nunito', 'Source Sans Pro', 'Merriweather', 'Playfair Display', 'Raleway', 'Oswald', 'Ubuntu', 'PT Sans', 'Noto Sans', 'Fira Sans', 'Rubik', 'Mulish', 'Josefin Sans', 'Work Sans', 'Karla', 'Quicksand', 'Barlow', 'Heebo', 'Hind', 'Manrope', 'IBM Plex Sans', 'IBM Plex Serif', 'Archivo', 'Catamaran', 'DM Sans', 'DM Serif Display', 'Cabin', 'Titillium Web', 'Bebas Neue', 'Anton', 'Inconsolata', 'Space Mono', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Courier New', 'Segoe UI'
   ];
   const handleSelectFont = (font) => {
     if (!selectedFonts.includes(font)) {
@@ -583,7 +583,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const [brandLogos, setBrandLogos] = useState([]);
   const [isLogoUploading, setIsLogoUploading] = useState(false);
   const logoFileInputRef = useRef(null);
-  
+
   // Sync selectedLogo with logoAnswer for backward compatibility
   useEffect(() => {
     if (selectedLogo === 'yes') {
@@ -624,19 +624,19 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const stopAllBrandVoice = () => {
     try {
       const map = brandVoiceAudioRefs.current || {};
-      Object.keys(map).forEach(k => { const a = map[k]; if (a) { try { a.pause(); a.currentTime = 0; } catch(_){} } });
-    } catch(_){}
+      Object.keys(map).forEach(k => { const a = map[k]; if (a) { try { a.pause(); a.currentTime = 0; } catch (_) { } } });
+    } catch (_) { }
   };
   const playBrandVoice = (i, url) => {
     try {
       stopAllBrandVoice();
       let a = brandVoiceAudioRefs.current[i];
       if (!a || a.src !== url) { a = new Audio(url); brandVoiceAudioRefs.current[i] = a; }
-      a.currentTime = 0; a.play().catch(()=>{});
-    } catch(_){}
+      a.currentTime = 0; a.play().catch(() => { });
+    } catch (_) { }
   };
-  const stopBrandVoice = (i) => { try { const a = brandVoiceAudioRefs.current[i]; if (a) { a.pause(); a.currentTime = 0; } } catch(_){} };
-  
+  const stopBrandVoice = (i) => { try { const a = brandVoiceAudioRefs.current[i]; if (a) { a.pause(); a.currentTime = 0; } } catch (_) { } };
+
   // Extract voice name from voice object (matching Guidelines.js)
   const extractBrandVoiceName = useCallback((voice, index) => {
     if (!voice) return `Voice ${index + 1}`;
@@ -660,15 +660,15 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
         const last = parts[parts.length - 1] || '';
         const name = (last.split('?')[0] || '').split('.')[0] || '';
         if (name) return name;
-      } catch (_) {}
+      } catch (_) { }
     }
     return `Voice ${index + 1}`;
   }, []);
-  
+
   // Filter voiceovers by selected tone when Audio is "Yes" (matching Guidelines.js)
   const uniqueBrandVoiceOptions = useMemo(() => {
     let source = Array.isArray(brandVoices) ? brandVoices : [];
-    
+
     // If Audio is selected as "Yes", filter by tone type
     if (audioAnswer === 'Yes' && tone) {
       source = source.filter(voice => {
@@ -678,7 +678,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
         return voiceType.toLowerCase() === tone.toLowerCase();
       });
     }
-    
+
     const seen = new Map();
     return source.reduce((acc, voice, index) => {
       const name = extractBrandVoiceName(voice, index);
@@ -701,7 +701,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     { id: 'longer5', label: 'Longer than 5 minutes' },
   ];
   const handleSelectDuration = (id) => setSelectedDuration(id);
-  
+
   const [selectedFormat, setSelectedFormat] = useState('mp4'); // Default to "MP4"
   const [otherFormatText, setOtherFormatText] = useState('');
   const optionsFormat = [
@@ -711,7 +711,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     { id: 'other', label: 'Other (please specify)' },
   ];
   const handleSelectFormat = (id) => setSelectedFormat(id);
-  
+
   const [selectedAspect, setSelectedAspect] = useState('16_9'); // Default to "16:9 (Standard widescreen)"
   const [otherAspectText, setOtherAspectText] = useState('');
   const [customAspectWidth, setCustomAspectWidth] = useState('');
@@ -722,13 +722,13 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     { id: 'custom', label: 'Custom aspect ratio' },
   ];
   const handleSelectAspect = (id) => setSelectedAspect(id);
-  
+
   // Legacy state for backward compatibility
   const [aspectRatio, setAspectRatio] = useState('9:16 (Vertical, ideal for TikTok, Stories)');
   const [videoFormat, setVideoFormat] = useState('MP4');
   const [videoLength, setVideoLength] = useState('1 -2 minutes');
   const [contentEmphasisCsv, setContentEmphasisCsv] = useState('');
-  
+
   // Sync new state with legacy state
   useEffect(() => {
     // Map selectedDuration to videoLength
@@ -742,7 +742,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     if (durationMap[selectedDuration]) {
       setVideoLength(durationMap[selectedDuration]);
     }
-    
+
     // Map selectedFormat to videoFormat
     const formatMap = {
       'mp4': 'MP4',
@@ -755,7 +755,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     } else {
       setVideoFormat(otherFormatText || 'MP4');
     }
-    
+
     // Map selectedAspect to aspectRatio
     const aspectMap = {
       '16_9': '16:9 (Standard widescreen)',
@@ -784,10 +784,10 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
         // Fetch logos from brand_identity.logo (matching Guidelines.js)
         const current = assets || {};
         const bi = current?.brand_identity || {};
-        const logosNow = Array.isArray(bi.logo) 
-          ? bi.logo 
-          : (Array.isArray(current?.logos) 
-            ? current.logos 
+        const logosNow = Array.isArray(bi.logo)
+          ? bi.logo
+          : (Array.isArray(current?.logos)
+            ? current.logos
             : (Array.isArray(current?.logo) ? current.logo : []));
         const logoUrls = (logosNow || []).map(l => (typeof l === 'string' ? l : (l?.url || l?.link || ''))).filter(Boolean);
         setBrandLogos(logoUrls);
@@ -814,18 +814,18 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
           if (audioPreviewRef.current) audioPreviewRef.current.src = url;
         } catch (e) { console.error(e); }
         setIsRecording(false);
-        try { stream.getTracks().forEach(t => t.stop()); } catch(_){}
+        try { stream.getTracks().forEach(t => t.stop()); } catch (_) { }
       };
       mr.start();
       setIsRecording(true);
     } catch (_) { alert('Unable to access microphone.'); }
   };
-  const stopRecording = () => { 
-    try { 
+  const stopRecording = () => {
+    try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
-    } catch(_){} 
+    } catch (_) { }
   };
 
   // Add Voice modal (upload/record) - matching Guidelines.js
@@ -839,7 +839,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const [voiceModalTab, setVoiceModalTab] = useState('record');
   const [elapsedSec, setElapsedSec] = useState(0);
   const [voiceName, setVoiceName] = useState('');
-  
+
   // Recording timer effect (matching Guidelines.js)
   useEffect(() => {
     let t;
@@ -849,7 +849,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
     }
     return () => { if (t) clearInterval(t); };
   }, [isRecording]);
-  
+
   // Recording helper: sample script based on selected tone/style (matching Guidelines.js)
   const getRecordingSample = () => {
     if (tone === 'other' && otherGoalText) {
@@ -875,24 +875,24 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const FontMultiSelect = ({ value = [], onChange }) => {
     const [open, setOpen] = useState(false);
     const options = [
-      'Poppins','Inter','Roboto','Open Sans','Lato','Montserrat','Nunito','Source Sans Pro','Merriweather','Playfair Display','Raleway','Oswald','Ubuntu','PT Sans','Noto Sans','Fira Sans','Rubik','Mulish','Josefin Sans','Work Sans','Karla','Quicksand','Barlow','Heebo','Hind','Manrope','IBM Plex Sans','IBM Plex Serif','Archivo','Catamaran','DM Sans','DM Serif Display','Cabin','Titillium Web','Bebas Neue','Anton','Inconsolata','Space Mono','Arial','Helvetica','Times New Roman','Georgia','Verdana','Tahoma','Trebuchet MS','Courier New','Segoe UI'
+      'Poppins', 'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Nunito', 'Source Sans Pro', 'Merriweather', 'Playfair Display', 'Raleway', 'Oswald', 'Ubuntu', 'PT Sans', 'Noto Sans', 'Fira Sans', 'Rubik', 'Mulish', 'Josefin Sans', 'Work Sans', 'Karla', 'Quicksand', 'Barlow', 'Heebo', 'Hind', 'Manrope', 'IBM Plex Sans', 'IBM Plex Serif', 'Archivo', 'Catamaran', 'DM Sans', 'DM Serif Display', 'Cabin', 'Titillium Web', 'Bebas Neue', 'Anton', 'Inconsolata', 'Space Mono', 'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Courier New', 'Segoe UI'
     ];
     const selected = Array.isArray(value) ? value : [];
     const toggle = (f) => {
       const exists = selected.includes(f);
-      const next = exists ? selected.filter(x=>x!==f) : [...selected, f];
+      const next = exists ? selected.filter(x => x !== f) : [...selected, f];
       onChange && onChange(next);
     };
-    const remove = (f) => onChange && onChange(selected.filter(x=>x!==f));
+    const remove = (f) => onChange && onChange(selected.filter(x => x !== f));
     return (
       <div className='relative z-10'>
-        <button type='button' onClick={()=>setOpen(o=>!o)} className='w-full min-h-[48px] border border-gray-300 rounded-lg px-3 py-2 bg-white flex items-center justify-between'>
+        <button type='button' onClick={() => setOpen(o => !o)} className='w-full min-h-[48px] border border-gray-300 rounded-lg px-3 py-2 bg-white flex items-center justify-between'>
           <div className='flex flex-wrap gap-2'>
             {selected.length === 0 && <span className='text-gray-400'>Select fonts</span>}
             {selected.map(f => (
-              <span key={f} className='px-2 py-1 bg-gray-100 text-gray-700 rounded-md text-sm inline-flex items-center gap-2' style={{fontFamily: f}}>
+              <span key={f} className='px-2 py-1 bg-gray-100 text-gray-700 rounded-md text-sm inline-flex items-center gap-2' style={{ fontFamily: f }}>
                 {f}
-                <button type='button' onClick={(e)=>{e.stopPropagation(); remove(f);}} className='hover:text-red-500'>×</button>
+                <button type='button' onClick={(e) => { e.stopPropagation(); remove(f); }} className='hover:text-red-500'>×</button>
               </span>
             ))}
           </div>
@@ -900,13 +900,13 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
         </button>
         {open && (
           <div className='absolute z-20 mt-2 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto'>
-            {options.map((f)=> (
+            {options.map((f) => (
               <button
                 key={f}
                 type='button'
-                onClick={()=>toggle(f)}
-                className={`w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${selected.includes(f)?'bg-indigo-50':''}`}
-                style={{fontFamily: f}}
+                onClick={() => toggle(f)}
+                className={`w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${selected.includes(f) ? 'bg-indigo-50' : ''}`}
+                style={{ fontFamily: f }}
               >
                 {f}
               </button>
@@ -1057,7 +1057,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
       <div className='mb-4'>
         <input
           value={videoTitle}
-          onChange={(e)=>setVideoTitle(e.target.value)}
+          onChange={(e) => setVideoTitle(e.target.value)}
           placeholder='Add a Video Title'
           className='w-full p-4 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B]'
         />
@@ -1087,107 +1087,104 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
         >
           {/* Goal of the video */}
           <div className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
-                <div className="flex justify-between items-center">
-                  <span className="text-[18px] text-gray-600">Goal of the video</span>
-                </div>
-                <div className="mt-4">
-                  <div className="flex flex-col gap-3">
-                    {goalsOptions.map((g) => (
-                      <div key={g.id} className="flex items-center gap-3">
-                        <button
-                          onClick={() => setGoal(g.id)}
-                          className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                            goal === g.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
-                          }`}
-                        >
-                          {goal === g.id && <FaCheck className="text-white text-sm" />}
-                        </button>
-                        <label
-                          onClick={() => setGoal(g.id)}
-                          className="cursor-pointer"
-                        >
-                          {g.label}
-                        </label>
-                        {g.id === "other" && goal === "other" && (
-                          <input
-                            type="text"
-                            value={otherGoalText}
-                            onChange={(e) => setOtherGoalText(e.target.value)}
-                            placeholder="Please specify"
-                            className="border-b border-gray-400 outline-none ml-2"
-                          />
-                        )}
-                      </div>
-                    ))}
+            <div className="flex justify-between items-center">
+              <span className="text-[18px] text-gray-600">Goal of the video</span>
+            </div>
+            <div className="mt-4">
+              <div className="flex flex-col gap-3">
+                {goalsOptions.map((g) => (
+                  <div key={g.id} className="flex items-center gap-3">
+                    <button
+                      onClick={() => setGoal(g.id)}
+                      className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${goal === g.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
+                        }`}
+                    >
+                      {goal === g.id && <FaCheck className="text-white text-sm" />}
+                    </button>
+                    <label
+                      onClick={() => setGoal(g.id)}
+                      className="cursor-pointer"
+                    >
+                      {g.label}
+                    </label>
+                    {g.id === "other" && goal === "other" && (
+                      <input
+                        type="text"
+                        value={otherGoalText}
+                        onChange={(e) => setOtherGoalText(e.target.value)}
+                        placeholder="Please specify"
+                        className="border-b border-gray-400 outline-none ml-2"
+                      />
+                    )}
                   </div>
-                </div>
-              </div>
-            {/* Audience */}
-            <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
-              <div className="flex justify-between items-center">
-                <span className="text-[18px] text-gray-600">Audience</span>
-              </div>
-              <div className="mt-4">
-                <div className="flex flex-col gap-3">
-                  {audienceOptions.map((aud) => (
-                    <div key={aud.id} className="flex items-center gap-3">
-                      <button
-                        onClick={() => setAudience(aud.id)}
-                        className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                          audience === aud.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
-                        }`}
-                      >
-                        {audience === aud.id && <FaCheck className="text-white text-sm" />}
-                      </button>
-                      <label
-                        onClick={() => setAudience(aud.id)}
-                        className="cursor-pointer"
-                      >
-                        {aud.label}
-                      </label>
-                      {aud.id === "other" && audience === "other" && (
-                        <input
-                          type="text"
-                          value={otherAudienceText}
-                          onChange={(e) => setOtherAudienceText(e.target.value)}
-                          placeholder="Please specify"
-                          className="border-b border-gray-400 outline-none ml-2"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
+                ))}
               </div>
             </div>
+          </div>
+          {/* Audience */}
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+            <div className="flex justify-between items-center">
+              <span className="text-[18px] text-gray-600">Audience</span>
+            </div>
+            <div className="mt-4">
+              <div className="flex flex-col gap-3">
+                {audienceOptions.map((aud) => (
+                  <div key={aud.id} className="flex items-center gap-3">
+                    <button
+                      onClick={() => setAudience(aud.id)}
+                      className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${audience === aud.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
+                        }`}
+                    >
+                      {audience === aud.id && <FaCheck className="text-white text-sm" />}
+                    </button>
+                    <label
+                      onClick={() => setAudience(aud.id)}
+                      className="cursor-pointer"
+                    >
+                      {aud.label}
+                    </label>
+                    {aud.id === "other" && audience === "other" && (
+                      <input
+                        type="text"
+                        value={otherAudienceText}
+                        onChange={(e) => setOtherAudienceText(e.target.value)}
+                        placeholder="Please specify"
+                        className="border-b border-gray-400 outline-none ml-2"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
 
-            {/* Tone */}
-            <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
-              <div className="flex justify-between items-center">
-                <span className="text-[18px] text-gray-600">Tone or Style</span>
-              </div>
-              <div className="mt-4">
-                <div className="flex flex-col gap-3">
-                  {toneOptions.map((t) => (
-                    <div key={t.id} className="flex items-center gap-3">
-                      <button
-                        onClick={() => setTone(t.id)}
-                        className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                          tone === t.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
+          {/* Tone */}
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+            <div className="flex justify-between items-center">
+              <span className="text-[18px] text-gray-600">Tone or Style</span>
+            </div>
+            <div className="mt-4">
+              <div className="flex flex-col gap-3">
+                {toneOptions.map((t) => (
+                  <div key={t.id} className="flex items-center gap-3">
+                    <button
+                      onClick={() => setTone(t.id)}
+                      className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${tone === t.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
                         }`}
-                      >
-                        {tone === t.id && <FaCheck className="text-white text-sm" />}
-                      </button>
-                      <label
-                        onClick={() => setTone(t.id)}
-                        className="cursor-pointer"
-                      >
-                        {t.label}
-                      </label>
-                    </div>
-                  ))}
-                </div>
+                    >
+                      {tone === t.id && <FaCheck className="text-white text-sm" />}
+                    </button>
+                    <label
+                      onClick={() => setTone(t.id)}
+                      className="cursor-pointer"
+                    >
+                      {t.label}
+                    </label>
+                  </div>
+                ))}
               </div>
             </div>
+          </div>
         </div>
 
         {/* Style & Visual Preferences */}
@@ -1214,9 +1211,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                           onClick={() => setSelectedLogo(opt.id)}
                           className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                         ${selectedLogo === opt.id
-                            ? "bg-green-500 border-green-500"
-                            : "bg-white border-gray-400"
-                          }`}
+                              ? "bg-green-500 border-green-500"
+                              : "bg-white border-gray-400"
+                            }`}
                         >
                           {selectedLogo === opt.id && (
                             <FaCheck className="text-white text-sm" />
@@ -1233,8 +1230,8 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                     {selectedLogo === 'yes' && (
                       <div className="mt-2 border rounded-lg p-3">
                         <div className="flex items-center gap-2 mb-3">
-                          <button onClick={() => setLogoSelectMode('assets')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode==='assets' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>From Brand Assets</button>
-                          <button onClick={() => setLogoSelectMode('upload')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode==='upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>Upload Image</button>
+                          <button onClick={() => setLogoSelectMode('assets')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode === 'assets' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>From Brand Assets</button>
+                          <button onClick={() => setLogoSelectMode('upload')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode === 'upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>Upload Image</button>
                         </div>
                         {logoSelectMode === 'assets' ? (
                           <div>
@@ -1246,7 +1243,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                                   const active = selectedLogoUrl === url;
                                   return (
                                     <button key={i} onClick={() => setSelectedLogoUrl(url)} className={`border rounded-lg p-2 flex items-center justify-center bg-white hover:bg-gray-50 ${active ? 'border-blue-600 ring-2 ring-blue-200' : 'border-gray-200'}`}>
-                                      <img src={url} alt={`Logo ${i+1}`} className="max-h-16 object-contain" />
+                                      <img src={url} alt={`Logo ${i + 1}`} className="max-h-16 object-contain" />
                                     </button>
                                   )
                                 })}
@@ -1295,10 +1292,10 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                                     ? finalAssets.logos
                                     : (Array.isArray(finalAssets?.logo) ? finalAssets.logo : []));
                                 setBrandLogos(finalLogos);
-                                const lastSel = finalLogos && finalLogos.length ? (typeof finalLogos[finalLogos.length-1] === 'string' ? finalLogos[finalLogos.length-1] : (finalLogos[finalLogos.length-1]?.url || '')) : '';
+                                const lastSel = finalLogos && finalLogos.length ? (typeof finalLogos[finalLogos.length - 1] === 'string' ? finalLogos[finalLogos.length - 1] : (finalLogos[finalLogos.length - 1]?.url || '')) : '';
                                 if (lastSel) setSelectedLogoUrl(lastSel);
                               } catch (_) { /* noop */ }
-                              finally { setIsLogoUploading(false); e.target.value=''; }
+                              finally { setIsLogoUploading(false); e.target.value = ''; }
                             }} />
                             <button onClick={() => logoFileInputRef.current && logoFileInputRef.current.click()} className={`px-3 py-2 rounded-md text-sm ${isLogoUploading ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`} disabled={isLogoUploading}>
                               <span className="inline-flex items-center gap-2">
@@ -1330,9 +1327,8 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                         <div key={opt.id} className="flex items-center gap-3">
                           <button
                             onClick={() => handleSelectShareable(opt.id)}
-                            className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                              selectedShareable === opt.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
-                            }`}
+                            className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${selectedShareable === opt.id ? "bg-green-500 border-green-500" : "bg-white border-gray-400"
+                              }`}
                           >
                             {selectedShareable === opt.id && (
                               <FaCheck className="text-white text-sm" />
@@ -1411,7 +1407,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                         >
                           <FaEyeDropper className='w-4 h-4' />
                         </button>
-                        <input ref={colorInputRef} type='color' onChange={(e)=>{
+                        <input ref={colorInputRef} type='color' onChange={(e) => {
                           const newColor = e.target.value;
                           setCurrentColor(newColor);
                           if (!presetColors.includes(newColor) && !customColors.includes(newColor)) {
@@ -1434,9 +1430,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                           onClick={() => setSelectedFont(opt.id)}
                           className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                         ${selectedFont === opt.id
-                            ? "bg-green-500 border-green-500"
-                            : "bg-white border-gray-400"
-                          }`}
+                              ? "bg-green-500 border-green-500"
+                              : "bg-white border-gray-400"
+                            }`}
                         >
                           {selectedFont === opt.id && (
                             <FaCheck className="text-white text-sm" />
@@ -1492,7 +1488,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                                   key={font}
                                   type="button"
                                   onClick={() => handleSelectFont(font)}
-                                  className={`w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${selectedFonts.includes(font)?'bg-indigo-50':''}`}
+                                  className={`w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${selectedFonts.includes(font) ? 'bg-indigo-50' : ''}`}
                                   style={{ fontFamily: font }}
                                 >
                                   {font}
@@ -1530,9 +1526,8 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                     {['Yes', 'No'].map((v) => (
                       <div key={v} className="flex items-center gap-3 cursor-pointer" onClick={() => setAudioAnswer(v)}>
                         <button
-                          className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                            audioAnswer === v ? 'bg-green-500 border-green-500' : 'bg-white border-gray-400'
-                          }`}
+                          className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${audioAnswer === v ? 'bg-green-500 border-green-500' : 'bg-white border-gray-400'
+                            }`}
                         >
                           {audioAnswer === v && <FaCheck className="text-white text-sm" />}
                         </button>
@@ -1564,14 +1559,12 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                                 }}
                                 onMouseEnter={() => playBrandVoice(index, url)}
                                 onMouseLeave={() => stopBrandVoice(index)}
-                                className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${
-                                  active ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'
-                                }`}
+                                className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${active ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-50'
+                                  }`}
                                 title={name}
                               >
-                                <span className={`text-xs font-medium px-2 text-center truncate max-w-full ${
-                                  active ? 'text-blue-700' : 'text-gray-600'
-                                }`}>
+                                <span className={`text-xs font-medium px-2 text-center truncate max-w-full ${active ? 'text-blue-700' : 'text-gray-600'
+                                  }`}>
                                   {name.length > 10 ? name.substring(0, 8) + '...' : name}
                                 </span>
                               </button>
@@ -1629,9 +1622,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                         onClick={() => handleSelectDuration(opt.id)}
                         className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                       ${selectedDuration === opt.id
-                          ? "bg-green-500 border-green-500"
-                          : "bg-white border-gray-400"
-                        }`}
+                            ? "bg-green-500 border-green-500"
+                            : "bg-white border-gray-400"
+                          }`}
                       >
                         {selectedDuration === opt.id && (
                           <FaCheck className="text-white text-sm" />
@@ -1656,9 +1649,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                         onClick={() => handleSelectFormat(opt.id)}
                         className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                       ${selectedFormat === opt.id
-                          ? "bg-green-500 border-green-500"
-                          : "bg-white border-gray-400"
-                        }`}
+                            ? "bg-green-500 border-green-500"
+                            : "bg-white border-gray-400"
+                          }`}
                       >
                         {selectedFormat === opt.id && (
                           <FaCheck className="text-white text-sm" />
@@ -1749,8 +1742,8 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
 
       {/* Next Step Button - Matching Guidelines.js style */}
       <div className='w-full mt-8 flex justify-center'>
-        <button 
-          onClick={() => { 
+        <button
+          onClick={() => {
             // Validate title and description are required
             if (!videoTitle || !videoTitle.trim()) {
               try {
@@ -1768,9 +1761,9 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
               }
               return;
             }
-            syncUp(); 
-            onCreateScenes && onCreateScenes(); 
-          }} 
+            syncUp();
+            onCreateScenes && onCreateScenes();
+          }}
           className='px-6 py-2 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0066] transition-colors flex items-center gap-2'
         >
           Add Your Scenes <FaAngleRight />
@@ -1791,7 +1784,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                 setPendingVoiceUrls([]);
               }} className="text-gray-500 hover:text-gray-700">✕</button>
             </div>
-            
+
             {/* Name Input */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1805,16 +1798,16 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            
+
             {/* Tabs */}
             <div className="flex items-center gap-2 mb-4">
               <button
                 onClick={() => setVoiceModalTab('record')}
-                className={`${voiceModalTab==='record' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
+                className={`${voiceModalTab === 'record' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
               >Record</button>
               <button
                 onClick={() => setVoiceModalTab('upload')}
-                className={`${voiceModalTab==='upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
+                className={`${voiceModalTab === 'upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
               >Upload</button>
             </div>
 
@@ -1855,14 +1848,14 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
 
                   {/* Simple animated level bars for visual feedback */}
                   <div className="flex items-end justify-center gap-1 h-8">
-                    {[0,1,2,3,4].map((i) => (
-                      <span key={i} className={`w-1.5 bg-green-500 rounded-sm animate-pulse`} style={{height: `${6 + i*6}px`, animationDelay: `${i*120}ms`}} />
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <span key={i} className={`w-1.5 bg-green-500 rounded-sm animate-pulse`} style={{ height: `${6 + i * 6}px`, animationDelay: `${i * 120}ms` }} />
                     ))}
                   </div>
 
                   {pendingVoiceUrls && pendingVoiceUrls.length > 0 && (
                     <div className="mt-2">
-                      <audio ref={audioPreviewRef} src={pendingVoiceUrls[pendingVoiceUrls.length-1]} controls className="w-full" />
+                      <audio ref={audioPreviewRef} src={pendingVoiceUrls[pendingVoiceUrls.length - 1]} controls className="w-full" />
                       <div className="mt-2 flex items-center gap-2">
                         <button onClick={() => { setPendingVoiceBlobs([]); setPendingVoiceUrls([]); }} className="px-3 py-1.5 rounded-md text-sm bg-gray-100 hover:bg-gray-200 text-gray-800">Re-record</button>
                       </div>
@@ -1896,28 +1889,28 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
               </div>
             )}
             <div className="mt-4 flex items-center justify-end gap-2">
-                <button onClick={() => {
-                  setIsVoiceModalOpen(false);
-                  setVoiceName('');
-                  setVoiceFilesForUpload([]);
-                  setPendingVoiceBlobs([]);
-                  setPendingVoiceUrls([]);
-                }} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
+              <button onClick={() => {
+                setIsVoiceModalOpen(false);
+                setVoiceName('');
+                setVoiceFilesForUpload([]);
+                setPendingVoiceBlobs([]);
+                setPendingVoiceUrls([]);
+              }} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
               <button
                 onClick={async () => {
                   try {
                     setVoiceSaveMsg('');
                     setIsSavingBrandVoices(true);
-                    
+
                     // Validate name
                     if (!voiceName || !voiceName.trim()) {
                       setVoiceSaveMsg('Please enter a voice name.');
                       return;
                     }
-                    
+
                     // Get the file to upload
                     let fileToUpload = null;
-                    
+
                     if (voiceModalTab === 'record') {
                       // Use recorded voice
                       if (!pendingVoiceBlobs || pendingVoiceBlobs.length === 0) {
@@ -1934,41 +1927,41 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                       }
                       fileToUpload = voiceFilesForUpload[0];
                     }
-                    
+
                     // Get the tone type for the API (professional, casual, humorous, inspiring, formal)
-                    const toneType = (tone && tone !== 'other') 
-                      ? tone.toLowerCase() 
+                    const toneType = (tone && tone !== 'other')
+                      ? tone.toLowerCase()
                       : 'professional';
-                    
+
                     const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
                     if (!token) {
                       setVoiceSaveMsg('Login required');
                       return;
                     }
-                    
+
                     // Upload to the new API endpoint
                     const form = new FormData();
                     form.append('user_id', token);
                     form.append('name', voiceName.trim());
                     form.append('type', toneType); // Use tone (professional, casual, humorous, inspiring, formal)
                     form.append('file', fileToUpload);
-                    
+
                     const uploadResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-voiceover', {
                       method: 'POST',
                       body: form
                     });
-                    
+
                     if (!uploadResp.ok) {
                       const errorText = await uploadResp.text().catch(() => '');
                       throw new Error(`Upload failed: ${uploadResp.status} ${errorText}`);
                     }
-                    
+
                     // Call get brand assets API to refresh the list
                     const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`);
                     if (!getResp.ok) {
                       throw new Error(`Failed to fetch brand assets: ${getResp.status}`);
                     }
-                    
+
                     const assets = await getResp.json().catch(() => ({}));
                     // Parse voiceovers using the same logic as initial load
                     const voices = Array.isArray(assets?.voiceovers)
@@ -1976,18 +1969,18 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
                       : (Array.isArray(assets?.voiceover)
                         ? assets.voiceover
                         : (assets?.voices || []));
-                    
+
                     // Update brand voices state - this will trigger uniqueBrandVoiceOptions to recalculate
                     setBrandVoices(voices);
-                    
+
                     // Reset form
                     setVoiceName('');
                     setVoiceFilesForUpload([]);
-                    try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) {}
+                    try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) { }
                     setPendingVoiceUrls([]);
                     setPendingVoiceBlobs([]);
                     setVoiceSaveMsg('Voice uploaded successfully!');
-                    
+
                     // Close modal after a brief delay to show success message
                     setTimeout(() => {
                       setIsVoiceModalOpen(false);
@@ -2016,7 +2009,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   );
 };
 
-const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) => {
+const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, hasImages = false, onGoToStoryboard }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   // Only show 5 scene tabs at a time without scroll
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
@@ -2029,7 +2022,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   // Kebab menu state
   const [kebabMenuOpen, setKebabMenuOpen] = useState(false);
   const kebabMenuRef = useRef(null);
-  
+
   // Close kebab menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -2040,12 +2033,12 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [kebabMenuOpen]);
-  
+
   // Use centralized script state
   const { script, setScript, setFromApi, updateScene: updateScriptScene, addSceneSimple, modelToType, typeToModel, computeTimelineForIndexByScript } = useScriptScenes(
     Array.isArray(values?.scripts?.[0]?.airesponse) ? values.scripts[0].airesponse : (Array.isArray(values?.script) ? values.script : [])
   );
-  
+
   // Track last synced script to avoid unnecessary updates
   const lastSyncedScriptRef = useRef(null);
   const lastSavedScriptRef = useRef(null);
@@ -2056,7 +2049,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   useEffect(() => {
     // Prevent infinite loop - if we're already syncing, skip
     if (isSyncingRef.current) return;
-    
+
     const currentScript = Array.isArray(values?.script) ? values.script : [];
     if (currentScript.length === 0) {
       // If parent has no script but we have local script, keep local script
@@ -2068,9 +2061,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       setTimeout(() => { isSyncingRef.current = false; }, 0);
       return;
     }
-    
+
     const scriptKey = JSON.stringify(currentScript);
-    
+
     // Always sync if script has changed or if local script is empty (initial load)
     // This ensures scene descriptions are fetched the same way as text_to_be_included
     if (scriptKey !== lastSyncedScriptRef.current || script.length === 0) {
@@ -2160,11 +2153,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   const [isAdding, setIsAdding] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isSavingScenes, setIsSavingScenes] = useState(false);
-  
+
   // Progress bars for scene save and add operations
   const savingScenesProgress = useProgressLoader(isSavingScenes, 95, 30000);
   const addingSceneProgress = useProgressLoader(isAdding, 95, 30000);
-  
+
   const imageFileInputRef = useRef(null);
   const [isUploadingSceneImage, setIsUploadingSceneImage] = useState(false);
   const [textIncludeInput, setTextIncludeInput] = useState('');
@@ -2290,7 +2283,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [],
         ref_image: Array.isArray(refImagesOverride) && isTarget && refImagesOverride.length > 0
           ? refImagesOverride
-          : (Array.isArray(r?.ref_image) ? r.ref_image : []) ,
+          : (Array.isArray(r?.ref_image) ? r.ref_image : []),
         folderLink: r?.folderLink ?? r?.folder_link ?? '',
         // Preserve frame data
         opening_frame: r?.opening_frame ?? null,
@@ -2324,7 +2317,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     });
     const txt = await resp.text();
     if (!resp.ok) throw new Error(`scripts/update-text failed: ${resp.status} ${txt}`);
-    try { toast.success('Scene updated'); } catch(_) {}
+    try { toast.success('Scene updated'); } catch (_) { }
   };
 
   const openAssetsModal = async () => {
@@ -2336,14 +2329,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
       const resp = await fetch(url);
       const text = await resp.text();
-      let data; try { data = JSON.parse(text); } catch(_) { data = {}; }
+      let data; try { data = JSON.parse(text); } catch (_) { data = {}; }
       const logos = Array.isArray(data?.logos) ? data.logos : [];
       const icons = Array.isArray(data?.icons) ? data.icons : [];
       const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
       const templates = Array.isArray(data?.templates) ? data.templates : [];
       const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
       setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
-    } catch(_) { /* noop */ }
+    } catch (_) { /* noop */ }
     finally { setIsAssetsLoading(false); }
   };
 
@@ -2369,36 +2362,36 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   // Validation function for all scenes
   const validateAllScenes = () => {
     const errors = [];
-    
+
     if (!Array.isArray(script) || script.length === 0) {
       errors.push('At least one scene is required');
       return errors;
     }
-    
+
     script.forEach((currentScene, index) => {
       if (!currentScene) {
         errors.push(`Scene ${index + 1}: Scene data is missing`);
         return;
       }
-      
+
       // 1. Scene Title - required
       const sceneTitle = currentScene?.scene_title || '';
       if (!sceneTitle || sceneTitle.trim() === '') {
         errors.push(`Scene ${index + 1}: Scene Title is required`);
       }
-      
+
       // 2. Video Type - required
       const videoType = modelToType(currentScene?.model || '');
       if (!videoType || videoType.trim() === '') {
         errors.push(`Scene ${index + 1}: Video Type is required`);
       }
-      
+
       // 3. Narration - required
       const narration = currentScene?.narration || '';
       if (!narration || narration.trim() === '') {
         errors.push(`Scene ${index + 1}: Narration is required`);
       }
-      
+
       // 4. Scene Description fields - required only for Avatar Based scenes
       if (videoType === 'Avatar Based') {
         const descriptionFields = [
@@ -2411,7 +2404,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           { key: 'composition', label: 'Composition' },
           { key: 'focus_and_lens', label: 'Focus and Lens' }
         ];
-        
+
         // Check Scene Description fields from veo3_prompt_template first, then direct fields
         descriptionFields.forEach(({ key, label }) => {
           let value = '';
@@ -2442,7 +2435,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           }
         });
       }
-      
+
       // 5. Opening Frame and Closing Frame - required for Infographic scenes
       if (videoType === 'Infographic') {
         const openingFrame = currentScene?.opening_frame;
@@ -2458,7 +2451,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             }
           });
         }
-        
+
         const closingFrame = currentScene?.closing_frame;
         if (!closingFrame || typeof closingFrame !== 'object') {
           errors.push(`Scene ${index + 1}: Closing Frame is required`);
@@ -2473,7 +2466,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           });
         }
       }
-      
+
       // 6. Background Frame - required for Financial scenes
       if (videoType === 'Financial') {
         const backgroundFrame = currentScene?.background_frame;
@@ -2490,14 +2483,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           });
         }
       }
-      
+
       // 7. Avatar selection - required if Avatar Based
       if (videoType === 'Avatar Based') {
         const sceneAvatar = currentScene?.avatar || (Array.isArray(currentScene?.avatar_urls) && currentScene.avatar_urls.length > 0 ? currentScene.avatar_urls[0] : null);
         if (!sceneAvatar || String(sceneAvatar).trim() === '') {
           errors.push(`Scene ${index + 1}: Avatar selection is required for Avatar Based videos`);
         }
-        
+
         // 8. Scene Settings (presenter preset) - required if Avatar Based
         const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
         if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
@@ -2509,14 +2502,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         }
       }
     });
-    
+
     return errors;
   };
 
   const saveScenesToServer = async () => {
     try {
       setIsSavingScenes(true);
-      
+
       // Validate all scenes before saving
       const validationErrors = validateAllScenes();
       if (validationErrors.length > 0) {
@@ -2524,67 +2517,67 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         setShowValidationModal(true);
         throw new Error('Validation failed');
       }
-      
+
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
       if (!sessionId) throw new Error('Missing session_id');
-    
-    // Filter scenes to only include allowed fields (matching sample object structure)
-    const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
-    
-    // Log first scene to verify all fields are included
-    if (airesponse.length > 0) {
-      console.log('[BuildReel] Saving scenes - First scene payload:', {
-        scene_number: airesponse[0].scene_number,
-        scene_title: airesponse[0].scene_title,
-        narration: airesponse[0].narration,
-        desc: airesponse[0].desc,
-        subject: airesponse[0].subject,
-        background: airesponse[0].background,
-        action: airesponse[0].action,
-        styleCard: airesponse[0].styleCard,
-        cameraCard: airesponse[0].cameraCard,
-        ambiance: airesponse[0].ambiance,
-        composition: airesponse[0].composition,
-        focus_and_lens: airesponse[0].focus_and_lens,
-        avatar: airesponse[0].avatar,
-        avatar_urls: airesponse[0].avatar_urls,
-        presenter_options: airesponse[0].presenter_options,
-        text_to_be_included: airesponse[0].text_to_be_included,
-        ref_image: airesponse[0].ref_image,
-        background_image: airesponse[0].background_image,
-        chart_type: airesponse[0].chart_type,
-        chart_data: airesponse[0].chart_data,
-        allKeys: Object.keys(airesponse[0])
-      });
-    }
-    
-    let uq = [];
-    try {
-      const raw = localStorage.getItem('buildreel_userquery');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
+
+      // Filter scenes to only include allowed fields (matching sample object structure)
+      const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
+
+      // Log first scene to verify all fields are included
+      if (airesponse.length > 0) {
+        console.log('[BuildReel] Saving scenes - First scene payload:', {
+          scene_number: airesponse[0].scene_number,
+          scene_title: airesponse[0].scene_title,
+          narration: airesponse[0].narration,
+          desc: airesponse[0].desc,
+          subject: airesponse[0].subject,
+          background: airesponse[0].background,
+          action: airesponse[0].action,
+          styleCard: airesponse[0].styleCard,
+          cameraCard: airesponse[0].cameraCard,
+          ambiance: airesponse[0].ambiance,
+          composition: airesponse[0].composition,
+          focus_and_lens: airesponse[0].focus_and_lens,
+          avatar: airesponse[0].avatar,
+          avatar_urls: airesponse[0].avatar_urls,
+          presenter_options: airesponse[0].presenter_options,
+          text_to_be_included: airesponse[0].text_to_be_included,
+          ref_image: airesponse[0].ref_image,
+          background_image: airesponse[0].background_image,
+          chart_type: airesponse[0].chart_type,
+          chart_data: airesponse[0].chart_data,
+          allKeys: Object.keys(airesponse[0])
+        });
       }
-    } catch (_) { /* noop */ }
-    if (!Array.isArray(uq)) uq = [];
-    const body = {
-      session_id: sessionId || '',
-      current_script: {
-        userquery: uq,
-        airesponse
-      },
-      action: 'save'
-    };
-    
-    console.log('[BuildReel] Save payload - Total scenes:', airesponse.length);
-    
-    const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    const text = await resp.text();
-    let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-    if (!resp.ok) throw new Error(`create-from-scratch(save) failed: ${resp.status} ${text}`);
-    return data;
+
+      let uq = [];
+      try {
+        const raw = localStorage.getItem('buildreel_userquery');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.userquery)) uq = parsed.userquery;
+        }
+      } catch (_) { /* noop */ }
+      if (!Array.isArray(uq)) uq = [];
+      const body = {
+        session_id: sessionId || '',
+        current_script: {
+          userquery: uq,
+          airesponse
+        },
+        action: 'save'
+      };
+
+      console.log('[BuildReel] Save payload - Total scenes:', airesponse.length);
+
+      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`create-from-scratch(save) failed: ${resp.status} ${text}`);
+      return data;
     } finally {
       setIsSavingScenes(false);
     }
@@ -2710,19 +2703,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const deleteEndpointPath = 'scripts/delete-scene';
 
       // 3) Build user payload EXACTLY from user-session-data.user_data
-      let userPayload = undefined;
-      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
-        userPayload = sessionDataResponse.user_data;
-      } else if (sd && typeof sd.user_data === 'object') {
-        userPayload = sd.user_data;
-      } else {
-        throw new Error('user_data missing in user-session-data response');
-      }
+      const rawUser = sessionDataResponse?.user_data || sd?.user_data || sd?.user || {};
+      const userPayload = normalizeUserSnapshot(rawUser, token);
 
       // 4) Build delete payload with { user, session, scene_number }
       const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
       const body = { user: userPayload, session: sessionForBody, scene_number: sceneNumber };
-      
+
       // 5) Call unified delete endpoint
       const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${deleteEndpointPath}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -2741,13 +2728,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const reloadText = await reloadResp.text();
       let reloadData;
       try { reloadData = JSON.parse(reloadText); } catch (_) { reloadData = reloadText; }
-      
+
       if (reloadResp.ok && reloadData) {
         const sessionDataObj = reloadData?.session_data || reloadData?.session || {};
-        const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0 
-          ? sessionDataObj.scripts 
+        const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0
+          ? sessionDataObj.scripts
           : [];
-        
+
         let scriptData = null;
         if (sessionDataObj?.reordered_script) {
           const reordered = sessionDataObj.reordered_script;
@@ -2777,7 +2764,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         if (!scriptData && Array.isArray(sessionDataObj?.airesponse)) {
           scriptData = sessionDataObj.airesponse;
         }
-        
+
         if (scriptData && Array.isArray(scriptData) && scriptData.length > 0) {
           setFromApi(scriptData);
           // Adjust activeIndex if needed
@@ -2786,7 +2773,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           }
         }
       }
-      
+
       toast.success('Scene deleted successfully');
     } catch (err) {
       console.error('Delete scene failed:', err);
@@ -2833,7 +2820,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
         const text = await resp.text();
         let data;
-        try { data = JSON.parse(text); } catch(_) { data = text; }
+        try { data = JSON.parse(text); } catch (_) { data = text; }
         if (resp.ok && data && typeof data === 'object') {
           const avatarsObject = data?.avatars || {};
           const avatarObjects = [];
@@ -2851,7 +2838,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           });
           setBrandAssetsAvatars(avatarObjects);
         }
-      } catch(_) { /* noop */ }
+      } catch (_) { /* noop */ }
       finally { setIsLoadingAvatars(false); }
     };
     loadAvatars();
@@ -2891,7 +2878,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   useEffect(() => {
     // Prevent infinite loop - don't save if we're syncing from parent
     if (isSyncingRef.current) return;
-    
+
     if (script.length > 0 && onSave) {
       // Convert script to scenes format for parent
       const scenes = script.map((r) => ({
@@ -2912,7 +2899,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         composition: r?.composition || '',
         focus_and_lens: r?.focus_and_lens || ''
       }));
-      
+
       // Only save if scenes have actually changed
       const scenesKey = JSON.stringify(scenes);
       if (scenesKey !== lastSavedScriptRef.current) {
@@ -2926,7 +2913,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   const addScene = async () => {
     try {
       if (isAdding) return;
-      
+
       // Validation: Check if current scene has all required fields
       const currentScene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
       if (!currentScene) {
@@ -2934,27 +2921,27 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         setShowValidationModal(true);
         return;
       }
-      
+
       const errors = [];
-      
+
       // 1. Scene Title - required
       const sceneTitle = currentScene?.scene_title || '';
       if (!sceneTitle || sceneTitle.trim() === '') {
         errors.push('Scene Title is required');
       }
-      
+
       // 2. Video Type - required
       const videoType = modelToType(currentScene?.model || '');
       if (!videoType || videoType.trim() === '') {
         errors.push('Video Type is required');
       }
-      
+
       // 3. Narration - required
       const narration = currentScene?.narration || '';
       if (!narration || narration.trim() === '') {
         errors.push('Narration is required');
       }
-      
+
       // 4. Scene Description fields - required only for Avatar Based scenes
       if (videoType === 'Avatar Based') {
         const descriptionFields = [
@@ -2967,7 +2954,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           { key: 'composition', label: 'Composition' },
           { key: 'focus_and_lens', label: 'Focus and Lens' }
         ];
-        
+
         // Check Scene Description fields from veo3_prompt_template first, then direct fields
         descriptionFields.forEach(({ key, label }) => {
           let value = '';
@@ -2998,7 +2985,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           }
         });
       }
-      
+
       // 5. Opening Frame and Closing Frame - required for Infographic scenes
       if (videoType === 'Infographic') {
         const openingFrame = currentScene?.opening_frame;
@@ -3014,7 +3001,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             }
           });
         }
-        
+
         const closingFrame = currentScene?.closing_frame;
         if (!closingFrame || typeof closingFrame !== 'object') {
           errors.push('Closing Frame is required');
@@ -3029,7 +3016,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           });
         }
       }
-      
+
       // 6. Background Frame - required for Financial scenes
       if (videoType === 'Financial') {
         const backgroundFrame = currentScene?.background_frame;
@@ -3046,14 +3033,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           });
         }
       }
-      
+
       // 7. Avatar selection - required if Avatar Based
       if (videoType === 'Avatar Based') {
         const sceneAvatar = currentScene?.avatar || (Array.isArray(currentScene?.avatar_urls) && currentScene.avatar_urls.length > 0 ? currentScene.avatar_urls[0] : null);
         if (!sceneAvatar || String(sceneAvatar).trim() === '') {
           errors.push('Avatar selection is required for Avatar Based videos');
         }
-        
+
         // 6. Scene Settings (presenter preset) - required if Avatar Based
         const modelUpper = String(currentScene?.model || currentScene?.mode || '').toUpperCase();
         if (modelUpper === 'VEO3' || modelUpper === 'ANCHOR') {
@@ -3067,14 +3054,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           }
         }
       }
-      
+
       // Show errors if any
       if (errors.length > 0) {
         setValidationErrors(errors);
         setShowValidationModal(true);
         return;
       }
-      
+
       setIsAdding(true);
       // 1) Load session id (frontend sends userquery + current scenes)
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
@@ -3097,9 +3084,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         }
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
-      
+
       const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
-      
+
       // 4) First, call create-from-scratch with action "save" to save current scenes
       const saveBody = {
         session_id: sessionId || '',
@@ -3109,7 +3096,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         },
         action: 'save'
       };
-      
+
       console.log('[BuildReel] addScene - Step 1: Saving current scenes with action "save"');
       const saveResp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(saveBody) });
       const saveText = await saveResp.text();
@@ -3126,7 +3113,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         },
         action: 'add'
       };
-      
+
       console.log('[BuildReel] addScene - Step 2: Adding new scene with action "add"');
       const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(addBody) });
       const text = await resp.text();
@@ -3166,7 +3153,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const pushStr = (u) => { if (typeof u === 'string') urls.push(u); };
       const harvest = (val) => {
         if (!val) return;
-        if (Array.isArray(val)) val.forEach(v => (typeof v === 'string') ? pushStr(v) : (v && typeof v === 'object' && pushStr(v.url || v.link || v.src)) );
+        if (Array.isArray(val)) val.forEach(v => (typeof v === 'string') ? pushStr(v) : (v && typeof v === 'object' && pushStr(v.url || v.link || v.src)));
         else if (typeof val === 'string') pushStr(val);
       };
       try {
@@ -3189,7 +3176,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   // Helper function to enhance field using AI
   const enhanceField = async (fieldName) => {
     if (enhancingFields[fieldName]) return; // Prevent duplicate calls
-    
+
     setEnhancingFields(prev => ({ ...prev, [fieldName]: true }));
     try {
       const sessionId = localStorage.getItem('session_id');
@@ -3271,11 +3258,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       if (fieldName === 'narration') {
         const enhancedValue = enhancedScript.narration || '';
         updateScriptScene(activeIndex, { narration: enhancedValue });
-        try { toast.success('Narration enhanced with AI'); } catch(_) {}
+        try { toast.success('Narration enhanced with AI'); } catch (_) { }
       } else if (fieldName === 'desc' || fieldName === 'description') {
         const enhancedValue = enhancedScript.desc || enhancedScript.description || '';
         updateScriptScene(activeIndex, { desc: enhancedValue, description: enhancedValue });
-        try { toast.success('Description enhanced with AI'); } catch(_) {}
+        try { toast.success('Description enhanced with AI'); } catch (_) { }
       } else if (fieldName === 'opening_frame') {
         const enhancedValue = enhancedScript.opening_frame || null;
         if (enhancedValue) {
@@ -3284,7 +3271,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           setIsEditingOpeningFrame(true);
           await saveFrameData('opening_frame', enhancedValue);
         }
-        try { toast.success('Opening frame enhanced with AI'); } catch(_) {}
+        try { toast.success('Opening frame enhanced with AI'); } catch (_) { }
       } else if (fieldName === 'closing_frame') {
         const enhancedValue = enhancedScript.closing_frame || null;
         if (enhancedValue) {
@@ -3293,7 +3280,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           setIsEditingClosingFrame(true);
           await saveFrameData('closing_frame', enhancedValue);
         }
-        try { toast.success('Closing frame enhanced with AI'); } catch(_) {}
+        try { toast.success('Closing frame enhanced with AI'); } catch (_) { }
       } else if (fieldName === 'background_frame') {
         const enhancedValue = enhancedScript.background_frame || null;
         if (enhancedValue) {
@@ -3301,7 +3288,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           setEditedBackgroundFrame(enhancedValue);
           await saveFrameData('background_frame', enhancedValue);
         }
-        try { toast.success('Background frame enhanced with AI'); } catch(_) {}
+        try { toast.success('Background frame enhanced with AI'); } catch (_) { }
       } else if (fieldName === 'animation_desc') {
         const enhancedValue = enhancedScript.animation_desc || null;
         if (enhancedValue) {
@@ -3309,11 +3296,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           setEditedAnimationDesc(enhancedValue);
           await saveFrameData('animation_desc', enhancedValue);
         }
-        try { toast.success('Animation description enhanced with AI'); } catch(_) {}
+        try { toast.success('Animation description enhanced with AI'); } catch (_) { }
       }
-    } catch(e) {
+    } catch (e) {
       console.error('enhanceField failed:', e);
-      try { toast.error(`Failed to enhance ${fieldName}. Please try again.`); } catch(_) { alert(`Failed to enhance ${fieldName}. Please try again.`); }
+      try { toast.error(`Failed to enhance ${fieldName}. Please try again.`); } catch (_) { alert(`Failed to enhance ${fieldName}. Please try again.`); }
     } finally {
       setEnhancingFields(prev => ({ ...prev, [fieldName]: false }));
     }
@@ -3330,11 +3317,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
 
       // Update the scene's frame data locally only
       updateScriptScene(activeIndex, { [fieldName]: fieldData });
-      
-      try { toast.success(`${fieldName.replace('_', ' ')} saved successfully`); } catch(_) {}
-    } catch(e) {
+
+      try { toast.success(`${fieldName.replace('_', ' ')} saved successfully`); } catch (_) { }
+    } catch (e) {
       console.error('saveFrameData failed:', e);
-      try { toast.error(`Failed to save ${fieldName}. Please try again.`); } catch(_) { alert(`Failed to save ${fieldName}. Please try again.`); }
+      try { toast.error(`Failed to save ${fieldName}. Please try again.`); } catch (_) { alert(`Failed to save ${fieldName}. Please try again.`); }
       throw e;
     } finally {
       setIsSavingFrameData(false);
@@ -3369,7 +3356,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     const isSora = sceneModelUpper === 'SORA';
     const isPlotly = sceneModelUpper === 'PLOTLY';
     const sceneType = scenes[activeIndex]?.type || '';
-    
+
     // Initialize for Infographic scenes (Scene Visual is always open for these)
     if (isSora || sceneType === 'Infographic') {
       // Initialize opening frame
@@ -3382,7 +3369,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       });
       setEditedOpeningFrame(initializedOpening);
       setIsEditingOpeningFrame(true);
-      
+
       // Initialize closing frame
       const closingData = scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame || {};
       const normalizedClosing = typeof closingData === 'object' && !Array.isArray(closingData) ? { ...closingData } : {};
@@ -3399,7 +3386,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       setIsEditingOpeningFrame(false);
       setIsEditingClosingFrame(false);
     }
-    
+
     // Initialize background frame for Financial scenes
     if (isPlotly || sceneType === 'Financial') {
       const backgroundData = scene?.background_frame || scene?.backgroundFrame || scene?.background || {};
@@ -3414,7 +3401,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       // Reset background frame for non-Financial scenes
       setEditedBackgroundFrame({});
     }
-    
+
     // Initialize Advanced Style Options for all scenes - ALWAYS fetch from scene data
     const colors = Array.isArray(scene?.colors) ? scene.colors : [];
     const fontSize = scene?.font_size ?? scene?.fontsize ?? scene?.fontSize ?? 16;
@@ -3422,7 +3409,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     setAdvancedStyleColors(colors);
     setAdvancedStyleFontSize(fontSize);
     setAdvancedStyleFontStyle(fontStyle);
-    
+
     // Initialize Animation Description for Infographic and Financial scenes
     if (isSora || isPlotly || sceneType === 'Infographic' || sceneType === 'Financial') {
       const animationData = scene?.animation_desc || scene?.animationDesc || {};
@@ -3485,7 +3472,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       presetJustSelectedRef.current = false;
       return;
     }
-    
+
     const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
     if (!scene) {
       setPresenterPresets({ VEO3: [], ANCHOR: [] });
@@ -3525,7 +3512,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           const additonalprop1 = firstUserQuery?.additonalprop1 || {};
           const technicalConstraints = additonalprop1?.technical_and_formal_constraints || {};
           rawAspect = technicalConstraints?.aspect_ratio || '';
-          
+
           // Extract only the numeric ratio part (e.g., "16:9" from "16:9 (Standard widescreen)")
           if (rawAspect && typeof rawAspect === 'string') {
             const ratioMatch = rawAspect.match(/^(\d+:\d+)/);
@@ -3693,9 +3680,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     const scenePresetId = presenterOpts?.preset_id || presenterOpts?.presetId || '';
     const sceneAnchorId = presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
     const scenePreset = presenterOpts?.preset || '';
-    
+
     let resolvedValue = '';
-    
+
     if (modelUpper === 'ANCHOR') {
       // For ANCHOR, check anchor_id first, then preset_id
       let valueToMatch = '';
@@ -3734,7 +3721,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         }
       }
     }
-    
+
     console.log('[BuildReel] Presenter preset from scene data:', {
       presenter_options: presenterOpts,
       preset_id: scenePresetId,
@@ -3744,7 +3731,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       model: modelUpper,
       availablePresets: list.length
     });
-    
+
     setSelectedPresenterPreset(resolvedValue);
     setPresenterPresetOriginal(resolvedValue);
     setPresenterPresetDirty(false);
@@ -3753,13 +3740,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   // Handler for presenter preset change - update scene data only (no API call)
   const handlePresenterPresetChange = (value) => {
     const normalizedValue = value != null ? String(value) : '';
-    
+
     // Set flag to prevent API re-call
     presetJustSelectedRef.current = true;
-    
+
     setSelectedPresenterPreset(normalizedValue);
     setPresenterPresetDirty(normalizedValue !== presenterPresetOriginal);
-    
+
     // Update preset selection in scene data immediately (no API call)
     try {
       const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
@@ -3767,37 +3754,37 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const modelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
       const isAvatarBased = modelUpper === 'VEO3' || modelUpper.includes('VEO') || modelUpper === 'ANCHOR';
       if (!isAvatarBased) return;
-      
+
       // Normalize the key to 'VEO3' if it contains 'VEO', otherwise keep as is (for ANCHOR)
       const presetKey = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'VEO3' : modelUpper;
       const list = Array.isArray(presenterPresets[presetKey]) ? presenterPresets[presetKey] : [];
       const selectedPreset = list.find(
         (item) => String(item?.preset_id || item?.option || '') === normalizedValue
       ) || {};
-      
+
       const presenterOpts = {
         ...(scene.presenter_options || {}),
         option: selectedPreset.option || '',
         preset_id: normalizedValue
       };
-      
+
       // For VEO3 models, also save preset_id to the preset field
       if (modelUpper === 'VEO3') {
         presenterOpts.preset = normalizedValue;
       }
-      
+
       // For ANCHOR models, include anchor_id from the preset
       if (modelUpper === 'ANCHOR' && selectedPreset?.anchor_id) {
         presenterOpts.anchor_id = String(selectedPreset.anchor_id);
       }
-      
+
       // Update scene data with presenter_options and veo3_prompt_template
       const updateData = { presenter_options: presenterOpts };
-      
+
       // Add veo3_prompt_template from selected preset's prompt_template (for avatar based videos)
       if (selectedPreset?.prompt_template) {
         updateData.veo3_prompt_template = selectedPreset.prompt_template;
-        
+
         // Also populate Scene Description fields from prompt_template
         const promptTemplate = selectedPreset.prompt_template;
         if (promptTemplate && typeof promptTemplate === 'object') {
@@ -3811,19 +3798,19 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           if (promptTemplate.background) sceneDescUpdates.background = promptTemplate.background;
           if (promptTemplate.composition) sceneDescUpdates.composition = promptTemplate.composition;
           if (promptTemplate.focus_and_lens) sceneDescUpdates.focus_and_lens = promptTemplate.focus_and_lens;
-          
+
           // Merge scene description updates
           Object.assign(updateData, sceneDescUpdates);
         }
       }
-      
+
       // Clear background_image when preset is selected
       updateData.background_image = [];
       updateData.ref_image = [];
-      
+
       // Update scene data immediately (no API call - only local update)
       updateScriptScene(activeIndex, updateData);
-      
+
       // Update state to reflect the change
       setPresenterPresetOriginal(normalizedValue);
       setPresenterPresetDirty(false);
@@ -3859,7 +3846,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       const presetIdForRequest = modelUpper === 'ANCHOR' && selectedPreset?.anchor_id
         ? String(selectedPreset.anchor_id)
         : String(pendingPresenterPresetId || '');
-      
+
       // Extract aspect ratio from session_data.scripts[0].userquery[0].additonalprop1.technical_and_formal_constraints.aspect_ratio
       let rawAspect = '';
       try {
@@ -3870,7 +3857,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         const additonalprop1 = firstUserQuery?.additonalprop1 || {};
         const technicalConstraints = additonalprop1?.technical_and_formal_constraints || {};
         rawAspect = technicalConstraints?.aspect_ratio || '';
-        
+
         // Extract only the numeric ratio part (e.g., "16:9" from "16:9 (Standard widescreen)")
         if (rawAspect && typeof rawAspect === 'string') {
           const ratioMatch = rawAspect.match(/^(\d+:\d+)/);
@@ -3883,14 +3870,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       }
       const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
       const aspectRatio = normalizedAspect && normalizedAspect !== 'Unspecified' ? normalizedAspect : '';
-      
+
       const payload = {
         user: normalizedUser,
         session: sanitizedSession,
         scene_number: sceneNumber,
         preset_id: presetIdForRequest
       };
-      
+
       // Add aspect_ratio to payload if found (same as Chat.js pattern)
       if (aspectRatio) {
         payload.aspect_ratio = aspectRatio;
@@ -3930,13 +3917,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         if (modelUpper === 'ANCHOR' && savedPreset?.anchor_id) {
           presenterOpts.anchor_id = String(savedPreset.anchor_id);
         }
-        
+
         // Add veo3_prompt_template from saved preset's prompt_template
         const updateData = { presenter_options: presenterOpts };
         if (savedPreset?.prompt_template) {
           updateData.veo3_prompt_template = savedPreset.prompt_template;
         }
-        
+
         const updated = {
           ...scene,
           presenter_options: presenterOpts,
@@ -3970,38 +3957,49 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
     <div className='bg-white h-[100vh] w-full rounded-lg p-6 overflow-y-auto'>
       <div className='flex items-center justify-between mb-6'>
         <h2 className='text-[24px] font-semibold'>Add Your Scenes</h2>
-        {/* Generate Storyboard button - top right */}
-        <button
-          onClick={async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (isGenerating) return;
-            if (!onGenerate) {
-              console.error('onGenerate is not defined');
-              return;
-            }
-            if (!script) {
-              console.error('script is not defined');
-              return;
-            }           
-            try {
-              await onGenerate(script);
-            } catch (error) {
-              console.error('Error calling onGenerate:', error);
-            }
-          }}
-          disabled={isGenerating || !script || script.length === 0}
-          className='px-5 py-2 rounded-lg bg-[#13008B] text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:bg-gray-800 transition-colors'
-        >
-          {isGenerating ? (
-            <>
-              <div className='w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin' />
-              Generating Storyboard...
-            </>
-          ) : (
-            'Generate Storyboard'
+        <div className="flex items-center gap-2">
+          {/* Go to Storyboard button */}
+          {hasImages && (
+            <button
+              onClick={onGoToStoryboard}
+              className='px-5 py-2 rounded-lg bg-[#fff] text-[#000] border-[1px] border-black flex items-center gap-2 hover:bg-gray-800 transition-colors'
+            >
+              Go to Storyboard
+            </button>
           )}
-        </button>
+          {/* Generate Storyboard button - top right */}
+          <button
+            onClick={async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (isGenerating) return;
+              if (!onGenerate) {
+                console.error('onGenerate is not defined');
+                return;
+              }
+              if (!script) {
+                console.error('script is not defined');
+                return;
+              }
+              try {
+                await onGenerate(script);
+              } catch (error) {
+                console.error('Error calling onGenerate:', error);
+              }
+            }}
+            disabled={isGenerating || !script || script.length === 0}
+            className='px-5 py-2 rounded-lg bg-[#13008B] text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:bg-gray-800 transition-colors'
+          >
+            {isGenerating ? (
+              <>
+                <div className='w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin' />
+                Generating Storyboard...
+              </>
+            ) : (
+              'Generate Storyboard'
+            )}
+          </button>
+        </div>
       </div>
 
       <div className='flex items-center gap-2 mb-5'>
@@ -4011,11 +4009,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             setVisibleStartIndex(prev => Math.max(0, prev - 1));
           }}
           disabled={visibleStartIndex <= 0}
-          className={`w-6 h-6 rounded-full flex items-center justify-center border ${
-            visibleStartIndex <= 0
-              ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-              : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'
-          }`}
+          className={`w-6 h-6 rounded-full flex items-center justify-center border ${visibleStartIndex <= 0
+            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+            : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'
+            }`}
           title="Previous scenes"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -4041,11 +4038,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                     setVisibleStartIndex(Math.max(0, index - 4));
                   }
                 }}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                  activeIndex === index
-                    ? 'bg-[#13008B] text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
+                className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${activeIndex === index
+                  ? 'bg-[#13008B] text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
               >
                 Scene {index + 1}
               </button>
@@ -4062,14 +4058,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             const total = Array.isArray(script) ? script.length : 0;
             return visibleStartIndex >= Math.max(0, total - 5);
           })()}
-          className={`w-6 h-6 rounded-full flex items-center justify-center border ${
-            (() => {
-              const total = Array.isArray(script) ? script.length : 0;
-              return visibleStartIndex >= Math.max(0, total - 5);
-            })()
-              ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
-              : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'
-          }`}
+          className={`w-6 h-6 rounded-full flex items-center justify-center border ${(() => {
+            const total = Array.isArray(script) ? script.length : 0;
+            return visibleStartIndex >= Math.max(0, total - 5);
+          })()
+            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+            : 'bg-white text-gray-800 hover:bg-gray-100 border-gray-300'
+            }`}
           title="Next scenes"
         >
           <ChevronRight className="w-4 h-4" />
@@ -4085,7 +4080,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         </button>
 
         {/* Save Scenes button */}
-        <button 
+        <button
           onClick={async () => {
             try {
               await saveScenesToServer();
@@ -4112,9 +4107,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
 
         {/* Kebab Menu */}
         <div ref={kebabMenuRef} className="relative">
-          <button 
-            onClick={() => setKebabMenuOpen(v => !v)} 
-            className="inline-flex items-center justify-center w-9 h-9 rounded-lg border bg-white hover:bg-gray-50 ml-2" 
+          <button
+            onClick={() => setKebabMenuOpen(v => !v)}
+            className="inline-flex items-center justify-center w-9 h-9 rounded-lg border bg-white hover:bg-gray-50 ml-2"
             title="More"
           >
             <MoreHorizontal className="w-5 h-5" />
@@ -4122,35 +4117,35 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           {kebabMenuOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden">
               <div className="py-1">
-                <button 
+                <button
                   onClick={() => {
                     setKebabMenuOpen(false);
                     handleUndoScript();
-                  }} 
-                  disabled={!canUndo} 
+                  }}
+                  disabled={!canUndo}
                   className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canUndo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}
                 >
                   <RefreshCcw className="w-4 h-4 rotate-180 text-[#13008B]" />
                   <span>Undo</span>
                 </button>
-                <button 
+                <button
                   onClick={() => {
                     setKebabMenuOpen(false);
                     handleRedoScript();
-                  }} 
-                  disabled={!canRedo} 
+                  }}
+                  disabled={!canRedo}
                   className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${canRedo ? 'hover:bg-gray-50' : 'text-gray-400 cursor-not-allowed'}`}
                 >
                   <RefreshCcw className="w-4 h-4 text-[#13008B]" />
                   <span>Redo</span>
                 </button>
                 <div className="my-1 h-px bg-gray-100" />
-                <button 
+                <button
                   onClick={() => {
                     setKebabMenuOpen(false);
                     setShowDeleteConfirm(true);
-                  }} 
-                  disabled={isDeletingScene || script.length === 0} 
+                  }}
+                  disabled={isDeletingScene || script.length === 0}
                   className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!script.length || isDeletingScene) ? 'text-gray-400 cursor-not-allowed' : 'text-red-700 hover:bg-red-50'}`}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -4184,11 +4179,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                   <button
                     key={t}
                     onClick={() => setScene(activeIndex, { type: t })}
-                    className={`px-3 py-2 rounded-full text-sm border transition-colors ${
-                      (scenes[activeIndex]?.type === t) ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                    }`}
+                    className={`px-3 py-2 rounded-full text-sm border transition-colors ${(scenes[activeIndex]?.type === t) ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
                   >
-                    {t.replace('Based','').trim()}
+                    {t.replace('Based', '').trim()}
                   </button>
                 ))}
               </div>
@@ -4279,7 +4273,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                       value={scenes[activeIndex]?.desc || scenes[activeIndex]?.description || ''}
                       onChange={(e) => {
                         const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                        updateScriptScene(activeIndex, { 
+                        updateScriptScene(activeIndex, {
                           desc: e.target.value,
                           description: e.target.value
                         });
@@ -4304,185 +4298,185 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           const isSora = sceneModelUpper === 'SORA';
           const sceneType = scenes[activeIndex]?.type || '';
           if (!(isSora || sceneType === 'Infographic')) return null;
-          
+
           return (
             <div className='space-y-4 mt-6'>
               <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
                 <h4 className='text-lg font-semibold text-gray-800 mb-4'>Scene Visual</h4>
-                
-                {/* Opening Frame - Always Open */}
-               <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
- <div className="bg-white rounded-lg border border-gray-200 mb-4">
-                  <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                    <span className="text-sm font-semibold text-gray-800">Opening Frame</span>
-                    <button
-                      type="button"
-                      onClick={() => enhanceField('opening_frame')}
-                      disabled={enhancingFields['opening_frame']}
-                      className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
-                      title='Enhance with AI'
-                    >
-                      {enhancingFields['opening_frame'] ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
-                          <span>AI...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className='w-3 h-3' />
-                          <span>AI</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <div className="px-4 pb-4 pt-4">
-                    {(() => {
-                      const formatTitle = (key) => {
-                        const cleaned = key.replace(/_/g, ' ').trim();
-                        if (!cleaned) return '';
-                        return cleaned
-                          .split(' ')
-                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                          .join(' ');
-                      };
-                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                      
-                      return (
-                        <>
-                          <div className="grid grid-cols-1 gap-4">
-                            {allFields.map((key) => {
-                              const title = formatTitle(key);
-                              const currentValue = editedOpeningFrame[key] || '';
-                              return (
-                                <div
-                                  key={key}
-                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
-                                >
-                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
-                                    {title}
-                                  </h5>
-                                  <textarea
-                                    value={currentValue}
-                                    onChange={(e) => {
-                                      const newData = { ...editedOpeningFrame };
-                                      newData[key] = e.target.value;
-                                      setEditedOpeningFrame(newData);
-                                      // Update local script state immediately
-                                      updateScriptScene(activeIndex, { opening_frame: newData });
-                                    }}
-                                    onBlur={async (e) => {
-                                      // Auto-save to backend on blur
-                                      try {
-                                        // Use the latest value from the event target to ensure we have the most current data
-                                        const latestData = { ...editedOpeningFrame };
-                                        latestData[key] = e.target.value;
-                                        setEditedOpeningFrame(latestData);
-                                        await saveFrameData('opening_frame', latestData);
-                                      } catch (err) {
-                                        console.error('Failed to auto-save opening frame:', err);
-                                      }
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
-                                    rows={3}
-                                    disabled={isSavingFrameData}
-                                    placeholder={`Enter ${title.toLowerCase()}...`}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                </div>
 
-                {/* Closing Frame - Always Open */}
-                <div className="bg-white rounded-lg border border-gray-200">
-                  <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                    <span className="text-sm font-semibold text-gray-800">Closing Frame</span>
-                    <button
-                      type="button"
-                      onClick={() => enhanceField('closing_frame')}
-                      disabled={enhancingFields['closing_frame']}
-                      className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
-                      title='Enhance with AI'
-                    >
-                      {enhancingFields['closing_frame'] ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
-                          <span>AI...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className='w-3 h-3' />
-                          <span>AI</span>
-                        </>
-                      )}
-                    </button>
+                {/* Opening Frame - Always Open */}
+                <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                  <div className="bg-white rounded-lg border border-gray-200 mb-4">
+                    <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                      <span className="text-sm font-semibold text-gray-800">Opening Frame</span>
+                      <button
+                        type="button"
+                        onClick={() => enhanceField('opening_frame')}
+                        disabled={enhancingFields['opening_frame']}
+                        className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                        title='Enhance with AI'
+                      >
+                        {enhancingFields['opening_frame'] ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                            <span>AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className='w-3 h-3' />
+                            <span>AI</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <div className="px-4 pb-4 pt-4">
+                      {(() => {
+                        const formatTitle = (key) => {
+                          const cleaned = key.replace(/_/g, ' ').trim();
+                          if (!cleaned) return '';
+                          return cleaned
+                            .split(' ')
+                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                            .join(' ');
+                        };
+                        const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+
+                        return (
+                          <>
+                            <div className="grid grid-cols-1 gap-4">
+                              {allFields.map((key) => {
+                                const title = formatTitle(key);
+                                const currentValue = editedOpeningFrame[key] || '';
+                                return (
+                                  <div
+                                    key={key}
+                                    className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                  >
+                                    <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                      {title}
+                                    </h5>
+                                    <textarea
+                                      value={currentValue}
+                                      onChange={(e) => {
+                                        const newData = { ...editedOpeningFrame };
+                                        newData[key] = e.target.value;
+                                        setEditedOpeningFrame(newData);
+                                        // Update local script state immediately
+                                        updateScriptScene(activeIndex, { opening_frame: newData });
+                                      }}
+                                      onBlur={async (e) => {
+                                        // Auto-save to backend on blur
+                                        try {
+                                          // Use the latest value from the event target to ensure we have the most current data
+                                          const latestData = { ...editedOpeningFrame };
+                                          latestData[key] = e.target.value;
+                                          setEditedOpeningFrame(latestData);
+                                          await saveFrameData('opening_frame', latestData);
+                                        } catch (err) {
+                                          console.error('Failed to auto-save opening frame:', err);
+                                        }
+                                      }}
+                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                      rows={3}
+                                      disabled={isSavingFrameData}
+                                      placeholder={`Enter ${title.toLowerCase()}...`}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
-                  <div className="px-4 pb-4 pt-4">
-                    {(() => {
-                      const formatTitle = (key) => {
-                        const cleaned = key.replace(/_/g, ' ').trim();
-                        if (!cleaned) return '';
-                        return cleaned
-                          .split(' ')
-                          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                          .join(' ');
-                      };
-                      const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                      
-                      return (
-                        <>
-                          <div className="grid grid-cols-1 gap-4">
-                            {allFields.map((key) => {
-                              const title = formatTitle(key);
-                              const currentValue = editedClosingFrame[key] || '';
-                              return (
-                                <div
-                                  key={key}
-                                  className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
-                                >
-                                  <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
-                                    {title}
-                                  </h5>
-                                  <textarea
-                                    value={currentValue}
-                                    onChange={(e) => {
-                                      const newData = { ...editedClosingFrame };
-                                      newData[key] = e.target.value;
-                                      setEditedClosingFrame(newData);
-                                      // Update local script state immediately
-                                      updateScriptScene(activeIndex, { closing_frame: newData });
-                                    }}
-                                    onBlur={async (e) => {
-                                      // Auto-save to backend on blur
-                                      try {
-                                        // Use the latest value from the event target to ensure we have the most current data
-                                        const latestData = { ...editedClosingFrame };
-                                        latestData[key] = e.target.value;
-                                        setEditedClosingFrame(latestData);
-                                        await saveFrameData('closing_frame', latestData);
-                                      } catch (err) {
-                                        console.error('Failed to auto-save closing frame:', err);
-                                      }
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
-                                    rows={3}
-                                    disabled={isSavingFrameData}
-                                    placeholder={`Enter ${title.toLowerCase()}...`}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      );
-                    })()}
+
+                  {/* Closing Frame - Always Open */}
+                  <div className="bg-white rounded-lg border border-gray-200">
+                    <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                      <span className="text-sm font-semibold text-gray-800">Closing Frame</span>
+                      <button
+                        type="button"
+                        onClick={() => enhanceField('closing_frame')}
+                        disabled={enhancingFields['closing_frame']}
+                        className='flex items-center gap-1 px-2 py-1 rounded-md bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium transition-colors'
+                        title='Enhance with AI'
+                      >
+                        {enhancingFields['closing_frame'] ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-purple-700 border-t-transparent rounded-full animate-spin" />
+                            <span>AI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className='w-3 h-3' />
+                            <span>AI</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <div className="px-4 pb-4 pt-4">
+                      {(() => {
+                        const formatTitle = (key) => {
+                          const cleaned = key.replace(/_/g, ' ').trim();
+                          if (!cleaned) return '';
+                          return cleaned
+                            .split(' ')
+                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                            .join(' ');
+                        };
+                        const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
+
+                        return (
+                          <>
+                            <div className="grid grid-cols-1 gap-4">
+                              {allFields.map((key) => {
+                                const title = formatTitle(key);
+                                const currentValue = editedClosingFrame[key] || '';
+                                return (
+                                  <div
+                                    key={key}
+                                    className="border border-gray-200 rounded-lg bg-white p-4 space-y-2 shadow-sm"
+                                  >
+                                    <h5 className="text-sm font-bold text-gray-800 uppercase tracking-wide">
+                                      {title}
+                                    </h5>
+                                    <textarea
+                                      value={currentValue}
+                                      onChange={(e) => {
+                                        const newData = { ...editedClosingFrame };
+                                        newData[key] = e.target.value;
+                                        setEditedClosingFrame(newData);
+                                        // Update local script state immediately
+                                        updateScriptScene(activeIndex, { closing_frame: newData });
+                                      }}
+                                      onBlur={async (e) => {
+                                        // Auto-save to backend on blur
+                                        try {
+                                          // Use the latest value from the event target to ensure we have the most current data
+                                          const latestData = { ...editedClosingFrame };
+                                          latestData[key] = e.target.value;
+                                          setEditedClosingFrame(latestData);
+                                          await saveFrameData('closing_frame', latestData);
+                                        } catch (err) {
+                                          console.error('Failed to auto-save closing frame:', err);
+                                        }
+                                      }}
+                                      className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B] text-sm text-gray-600 resize-none"
+                                      rows={3}
+                                      disabled={isSavingFrameData}
+                                      placeholder={`Enter ${title.toLowerCase()}...`}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
-               </div>
               </div>
             </div>
           );
@@ -4496,12 +4490,12 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           const isPlotly = sceneModelUpper === 'PLOTLY';
           const sceneType = scenes[activeIndex]?.type || '';
           if (!(isPlotly || sceneType === 'Financial')) return null;
-          
+
           return (
             <div className='space-y-4 mt-6'>
               <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
                 <h4 className='text-lg font-semibold text-gray-800 mb-4'>Scene Visual</h4>
-                
+
                 {/* Background Frame - Always Open */}
                 <div className="bg-white rounded-lg border border-gray-200">
                   <div className="flex items-center justify-between p-4 border-b border-gray-200">
@@ -4537,7 +4531,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                           .join(' ');
                       };
                       const allFields = ['style', 'action', 'setting', 'subject', 'composition', 'factual_details', 'camera_lens_shadow_lighting'];
-                      
+
                       return (
                         <>
                           <div className="grid grid-cols-1 gap-4">
@@ -4602,69 +4596,69 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           const sceneType = scenes[activeIndex]?.type || '';
           const isInfographic = isSora || sceneType === 'Infographic';
           const isFinancial = isPlotly || sceneType === 'Financial';
-          
+
           // Hide Scene Description for Infographic and Financial scenes
           if (isInfographic || isFinancial) return null;
-          
+
           return (
             <div className='bg-gray-50 border border-gray-200 rounded-xl p-4'>
               <div className='mb-4'>
                 <h3 className='text-lg font-semibold text-gray-900'>Scene Description</h3>
               </div>
               <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
-                  {[
-                    { key: 'subject', label: 'Subject' },
-                    { key: 'background', label: 'Background' },
-                    { key: 'action', label: 'Action' },
-                    { key: 'styleCard', label: 'Style' },
-                    { key: 'cameraCard', label: 'Camera' },
-                    { key: 'ambiance', label: 'Ambiance' },
-                    { key: 'composition', label: 'Composition' },
-                    { key: 'focus_and_lens', label: 'Focus and Lens' },
-                  ].map(({ key, label }) => {
-                    // Read directly from script to ensure we get the latest value
-                    const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-                    
-                    // Always prioritize veo3_prompt_template values over direct fields
-                    let fieldValue = '';
-                    if (scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object') {
-                      const promptTemplate = scene.veo3_prompt_template;
-                      // Map Scene Description keys to prompt_template keys
-                      const promptKeyMap = {
-                        'styleCard': 'style',
-                        'action': 'action',
-                        'cameraCard': 'camera',
-                        'subject': 'subject',
-                        'ambiance': 'ambiance',
-                        'background': 'background',
-                        'composition': 'composition',
-                        'focus_and_lens': 'focus_and_lens'
-                      };
-                      const promptKey = promptKeyMap[key];
-                      if (promptKey && promptTemplate[promptKey]) {
-                        fieldValue = promptTemplate[promptKey];
-                      }
+                {[
+                  { key: 'subject', label: 'Subject' },
+                  { key: 'background', label: 'Background' },
+                  { key: 'action', label: 'Action' },
+                  { key: 'styleCard', label: 'Style' },
+                  { key: 'cameraCard', label: 'Camera' },
+                  { key: 'ambiance', label: 'Ambiance' },
+                  { key: 'composition', label: 'Composition' },
+                  { key: 'focus_and_lens', label: 'Focus and Lens' },
+                ].map(({ key, label }) => {
+                  // Read directly from script to ensure we get the latest value
+                  const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+
+                  // Always prioritize veo3_prompt_template values over direct fields
+                  let fieldValue = '';
+                  if (scene?.veo3_prompt_template && typeof scene.veo3_prompt_template === 'object') {
+                    const promptTemplate = scene.veo3_prompt_template;
+                    // Map Scene Description keys to prompt_template keys
+                    const promptKeyMap = {
+                      'styleCard': 'style',
+                      'action': 'action',
+                      'cameraCard': 'camera',
+                      'subject': 'subject',
+                      'ambiance': 'ambiance',
+                      'background': 'background',
+                      'composition': 'composition',
+                      'focus_and_lens': 'focus_and_lens'
+                    };
+                    const promptKey = promptKeyMap[key];
+                    if (promptKey && promptTemplate[promptKey]) {
+                      fieldValue = promptTemplate[promptKey];
                     }
-                    
-                    // Fallback to direct field if not in prompt_template
-                    if (!fieldValue) {
-                      fieldValue = scene?.[key] || '';
-                    }
-                    
-                    return (
-                      <div key={key} className='bg-white border border-gray-200 rounded-lg p-3'>
-                        <p className='text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide'>{label}</p>
-                        <textarea
-                          rows={2}
-                          value={fieldValue}
-                          disabled={true}
-                          readOnly={true}
-                          className='w-full p-2 border rounded-lg text-sm bg-gray-100 cursor-not-allowed opacity-75'
-                          placeholder={`Add ${label.toLowerCase()}...`}
-                        />
-                      </div>
-                    );
-                  })}
+                  }
+
+                  // Fallback to direct field if not in prompt_template
+                  if (!fieldValue) {
+                    fieldValue = scene?.[key] || '';
+                  }
+
+                  return (
+                    <div key={key} className='bg-white border border-gray-200 rounded-lg p-3'>
+                      <p className='text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide'>{label}</p>
+                      <textarea
+                        rows={2}
+                        value={fieldValue}
+                        disabled={true}
+                        readOnly={true}
+                        className='w-full p-2 border rounded-lg text-sm bg-gray-100 cursor-not-allowed opacity-75'
+                        placeholder={`Add ${label.toLowerCase()}...`}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -4673,45 +4667,45 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
         {/* Text To Be Included */}
         <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
           <h4 className='text-lg font-semibold text-gray-800 mb-2'>Text To Be Included</h4>
-            {(() => {
-              const r = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
-              const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
-              const removeAt = (idx) => {
-                const next = items.slice();
-                next.splice(idx,1);
-                updateScriptScene(activeIndex, { text_to_be_included: next });
-              };
-              const addItem = () => {
-                const val = (textIncludeInput || '').trim();
-                if (!val) return;
-                const next = [...items, val];
-                updateScriptScene(activeIndex, { text_to_be_included: next });
-                setTextIncludeInput('');
-              };
-              return (
-                <div>
-                  <div className='flex flex-wrap gap-2 mb-2'>
-                    {items.map((t,i) => (
-                      <span key={i} className='inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm'>
-                        {t}
-                        <button type='button' onClick={() => removeAt(i)} className='text-gray-500 hover:text-red-600'>×</button>
-                      </span>
-                    ))}
-                  </div>
-                  <input
-                    type='text'
-                    value={textIncludeInput}
-                    onChange={(e) => setTextIncludeInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
-                    className='w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent'
-                    placeholder='Type text and press Enter to add'
-                  />
-                  <div className='mt-2 flex justify-end'>
-                    <button type='button' onClick={addItem} className='px-3 py-1.5 rounded-md bg-[#13008B] text-white text-sm'>Add</button>
-                  </div>
+          {(() => {
+            const r = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
+            const items = Array.isArray(r?.text_to_be_included) ? r.text_to_be_included : [];
+            const removeAt = (idx) => {
+              const next = items.slice();
+              next.splice(idx, 1);
+              updateScriptScene(activeIndex, { text_to_be_included: next });
+            };
+            const addItem = () => {
+              const val = (textIncludeInput || '').trim();
+              if (!val) return;
+              const next = [...items, val];
+              updateScriptScene(activeIndex, { text_to_be_included: next });
+              setTextIncludeInput('');
+            };
+            return (
+              <div>
+                <div className='flex flex-wrap gap-2 mb-2'>
+                  {items.map((t, i) => (
+                    <span key={i} className='inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white border border-gray-300 text-sm'>
+                      {t}
+                      <button type='button' onClick={() => removeAt(i)} className='text-gray-500 hover:text-red-600'>×</button>
+                    </span>
+                  ))}
                 </div>
-              );
-            })()}
+                <input
+                  type='text'
+                  value={textIncludeInput}
+                  onChange={(e) => setTextIncludeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
+                  className='w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent'
+                  placeholder='Type text and press Enter to add'
+                />
+                <div className='mt-2 flex justify-end'>
+                  <button type='button' onClick={addItem} className='px-3 py-1.5 rounded-md bg-[#13008B] text-white text-sm'>Add</button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
         {/* Avatar selection section - only show when Avatar Based */}
         {((scenes[activeIndex]?.type || '') === 'Avatar Based') && (
@@ -4752,63 +4746,62 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                 };
                 return (
                   <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
-                            <div className='mb-4'>
-                              <h4 className='text-lg font-semibold text-gray-800'>Select an Avatar</h4>
-                            </div>
-                            {isLoadingAvatars ? (
-                              <div className='flex items-center justify-center py-8'>
-                                <div className='w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
-                              </div>
-                            ) : (
-                              <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4'>
-                                {allAvatars.length === 0 ? (
-                                  <div className='col-span-full text-center py-8 text-gray-500'>
-                                    No avatars available. Click "Upload Avatar" to add one.
-                                  </div>
-                                ) : (
-                                  allAvatars.map((avatarObj, index) => {
-                                    const avatarUrl = avatarObj.url;
-                                    const avatarName = avatarObj.name || `Avatar ${index + 1}`;
-                                    const isSelected = isAvatarSelected(avatarObj);
-                                    return (
-                                      <div key={index} className='flex flex-col items-center gap-2'>
-                                        <button
-                                          type='button'
-                                          onClick={async () => {
-                                            try {
-                                              setSelectedAvatar(avatarUrl);
-                                              // Update local state only - no API call
-                                              updateScriptScene(activeIndex, { avatar: avatarUrl, avatar_urls: [avatarUrl] });
-                                            } catch (err) {
-                                              console.error('Failed to update avatar:', err);
-                                            }
-                                          }}
-                                          className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${
-                                            isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
-                                          }`}
-                                          title={avatarName}
-                                        >
-                                          <img src={avatarUrl} alt={avatarName} className='w-full h-full object-cover' />
-                                        </button>
-                                        <span className='text-xs text-gray-600 text-center max-w-[80px] truncate' title={avatarName}>
-                                          {avatarName}
-                                        </span>
-                                      </div>
-                                    );
-                                  })
-                                )}
+                    <div className='mb-4'>
+                      <h4 className='text-lg font-semibold text-gray-800'>Select an Avatar</h4>
+                    </div>
+                    {isLoadingAvatars ? (
+                      <div className='flex items-center justify-center py-8'>
+                        <div className='w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
+                      </div>
+                    ) : (
+                      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4'>
+                        {allAvatars.length === 0 ? (
+                          <div className='col-span-full text-center py-8 text-gray-500'>
+                            No avatars available. Click "Upload Avatar" to add one.
+                          </div>
+                        ) : (
+                          allAvatars.map((avatarObj, index) => {
+                            const avatarUrl = avatarObj.url;
+                            const avatarName = avatarObj.name || `Avatar ${index + 1}`;
+                            const isSelected = isAvatarSelected(avatarObj);
+                            return (
+                              <div key={index} className='flex flex-col items-center gap-2'>
                                 <button
                                   type='button'
-                                  onClick={() => setShowAvatarUploadPopup(true)}
-                                  className='w-20 h-20 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-[#13008B] transition-colors'
-                                  title='Upload Avatar'
+                                  onClick={async () => {
+                                    try {
+                                      setSelectedAvatar(avatarUrl);
+                                      // Update local state only - no API call
+                                      updateScriptScene(activeIndex, { avatar: avatarUrl, avatar_urls: [avatarUrl] });
+                                    } catch (err) {
+                                      console.error('Failed to update avatar:', err);
+                                    }
+                                  }}
+                                  className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
+                                    }`}
+                                  title={avatarName}
                                 >
-                                  <svg className='w-8 h-8 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 6v6m0 0v6m0-6h6m-6 0H6' />
-                                  </svg>
+                                  <img src={avatarUrl} alt={avatarName} className='w-full h-full object-cover' />
                                 </button>
+                                <span className='text-xs text-gray-600 text-center max-w-[80px] truncate' title={avatarName}>
+                                  {avatarName}
+                                </span>
                               </div>
-                            )}
+                            );
+                          })
+                        )}
+                        <button
+                          type='button'
+                          onClick={() => setShowAvatarUploadPopup(true)}
+                          className='w-20 h-20 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-[#13008B] transition-colors'
+                          title='Upload Avatar'
+                        >
+                          <svg className='w-8 h-8 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 6v6m0 0v6m0-6h6m-6 0H6' />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -4828,7 +4821,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                 // Check if preset is selected - if so, don't show any background images
                 const presenterOpts = scene?.presenter_options || {};
                 const hasPreset = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId;
-                
+
                 // If preset is selected, show empty state
                 if (hasPreset) {
                   return (
@@ -4837,7 +4830,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                     </div>
                   );
                 }
-                
+
                 const refs = (() => {
                   const urls = [];
                   // Only show background images if they were explicitly selected (not from preset)
@@ -4899,19 +4892,19 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                                 image_url: u,
                                 template_id: ''
                               }));
-                              updateScriptScene(activeIndex, { 
+                              updateScriptScene(activeIndex, {
                                 ref_image: newSelected,
                                 background_image: backgroundImageArray.length > 0 ? backgroundImageArray : []
                               });
-                              await updateTextForSelected(activeIndex, { 
-                                genImage: false, 
-                                descriptionOverride: '', 
-                                refImagesOverride: newSelected 
+                              await updateTextForSelected(activeIndex, {
+                                genImage: false,
+                                descriptionOverride: '',
+                                refImagesOverride: newSelected
                               });
-                            } catch(_) {}
+                            } catch (_) { }
                           }}>
-                            <img src={url} alt={`BG ${idx+1}`} className='w-full h-full object-cover' />
-                            <button className='pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity' title='View full size' onClick={(e)=>{ e.stopPropagation(); window.open(url, '_blank'); }}>
+                            <img src={url} alt={`BG ${idx + 1}`} className='w-full h-full object-cover' />
+                            <button className='pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity' title='View full size' onClick={(e) => { e.stopPropagation(); window.open(url, '_blank'); }}>
                               <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17' /></svg>
                             </button>
                           </div>
@@ -4938,20 +4931,20 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                             setIsUploadingSceneImage(true);
                             const urls = await uploadSceneImage(file);
                             if (urls.length > 0) {
-                              const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0,1) : [];
-                              const newRefs = [urls[0], ...curRefs].slice(0,2);
+                              const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0, 1) : [];
+                              const newRefs = [urls[0], ...curRefs].slice(0, 2);
                               const backgroundImageArray = newRefs.map((u) => ({
                                 image_url: u,
                                 template_id: ''
                               }));
-                              updateScriptScene(activeIndex, { 
+                              updateScriptScene(activeIndex, {
                                 ref_image: newRefs,
                                 background_image: backgroundImageArray
                               });
-                              await updateTextForSelected(activeIndex, { 
-                                genImage: false, 
-                                descriptionOverride: '', 
-                                refImagesOverride: newRefs 
+                              await updateTextForSelected(activeIndex, {
+                                genImage: false,
+                                descriptionOverride: '',
+                                refImagesOverride: newRefs
                               });
                             }
                           } finally {
@@ -5021,14 +5014,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                       const presenterOpts = scene?.presenter_options || scene?.presenterOptions || {};
                       const scenePresetId = String(presenterOpts?.preset_id || presenterOpts?.presetId || '').trim();
                       const scenePreset = String(presenterOpts?.preset || '').trim();
-                      
+
                       // Match based on preset_id from presenter_options (primary) or preset field (fallback)
                       const matchesPresetId = scenePresetId && String(value).trim() === scenePresetId;
                       const matchesPreset = scenePreset && String(value).trim() === scenePreset;
                       const matchesState = String(selectedPresenterPreset || '').trim() === String(value).trim();
-                      
+
                       const isSelected = matchesPresetId || matchesPreset || matchesState;
-                      
+
                       // Debug log for first preset to help troubleshoot
                       if (optionsList.indexOf(po) === 0) {
                         console.log('[BuildReel] Preset selection check:', {
@@ -5062,11 +5055,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                           <button
                             type='button'
                             onClick={() => handlePresenterPresetChange(value)}
-                            className={`relative flex flex-col overflow-hidden rounded-lg border transition-shadow w-full ${
-                              isSelected
-                                ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
-                                : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
-                            }`}
+                            className={`relative flex flex-col overflow-hidden rounded-lg border transition-shadow w-full ${isSelected
+                              ? 'border-[#13008B] ring-2 ring-[#13008B] shadow-lg'
+                              : 'border-gray-200 shadow-sm hover:border-[#13008B] hover:shadow'
+                              }`}
                           >
                             {isSelected && (
                               <span className='absolute right-2 top-2 rounded-full bg-[#13008B] px-2.5 py-1 text-xs font-semibold text-white z-20 shadow-lg'>
@@ -5132,41 +5124,91 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           const sceneModelUpper = String(scene?.model || scene?.mode || '').toUpperCase();
           const isPlotly = sceneModelUpper === 'PLOTLY';
           if (!isPlotly) return null;
-          
+
           const chartType = scene?.chart_type || scene?.chartType || '';
           const chartData = scene?.chart_data || scene?.chartData || null;
-          
+
+          // REPLACE handleChartTypeChange function
           const handleChartTypeChange = (newChartType) => {
-            // Just update local state, don't call API
-            // Initialize default chart data structure if chart type is selected and no data exists
             let newChartData = chartData;
             if (newChartType && !chartData) {
-              // Initialize default structure based on chart type
-              if (newChartType === 'pie' || newChartType === 'donut') {
+              // Initialize default structure based on chart type - FOLLOW EXACT PLOTLY FORMAT
+              if (newChartType === 'pie' || newChartType === 'donut') { // ✅ HANDLE BOTH
+                // Pie/Donut use "labels" and "values" (NOT "x" and "y")
                 newChartData = {
                   series: {
-                    labels: ['Category 1', 'Category 2'],
-                    data: [{ values: [10, 20] }]
+                    labels: ['Category 1', 'Category 2', 'Category 3'],
+                    data: [
+                      { name: 'Market Share', values: [45, 35, 20] }
+                    ]
                   },
                   formatting: {
                     series_info: [
-                      { name: 'Category 1', color: '#000000' },
-                      { name: 'Category 2', color: '#000000' }
+                      { name: 'Category 1', color: '#4F008C' },
+                      { name: 'Category 2', color: '#1976D2' },
+                      { name: 'Category 3', color: '#FF375E' }
+                    ],
+                    font_style: 'Inter',
+                    font_size: 20
+                  }
+                };
+              } else if (newChartType === 'waterfall_bar' || newChartType === 'waterfall_column') {
+                // Waterfall MUST have measure array INSIDE data object
+                newChartData = {
+                  series: {
+                    x: ['Start', 'Change 1', 'Change 2', 'Total'],
+                    data: [
+                      {
+                        name: 'Flow',
+                        y: [1000, 300, -150, 1150],
+                        measure: ['absolute', 'relative', 'relative', 'total']
+                      }
                     ]
+                  },
+                  formatting: {
+                    waterfall_colors: {
+                      increasing: '#1976D2',
+                      decreasing: '#FF375E',
+                      totals: '#4F008C'
+                    },
+                    font_style: 'Inter',
+                    font_size: 20
+                  }
+                };
+              } else if (newChartType === 'stacked_bar' || newChartType === 'stacked_column') {
+                // Stacked charts
+                newChartData = {
+                  series: {
+                    x: ['Q1', 'Q2', 'Q3', 'Q4'],
+                    data: [
+                      { name: 'Product A', y: [100, 120, 140, 160] },
+                      { name: 'Product B', y: [80, 90, 100, 110] }
+                    ]
+                  },
+                  formatting: {
+                    series_info: [
+                      { name: 'Product A', color: '#4F008C' },
+                      { name: 'Product B', color: '#1976D2' }
+                    ],
+                    font_style: 'Inter',
+                    font_size: 20
                   }
                 };
               } else {
+                // Default: clustered_bar, clustered_column, line
                 newChartData = {
                   series: {
-                    x: ['2021', '2022', '2023'],
+                    x: ['Q1', 'Q2', 'Q3', 'Q4'],
                     data: [
-                      { name: 'Series 1', y: [10, 20, 30] }
+                      { name: 'Series 1', y: [100, 120, 140, 160] }
                     ]
                   },
                   formatting: {
                     series_info: [
-                      { name: 'Series 1', color: '#000000' }
-                    ]
+                      { name: 'Series 1', color: '#4F008C' }
+                    ],
+                    font_style: 'Inter',
+                    font_size: 20
                   }
                 };
               }
@@ -5178,7 +5220,6 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
               chartData: newChartData
             });
           };
-          
           const handleChartDataChange = (newChartData) => {
             // Update chart data in local state
             updateScriptScene(activeIndex, {
@@ -5186,7 +5227,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
               chartData: newChartData
             });
           };
-          
+
           const handleChartDataSave = async (newChartData) => {
             // Save chart data to scene
             updateScriptScene(activeIndex, {
@@ -5195,17 +5236,17 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             });
             // Optionally call updateTextForSelected to persist to server
             try {
-              await updateTextForSelected(activeIndex, { 
-                genImage: false, 
-                descriptionOverride: '', 
-                refImagesOverride: [] 
+              await updateTextForSelected(activeIndex, {
+                genImage: false,
+                descriptionOverride: '',
+                refImagesOverride: []
               });
               toast.success('Chart data saved');
             } catch (e) {
               console.error('Failed to save chart data:', e);
             }
           };
-          
+
           return (
             <div className='bg-gray-50 rounded-lg p-4 border border-gray-200'>
               <h4 className='text-lg font-semibold text-gray-800 mb-4'>Chart</h4>
@@ -5224,7 +5265,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                     <option value='clustered_column'>Clustered Column</option>
                     <option value='line'>Line</option>
                     <option value='pie'>Pie</option>
-                    <option value='stacked_bar'>Stacked Bar</option>
+                    <option value='stacked_bar'>Stacked Bar</option> {/* ✅ ADD THIS LINE */}
                     <option value='stacked_column'>Stacked Column</option>
                     <option value='waterfall_bar'>Waterfall Bar</option>
                     <option value='waterfall_column'>Waterfall Column</option>
@@ -5260,142 +5301,142 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                 <h4 className='text-lg font-semibold text-gray-800'>Select a Background Image</h4>
               </div>
               {(() => {
-                  const scene = script?.[activeIndex];
-                  const refs = (() => {
-                    const urls = [];
-                    // First try background_image array
-                    if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
-                      scene.background_image.forEach(item => {
-                        let url = '';
-                        if (typeof item === 'string' && item.trim()) {
-                          url = item.trim();
-                        } else if (item && typeof item === 'object') {
-                          url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || item?.image || '';
-                          if (url) url = url.trim();
-                        }
-                        if (url && typeof url === 'string' && url.length > 0 && !urls.includes(url)) {
-                          urls.push(url);
+                const scene = script?.[activeIndex];
+                const refs = (() => {
+                  const urls = [];
+                  // First try background_image array
+                  if (Array.isArray(scene?.background_image) && scene.background_image.length > 0) {
+                    scene.background_image.forEach(item => {
+                      let url = '';
+                      if (typeof item === 'string' && item.trim()) {
+                        url = item.trim();
+                      } else if (item && typeof item === 'object') {
+                        url = item?.imageurl || item?.imageUrl || item?.image_url || item?.url || item?.src || item?.link || item?.image || '';
+                        if (url) url = url.trim();
+                      }
+                      if (url && typeof url === 'string' && url.length > 0 && !urls.includes(url)) {
+                        urls.push(url);
+                      }
+                    });
+                  }
+                  // Fallback to ref_image
+                  if (urls.length === 0) {
+                    const r = scene?.ref_image;
+                    if (Array.isArray(r) && r.length > 0) {
+                      r.forEach(url => {
+                        const trimmed = typeof url === 'string' ? url.trim() : url;
+                        if (trimmed && !urls.includes(trimmed)) {
+                          urls.push(trimmed);
                         }
                       });
-                    }
-                    // Fallback to ref_image
-                    if (urls.length === 0) {
-                      const r = scene?.ref_image;
-                      if (Array.isArray(r) && r.length > 0) {
-                        r.forEach(url => {
-                          const trimmed = typeof url === 'string' ? url.trim() : url;
-                          if (trimmed && !urls.includes(trimmed)) {
-                            urls.push(trimmed);
-                          }
-                        });
-                      } else if (typeof r === 'string' && r.trim()) {
-                        const trimmed = r.trim();
-                        if (!urls.includes(trimmed)) urls.push(trimmed);
-                      }
-                    }
-                    // Fallback to background field
-                    if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
-                      const trimmed = scene.background.trim();
+                    } else if (typeof r === 'string' && r.trim()) {
+                      const trimmed = r.trim();
                       if (!urls.includes(trimmed)) urls.push(trimmed);
                     }
-                    return urls;
-                  })();
-                  const selectedRefs = refs;
-                  return (
-                    <div>
-                      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4'>
-                        {refs.length === 0 ? (
-                          <p className='text-sm text-gray-500 col-span-4'>No background images yet. Add one below.</p>
-                        ) : (
-                          refs.map((url, idx) => (
-                            <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${selectedRefs.includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300'} overflow-visible transition-colors cursor-pointer`} title={url} onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                const currentSelected = selectedRefs || [];
-                                const exists = currentSelected.includes(url);
-                                let newSelected;
-                                if (exists) {
-                                  newSelected = currentSelected.filter(u => u !== url);
-                                } else {
-                                  const next = [...currentSelected, url];
-                                  newSelected = next.length > 2 ? next.slice(-2) : next;
-                                }
-                                // Update scene with background images
-                                const backgroundImageArray = newSelected.map((u) => ({
-                                  image_url: u,
-                                  template_id: ''
-                                }));
-                                updateScriptScene(activeIndex, { 
-                                  ref_image: newSelected,
-                                  background_image: backgroundImageArray.length > 0 ? backgroundImageArray : []
-                                });
-                                await updateTextForSelected(activeIndex, { 
-                                  genImage: false, 
-                                  descriptionOverride: '', 
-                                  refImagesOverride: newSelected 
-                                });
-                              } catch(_) {}
-                            }}>
-                              <img src={url} alt={`BG ${idx+1}`} className='w-full h-full object-cover' />
-                              <button className='pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity' title='View full size' onClick={(e)=>{ e.stopPropagation(); window.open(url, '_blank'); }}>
-                                <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17' /></svg>
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      <div className='flex items-center gap-2'>
-                        <button
-                          onClick={openAssetsModal}
-                          className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
-                          title='Choose from templates'
-                        >
-                          <FaPlus className='w-4 h-4' /> Choose From Template
-                        </button>
-                        <input
-                          ref={imageFileInputRef}
-                          type='file'
-                          accept='image/*'
-                          className='hidden'
-                          onChange={async (e) => {
+                  }
+                  // Fallback to background field
+                  if (urls.length === 0 && typeof scene?.background === 'string' && scene.background.trim()) {
+                    const trimmed = scene.background.trim();
+                    if (!urls.includes(trimmed)) urls.push(trimmed);
+                  }
+                  return urls;
+                })();
+                const selectedRefs = refs;
+                return (
+                  <div>
+                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 gap-4 mb-4'>
+                      {refs.length === 0 ? (
+                        <p className='text-sm text-gray-500 col-span-4'>No background images yet. Add one below.</p>
+                      ) : (
+                        refs.map((url, idx) => (
+                          <div key={idx} className={`group relative w-24 h-24 rounded-lg border-2 ${selectedRefs.includes(url) ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300'} overflow-visible transition-colors cursor-pointer`} title={url} onClick={async (e) => {
+                            e.stopPropagation();
                             try {
-                              const file = (e.target.files && e.target.files[0]) || null;
-                              if (!file) return;
-                              setIsUploadingSceneImage(true);
-                              const urls = await uploadSceneImage(file);
-                              if (urls.length > 0) {
-                                const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0,1) : [];
-                                const newRefs = [urls[0], ...curRefs].slice(0,2);
-                                const backgroundImageArray = newRefs.map((u) => ({
-                                  image_url: u,
-                                  template_id: ''
-                                }));
-                                updateScriptScene(activeIndex, { 
-                                  ref_image: newRefs,
-                                  background_image: backgroundImageArray
-                                });
-                                await updateTextForSelected(activeIndex, { 
-                                  genImage: false, 
-                                  descriptionOverride: '', 
-                                  refImagesOverride: newRefs 
-                                });
+                              const currentSelected = selectedRefs || [];
+                              const exists = currentSelected.includes(url);
+                              let newSelected;
+                              if (exists) {
+                                newSelected = currentSelected.filter(u => u !== url);
+                              } else {
+                                const next = [...currentSelected, url];
+                                newSelected = next.length > 2 ? next.slice(-2) : next;
                               }
-                            } finally {
-                              setIsUploadingSceneImage(false);
-                              if (imageFileInputRef.current) imageFileInputRef.current.value = '';
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={() => imageFileInputRef.current?.click()}
-                          className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
-                          disabled={isUploadingSceneImage}
-                        >
-                          {isUploadingSceneImage ? 'Uploading...' : 'Upload Image'}
-                        </button>
-                      </div>
+                              // Update scene with background images
+                              const backgroundImageArray = newSelected.map((u) => ({
+                                image_url: u,
+                                template_id: ''
+                              }));
+                              updateScriptScene(activeIndex, {
+                                ref_image: newSelected,
+                                background_image: backgroundImageArray.length > 0 ? backgroundImageArray : []
+                              });
+                              await updateTextForSelected(activeIndex, {
+                                genImage: false,
+                                descriptionOverride: '',
+                                refImagesOverride: newSelected
+                              });
+                            } catch (_) { }
+                          }}>
+                            <img src={url} alt={`BG ${idx + 1}`} className='w-full h-full object-cover' />
+                            <button className='pointer-events-auto absolute inset-0 m-auto w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity' title='View full size' onClick={(e) => { e.stopPropagation(); window.open(url, '_blank'); }}>
+                              <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15 10l4.553-4.553a2.121 2.121 0 10-3-3L12 7M9 14l-4.553 4.553a2.121 2.121 0 103 3L12 17' /></svg>
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
-                  );
+                    <div className='flex items-center gap-2'>
+                      <button
+                        onClick={openAssetsModal}
+                        className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                        title='Choose from templates'
+                      >
+                        <FaPlus className='w-4 h-4' /> Choose From Template
+                      </button>
+                      <input
+                        ref={imageFileInputRef}
+                        type='file'
+                        accept='image/*'
+                        className='hidden'
+                        onChange={async (e) => {
+                          try {
+                            const file = (e.target.files && e.target.files[0]) || null;
+                            if (!file) return;
+                            setIsUploadingSceneImage(true);
+                            const urls = await uploadSceneImage(file);
+                            if (urls.length > 0) {
+                              const curRefs = Array.isArray(script?.[activeIndex]?.ref_image) ? script[activeIndex].ref_image.slice(0, 1) : [];
+                              const newRefs = [urls[0], ...curRefs].slice(0, 2);
+                              const backgroundImageArray = newRefs.map((u) => ({
+                                image_url: u,
+                                template_id: ''
+                              }));
+                              updateScriptScene(activeIndex, {
+                                ref_image: newRefs,
+                                background_image: backgroundImageArray
+                              });
+                              await updateTextForSelected(activeIndex, {
+                                genImage: false,
+                                descriptionOverride: '',
+                                refImagesOverride: newRefs
+                              });
+                            }
+                          } finally {
+                            setIsUploadingSceneImage(false);
+                            if (imageFileInputRef.current) imageFileInputRef.current.value = '';
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => imageFileInputRef.current?.click()}
+                        className='inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm hover:bg-gray-50'
+                        disabled={isUploadingSceneImage}
+                      >
+                        {isUploadingSceneImage ? 'Uploading...' : 'Upload Image'}
+                      </button>
+                    </div>
+                  </div>
+                );
               })()}
             </div>
           </div>
@@ -5566,9 +5607,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                   const isPlotly = sceneModelUpper === 'PLOTLY';
                   const sceneType = scenes[activeIndex]?.type || '';
                   if (!(isSora || isPlotly || sceneType === 'Infographic' || sceneType === 'Financial')) return null;
-                  
+
                   const animationDesc = scene?.animation_desc || scene?.animationDesc || {};
-                  
+
                   return (
                     <div className="bg-white rounded-lg border border-gray-200 mt-4">
                       <div className="flex items-center justify-between p-4">
@@ -5636,7 +5677,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                                 .join(' ');
                             };
                             const priorityOrder = ['lighting', 'style_mood', 'transition_type', 'scene_description', 'subject_description', 'action_specification', 'content_modification', 'camera_specifications', 'geometric_preservation'];
-                            
+
                             // Ensure all priority fields exist
                             const allFields = priorityOrder;
                             const finalData = { ...currentData };
@@ -5645,7 +5686,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                                 finalData[field] = '';
                               }
                             });
-                            
+
                             return allFields.length > 0 ? (
                               <>
                                 <div className="grid grid-cols-1 gap-4">
@@ -5709,10 +5750,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
       </div>
 
       <div className='flex justify-end gap-3 mt-8'>
-        <button 
+        <button
           type="button"
-          onClick={onBack} 
-          disabled={isGenerating} 
+          onClick={onBack}
+          disabled={isGenerating}
           className='px-5 py-2 rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed'
         >
           Back
@@ -5822,21 +5863,21 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
             </div>
             <div className='px-4 pt-3 border-b border-gray-100'>
               <div className='flex items-center gap-3 flex-wrap'>
-                {['uploaded_images','documents_images','logos','icons','templates'].map(tab => (
+                {['uploaded_images', 'documents_images', 'logos', 'icons', 'templates'].map(tab => (
                   <button
                     key={tab}
                     onClick={() => setAssetsTab(tab)}
-                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab===tab ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                  >{tab.replace('_',' ')}</button>
+                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab === tab ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  >{tab.replace('_', ' ')}</button>
                 ))}
                 <div className='ml-auto'>
                   <button
-                    onClick={() => { setPendingUploadType(assetsTab === 'templates' ? 'template' : (assetsTab.endsWith('s') ? assetsTab.slice(0,-1) : assetsTab)); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
+                    onClick={() => { setPendingUploadType(assetsTab === 'templates' ? 'template' : (assetsTab.endsWith('s') ? assetsTab.slice(0, -1) : assetsTab)); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
                     className='px-3 py-1.5 rounded-lg border text-sm bg-white hover:bg-gray-50'
                   >
                     Upload
                   </button>
-                  <input ref={assetsUploadInputRef} type='file' accept='image/*' className='hidden' multiple onChange={async (e)=>{
+                  <input ref={assetsUploadInputRef} type='file' accept='image/*' className='hidden' multiple onChange={async (e) => {
                     try {
                       const files = Array.from(e.target.files || []);
                       if (files.length === 0) return;
@@ -5854,7 +5895,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                       setIsAssetsLoading(true);
                       const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
                       const getText = await getResp.text();
-                      let data; try { data = JSON.parse(getText); } catch(_) { data = {}; }
+                      let data; try { data = JSON.parse(getText); } catch (_) { data = {}; }
                       const logos = Array.isArray(data?.logos) ? data.logos : [];
                       const icons = Array.isArray(data?.icons) ? data.icons : [];
                       const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
@@ -5862,7 +5903,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                       const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
                       setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
                     } catch (err) { console.error('Upload failed:', err); alert('Failed to upload file.'); }
-                    finally { setIsAssetsLoading(false); if (assetsUploadInputRef.current) assetsUploadInputRef.current.value=''; }
+                    finally { setIsAssetsLoading(false); if (assetsUploadInputRef.current) assetsUploadInputRef.current.value = ''; }
                   }} />
                 </div>
               </div>
@@ -5873,7 +5914,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                   <div className='w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
                 </div>
               ) : (
-                (()=>{
+                (() => {
                   const list = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
                   const urls = list.map(item => (typeof item === 'string' ? item : (item?.url || item?.link || ''))).filter(Boolean);
                   return (
@@ -5881,7 +5922,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                       {urls.map((url, idx) => {
                         const selected = selectedAssetUrl === url;
                         return (
-                          <button key={idx} onClick={()=> setSelectedAssetUrl(url)} className={`relative block w-full pt-[100%] rounded-lg overflow-hidden border ${selected ? 'border-blue-600 ring-2 ring-blue-300' : 'border-gray-200 hover:border-gray-300'}`} title={url}>
+                          <button key={idx} onClick={() => setSelectedAssetUrl(url)} className={`relative block w-full pt-[100%] rounded-lg overflow-hidden border ${selected ? 'border-blue-600 ring-2 ring-blue-300' : 'border-gray-200 hover:border-gray-300'}`} title={url}>
                             <img src={url} alt={`asset-${idx}`} className='absolute inset-0 w-full h-full object-cover' />
                           </button>
                         );
@@ -5892,18 +5933,18 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
               )}
             </div>
             <div className='p-4 border-t border-gray-200 flex items-center justify-end gap-2'>
-              <button onClick={()=> setShowAssetsModal(false)} className='px-4 py-2 rounded-lg text-sm bg-gray-100 text-gray-800 hover:bg-gray-200'>Cancel</button>
+              <button onClick={() => setShowAssetsModal(false)} className='px-4 py-2 rounded-lg text-sm bg-gray-100 text-gray-800 hover:bg-gray-200'>Cancel</button>
               <button
                 onClick={async () => {
                   try {
                     if (!selectedAssetUrl) return;
-                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0,2) : [];
-                    const next = [selectedAssetUrl, ...imgs].slice(0,3);
+                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0, 2) : [];
+                    const next = [selectedAssetUrl, ...imgs].slice(0, 3);
                     updateScriptScene(activeIndex, { ref_image: next });
                     await updateTextForSelected(activeIndex, { genImage: false, descriptionOverride: '', refImagesOverride: [selectedAssetUrl] });
                     setSelectedAssetUrl('');
                     setShowAssetsModal(false);
-                  } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to keep default'); } catch(_) { alert('Failed to keep default'); } }
+                  } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to keep default'); } catch (_) { alert('Failed to keep default'); } }
                 }}
                 disabled={!selectedAssetUrl}
                 className={`px-4 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
@@ -5918,13 +5959,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                     const { user, sessionForBody } = await getSessionSnapshot();
                     const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
                     const sceneNumber = scene?.scene_number ?? (activeIndex + 1);
-                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0,2) : [];
-                    const next = [selectedAssetUrl, ...imgs].slice(0,3);
+                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0, 2) : [];
+                    const next = [selectedAssetUrl, ...imgs].slice(0, 3);
                     updateScriptScene(activeIndex, { ref_image: next });
                     await updateTextForSelected(activeIndex, { genImage: true, descriptionOverride: scene?.desc || scene?.description || '', refImagesOverride: [selectedAssetUrl] });
                     setSelectedAssetUrl('');
                     setShowAssetsModal(false);
-                  } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to generate'); } catch(_) { alert('Failed to generate'); } }
+                  } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to generate'); } catch (_) { alert('Failed to generate'); } }
                   finally { setIsEnhancing(false); }
                 }}
                 disabled={!selectedAssetUrl}
@@ -5943,7 +5984,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
           <div className='bg-white w-[90%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]'>
             <div className='flex items-center justify-between p-4 border-b border-gray-200'>
               <h3 className='text-lg font-semibold text-[#13008B]'>Upload Avatar</h3>
-              <button 
+              <button
                 onClick={() => {
                   setShowAvatarUploadPopup(false);
                   setAvatarUploadFiles([]);
@@ -5954,7 +5995,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                 Close
               </button>
             </div>
-            
+
             <div className='p-6 overflow-y-auto flex-1'>
               <div className='mb-6'>
                 <label className='block text-sm font-medium text-gray-700 mb-2'>
@@ -5968,7 +6009,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                   className='w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent'
                 />
               </div>
-              
+
               <div className='mb-6'>
                 <label className='block text-sm font-medium text-gray-700 mb-2'>
                   Select Avatar File
@@ -6057,40 +6098,40 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                         alert('Please enter an avatar name');
                         return;
                       }
-                      
+
                       if (avatarUploadFiles.length === 0) {
                         alert('Please select a file to upload');
                         return;
                       }
-                      
+
                       const token = localStorage.getItem('token');
                       if (!token) {
                         alert('Missing user ID');
                         return;
                       }
-                      
+
                       setIsUploadingAvatarFiles(true);
-                      
+
                       const form = new FormData();
                       form.append('user_id', token);
                       form.append('name', avatarName.trim());
                       form.append('file', avatarUploadFiles[0]);
-                      
+
                       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
                         method: 'POST',
                         body: form
                       });
-                      
+
                       const text = await resp.text();
                       if (!resp.ok) {
                         throw new Error(`Upload failed: ${resp.status} ${text}`);
                       }
-                      
+
                       const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
                       const getText = await getResp.text();
                       let data;
-                      try { data = JSON.parse(getText); } catch(_) { data = getText; }
-                      
+                      try { data = JSON.parse(getText); } catch (_) { data = getText; }
+
                       if (getResp.ok && data && typeof data === 'object') {
                         const avatarsObject = data?.avatars || {};
                         const avatarObjects = [];
@@ -6108,7 +6149,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
                         });
                         setBrandAssetsAvatars(avatarObjects);
                       }
-                      
+
                       setShowAvatarUploadPopup(false);
                       setAvatarUploadFiles([]);
                       setAvatarName('');
@@ -6190,13 +6231,13 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false }) =
   );
 };
 
-const    BuildReelWizard = () => {
+const BuildReelWizard = () => {
   // Restore step from localStorage on mount
   const [step, setStep] = useState(() => {
     try {
       const stored = localStorage.getItem('buildreel_current_step');
       const storedStep = stored ? parseInt(stored, 10) : 1;
-      
+
       // Only restore to step 2+ if we have a valid session
       if (storedStep > 1) {
         const sessionId = localStorage.getItem('session_id');
@@ -6212,7 +6253,7 @@ const    BuildReelWizard = () => {
           return 1;
         }
       }
-      
+
       return storedStep;
     } catch (_) {
       return 1;
@@ -6223,7 +6264,7 @@ const    BuildReelWizard = () => {
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
   const [isSavingStoryboard, setIsSavingStoryboard] = useState(false);
   const [isGeneratingImagesQueue, setIsGeneratingImagesQueue] = useState(false);
-  
+
   // Progress bars for loaders
   const creatingScriptProgress = useProgressLoader(isCreatingScenes, 95, 60000);
   const savingStoryboardProgress = useProgressLoader(isSavingStoryboard, 95, 30000);
@@ -6238,6 +6279,7 @@ const    BuildReelWizard = () => {
       return 'editor';
     }
   });
+  const [hasImages, setHasImages] = useState(false);
   const [imagesJobId, setImagesJobId] = useState('');
   const [videosJobId, setVideosJobId] = useState('');
   const [hasVideosAvailable, setHasVideosAvailable] = useState(false);
@@ -6275,16 +6317,16 @@ const    BuildReelWizard = () => {
 
   // Track if we've already restored session to prevent multiple restores
   const hasRestoredSessionRef = useRef(false);
-  
+
   // Restore session data and scenes when step > 1 on mount
   useEffect(() => {
     const restoreSession = async () => {
       // Only restore if we're on step 2 or 3 and haven't restored yet
       if (step === 1 || isRestoringSession || hasRestoredSessionRef.current) return;
-      
+
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
-      
+
       // If no session ID or token, reset to step 1
       if (!sessionId || !token) {
         console.log('[BuildReel] No session ID or token found, resetting to step 1');
@@ -6299,7 +6341,7 @@ const    BuildReelWizard = () => {
 
       try {
         setIsRestoringSession(true);
-        
+
         // Load session data
         const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
           method: 'POST',
@@ -6313,7 +6355,7 @@ const    BuildReelWizard = () => {
         } catch (_) {
           sessionData = sessText;
         }
-        
+
         if (!sessResp.ok) {
           console.error('Failed to load session data:', sessText);
           // If session data fetch fails, reset to step 1
@@ -6328,13 +6370,17 @@ const    BuildReelWizard = () => {
         }
 
         const sd = sessionData?.session_data || sessionData?.session || {};
-        
+
+        // Check if session has images
+        const sessionImages = Array.isArray(sd?.images) ? sd.images : [];
+        setHasImages(sessionImages.length > 0);
+
         // Extract scripts/airesponse from session data
         // scripts[0] is the latest/current version
         const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
         let currentScript = scripts[0] || null;
         let airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
-        
+
         // If scripts[0] doesn't have airesponse, try to find the latest script with airesponse
         if (airesponse.length === 0 && scripts.length > 0) {
           for (let i = 0; i < scripts.length; i++) {
@@ -6347,7 +6393,7 @@ const    BuildReelWizard = () => {
             }
           }
         }
-        
+
         // If no scenes found in session, reset to step 1
         if (airesponse.length === 0) {
           console.log('[BuildReel] No scenes found in session, resetting to step 1');
@@ -6359,13 +6405,13 @@ const    BuildReelWizard = () => {
           }
           return;
         }
-        
+
         // Check if scene description fields are populated
         const hasSceneDescriptionFields = airesponse.length > 0 && airesponse.some(scene => {
-          return scene?.subject || scene?.background || scene?.action || scene?.styleCard || 
-                 scene?.cameraCard || scene?.ambiance || scene?.composition || scene?.focus_and_lens;
+          return scene?.subject || scene?.background || scene?.action || scene?.styleCard ||
+            scene?.cameraCard || scene?.ambiance || scene?.composition || scene?.focus_and_lens;
         });
-        
+
         // Debug logging to check what we're getting
         console.log('[BuildReel] Session restore - scripts array:', scripts.length);
         console.log('[BuildReel] Session restore - currentScript:', currentScript);
@@ -6385,7 +6431,7 @@ const    BuildReelWizard = () => {
             focus_and_lens: airesponse[0]?.focus_and_lens
           });
         }
-        
+
         // Restore userquery from session or localStorage
         let uq = [];
         try {
@@ -6405,21 +6451,21 @@ const    BuildReelWizard = () => {
             const restoredScript = airesponse.map((r, i) => {
               const sn = Number(r?.scene_number) || (i + 1);
               const m = String(r?.model || '').toUpperCase();
-              const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : 
-                          (m === 'PLOTLY') ? 'Financial' : 
-                          (m.includes('SORA')) ? 'Infographic' : 
-                          (r?.type || 'Infographic');
+              const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' :
+                (m === 'PLOTLY') ? 'Financial' :
+                  (m.includes('SORA')) ? 'Infographic' :
+                    (r?.type || 'Infographic');
               const mappedScenes = mapResponseToScenes(airesponse);
-              
+
               // Extract presenter preset from presenter_options (same as Chat.js)
               const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
               const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
-              
+
               const sceneObj = {
                 scene_number: sn,
                 scene_title: r?.scene_title ?? '',
-                model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' : 
-                       (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
+                model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' :
+                  (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
                 timeline: computeTimelineForIndex(mappedScenes, i),
                 narration: r?.narration ?? '',
                 desc: r?.desc ?? r?.description ?? '',
@@ -6440,19 +6486,19 @@ const    BuildReelWizard = () => {
                 presenter_options: presenterOpts,
                 veo3_prompt_template: r?.veo3_prompt_template ?? '',
                 background_image: Array.isArray(r?.background_image) ? r.background_image : [],
-        opening_frame: r?.opening_frame ?? null,
-        closing_frame: r?.closing_frame ?? null,
-        background_frame: r?.background_frame ?? null,
-        chart_type: r?.chart_type ?? '',
-        chart_data: r?.chart_data ?? null,
-        // Advanced Style Options
-        colors: Array.isArray(r?.colors) ? r.colors : [],
-        font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? 16,
-        font_style: r?.font_style ?? r?.fontStyle ?? '',
-        // Animation Description
-        animation_desc: r?.animation_desc ?? r?.animationDesc ?? null
-      };
-              
+                opening_frame: r?.opening_frame ?? null,
+                closing_frame: r?.closing_frame ?? null,
+                background_frame: r?.background_frame ?? null,
+                chart_type: r?.chart_type ?? '',
+                chart_data: r?.chart_data ?? null,
+                // Advanced Style Options
+                colors: Array.isArray(r?.colors) ? r.colors : [],
+                font_size: r?.font_size ?? r?.fontsize ?? r?.fontSize ?? 16,
+                font_style: r?.font_style ?? r?.fontStyle ?? '',
+                // Animation Description
+                animation_desc: r?.animation_desc ?? r?.animationDesc ?? null
+              };
+
               // Debug log for first scene (matching Chat.js approach)
               if (i === 0) {
                 console.log('[BuildReel] Restored first scene from user-session-data:', {
@@ -6495,12 +6541,12 @@ const    BuildReelWizard = () => {
                   model: sceneObj.model
                 });
               }
-              
+
               return sceneObj;
             });
-            
+
             console.log('[BuildReel] Total scenes restored:', restoredScript.length);
-            
+
             // Restore presenter preset for the first scene if it's Avatar Based
             const firstScene = restoredScript[0];
             if (firstScene && (firstScene.model === 'VEO3' || firstScene.model === 'ANCHOR')) {
@@ -6511,7 +6557,7 @@ const    BuildReelWizard = () => {
                 console.log('[BuildReel] Found presenter preset in session:', presetId);
               }
             }
-            
+
             return {
               ...f,
               script: restoredScript,
@@ -6524,10 +6570,10 @@ const    BuildReelWizard = () => {
         try {
           const storedImagesJobId = localStorage.getItem('current_images_job_id');
           if (storedImagesJobId) setImagesJobId(storedImagesJobId);
-          
+
           const storedVideosJobId = localStorage.getItem('current_video_job_id');
           if (storedVideosJobId) setVideosJobId(storedVideosJobId);
-          
+
           const vids = Array.isArray(sd?.videos) ? sd.videos : [];
           setHasVideosAvailable(vids.length > 0);
         } catch (_) {
@@ -6578,10 +6624,10 @@ const    BuildReelWizard = () => {
     try {
       console.log('[BuildReel] handleGenerateStoryboard called, setting isGenerating to true');
       setIsGenerating(true);
-      
+
       // Small delay to ensure state update is processed
       await new Promise(resolve => setTimeout(resolve, 0));
-      
+
       // Validate all scenes have narration (description is required for Infographic/Financial)
       const scriptArray = Array.isArray(script) ? script : [];
       console.log('[BuildReel] Validating script with', scriptArray.length, 'scenes');
@@ -6595,9 +6641,9 @@ const    BuildReelWizard = () => {
         hasNarration: !!scriptArray[0].narration,
         hasDesc: !!(scriptArray[0].desc || scriptArray[0].description)
       } : 'No scenes');
-      
+
       const validationErrors = [];
-      
+
       scriptArray.forEach((s, index) => {
         const sceneNum = s?.scene_number || (index + 1);
         const sceneTitle = s?.scene_title || `Scene ${sceneNum}`;
@@ -6606,32 +6652,32 @@ const    BuildReelWizard = () => {
         const sceneModelUpper = String(s?.model || s?.mode || '').toUpperCase();
         const isInfographic = sceneModelUpper === 'SORA';
         const isFinancial = sceneModelUpper === 'PLOTLY';
-        
+
         // Narration is always required
         if (!narration) {
           validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration is required`);
         }
-        
+
         // Description is required for Infographic and Financial scenes
         if ((isInfographic || isFinancial) && !description) {
           validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Description is required for Infographic/Financial scenes`);
         }
       });
-      
+
       if (validationErrors.length > 0) {
         console.log('[BuildReel] Validation failed:', validationErrors);
-        const errorMessage = validationErrors.length === 1 
+        const errorMessage = validationErrors.length === 1
           ? validationErrors[0]
           : `Please fill narration for all scenes. Issues found:\n${validationErrors.join('\n')}`;
-        try { 
-          toast.error(errorMessage); 
-        } catch(_) { 
-          alert(errorMessage); 
+        try {
+          toast.error(errorMessage);
+        } catch (_) {
+          alert(errorMessage);
         }
         setIsGenerating(false);
         return;
       }
-      
+
       console.log('[BuildReel] Validation passed - all scenes have narration');
       setForm((f) => ({ ...f, script }));
 
@@ -6662,7 +6708,7 @@ const    BuildReelWizard = () => {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
         const saveText = await saveResp.text();
-        let saveData; try { saveData = JSON.parse(saveText); } catch(_) { saveData = saveText; }
+        let saveData; try { saveData = JSON.parse(saveText); } catch (_) { saveData = saveText; }
         if (!saveResp.ok) throw new Error(`create-from-scratch(save) failed: ${saveResp.status} ${saveText}`);
         console.log('[BuildReel] create-from-scratch(save) response:', saveData);
       } finally {
@@ -6692,9 +6738,9 @@ const    BuildReelWizard = () => {
         if (!jobId) {
           throw new Error('No job ID received from generate-images-queue');
         }
-        
+
         try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
-        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch(_){}
+        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch (_) { }
         setImagesJobId(jobId);
       } finally {
         setIsGeneratingImagesQueue(false);
@@ -6703,13 +6749,13 @@ const    BuildReelWizard = () => {
       // Step 3: Navigate to images subview immediately (ImageList will handle job polling)
       await sendUserSessionData();
       setSubView('images');
-      
+
       // ImageList component will automatically poll job-status API using the jobId from localStorage
       setIsGenerating(false);
-      
+
     } catch (e) {
       console.error('Generate Storyboard failed:', e);
-      try { toast.error(e?.message || 'Failed to generate storyboard'); } catch(_) { alert(e?.message || 'Failed to generate storyboard'); }
+      try { toast.error(e?.message || 'Failed to generate storyboard'); } catch (_) { alert(e?.message || 'Failed to generate storyboard'); }
       setIsSavingStoryboard(false);
       setIsGeneratingImagesQueue(false);
       setIsGenerating(false);
@@ -6759,7 +6805,7 @@ const    BuildReelWizard = () => {
       if (!genResp.ok) throw new Error(`videos/generate-from-session failed: ${genResp.status} ${genText}`);
       const jobId = genData?.job_id || genData?.jobId || genData?.id;
       if (jobId) {
-        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) {}
+        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { }
         setVideosJobId(jobId);
       }
       setShowVideoPopup(true);
@@ -6821,11 +6867,11 @@ const    BuildReelWizard = () => {
       // Build request per new format
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
       const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-      
+
       if (!sessionId || !token) {
         throw new Error('Missing session_id or token');
       }
-      
+
       // Step 1: Fetch user_data from user-session-data API
       const sessionReqBody = { user_id: token, session_id: sessionId };
       const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
@@ -6837,19 +6883,11 @@ const    BuildReelWizard = () => {
       }
       const sessionDataResponse = await sessionResp.json();
       const sd = sessionDataResponse?.session_data || {};
-      
+
       // Extract user_data from response (use as-is, don't change anything)
-      let userPayload = undefined;
-      if (sessionDataResponse && typeof sessionDataResponse.user_data === 'object') {
-        userPayload = sessionDataResponse.user_data;
-      } else if (sd && typeof sd.user_data === 'object') {
-        userPayload = sd.user_data;
-      } else if (sd && typeof sd.user === 'object') {
-        userPayload = sd.user;
-      } else {
-        throw new Error('user_data missing in user-session-data response');
-      }
-      
+      const rawUser = sessionDataResponse?.user_data || sd?.user_data || sd?.user || {};
+      const userPayload = normalizeUserSnapshot(rawUser, token);
+
       // Userquery payload from form/localStorage
       let uq = [];
       try {
@@ -6865,11 +6903,22 @@ const    BuildReelWizard = () => {
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
 
+      let transformedUQ = [];
+      if (Array.isArray(uq) && uq.length > 0) {
+        const first = uq[0];
+        if (first && typeof first === 'object') {
+          const inner = first.additonalprop1 && typeof first.additonalprop1 === 'object'
+            ? first.additonalprop1
+            : first;
+          transformedUQ = [inner];
+        }
+      }
+
       // Step 2: Call create-from-scratch API first (this creates the title automatically in Swagger)
       const body = {
         user: userPayload,
         session_id: sessionId || '',
-        current_script: { userquery: uq },
+        current_script: { userquery: transformedUQ },
         action: 'add',
         model_type: 'SORA'
       };
@@ -6881,7 +6930,7 @@ const    BuildReelWizard = () => {
       let data; try { data = JSON.parse(text); } catch (_) { data = text; }
       if (!resp.ok) throw new Error(`create-from-scratch failed: ${resp.status} ${text}`);
       console.log('[BuildReel] Step 2: create-from-scratch successful');
-      
+
       // Step 3: Call video-type/update API after create-from-scratch
       try {
         const updateVideoTypeBody = {
@@ -6911,7 +6960,7 @@ const    BuildReelWizard = () => {
         console.error('[BuildReel] video-type/update API error:', videoTypeError);
         // Continue anyway, don't block the flow
       }
-      
+
       // Step 4: Call title API after video-type update to refresh sidebar
       try {
         const titleBody = {
@@ -6939,8 +6988,8 @@ const    BuildReelWizard = () => {
           // Dispatch event to refresh sidebar sessions list (same as Generate Reel)
           if (titleData && (titleData.title || titleData.updated)) {
             try {
-              window.dispatchEvent(new CustomEvent('session-title-updated', { 
-                detail: { sessionId, title: titleData.title } 
+              window.dispatchEvent(new CustomEvent('session-title-updated', {
+                detail: { sessionId, title: titleData.title }
               }));
             } catch (_) { /* noop */ }
           }
@@ -6957,50 +7006,52 @@ const    BuildReelWizard = () => {
         ?? data?.script
         ?? [];
       const mapped = mapResponseToScenes(aiArr);
-      
+
       // Use the response from create-from-scratch directly (no session API call)
-      setForm((f) => ({ ...f, script: aiArr.map((r, i) => {
-        const sn = Number(r?.scene_number) || (i + 1);
-        const m = String(r?.model || '').toUpperCase();
-        const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' : 
-                    (m === 'PLOTLY') ? 'Financial' : 
-                    (m.includes('SORA')) ? 'Infographic' : 
-                    (r?.type || 'Infographic');
-        
-        // Extract presenter preset from presenter_options (same as Chat.js)
-        const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
-        const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
-        
-        // Preserve ALL fields from airesponse, including scene description fields
-        return {
-          scene_number: sn,
-          scene_title: r?.scene_title ?? '',
-          model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' : 
-                 (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
-          timeline: computeTimelineForIndex(mapped, i),
-          narration: r?.narration ?? '',
-          desc: r?.desc ?? r?.description ?? '',
-          text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
-          ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
-          folderLink: r?.folderLink ?? '',
-          // Preserve scene description fields directly from airesponse
-          subject: r?.subject ?? '',
-          background: r?.background ?? '',
-          action: r?.action ?? '',
-          styleCard: r?.styleCard ?? '',
-          cameraCard: r?.cameraCard ?? '',
-          ambiance: r?.ambiance ?? '',
-          composition: r?.composition ?? '',
-          focus_and_lens: r?.focus_and_lens ?? '',
-          avatar: r?.avatar ?? (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0 ? r.avatar_urls[0] : null),
-          avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [],
-          presenter_options: presenterOpts,
-          background_image: Array.isArray(r?.background_image) ? r.background_image : [],
-          chart_type: r?.chart_type ?? '',
-          chart_data: r?.chart_data ?? null
-        };
-      }) }));
-      
+      setForm((f) => ({
+        ...f, script: aiArr.map((r, i) => {
+          const sn = Number(r?.scene_number) || (i + 1);
+          const m = String(r?.model || '').toUpperCase();
+          const type = (m === 'VEO3' || m.includes('VEO')) ? 'Avatar Based' :
+            (m === 'PLOTLY') ? 'Financial' :
+              (m.includes('SORA')) ? 'Infographic' :
+                (r?.type || 'Infographic');
+
+          // Extract presenter preset from presenter_options (same as Chat.js)
+          const presenterOpts = r?.presenter_options || r?.presenterOptions || {};
+          const presetId = presenterOpts?.preset_id || presenterOpts?.presetId || presenterOpts?.preset || presenterOpts?.anchor_id || presenterOpts?.anchorId || '';
+
+          // Preserve ALL fields from airesponse, including scene description fields
+          return {
+            scene_number: sn,
+            scene_title: r?.scene_title ?? '',
+            model: (String(type).toLowerCase() === 'avatar based') ? 'VEO3' :
+              (String(type).toLowerCase() === 'financial') ? 'PLOTLY' : 'SORA',
+            timeline: computeTimelineForIndex(mapped, i),
+            narration: r?.narration ?? '',
+            desc: r?.desc ?? r?.description ?? '',
+            text_to_be_included: Array.isArray(r?.text_to_be_included) ? r.text_to_be_included.slice() : [],
+            ref_image: Array.isArray(r?.ref_image) ? r.ref_image : [],
+            folderLink: r?.folderLink ?? '',
+            // Preserve scene description fields directly from airesponse
+            subject: r?.subject ?? '',
+            background: r?.background ?? '',
+            action: r?.action ?? '',
+            styleCard: r?.styleCard ?? '',
+            cameraCard: r?.cameraCard ?? '',
+            ambiance: r?.ambiance ?? '',
+            composition: r?.composition ?? '',
+            focus_and_lens: r?.focus_and_lens ?? '',
+            avatar: r?.avatar ?? (Array.isArray(r?.avatar_urls) && r.avatar_urls.length > 0 ? r.avatar_urls[0] : null),
+            avatar_urls: Array.isArray(r?.avatar_urls) ? r.avatar_urls : [],
+            presenter_options: presenterOpts,
+            background_image: Array.isArray(r?.background_image) ? r.background_image : [],
+            chart_type: r?.chart_type ?? '',
+            chart_data: r?.chart_data ?? null
+          };
+        })
+      }));
+
       setStep(2);
       // Persist step change
       try {
@@ -7080,6 +7131,8 @@ const    BuildReelWizard = () => {
               onSave={handleSaveScenes}
               onGenerate={handleGenerate}
               isGenerating={isGenerating}
+              hasImages={hasImages}
+              onGoToStoryboard={() => setSubView('images')}
             />
           )}
           {subView === 'images' && (

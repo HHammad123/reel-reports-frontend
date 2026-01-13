@@ -12,7 +12,7 @@ import { Zap, ChevronRight, X, Menu } from 'lucide-react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import LogoImage from '../../asset/mainLogo.png';
-import LoadingAnimationGif from '../../asset/loading.gif';
+import LoadingAnimationGif from '../../asset/loadingv2.gif';
 import { uploadBlobUrl } from '../../utils/uploadAssets';
 import Loader from '../Loader';
 import { useProgressLoader } from '../../hooks/useProgressLoader';

@@ -1,10 +1,10 @@
 import React from 'react';
-import LoadingAnimationGif from '../asset/loading.gif';
+import LoadingAnimationGif from '../asset/loadingv2.gif';
 
 /**
  * Reusable Loader Component
  * 
- * Displays a consistent loading animation with the loading.gif at the top
+ * Displays a consistent loading animation with the loadingv2.gif at the top
  * and customizable content below.
  * 
  * @param {Object} props
@@ -39,7 +39,7 @@ const Loader = ({
           className="w-full h-full object-contain"
         />
       </div>
-      
+
       {/* Content below the animation */}
       <div className="space-y-2 w-full">
         {title && (
@@ -48,7 +48,7 @@ const Loader = ({
         {description && (
           <p className="text-sm text-gray-600">{description}</p>
         )}
-        
+
         {/* Progress Bar - appears below title/description */}
         {progress !== null && (
           <div className="w-full max-w-xs mx-auto mt-3">
@@ -61,7 +61,7 @@ const Loader = ({
             <p className="text-xs text-gray-600 mt-1">{Math.min(100, Math.max(0, Math.round(progress)))}%</p>
           </div>
         )}
-        
+
         {children}
       </div>
     </div>
