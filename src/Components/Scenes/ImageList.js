@@ -1167,24 +1167,23 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       const modelUpper = String(row?.model || '').toUpperCase()
       const isVEO3 = modelUpper === 'VEO3'
 
-      // ALWAYS get images from current version (via getOrderedRefs which uses imageFrames)
       const ordered = getOrderedRefs(row)
       const imageRefs = ordered.length > 0 ? ordered : []
 
-      // For VEO3 only: combine images and avatar_urls from current version
       if (isVEO3) {
-        // ALWAYS extract avatar_urls from current version
-        let avatarUrls = []
+        const latestVersion = row?.imageVersionData
+          ? getLatestVersionKey(row.imageVersionData)
+          : 'v1'
 
-        // Priority 1: Extract from imageVersionData latest version
-        if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
-          const imgContainer = row.imageVersionData
-          const vKey = getLatestVersionKey(imgContainer)
-          const vObj = imgContainer[vKey] || {}
-          const versionAvatars = vObj?.avatar_urls
+        let avatarUrls = getAvatarUrlsFromImageVersion(
+          row?.imageVersionData,
+          latestVersion,
+          'VEO3'
+        )
 
-          if (Array.isArray(versionAvatars) && versionAvatars.length > 0) {
-            avatarUrls = versionAvatars.map((av) => {
+        if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(row?.avatar_urls)) {
+          avatarUrls = row.avatar_urls
+            .map((av) => {
               if (typeof av === 'string') return av.trim()
               return (
                 av?.imageurl ||
@@ -1196,50 +1195,43 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 av?.avatar_url ||
                 ''
               )
-            }).filter(url => url && typeof url === 'string' && url.trim())
-          }
+            })
+            .filter((url) => url && typeof url === 'string' && url.trim())
         }
 
-        // Priority 2: Extract from row.avatar_urls (should already be from current version)
-        if (avatarUrls.length === 0 && Array.isArray(row?.avatar_urls)) {
-          avatarUrls = row.avatar_urls.map((av) => {
-            if (typeof av === 'string') return av.trim()
-            return (
-              av?.imageurl ||
-              av?.imageUrl ||
-              av?.image_url ||
-              av?.url ||
-              av?.src ||
-              av?.link ||
-              av?.avatar_url ||
-              ''
-            )
-          }).filter(url => url && typeof url === 'string' && url.trim())
+        let genImage = true
+        if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
+          const imageVersionData = row.imageVersionData
+          const versionKey = getLatestVersionKey(imageVersionData)
+          const verObj = imageVersionData[versionKey] || {}
+          genImage = verObj?.gen_image !== false
         }
 
-        // For VEO3 with 9:16 aspect ratio: show only avatar if available, else only one background image
+        if (!genImage && avatarUrls.length > 0) {
+          return [avatarUrls[0]].filter(Boolean)
+        }
+
         if (isPortrait9x16) {
-          // If avatar exists, return only first avatar
           if (avatarUrls.length > 0) {
             return [avatarUrls[0]].filter(Boolean)
           }
-          // Else, return only first background image (from imageRefs)
           if (imageRefs.length > 0) {
             return [imageRefs[0]].filter(Boolean)
           }
-          // Fallback: return empty array
           return []
         }
 
-        // For VEO3 with other aspect ratios: combine images and avatar_urls from current version, removing duplicates
+        if (imageRefs.length === 0 && avatarUrls.length > 0) {
+          return [avatarUrls[0]].filter(Boolean)
+        }
+
         const combined = [...new Set([...imageRefs, ...avatarUrls])].filter(Boolean)
-        return combined // Return all combined images for VEO3
+        return combined
       }
 
-      // For non-VEO3 models, return only images from current version (max 2)
       return imageRefs.slice(0, 2)
     },
-    [getOrderedRefs, isPortrait9x16]
+    [getOrderedRefs, isPortrait9x16, getAvatarUrlsFromImageVersion]
   )
 
   const getVeo3ImageTabImages = useCallback(
@@ -1710,6 +1702,26 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
     const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}, allScriptScenesByNumber = {}) => {
       let mapped = [];
       const usedSceneNumbers = new Set();
+      let globalAvatarUrls = [];
+      if (Array.isArray(imagesRoot) && imagesRoot.length > 2) {
+        const avatarNode = imagesRoot[2];
+        const rawAvatarUrls = Array.isArray(avatarNode?.avatar_urls) ? avatarNode.avatar_urls : [];
+        globalAvatarUrls = rawAvatarUrls
+          .map((av) => {
+            if (typeof av === 'string') return av.trim();
+            return (
+              av?.imageurl ||
+              av?.imageUrl ||
+              av?.image_url ||
+              av?.url ||
+              av?.src ||
+              av?.link ||
+              av?.avatar_url ||
+              ''
+            );
+          })
+          .filter((url) => url && typeof url === 'string' && url.trim());
+      }
       const collectUrls = (node) => {
         const urls = [];
         const uniqPush = (v) => {
@@ -1894,39 +1906,42 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const versionKey = getLatestVersionKey(imagesContainer);
               const verObj = imagesContainer[versionKey] || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
+
+              const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
+              const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
+              const isSora = modelUpper === 'SORA';
+              const sceneNumber = it?.scene_number || idx + 1;
+
+              let finalRefs = [];
+              let avatarUrlsForMeta = [];
+              let imageFrames = [];
+              let imageDimensions = null;
+              let textElements = [];
+
               if (arr.length > 0) {
                 const refs = arr
                   .map((img) => (img?.base_image?.image_url || img?.base_image?.imageUrl || img?.image_url || img?.url || ''))
                   .filter(Boolean);
                 const primary = arr[0] || {};
                 const baseImage = primary?.base_image || primary?.baseImage || {};
-                const imageDimensions =
+                imageDimensions =
                   baseImage?.image_dimensions ||
                   baseImage?.imageDimensions ||
                   primary?.image_dimensions ||
                   primary?.imageDimensions ||
                   null;
-                const textElements = Array.isArray(primary?.text_elements)
+                textElements = Array.isArray(primary?.text_elements)
                   ? primary.text_elements
                   : Array.isArray(primary?.textElements)
                     ? primary.textElements
                     : [];
-                // For VEO3/SORA models, prioritize base_image URLs from image arrays
-                // Only use avatar_urls as fallback when no image arrays exist
-                const modelUpper = String(it?.model || it?.mode || '').toUpperCase();
-                const isVEO3 = (modelUpper === 'VEO3' || modelUpper === 'ANCHOR');
-                const isSora = modelUpper === 'SORA';
-                const sceneNumber = it?.scene_number || idx + 1;
+                imageFrames = arr;
 
+                finalRefs = refs;
 
-                let finalRefs = refs;
-                let avatarUrlsForMeta = []; // Store avatar_urls for VEO3
-
-                // Only use avatar_urls if we have no valid refs from image arrays
                 if ((isVEO3 || isSora) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
                   const scene = veo3ScriptScenesByNumber[sceneNumber];
 
-                  // Get background_image URLs to exclude them
                   const backgroundImageUrls = new Set();
                   if (Array.isArray(scene?.background_image)) {
                     scene.background_image.forEach((bg) => {
@@ -1939,14 +1954,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     });
                   }
 
-                  // Filter out any background_image URLs from collected refs
                   const filteredRefs = refs.filter(url => {
                     const trimmed = typeof url === 'string' ? url.trim() : '';
                     return trimmed && !backgroundImageUrls.has(trimmed);
                   });
 
-
-                  // Extract avatar_urls for VEO3 (always, not just as fallback)
                   if (isVEO3) {
                     avatarUrlsForMeta = Array.isArray(scene?.avatar_urls)
                       ? scene.avatar_urls.map((av) => {
@@ -1965,11 +1977,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       : [];
                   }
 
-                  // PRIORITY: Use base_image URLs from image arrays if available
                   if (filteredRefs.length > 0) {
                     finalRefs = filteredRefs;
                   } else {
-                    // FALLBACK: Only use avatar_urls if no image arrays exist
                     const avatarUrls = Array.isArray(scene?.avatar_urls)
                       ? scene.avatar_urls.map((av) => {
                         if (typeof av === 'string') return av.trim();
@@ -1988,87 +1998,158 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
                     if (avatarUrls.length > 0) {
                       finalRefs = avatarUrls;
+                      if (isVEO3 && avatarUrlsForMeta.length === 0) {
+                        avatarUrlsForMeta = avatarUrls;
+                      }
                     }
                   }
                 }
+              } else {
+                const genImage = verObj?.gen_image !== false;
+                if (isVEO3 && !genImage) {
+                  let avatarUrls = [];
 
-                // Get description and narration from script data only
-                const sceneNumberForIt = it?.scene_number ?? (idx + 1);
-                const scriptSceneForIt =
-                  allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForIt]
-                    ? allScriptScenesByNumber[sceneNumberForIt]
-                    : null;
-                const scriptIndexForIt =
-                  typeof scriptSceneForIt?.__aiIndex === 'number'
-                    ? scriptSceneForIt.__aiIndex
-                    : Math.max(0, Number(sceneNumberForIt) - 1);
-                const scriptBasePathForIt = `scripts[0].airesponse[${scriptIndexForIt}]`;
-                const descriptionForIt = pickFieldWithPath('description', sceneNumberForIt, [
-                  {
-                    value: scriptSceneForIt?.desc,
-                    path: `${scriptBasePathForIt}.desc`
-                  },
-                  {
-                    value: scriptSceneForIt?.description,
-                    path: `${scriptBasePathForIt}.description`
-                  },
-                  {
-                    value: scriptSceneForIt?.scene_description,
-                    path: `${scriptBasePathForIt}.scene_description`
+                  if (Array.isArray(verObj?.avatar_urls)) {
+                    avatarUrls = verObj.avatar_urls.map((av) => {
+                      if (typeof av === 'string') return av.trim();
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    }).filter(url => url && typeof url === 'string' && url.trim());
                   }
-                ]);
-                const narrationForIt = pickFieldWithPath('narration', sceneNumberForIt, [
-                  {
-                    value: scriptSceneForIt?.narration,
-                    path: `${scriptBasePathForIt}.narration`
-                  }
-                ]);
 
-                // Extract veo3_prompt_template from script scene data
-                const veo3PromptTemplate = scriptSceneForIt?.veo3_prompt_template ||
-                  scriptSceneForIt?.veo3PromptTemplate ||
-                  scriptSceneForIt?.veo3_prompt ||
-                  scriptSceneForIt?.veo3Prompt ||
-                  it?.veo3_prompt_template ||
-                  it?.veo3PromptTemplate ||
-                  it?.veo3_prompt ||
-                  it?.veo3Prompt ||
-                  null;
-
-                const meta = {
-                  description: descriptionForIt,
-                  narration: narrationForIt,
-                  textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
-                  model: modelUpper,
-                  imageDimensions,
-                  textElements,
-                  imageVersionData: imagesContainer,
-                  imageFrames: arr,
-                  isEditable: true,
-                  // Store avatar_urls in metadata for VEO3 only
-                  ...(isVEO3 && avatarUrlsForMeta.length > 0 ? { avatar_urls: avatarUrlsForMeta } : {}),
-                  // Store veo3_prompt_template for VEO3 models
-                  ...(isVEO3 && veo3PromptTemplate ? { veo3_prompt_template: veo3PromptTemplate } : {}),
-                  prompts: {
-                    opening_frame: normalizePromptFields(
-                      verObj?.opening_frame ||
-                      verObj?.prompts?.opening_frame ||
-                      it?.opening_frame ||
-                      it?.prompts?.opening_frame ||
-                      {}
-                    ),
-                    closing_frame: normalizePromptFields(
-                      verObj?.closing_frame ||
-                      verObj?.prompts?.closing_frame ||
-                      it?.closing_frame ||
-                      it?.prompts?.closing_frame ||
-                      {}
-                    )
+                  if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(it?.avatar_urls)) {
+                    avatarUrls = it.avatar_urls.map((av) => {
+                      if (typeof av === 'string') return av.trim();
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    }).filter(url => url && typeof url === 'string' && url.trim());
                   }
-                };
-                pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, finalRefs, meta);
+
+                  if ((!avatarUrls || avatarUrls.length === 0) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                    const scene = veo3ScriptScenesByNumber[sceneNumber];
+                    if (Array.isArray(scene?.avatar_urls)) {
+                      avatarUrls = scene.avatar_urls.map((av) => {
+                        if (typeof av === 'string') return av.trim();
+                        return (
+                          av?.imageurl ||
+                          av?.imageUrl ||
+                          av?.image_url ||
+                          av?.url ||
+                          av?.src ||
+                          av?.link ||
+                          av?.avatar_url ||
+                          ''
+                        );
+                      }).filter(url => url && typeof url === 'string' && url.trim());
+                    }
+                  }
+
+                  if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(globalAvatarUrls) && globalAvatarUrls.length > 0) {
+                    avatarUrls = globalAvatarUrls;
+                  }
+
+                  if (avatarUrls.length > 0) {
+                    finalRefs = avatarUrls;
+                    avatarUrlsForMeta = avatarUrls;
+                    imageFrames = [];
+                    imageDimensions = null;
+                    textElements = [];
+                  }
+                }
+              }
+
+              if (finalRefs.length === 0) {
                 return;
               }
+
+              const sceneNumberForIt = it?.scene_number ?? (idx + 1);
+              const scriptSceneForIt =
+                allScriptScenesByNumber && allScriptScenesByNumber[sceneNumberForIt]
+                  ? allScriptScenesByNumber[sceneNumberForIt]
+                  : null;
+              const scriptIndexForIt =
+                typeof scriptSceneForIt?.__aiIndex === 'number'
+                  ? scriptSceneForIt.__aiIndex
+                  : Math.max(0, Number(sceneNumberForIt) - 1);
+              const scriptBasePathForIt = `scripts[0].airesponse[${scriptIndexForIt}]`;
+              const descriptionForIt = pickFieldWithPath('description', sceneNumberForIt, [
+                {
+                  value: scriptSceneForIt?.desc,
+                  path: `${scriptBasePathForIt}.desc`
+                },
+                {
+                  value: scriptSceneForIt?.description,
+                  path: `${scriptBasePathForIt}.description`
+                },
+                {
+                  value: scriptSceneForIt?.scene_description,
+                  path: `${scriptBasePathForIt}.scene_description`
+                }
+              ]);
+              const narrationForIt = pickFieldWithPath('narration', sceneNumberForIt, [
+                {
+                  value: scriptSceneForIt?.narration,
+                  path: `${scriptBasePathForIt}.narration`
+                }
+              ]);
+
+              const veo3PromptTemplate = scriptSceneForIt?.veo3_prompt_template ||
+                scriptSceneForIt?.veo3PromptTemplate ||
+                scriptSceneForIt?.veo3_prompt ||
+                scriptSceneForIt?.veo3Prompt ||
+                it?.veo3_prompt_template ||
+                it?.veo3PromptTemplate ||
+                it?.veo3_prompt ||
+                it?.veo3Prompt ||
+                null;
+
+              const meta = {
+                description: descriptionForIt,
+                narration: narrationForIt,
+                textToBeIncluded: it?.text_to_be_included || it?.textToBeIncluded || it?.include_text || '',
+                model: modelUpper,
+                imageDimensions,
+                textElements,
+                imageVersionData: imagesContainer,
+                imageFrames,
+                isEditable: arr.length > 0,
+                ...(isVEO3 && avatarUrlsForMeta.length > 0 ? { avatar_urls: avatarUrlsForMeta } : {}),
+                ...(isVEO3 && veo3PromptTemplate ? { veo3_prompt_template: veo3PromptTemplate } : {}),
+                prompts: {
+                  opening_frame: normalizePromptFields(
+                    verObj?.opening_frame ||
+                    verObj?.prompts?.opening_frame ||
+                    it?.opening_frame ||
+                    it?.prompts?.opening_frame ||
+                    {}
+                  ),
+                  closing_frame: normalizePromptFields(
+                    verObj?.closing_frame ||
+                    verObj?.prompts?.closing_frame ||
+                    it?.closing_frame ||
+                    it?.prompts?.closing_frame ||
+                    {}
+                  )
+                }
+              };
+              pushRow(it?.scene_number ?? (idx + 1), it?.scene_title || it?.title, finalRefs, meta);
+              return;
             }
 
             if (Array.isArray(it?.scenes)) {
@@ -2327,7 +2408,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           });
 
           // Get avatar_urls
-          const avatarUrls = Array.isArray(scene?.avatar_urls)
+          let avatarUrls = Array.isArray(scene?.avatar_urls)
             ? scene.avatar_urls.map((av) => {
               if (typeof av === 'string') return av.trim();
               return (
@@ -2342,6 +2423,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               );
             }).filter(url => url && typeof url === 'string' && url.trim())
             : [];
+
+          if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(globalAvatarUrls) && globalAvatarUrls.length > 0) {
+            avatarUrls = globalAvatarUrls;
+          }
 
           // For VEO3: store avatar_urls separately in metadata, combine with collectedUrls in refs
           // For other models: combine as before
@@ -2507,10 +2592,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         const sessionImages = mapSessionImages(sdata?.session_data?.images, veo3ScriptScenesByNumber, allScriptScenesByNumber);
         if (!cancelled && sessionImages.length > 0) {
           setRows(sessionImages);
-          const initialImages = getSceneImages(sessionImages[0]);
-          const first = getPrimaryImage(sessionImages[0]);
-          const model0 = String(sessionImages[0]?.model || sessionImages[0]?.mode || '').toUpperCase();
           const firstScene = sessionImages[0];
+          const initialImages = getSceneImages(firstScene);
+          const model0 = String(firstScene?.model || firstScene?.mode || '').toUpperCase();
+
+          const primaryFromSceneImages = Array.isArray(initialImages) && initialImages.length > 0
+            ? (typeof initialImages[0] === 'string'
+              ? initialImages[0]
+              : (initialImages[0]?.image_url || initialImages[0]?.imageUrl || initialImages[0]?.url || ''))
+            : '';
+          const first = primaryFromSceneImages || getPrimaryImage(firstScene);
 
           // Get latest version from images object (always use latest)
           const imageVersionData = firstScene?.imageVersionData || null;
@@ -3082,8 +3173,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       const mapSessionImages = (imagesRoot, veo3ScriptScenesByNumber = {}, allScriptScenesByNumber = {}) => {
         let mapped = [];
         const usedSceneNumbers = new Set();
-        // Store the first avatar URL found from any VEO3 scene to use for all VEO3 scenes
         let globalAvatarUrl = null;
+        if (!globalAvatarUrl && Array.isArray(imagesRoot) && imagesRoot.length > 2) {
+          const avatarNode = imagesRoot[2];
+          const rawAvatarUrls = Array.isArray(avatarNode?.avatar_urls) ? avatarNode.avatar_urls : [];
+          const normalized = rawAvatarUrls
+            .map((av) => {
+              if (typeof av === 'string') return av.trim();
+              return (
+                av?.imageurl ||
+                av?.imageUrl ||
+                av?.image_url ||
+                av?.url ||
+                av?.src ||
+                av?.link ||
+                av?.avatar_url ||
+                ''
+              );
+            })
+            .filter((url) => url && typeof url === 'string' && url.trim());
+          if (normalized.length > 0) {
+            globalAvatarUrl = normalized[0];
+          }
+        }
         const collectUrls = (node) => {
           const urls = [];
           const uniqPush = (v) => {
@@ -3351,7 +3463,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               }
             }
 
-            // For VEO3/ANCHOR: Check if it has versioned structure like SORA
             let refs = [];
             let avatarUrlsForMeta = []; // Store avatar_urls for VEO3
             let hasVersionedImages = false;
@@ -3362,12 +3473,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const versionKey = getLatestVersionKey(imagesContainer);
               const verObj = imagesContainer[versionKey] || {};
               const arr = Array.isArray(verObj?.images) ? verObj.images : [];
-
-              // Explicitly check and log avatar_urls
               const versionAvatars = verObj?.avatar_urls;
 
               if (arr.length > 0) {
-                // Extract images from current_version using base_image.image_url
                 refs = arr
                   .map((frame) => frame?.base_image?.image_url || frame?.base_image?.imageUrl || '')
                   .filter(Boolean);
@@ -3389,15 +3497,78 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   );
                 }).filter(url => url && typeof url === 'string' && url.trim());
 
-                // Store the first avatar URL found to use for all VEO3 scenes
                 if (avatarUrlsForMeta.length > 0 && !globalAvatarUrl) {
                   globalAvatarUrl = avatarUrlsForMeta[0];
+                }
+              }
+
+              if (arr.length === 0) {
+                const genImage = verObj?.gen_image !== false;
+                if (!genImage) {
+                  let avatarUrls = [];
+
+                  if (Array.isArray(versionAvatars)) {
+                    avatarUrls = versionAvatars.map((av) => {
+                      if (typeof av === 'string') return av.trim();
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    }).filter(url => url && typeof url === 'string' && url.trim());
+                  }
+
+                  if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(it?.avatar_urls)) {
+                    avatarUrls = it.avatar_urls.map((av) => {
+                      if (typeof av === 'string') return av.trim();
+                      return (
+                        av?.imageurl ||
+                        av?.imageUrl ||
+                        av?.image_url ||
+                        av?.url ||
+                        av?.src ||
+                        av?.link ||
+                        av?.avatar_url ||
+                        ''
+                      );
+                    }).filter(url => url && typeof url === 'string' && url.trim());
+                  }
+
+                  if ((!avatarUrls || avatarUrls.length === 0) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                    const scene = veo3ScriptScenesByNumber[sceneNumber];
+                    if (Array.isArray(scene?.avatar_urls)) {
+                      avatarUrls = scene.avatar_urls.map((av) => {
+                        if (typeof av === 'string') return av.trim();
+                        return (
+                          av?.imageurl ||
+                          av?.imageUrl ||
+                          av?.image_url ||
+                          av?.url ||
+                          av?.src ||
+                          av?.link ||
+                          av?.avatar_url ||
+                          ''
+                        );
+                      }).filter(url => url && typeof url === 'string' && url.trim());
+                    }
+                  }
+
+                  if (avatarUrls.length > 0) {
+                    refs = avatarUrls;
+                    avatarUrlsForMeta = avatarUrls;
+                    hasVersionedImages = true;
+                  }
                 }
               }
             }
 
             // Fallback to collectUrls if no versioned structure
-            if (!hasVersionedImages) {
+            if (!hasVersionedImages && (!refs || refs.length === 0)) {
               refs = collectUrls(it);
             }
 
@@ -7307,12 +7478,76 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               const img2 = getImg2();
               const isDualImageModel = selectedModel === 'VEO3' || selectedModel === 'ANCHOR';
               const isVeoScene = selectedModel === 'VEO3';
-              const primaryImg = isVeoScene ? img2 : img1;
-              const secondaryImg = isVeoScene ? img1 : img2;
-              const primaryLabel = isVeoScene ? 'Image' : 'Image 1';
-              const secondaryLabel = isVeoScene ? 'Avatar' : 'Image 2';
+              let primaryImg = isVeoScene ? img2 : img1;
+              let secondaryImg = isVeoScene ? img1 : img2;
+              let primaryLabel = isVeoScene ? 'Image' : 'Image 1';
+              let secondaryLabel = isVeoScene ? 'Avatar' : 'Image 2';
               const primaryFrameIndex = isVeoScene ? 1 : 0;
               const secondaryFrameIndex = isVeoScene ? 0 : 1;
+
+              if (isVeoScene) {
+                let genImage = true;
+                if (selected?.imageVersionData && typeof selected.imageVersionData === 'object') {
+                  const imageVersionData = selected.imageVersionData;
+                  const versionKey = getLatestVersionKey(imageVersionData);
+                  const verObj = imageVersionData[versionKey] || {};
+                  genImage = verObj?.gen_image !== false;
+                }
+
+                let avatarUrl = '';
+                let hasAvatarForGenFalse = false;
+
+                const latestVersionForSelected = selected?.imageVersionData ? getLatestVersionKey(selected.imageVersionData) : 'v1';
+                const avatarUrlsFromSelected = getAvatarUrlsFromImageVersion(
+                  selected?.imageVersionData || null,
+                  latestVersionForSelected,
+                  selectedModel
+                );
+                if (Array.isArray(avatarUrlsFromSelected) && avatarUrlsFromSelected.length > 0) {
+                  avatarUrl = avatarUrlsFromSelected[0];
+                  if (typeof avatarUrl === 'string' && avatarUrl.trim()) {
+                    hasAvatarForGenFalse = true;
+                  }
+                } else if (selected && Array.isArray(selected.avatar_urls) && selected.avatar_urls.length > 0) {
+                  const avatarEntry = selected.avatar_urls[0];
+                  const url =
+                    typeof avatarEntry === 'string'
+                      ? avatarEntry.trim()
+                      : (
+                        avatarEntry?.imageurl ||
+                        avatarEntry?.imageUrl ||
+                        avatarEntry?.image_url ||
+                        avatarEntry?.url ||
+                        avatarEntry?.src ||
+                        avatarEntry?.link ||
+                        avatarEntry?.avatar_url ||
+                        ''
+                      );
+                  if (typeof url === 'string' && url.trim()) {
+                    avatarUrl = url.trim();
+                    hasAvatarForGenFalse = true;
+                  }
+                }
+
+                if (!genImage && hasAvatarForGenFalse) {
+                  primaryImg = avatarUrl;
+                  secondaryImg = '';
+                  primaryLabel = 'Avatar';
+                  secondaryLabel = '';
+                } else {
+                  const hasPrimary = primaryImg && typeof primaryImg === 'string' && primaryImg.trim();
+                  const hasSecondary = secondaryImg && typeof secondaryImg === 'string' && secondaryImg.trim();
+
+                  // If there is only an avatar image and no generated image,
+                  // show the avatar image only in the detail view
+                  if (!hasPrimary && hasSecondary) {
+                    primaryImg = secondaryImg;
+                    secondaryImg = '';
+                    primaryLabel = 'Avatar';
+                    secondaryLabel = '';
+                  }
+                }
+              }
 
               // Get latest version for cache-busting avatar images
               const currentVersion = selected?.imageVersionData ? getLatestVersionKey(selected.imageVersionData) : (selected?.current_version || 'v1');
@@ -8775,7 +9010,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           </div>
                         )}
 
-                        <div className="mt-4 border border-[#D8DFFF] rounded-lg p-3 bg-white">
+                        <div className="mt-4 border border-[#D8DFFF] rounded-lg p-3 bg-blue-50">
                           <div className="flex items-center justify-between mb-1">
                             <label className="text-xs font-medium text-gray-600">Narration</label>
                             {editingField === 'narration' ? (
@@ -8826,7 +9061,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           ) : (
                             <input
                               type="text"
-                              className="w-full border border-[#D8DFFF] bg-white rounded-lg px-3 py-2 text-sm text-gray-700 min-h-[40px]"
+                              className="w-full bg-blue-50 rounded-lg py-2 text-sm text-gray-700 min-h-[40px]"
                               readOnly
                               value={truncateText(selected?.narration || '', 16)}
                             />
@@ -9275,10 +9510,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     };
 
                     return (
-                      <div className="bg-[#F5F7FF] rounded-lg p-4 border border-[#D8DFFF] relative w-full">
+                      <div className="bg-gray-50 rounded-lg p-4 border border-[#D8DFFF] relative w-full">
                         <h4 className="text-sm font-semibold text-gray-800 mb-3">Transitions</h4>
                         <div className="space-y-3">
-                          <div className="border border-[#D8DFFF] rounded-lg p-3 bg-[#F5F7FF] relative">
+                          <div className="border border-[#D8DFFF] rounded-lg p-3 bg-gray-50 relative">
                             {/* Loading Overlay - Shows until update-scene-field API completes */}
                             {isSavingAnimationDesc && (
                               <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
@@ -9362,7 +9597,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
                               return (
                                 <div className="grid grid-cols-2 gap-3">
-                                  <div>
+                                  <div className='bg-blue-50 px-3 rounded-lg'>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
                                     {isEditing ? (
                                       <textarea
@@ -9378,11 +9613,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.subject_description || '', 4)}
                                         disabled
-                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                        className="w-full h-10 rounded-lg py-2 text-sm bg-blue-50 text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
-                                  <div>
+                                  <div className='bg-blue-50 px-3 rounded-lg'>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
                                     {isEditing ? (
                                       <textarea
@@ -9398,11 +9633,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.scene_description || '', 4)}
                                         disabled
-                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                        className="w-full h-10  rounded-lg px-3 py-2 text-sm  text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
-                                  <div>
+                                  <div className='bg-blue-50 px-3 rounded-lg'>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
                                     {isEditing ? (
                                       <textarea
@@ -9418,11 +9653,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.action_specification || '', 4)}
                                         disabled
-                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                        className="w-full h-10  rounded-lg px-3 py-2 text-sm text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
-                                  <div>
+                                  <div className='bg-blue-50 px-3 rounded-lg'>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
                                     {isEditing ? (
                                       <textarea
@@ -9438,7 +9673,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.content_modification || '', 4)}
                                         disabled
-                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                        className="w-full h-10 rounded-lg px-3 py-2 text-sm  text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
@@ -9469,7 +9704,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 </div>
                               )}
                             </div>
-                            <div className="mt-4 border-t border-gray-200 pt-3">
+                            <div className="mt-4 border-t border-gray-200 bg-blue-50 py-3 px-3 rounded-lg">
                               <div className="flex items-center justify-between mb-1">
                                 <label className="text-sm font-medium text-gray-700">Narration</label>
                                 {editingField === 'narration' ? (
@@ -9520,7 +9755,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               ) : (
                                 <input
                                   type="text"
-                                  className="w-full border border-[#D8DFFF] bg-white rounded-lg px-3 py-2 text-sm text-gray-700"
+                                  className="w-full rounded-lg px-3 py-2 text-sm bg-blue-50 text-gray-700"
                                   readOnly
                                   value={truncateText(selected?.narration || '', 12)}
                                 />
@@ -11175,7 +11410,43 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               )}
               {rows.map((r, i) => {
                 const modelUpper = String(r?.model || '').toUpperCase();
-                const orderedSceneImages = getSceneImages(r);
+                let orderedSceneImages = getSceneImages(r);
+
+                // Fallback: if no generated images are available for VEO3/ANCHOR, use avatar image only
+                if ((!orderedSceneImages || orderedSceneImages.length === 0) && (modelUpper === 'VEO3' || modelUpper === 'ANCHOR')) {
+                  const imageVersionData = r?.imageVersionData || null;
+                  const imagesCurrentVersion = imageVersionData ? getLatestVersionKey(imageVersionData) : 'v1';
+                  const avatarUrlsFromVersion = getAvatarUrlsFromImageVersion(
+                    imageVersionData,
+                    imagesCurrentVersion,
+                    modelUpper
+                  );
+                  let avatarUrls = avatarUrlsFromVersion.length > 0
+                    ? avatarUrlsFromVersion
+                    : (Array.isArray(r?.avatar_urls) ? r.avatar_urls : []);
+
+                  if (Array.isArray(avatarUrls) && avatarUrls.length > 0) {
+                    const firstAvatarEntry = avatarUrls[0];
+                    const avatarUrl =
+                      typeof firstAvatarEntry === 'string'
+                        ? firstAvatarEntry.trim()
+                        : (
+                          firstAvatarEntry?.imageurl ||
+                          firstAvatarEntry?.imageUrl ||
+                          firstAvatarEntry?.image_url ||
+                          firstAvatarEntry?.url ||
+                          firstAvatarEntry?.src ||
+                          firstAvatarEntry?.link ||
+                          firstAvatarEntry?.avatar_url ||
+                          ''
+                        ).trim();
+
+                    if (avatarUrl) {
+                      orderedSceneImages = [avatarUrl];
+                    }
+                  }
+                }
+
                 const first = orderedSceneImages[0];
                 const second = orderedSceneImages[1];
                 return (
