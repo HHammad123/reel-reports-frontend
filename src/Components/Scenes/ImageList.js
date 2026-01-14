@@ -397,6 +397,140 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [chartEditorData, setChartEditorData] = useState(null);
   const [chartEditorLoading, setChartEditorLoading] = useState(false);
   const [chartEditorError, setChartEditorError] = useState('');
+
+  const handleSaveNarration = async () => {
+    if (!selected) return;
+    setIsSavingField(true);
+    try {
+      const user_id = localStorage.getItem('token');
+      const session_id = localStorage.getItem('session_id');
+      const scene_number = selected?.sceneNumber || selected?.scene_number || 1;
+
+      if (!user_id || !session_id) {
+        throw new Error('Missing user_id or session_id');
+      }
+
+      const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id, session_id })
+      });
+
+      const sessionDataText = await sessionDataResp.text();
+      let sessionData;
+      try {
+        sessionData = JSON.parse(sessionDataText);
+      } catch {
+        sessionData = sessionDataText;
+      }
+
+      if (!sessionDataResp.ok) {
+        throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
+      }
+
+      const fullSessionData = sessionData?.session_data || sessionData?.session || {};
+      const fullUserData = sessionData?.user_data || sessionData?.user || {};
+
+      let normalizedSession = {};
+      if (fullSessionData && Object.keys(fullSessionData).length > 0) {
+        normalizedSession = { ...fullSessionData };
+        if (normalizedSession.id && !normalizedSession.session_id) {
+          normalizedSession.session_id = normalizedSession.id;
+          delete normalizedSession.id;
+        }
+        if (!normalizedSession.session_id) {
+          normalizedSession.session_id = session_id;
+        }
+      } else {
+        normalizedSession = {
+          session_id: session_id,
+          user_id: user_id,
+          title: '',
+          video_duration: '60',
+          created_at: '',
+          updated_at: '',
+          document_summary: [],
+          messages: [],
+          total_summary: [],
+          scripts: [],
+          videos: [],
+          images: [],
+          final_link: {},
+          videoType: '',
+          brand_style_interpretation: {},
+          ...sessionAssets
+        };
+      }
+
+      const session = normalizedSession;
+
+      const user = fullUserData && Object.keys(fullUserData).length > 0
+        ? fullUserData
+        : {
+          id: user_id,
+          email: '',
+          display_name: '',
+          created_at: '',
+          avatar_url: '',
+          folder_url: '',
+          brand_identity: {},
+          tone_and_voice: {},
+          look_and_feel: {},
+          templates: [],
+          voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
+        };
+
+      const nextNarration = (editedNarration || '').trim();
+
+      const payload = {
+        user,
+        session,
+        scene_number: Number(scene_number),
+        field_name: 'narration',
+        new_value: nextNarration
+      };
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
+      }
+
+      setSelected(prev => {
+        if (!prev) return prev;
+        return { ...prev, narration: nextNarration };
+      });
+
+      setRows(prevRows => prevRows.map(row => {
+        const rowSceneNumber = row?.scene_number || row?.sceneNumber;
+        if (String(rowSceneNumber) === String(scene_number)) {
+          return { ...row, narration: nextNarration };
+        }
+        return row;
+      }));
+
+      setEditingField(null);
+      setEditedNarration('');
+      setError('');
+    } catch (error) {
+      console.error('Failed to update narration:', error);
+      setError('Failed to update narration: ' + (error?.message || 'Unknown error'));
+    } finally {
+      setIsSavingField(false);
+    }
+  };
   // State for session assets (logo and voiceover)
   const [sessionAssets, setSessionAssets] = useState({ logo_url: '', voice_url: '', voice_urls: {} });
   // State for brand assets
@@ -8611,7 +8745,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                       ? JSON.stringify(value, null, 2)
                                       : String(value || ''));
 
-                                  // Format key: replace underscores with spaces and capitalize
                                   const formattedKey = key
                                     .replace(/_/g, ' ')
                                     .split(' ')
@@ -8641,6 +8774,64 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             )}
                           </div>
                         )}
+
+                        <div className="mt-4 border border-[#D8DFFF] rounded-lg p-3 bg-white">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-medium text-gray-600">Narration</label>
+                            {editingField === 'narration' ? (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingField(null);
+                                    setEditedNarration('');
+                                  }}
+                                  disabled={isSavingField}
+                                  className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleSaveNarration}
+                                  disabled={isSavingField}
+                                  className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isSavingField ? 'Saving...' : 'Save'}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingField('narration');
+                                  setEditedNarration(selected?.narration || '');
+                                }}
+                                className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                </svg>
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                          {editingField === 'narration' ? (
+                            <textarea
+                              className="w-full h-24 border border-[#D8DFFF] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                              value={editedNarration}
+                              onChange={(e) => setEditedNarration(e.target.value)}
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              className="w-full border border-[#D8DFFF] bg-white rounded-lg px-3 py-2 text-sm text-gray-700 min-h-[40px]"
+                              readOnly
+                              value={truncateText(selected?.narration || '', 16)}
+                            />
+                          )}
+                        </div>
                       </div>
                     );
                   }
@@ -9084,11 +9275,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     };
 
                     return (
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative w-full">
+                      <div className="bg-[#F5F7FF] rounded-lg p-4 border border-[#D8DFFF] relative w-full">
                         <h4 className="text-sm font-semibold text-gray-800 mb-3">Transitions</h4>
                         <div className="space-y-3">
-                          {/* Design Your Own Section - First */}
-                          <div className="border rounded-lg p-3 bg-gray-50 relative">
+                          <div className="border border-[#D8DFFF] rounded-lg p-3 bg-[#F5F7FF] relative">
                             {/* Loading Overlay - Shows until update-scene-field API completes */}
                             {isSavingAnimationDesc && (
                               <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
@@ -9102,7 +9292,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               </div>
                             )}
                             <div className="mb-3 flex items-center justify-between">
-                              <span className="text-sm font-medium text-gray-700">Design Your Own</span>
+                              <span className="text-sm font-semibold text-[#13008B]">Design Your Own</span>
                               {isEditing ? (
                                 <div className="flex items-center gap-2">
                                   <button
@@ -9174,85 +9364,88 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 <div className="grid grid-cols-2 gap-3">
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Subject Description</label>
-                                    <textarea
-                                      value={isEditing ? (displayNotes?.subject_description || '') : (truncateText(displayNotes?.subject_description || '', 8))}
-                                      onChange={(e) => {
-                                        if (isEditing) {
+                                    {isEditing ? (
+                                      <textarea
+                                        value={displayNotes?.subject_description || ''}
+                                        onChange={(e) => {
                                           updateEditableAnimationDesc('subject_description', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            subject_description: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
-                                      className={`w-full ${isEditing ? 'h-20' : 'h-12'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
-                                    />
+                                        }}
+                                        placeholder="e.g., Two complete graphic compositions with all geometric shapes, colors, and layout elements"
+                                        className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={truncateText(displayNotes?.subject_description || '', 4)}
+                                        disabled
+                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                      />
+                                    )}
                                   </div>
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Scene Description</label>
-                                    <textarea
-                                      value={isEditing ? (displayNotes?.scene_description || '') : (truncateText(displayNotes?.scene_description || '', 8))}
-                                      onChange={(e) => {
-                                        if (isEditing) {
+                                    {isEditing ? (
+                                      <textarea
+                                        value={displayNotes?.scene_description || ''}
+                                        onChange={(e) => {
                                           updateEditableAnimationDesc('scene_description', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            scene_description: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Flat graphic layouts displayed in sequence"
-                                      className={`w-full ${isEditing ? 'h-20' : 'h-0'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
-                                    />
+                                        }}
+                                        placeholder="e.g., Flat graphic layouts displayed in sequence"
+                                        className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={truncateText(displayNotes?.scene_description || '', 4)}
+                                        disabled
+                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                      />
+                                    )}
                                   </div>
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Action Specification</label>
-                                    <textarea
-                                      value={isEditing ? (displayNotes?.action_specification || '') : (truncateText(displayNotes?.action_specification || '', 8))}
-                                      onChange={(e) => {
-                                        if (isEditing) {
+                                    {isEditing ? (
+                                      <textarea
+                                        value={displayNotes?.action_specification || ''}
+                                        onChange={(e) => {
                                           updateEditableAnimationDesc('action_specification', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            action_specification: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., Instant cut transition between static compositions"
-                                      className={`w-full ${isEditing ? 'h-20' : 'h-12'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
-                                    />
+                                        }}
+                                        placeholder="e.g., Instant cut transition between static compositions"
+                                        className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={truncateText(displayNotes?.action_specification || '', 4)}
+                                        disabled
+                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                      />
+                                    )}
                                   </div>
                                   <div>
                                     <label className="text-sm font-medium text-gray-700 mb-1 block">Content Modification</label>
-                                    <textarea
-                                      value={isEditing ? (displayNotes?.content_modification || '') : (truncateText(displayNotes?.content_modification || '', 8))}
-                                      onChange={(e) => {
-                                        if (isEditing) {
+                                    {isEditing ? (
+                                      <textarea
+                                        value={displayNotes?.content_modification || ''}
+                                        onChange={(e) => {
                                           updateEditableAnimationDesc('content_modification', e.target.value);
-                                        } else {
-                                          updateSceneOption('customPreservationNotes', {
-                                            ...sceneOptions.customPreservationNotes,
-                                            content_modification: e.target.value
-                                          });
-                                        }
-                                      }}
-                                      disabled={!isEditing}
-                                      placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
-                                      className={`w-full ${isEditing ? 'h-20' : 'h-12'} border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white disabled:cursor-not-allowed`}
-                                    />
+                                        }}
+                                        placeholder="e.g., No morphing or content generation - pure camera movement and instant cut only"
+                                        className="w-full h-20 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] resize-none bg-white"
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={truncateText(displayNotes?.content_modification || '', 4)}
+                                        disabled
+                                        className="w-full h-10 border rounded-lg px-3 py-2 text-sm bg-white text-gray-700 cursor-default"
+                                      />
+                                    )}
                                   </div>
                                 </div>
                               );
                             })()}
 
-                            {/* Save this preset */}
                             <div className="mt-4 border-t border-gray-200 pt-3 space-y-2">
                               <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                                 <input
@@ -9274,6 +9467,63 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B]"
                                   />
                                 </div>
+                              )}
+                            </div>
+                            <div className="mt-4 border-t border-gray-200 pt-3">
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="text-sm font-medium text-gray-700">Narration</label>
+                                {editingField === 'narration' ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingField(null);
+                                        setEditedNarration('');
+                                      }}
+                                      disabled={isSavingField}
+                                      className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={handleSaveNarration}
+                                      disabled={isSavingField}
+                                      className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {isSavingField ? 'Saving...' : 'Save'}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingField('narration');
+                                      setEditedNarration(selected?.narration || '');
+                                    }}
+                                    className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                              {editingField === 'narration' ? (
+                                <textarea
+                                  className="w-full h-24 border border-[#D8DFFF] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                                  value={editedNarration}
+                                  onChange={(e) => setEditedNarration(e.target.value)}
+                                />
+                              ) : (
+                                <input
+                                  type="text"
+                                  className="w-full border border-[#D8DFFF] bg-white rounded-lg px-3 py-2 text-sm text-gray-700"
+                                  readOnly
+                                  value={truncateText(selected?.narration || '', 12)}
+                                />
                               )}
                             </div>
                           </div>
@@ -9526,281 +9776,69 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           )}
                         </div>
                       )}
+                      <div className="mt-4 border rounded-lg px-3 py-2 bg-white">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-medium text-gray-600">Narration</label>
+                          {editingField === 'narration' ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingField(null);
+                                  setEditedNarration('');
+                                }}
+                                disabled={isSavingField}
+                                className="px-3 py-1.5 rounded-lg border border-gray-300 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveNarration}
+                                disabled={isSavingField}
+                                className="px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-xs hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {isSavingField ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingField('narration');
+                                setEditedNarration(selected?.narration || '');
+                              }}
+                              className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                              </svg>
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                        {editingField === 'narration' ? (
+                          <textarea
+                            className="w-full h-24 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B]"
+                            value={editedNarration}
+                            onChange={(e) => setEditedNarration(e.target.value)}
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            className="w-full border border-gray-200 bg-white rounded-lg px-3 py-2 text-sm text-gray-700"
+                            readOnly
+                            value={truncateText(selected?.narration || '', 16)}
+                          />
+                        )}
+                      </div>
                     </div>
                   );
                 })()}
               </div>
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-sm text-gray-600">Narration</label>
-                  {editingField !== 'narration' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingField('narration');
-                        setEditedNarration(selected?.narration || '');
-                      }}
-                      className="text-xs text-[#13008B] hover:text-[#0F0069] font-medium flex items-center gap-1"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                      </svg>
-                      Edit
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingField(null);
-                          setEditedNarration('');
-                        }}
-                        disabled={isSavingField}
-                        className="text-xs text-gray-600 hover:text-gray-800 px-2 py-1 rounded disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setIsSavingField(true);
-                          try {
-                            const user_id = localStorage.getItem('token');
-                            const session_id = localStorage.getItem('session_id');
-                            const scene_number = selected?.sceneNumber || selected?.scene_number || 1;
 
-                            if (!user_id || !session_id) {
-                              throw new Error('Missing user_id or session_id');
-                            }
-
-                            // First, fetch the complete user session data
-                            const sessionDataResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ user_id, session_id })
-                            });
-
-                            const sessionDataText = await sessionDataResp.text();
-                            let sessionData;
-                            try {
-                              sessionData = JSON.parse(sessionDataText);
-                            } catch {
-                              sessionData = sessionDataText;
-                            }
-
-                            if (!sessionDataResp.ok) {
-                              throw new Error(`Failed to fetch session data: ${sessionDataResp.status} ${JSON.stringify(sessionData)}`);
-                            }
-
-                            // Extract the complete session and user objects from the response
-                            const fullSessionData = sessionData?.session_data || sessionData?.session || {};
-                            const fullUserData = sessionData?.user_data || sessionData?.user || {};
-
-                            // Normalize session object: ensure session_id exists (convert id to session_id if needed)
-                            let normalizedSession = {};
-                            if (fullSessionData && Object.keys(fullSessionData).length > 0) {
-                              normalizedSession = { ...fullSessionData };
-                              // If session has 'id' but no 'session_id', use 'id' as 'session_id'
-                              if (normalizedSession.id && !normalizedSession.session_id) {
-                                normalizedSession.session_id = normalizedSession.id;
-                                delete normalizedSession.id;
-                              }
-                              // Ensure session_id is set
-                              if (!normalizedSession.session_id) {
-                                normalizedSession.session_id = session_id;
-                              }
-                            } else {
-                              // Fallback to minimal session object
-                              normalizedSession = {
-                                session_id: session_id,
-                                user_id: user_id,
-                                title: '',
-                                video_duration: '60',
-                                created_at: '',
-                                updated_at: '',
-                                document_summary: [],
-                                messages: [],
-                                total_summary: [],
-                                scripts: [],
-                                videos: [],
-                                images: [],
-                                final_link: {},
-                                videoType: '',
-                                brand_style_interpretation: {},
-                                ...sessionAssets
-                              };
-                            }
-
-                            const session = normalizedSession;
-
-                            // Use the complete user object, or fallback to minimal if not available
-                            const user = fullUserData && Object.keys(fullUserData).length > 0
-                              ? fullUserData
-                              : {
-                                id: user_id,
-                                email: '',
-                                display_name: '',
-                                created_at: '',
-                                avatar_url: '',
-                                folder_url: '',
-                                brand_identity: {},
-                                tone_and_voice: {},
-                                look_and_feel: {},
-                                templates: [],
-                                voiceover: Array.isArray(brandAssets?.voiceover) ? brandAssets.voiceover : []
-                              };
-
-                            const payload = {
-                              user,
-                              session,
-                              scene_number: Number(scene_number),
-                              field_name: 'narration',
-                              new_value: editedNarration.trim()
-                            };
-
-                            const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/update-scene-field', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify(payload)
-                            });
-
-                            const text = await response.text();
-                            let data;
-                            try {
-                              data = JSON.parse(text);
-                            } catch {
-                              data = text;
-                            }
-
-                            if (!response.ok) {
-                              throw new Error(`Update failed: ${response.status} ${JSON.stringify(data)}`);
-                            }
-
-                            // Update local state
-                            setSelected(prev => ({ ...prev, narration: editedNarration.trim() }));
-                            setRows(prevRows => prevRows.map(row => {
-                              const rowSceneNumber = row?.scene_number || row?.sceneNumber;
-                              if (String(rowSceneNumber) === String(scene_number)) {
-                                return { ...row, narration: editedNarration.trim() };
-                              }
-                              return row;
-                            }));
-
-                            setEditingField(null);
-                            setError('');
-                          } catch (error) {
-                            setError('Failed to update narration: ' + (error?.message || 'Unknown error'));
-                          } finally {
-                            setIsSavingField(false);
-                          }
-                        }}
-                        disabled={isSavingField}
-                        className="text-xs bg-[#13008B] text-white px-3 py-1 rounded hover:bg-[#0F0069] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                      >
-                        {isSavingField ? (
-                          <>
-                            <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                            Saving...
-                          </>
-                        ) : (
-                          <>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
-                            Save
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
-                {editingField === 'narration' ? (
-                  <textarea
-                    className="w-full h-32 border rounded-lg px-3 py-2 text-sm bg-white border-[#13008B] focus:ring-2 focus:ring-[#13008B]"
-                    rows={4}
-                    value={editedNarration}
-                    onChange={(e) => setEditedNarration(e.target.value)}
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    className="w-full border rounded-lg px-3 py-2 text-sm bg-gray-50"
-                    readOnly
-                    value={truncateText(selected?.narration || '', 12)}
-                  />
-                )}
-              </div>
             </div>
-            {/* {(() => {
-              const prompts = selected?.prompts || {};
-              const opening = prompts.opening_frame || {};
-              const closing = prompts.closing_frame || {};
-              const hasAny = (obj) => Object.values(obj || {}).some(v => typeof v === 'string' && v.trim());
-              const fields = [
-                ['final_prompt', 'Final Prompt'],
-                ['image_summary', 'Image Summary'],
-                ['main_subject_details', 'Main Subject Details'],
-                ['pose_or_action', 'Pose or Action'],
-                ['secondary_elements', 'Secondary Elements'],
-                ['lighting_and_atmosphere', 'Lighting & Atmosphere'],
-                ['framing_and_composition', 'Framing & Composition'],
-                ['technical_enhancers', 'Technical Enhancers']
-              ];
-              if (!hasAny(opening) && !hasAny(closing)) return null;
-              return (
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={() => setShowPromptsAccordion((prev) => !prev)}
-                    className="flex w-full items-center justify-between rounded-lg border border-[#D8D3FF] bg-white px-4 py-3 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#F6F4FF]"
-                  >
-                    <span>Additional Information</span>
-                    <ChevronDown className={`h-4 w-4 transition-transform ${showPromptsAccordion ? 'rotate-180' : ''}`} />
-                  </button>
-                  {showPromptsAccordion && (
-                    <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {hasAny(opening) && (
-                        <div className="border rounded-lg p-4 bg-white">
-                          <div className="text-base font-medium mb-2">Prompts — Opening Frame</div>
-                          <dl className="space-y-1">
-                            {fields.map(([key,label]) => {
-                              const val = opening?.[key];
-                              if (!val || !String(val).trim()) return null;
-                              return (
-                                <div key={`open-${key}`}>
-                                  <dt className="text-[11px] uppercase text-gray-500">{label}</dt>
-                                  <dd className="text-sm text-gray-800 whitespace-pre-wrap">{val}</dd>
-                                </div>
-                              );
-                            })}
-                          </dl>
-                        </div>
-                      )}
-                      {hasAny(closing) && (
-                        <div className="border rounded-lg p-4 bg-white">
-                          <div className="text-base font-medium mb-2">Prompts — Closing Frame</div>
-                          <dl className="space-y-1">
-                            {fields.map(([key,label]) => {
-                              const val = closing?.[key];
-                              if (!val || !String(val).trim()) return null;
-                              return (
-                                <div key={`close-${key}`}>
-                                  <dt className="text-[11px] uppercase text-gray-500">{label}</dt>
-                                  <dd className="text-sm text-gray-800 whitespace-pre-wrap">{val}</dd>
-                                </div>
-                              );
-                            })}
-                          </dl>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })()} */}
-
-            {/* Advanced Options Accordion - Show for all models (VEO3 only shows logo and voiceover) */}
             {(() => {
               const modelUpper = String(selected?.model || '').toUpperCase();
               const isVEO3 = modelUpper === 'VEO3';
@@ -10532,7 +10570,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             {isTransitionsOpen && (
                               <div className="mt-3 space-y-3">
                                 {/* Design Your Own Section - First */}
-                                <div className="border rounded-lg p-3 bg-gray-50">
+                                <div className="border border-grey-200 rounded-lg p-3 bg-gray-50">
                                   <label className="text-sm font-medium text-gray-700 mb-3 block">Design Your Own</label>
                                   {(() => {
                                     // Get animation_desc from the scene data (from images object)
@@ -11226,638 +11264,1434 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         )}
       </div>
 
-      {isSceneUpdating && (
-        <div className="px-4 pb-4">
-          <div className="flex items-center justify-center gap-3 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg py-2 shadow-sm">
-            <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-            <span>Applying changes…</span>
+      {
+        isSceneUpdating && (
+          <div className="px-4 pb-4">
+            <div className="flex items-center justify-center gap-3 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg py-2 shadow-sm">
+              <span className="w-4 h-4 border-2 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+              <span>Applying changes…</span>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
-      {showEditor && (
-        <ImageEditor
-          data={editorData}
-          onClose={() => {
-            setShowEditor(false);
-            setEditorData(null);
-          }}
-        />
-      )}
+      {
+        showEditor && (
+          <ImageEditor
+            data={editorData}
+            onClose={() => {
+              setShowEditor(false);
+              setEditorData(null);
+            }}
+          />
+        )
+      }
 
-      {showImageEdit && (
-        <ImageEdit
-          isOpen={showImageEdit}
-          onClose={handleInlineEditorClose}
-          onFrameEditComplete={handleFrameEditComplete}
-          frameData={editingImageFrame}
-          sceneNumber={editingSceneNumber}
-          imageIndex={editingImageIndex}
-          aspectRatioCss={cssAspectRatio}
-        />
-      )}
-      {showChartEditor && chartEditorData && (
-        <ChartEditorModal
-          isOpen={showChartEditor}
-          sceneData={chartEditorData}
-          onClose={() => {
-            setShowChartEditor(false);
-            setChartEditorData(null);
-          }}
-          onSave={async ({ sceneNumber, overlayElements, chartImageUrl }) => {
-            // Update rows and selected scene in-place so chart changes appear immediately
-            const targetSceneNumber =
-              sceneNumber ||
-              chartEditorData?.scene_number ||
-              chartEditorData?.sceneNumber ||
-              selected?.sceneNumber ||
-              selected?.scene_number ||
-              null;
+      {
+        showImageEdit && (
+          <ImageEdit
+            isOpen={showImageEdit}
+            onClose={handleInlineEditorClose}
+            onFrameEditComplete={handleFrameEditComplete}
+            frameData={editingImageFrame}
+            sceneNumber={editingSceneNumber}
+            imageIndex={editingImageIndex}
+            aspectRatioCss={cssAspectRatio}
+          />
+        )
+      }
+      {
+        showChartEditor && chartEditorData && (
+          <ChartEditorModal
+            isOpen={showChartEditor}
+            sceneData={chartEditorData}
+            onClose={() => {
+              setShowChartEditor(false);
+              setChartEditorData(null);
+            }}
+            onSave={async ({ sceneNumber, overlayElements, chartImageUrl }) => {
+              // Update rows and selected scene in-place so chart changes appear immediately
+              const targetSceneNumber =
+                sceneNumber ||
+                chartEditorData?.scene_number ||
+                chartEditorData?.sceneNumber ||
+                selected?.sceneNumber ||
+                selected?.scene_number ||
+                null;
 
-            if (!targetSceneNumber) return;
+              if (!targetSceneNumber) return;
 
-            setRows((prevRows) =>
-              prevRows.map((row) => {
-                const rowSceneNum = row?.scene_number || row?.sceneNumber;
-                if (String(rowSceneNum) !== String(targetSceneNumber)) return row;
+              setRows((prevRows) =>
+                prevRows.map((row) => {
+                  const rowSceneNum = row?.scene_number || row?.sceneNumber;
+                  if (String(rowSceneNum) !== String(targetSceneNumber)) return row;
 
-                const updatedRow = { ...row };
+                  const updatedRow = { ...row };
 
-                if (Array.isArray(updatedRow.imageFrames)) {
-                  updatedRow.imageFrames = updatedRow.imageFrames.map((frame) => ({
+                  if (Array.isArray(updatedRow.imageFrames)) {
+                    updatedRow.imageFrames = updatedRow.imageFrames.map((frame) => ({
+                      ...frame,
+                      overlay_elements: Array.isArray(overlayElements)
+                        ? overlayElements
+                        : frame?.overlay_elements || frame?.overlayElements || []
+                    }));
+                  }
+
+                  if (Array.isArray(overlayElements)) {
+                    updatedRow.overlay_elements = overlayElements;
+                  }
+
+                  return updatedRow;
+                })
+              );
+
+              setSelected((prev) => {
+                if (!prev) return prev;
+                const prevSceneNum = prev.sceneNumber || prev.scene_number;
+                if (String(prevSceneNum) !== String(targetSceneNumber)) return prev;
+
+                const updated = { ...prev };
+                if (Array.isArray(updated.imageFrames)) {
+                  updated.imageFrames = updated.imageFrames.map((frame) => ({
                     ...frame,
                     overlay_elements: Array.isArray(overlayElements)
                       ? overlayElements
                       : frame?.overlay_elements || frame?.overlayElements || []
                   }));
                 }
-
                 if (Array.isArray(overlayElements)) {
-                  updatedRow.overlay_elements = overlayElements;
+                  updated.overlayElements = overlayElements;
                 }
+                return updated;
+              });
+              // Bump chart version to force re-render of chart overlays with new image URL
+              setChartVersion((v) => v + 1);
 
-                return updatedRow;
-              })
-            );
+              // Close the modal
+              setShowChartEditor(false);
+              setChartEditorData(null);
 
-            setSelected((prev) => {
-              if (!prev) return prev;
-              const prevSceneNum = prev.sceneNumber || prev.scene_number;
-              if (String(prevSceneNum) !== String(targetSceneNumber)) return prev;
-
-              const updated = { ...prev };
-              if (Array.isArray(updated.imageFrames)) {
-                updated.imageFrames = updated.imageFrames.map((frame) => ({
-                  ...frame,
-                  overlay_elements: Array.isArray(overlayElements)
-                    ? overlayElements
-                    : frame?.overlay_elements || frame?.overlayElements || []
-                }));
+              // Refresh the scene data to show the updated chart
+              if (refreshLoad) {
+                await refreshLoad(targetSceneNumber);
               }
-              if (Array.isArray(overlayElements)) {
-                updated.overlayElements = overlayElements;
-              }
-              return updated;
-            });
-            // Bump chart version to force re-render of chart overlays with new image URL
-            setChartVersion((v) => v + 1);
-
-            // Close the modal
-            setShowChartEditor(false);
-            setChartEditorData(null);
-
-            // Refresh the scene data to show the updated chart
-            if (refreshLoad) {
-              await refreshLoad(targetSceneNumber);
-            }
-          }}
-        />
-      )}
+            }}
+          />
+        )
+      }
 
       {/* Regenerate Image Popup */}
-      {showRegeneratePopup && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Close Button - Circle at top right */}
-            <button
-              onClick={() => {
-                if (!isRegenerating) {
-                  setShowRegeneratePopup(false);
-                  setRegenerateUserQuery('');
-                  setRegeneratingSceneNumber(null);
-                  setIsRegenerateForDescription(false);
-                  setIsRegenerating(false);
-                  setError('');
-                  setRegenerateReferenceFile([]);
-                  setRegenerateReferencePreview([]);
-                }
-              }}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Close"
-              disabled={isRegenerating}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
+      {
+        showRegeneratePopup && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
+              {/* Close Button - Circle at top right */}
+              <button
+                onClick={() => {
+                  if (!isRegenerating) {
+                    setShowRegeneratePopup(false);
+                    setRegenerateUserQuery('');
+                    setRegeneratingSceneNumber(null);
+                    setIsRegenerateForDescription(false);
+                    setIsRegenerating(false);
+                    setError('');
+                    setRegenerateReferenceFile([]);
+                    setRegenerateReferencePreview([]);
+                  }
+                }}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Close"
+                disabled={isRegenerating}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
 
-            {/* Popup Content */}
-            <div className="flex-1 p-6 overflow-y-auto relative">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">
-                {isRegenerateForDescription ? 'Edit Description' : 'Regenerate Image'}
-              </h3>
+              {/* Popup Content */}
+              <div className="flex-1 p-6 overflow-y-auto relative">
+                <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">
+                  {isRegenerateForDescription ? 'Edit Description' : 'Regenerate Image'}
+                </h3>
 
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Describe how you want the image to be regenerated
-                </label>
-                <textarea
-                  value={regenerateUserQuery}
-                  onChange={(e) => setRegenerateUserQuery(e.target.value)}
-                  placeholder="e.g., Make it more cinematic with dramatic sunset lighting..."
-                  className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
-                  disabled={isRegenerating}
-                />
-              </div>
-
-              {/* Reference Image Upload (Optional) */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Upload Reference Images (Optional)
-                </label>
-                <p className="text-xs text-gray-500 mb-3">
-                  If you upload reference images, the system will generate new images based on your reference images and description.
-                </p>
-                {regenerateReferencePreview.length === 0 ? (
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-[#13008B] transition-colors">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files || []);
-                        if (files.length > 0) {
-                          setRegenerateReferenceFile(files);
-                          const previews = [];
-                          let loadedCount = 0;
-                          files.forEach((file) => {
-                            const reader = new FileReader();
-                            reader.onload = (event) => {
-                              previews.push(event.target?.result);
-                              loadedCount++;
-                              if (loadedCount === files.length) {
-                                setRegenerateReferencePreview(previews);
-                              }
-                            };
-                            reader.readAsDataURL(file);
-                          });
-                        }
-                      }}
-                      disabled={isRegenerating}
-                      className="hidden"
-                      id="regenerate-reference-upload"
-                    />
-                    <label
-                      htmlFor="regenerate-reference-upload"
-                      className={`cursor-pointer flex flex-col items-center gap-2 ${isRegenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      <span className="text-sm text-gray-600">
-                        Click to upload or drag and drop
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        PNG, JPG, GIF up to 10MB (Multiple images allowed)
-                      </span>
-                    </label>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-4">
-                    {regenerateReferencePreview.map((preview, index) => (
-                      <div key={index} className="relative border border-gray-300 rounded-lg p-4">
-                        <img
-                          src={preview}
-                          alt={`Reference preview ${index + 1}`}
-                          className="w-full h-48 object-contain rounded"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const newFiles = regenerateReferenceFile.filter((_, i) => i !== index);
-                            const newPreviews = regenerateReferencePreview.filter((_, i) => i !== index);
-                            setRegenerateReferenceFile(newFiles);
-                            setRegenerateReferencePreview(newPreviews);
-                            if (newFiles.length === 0) {
-                              const input = document.getElementById('regenerate-reference-upload');
-                              if (input) input.value = '';
-                            }
-                          }}
-                          disabled={isRegenerating}
-                          className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="Remove reference image"
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Frame Selection - Show for all models except VEO3 */}
-              {regeneratingSceneNumber && (() => {
-                const model = getSceneModel(regeneratingSceneNumber);
-                const modelUpper = String(model || '').toUpperCase();
-                const isVEO3 = modelUpper === 'VEO3';
-
-                // Show frame selection for all models except VEO3 (which uses background)
-                // ANCHOR and other models use opening/closing frames
-                if (!isVEO3) {
-                  return (
-                    <div className="mb-6">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Frames to Regenerate
-                      </label>
-                      <div className="flex gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={regenerateFrames.includes('opening')}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setRegenerateFrames(prev => [...new Set([...prev, 'opening'])]);
-                              } else {
-                                setRegenerateFrames(prev => prev.filter(f => f !== 'opening'));
-                              }
-                            }}
-                            disabled={isRegenerating}
-                            className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                          />
-                          <span className="text-sm text-gray-700">Opening Frame</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={regenerateFrames.includes('closing')}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setRegenerateFrames(prev => [...new Set([...prev, 'closing'])]);
-                              } else {
-                                setRegenerateFrames(prev => prev.filter(f => f !== 'closing'));
-                              }
-                            }}
-                            disabled={isRegenerating}
-                            className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                          />
-                          <span className="text-sm text-gray-700">Closing Frame</span>
-                        </label>
-                      </div>
-                      {regenerateFrames.length === 0 && (
-                        <p className="text-xs text-red-600 mt-1">Please select at least one frame</p>
-                      )}
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
-              {/* Save as New Version */}
-              <div className="mb-6">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={regenerateSaveAsNewVersion}
-                    onChange={(e) => setRegenerateSaveAsNewVersion(e.target.checked)}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Describe how you want the image to be regenerated
+                  </label>
+                  <textarea
+                    value={regenerateUserQuery}
+                    onChange={(e) => setRegenerateUserQuery(e.target.value)}
+                    placeholder="e.g., Make it more cinematic with dramatic sunset lighting..."
+                    className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
                     disabled={isRegenerating}
-                    className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                  />
-                  <span className="text-sm font-medium text-gray-700">Save as new version</span>
-                </label>
-                <p className="text-xs text-gray-500 ml-6 mt-1">
-                  {regenerateSaveAsNewVersion
-                    ? 'Will create a new version (e.g., v2, v3)'
-                    : 'Will overwrite the current version'}
-                </p>
-              </div>
-
-              {/* Error Message */}
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-                  {error}
-                </div>
-              )}
-
-              {/* Loading Overlay */}
-              {isRegenerating && (
-                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                  <Loader
-                    videoSize="w-16 h-16"
-                    title="Regenerating Storyboard"
-                    description="Please wait while we create your new image..."
-                    containerClass="!max-w-sm"
-                    progress={regeneratingProgress > 0 ? regeneratingProgress : null}
                   />
                 </div>
-              )}
 
-              {/* Generate Button - Bottom Right */}
-              <div className="flex justify-end">
-                <button
-                  onClick={handleGenerateImage}
-                  disabled={(() => {
-                    if (isRegenerating) return true;
-                    // Allow submission if either user query OR reference image is provided
-                    const hasQuery = regenerateUserQuery.trim().length > 0;
-                    const hasReferenceImage = regenerateReferenceFile.length > 0;
-                    if (!hasQuery && !hasReferenceImage) return true;
-                    // For non-VEO3 models, require at least one frame selected
-                    // VEO3 uses background, ANCHOR and others use opening/closing frames
-                    if (regeneratingSceneNumber) {
-                      const model = getSceneModel(regeneratingSceneNumber);
-                      const modelUpper = String(model || '').toUpperCase();
-                      const isVEO3 = modelUpper === 'VEO3';
-                      if (!isVEO3 && regenerateFrames.length === 0) return true;
-                    }
-                    return false;
-                  })()}
-                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isRegenerating ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Generating...
-                    </>
+                {/* Reference Image Upload (Optional) */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Upload Reference Images (Optional)
+                  </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    If you upload reference images, the system will generate new images based on your reference images and description.
+                  </p>
+                  {regenerateReferencePreview.length === 0 ? (
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-[#13008B] transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          if (files.length > 0) {
+                            setRegenerateReferenceFile(files);
+                            const previews = [];
+                            let loadedCount = 0;
+                            files.forEach((file) => {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                previews.push(event.target?.result);
+                                loadedCount++;
+                                if (loadedCount === files.length) {
+                                  setRegenerateReferencePreview(previews);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                          }
+                        }}
+                        disabled={isRegenerating}
+                        className="hidden"
+                        id="regenerate-reference-upload"
+                      />
+                      <label
+                        htmlFor="regenerate-reference-upload"
+                        className={`cursor-pointer flex flex-col items-center gap-2 ${isRegenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <span className="text-sm text-gray-600">
+                          Click to upload or drag and drop
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          PNG, JPG, GIF up to 10MB (Multiple images allowed)
+                        </span>
+                      </label>
+                    </div>
                   ) : (
-                    'Generate Image'
+                    <div className="grid grid-cols-2 gap-4">
+                      {regenerateReferencePreview.map((preview, index) => (
+                        <div key={index} className="relative border border-gray-300 rounded-lg p-4">
+                          <img
+                            src={preview}
+                            alt={`Reference preview ${index + 1}`}
+                            className="w-full h-48 object-contain rounded"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newFiles = regenerateReferenceFile.filter((_, i) => i !== index);
+                              const newPreviews = regenerateReferencePreview.filter((_, i) => i !== index);
+                              setRegenerateReferenceFile(newFiles);
+                              setRegenerateReferencePreview(newPreviews);
+                              if (newFiles.length === 0) {
+                                const input = document.getElementById('regenerate-reference-upload');
+                                if (input) input.value = '';
+                              }
+                            }}
+                            disabled={isRegenerating}
+                            className="absolute top-2 right-2 w-8 h-8 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Remove reference image"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <line x1="18" y1="6" x2="6" y2="18"></line>
+                              <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+                </div>
 
-      {showRegenerateAvatarPopup && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
-            <button
-              onClick={() => {
-                if (!isGeneratingAvatar) {
-                  setShowRegenerateAvatarPopup(false);
-                  setRegenerateAvatarUserQuery('');
-                  setRegeneratingAvatarSceneNumber(null);
-                  setRegenerateAvatarSaveAsNew(false);
-                  setRegenerateAvatarName('');
-                  setError('');
-                }
-              }}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Close"
-              disabled={isGeneratingAvatar}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
+                {/* Frame Selection - Show for all models except VEO3 */}
+                {regeneratingSceneNumber && (() => {
+                  const model = getSceneModel(regeneratingSceneNumber);
+                  const modelUpper = String(model || '').toUpperCase();
+                  const isVEO3 = modelUpper === 'VEO3';
 
-            <div className="flex-1 p-6 overflow-y-auto relative">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Regenerate Avatar</h3>
+                  // Show frame selection for all models except VEO3 (which uses background)
+                  // ANCHOR and other models use opening/closing frames
+                  if (!isVEO3) {
+                    return (
+                      <div className="mb-6">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Frames to Regenerate
+                        </label>
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={regenerateFrames.includes('opening')}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setRegenerateFrames(prev => [...new Set([...prev, 'opening'])]);
+                                } else {
+                                  setRegenerateFrames(prev => prev.filter(f => f !== 'opening'));
+                                }
+                              }}
+                              disabled={isRegenerating}
+                              className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                            />
+                            <span className="text-sm text-gray-700">Opening Frame</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={regenerateFrames.includes('closing')}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setRegenerateFrames(prev => [...new Set([...prev, 'closing'])]);
+                                } else {
+                                  setRegenerateFrames(prev => prev.filter(f => f !== 'closing'));
+                                }
+                              }}
+                              disabled={isRegenerating}
+                              className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                            />
+                            <span className="text-sm text-gray-700">Closing Frame</span>
+                          </label>
+                        </div>
+                        {regenerateFrames.length === 0 && (
+                          <p className="text-xs text-red-600 mt-1">Please select at least one frame</p>
+                        )}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
 
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Describe how you want the avatar to be regenerated
-                </label>
-                <textarea
-                  value={regenerateAvatarUserQuery}
-                  onChange={(e) => setRegenerateAvatarUserQuery(e.target.value)}
-                  placeholder="e.g., Make the avatar more professional with a neutral background..."
-                  className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
-                  disabled={isGeneratingAvatar}
-                />
-              </div>
-
-              <div className="mb-6">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={regenerateAvatarSaveAsNew}
-                    onChange={(e) => setRegenerateAvatarSaveAsNew(e.target.checked)}
-                    disabled={isGeneratingAvatar}
-                    className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                  />
-                  <span className="text-sm font-medium text-gray-700">Save as new avatar</span>
-                </label>
-                {regenerateAvatarSaveAsNew && (
-                  <div className="mt-3">
+                {/* Save as New Version */}
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
-                      type="text"
-                      value={regenerateAvatarName}
-                      onChange={(e) => setRegenerateAvatarName(e.target.value)}
-                      placeholder="Enter new avatar name"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                      disabled={isGeneratingAvatar}
+                      type="checkbox"
+                      checked={regenerateSaveAsNewVersion}
+                      onChange={(e) => setRegenerateSaveAsNewVersion(e.target.checked)}
+                      disabled={isRegenerating}
+                      className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Save as new version</span>
+                  </label>
+                  <p className="text-xs text-gray-500 ml-6 mt-1">
+                    {regenerateSaveAsNewVersion
+                      ? 'Will create a new version (e.g., v2, v3)'
+                      : 'Will overwrite the current version'}
+                  </p>
+                </div>
+
+                {/* Error Message */}
+                {error && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                    {error}
+                  </div>
+                )}
+
+                {/* Loading Overlay */}
+                {isRegenerating && (
+                  <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                    <Loader
+                      videoSize="w-16 h-16"
+                      title="Regenerating Storyboard"
+                      description="Please wait while we create your new image..."
+                      containerClass="!max-w-sm"
+                      progress={regeneratingProgress > 0 ? regeneratingProgress : null}
                     />
                   </div>
                 )}
-              </div>
 
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-                  {error}
+                {/* Generate Button - Bottom Right */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleGenerateImage}
+                    disabled={(() => {
+                      if (isRegenerating) return true;
+                      // Allow submission if either user query OR reference image is provided
+                      const hasQuery = regenerateUserQuery.trim().length > 0;
+                      const hasReferenceImage = regenerateReferenceFile.length > 0;
+                      if (!hasQuery && !hasReferenceImage) return true;
+                      // For non-VEO3 models, require at least one frame selected
+                      // VEO3 uses background, ANCHOR and others use opening/closing frames
+                      if (regeneratingSceneNumber) {
+                        const model = getSceneModel(regeneratingSceneNumber);
+                        const modelUpper = String(model || '').toUpperCase();
+                        const isVEO3 = modelUpper === 'VEO3';
+                        if (!isVEO3 && regenerateFrames.length === 0) return true;
+                      }
+                      return false;
+                    })()}
+                    className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isRegenerating ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Generating...
+                      </>
+                    ) : (
+                      'Generate Image'
+                    )}
+                  </button>
                 </div>
-              )}
-
-              {isGeneratingAvatar && (
-                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                  <Loader
-                    videoSize="w-16 h-16"
-                    title="Regenerating Avatar"
-                    description="Please wait while we create your new avatar..."
-                    containerClass="!max-w-sm"
-                  />
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <button
-                  onClick={handleGenerateAvatar}
-                  disabled={(() => {
-                    if (isGeneratingAvatar) return true;
-                    const hasQuery = regenerateAvatarUserQuery.trim().length > 0;
-                    if (!hasQuery) return true;
-                    if (regenerateAvatarSaveAsNew && !regenerateAvatarName.trim()) return true;
-                    return false;
-                  })()}
-                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isGeneratingAvatar ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Generating...
-                    </>
-                  ) : (
-                    'Generate Avatar'
-                  )}
-                </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
+
+      {
+        showRegenerateAvatarPopup && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
+              <button
+                onClick={() => {
+                  if (!isGeneratingAvatar) {
+                    setShowRegenerateAvatarPopup(false);
+                    setRegenerateAvatarUserQuery('');
+                    setRegeneratingAvatarSceneNumber(null);
+                    setRegenerateAvatarSaveAsNew(false);
+                    setRegenerateAvatarName('');
+                    setError('');
+                  }
+                }}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Close"
+                disabled={isGeneratingAvatar}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+
+              <div className="flex-1 p-6 overflow-y-auto relative">
+                <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Regenerate Avatar</h3>
+
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Describe how you want the avatar to be regenerated
+                  </label>
+                  <textarea
+                    value={regenerateAvatarUserQuery}
+                    onChange={(e) => setRegenerateAvatarUserQuery(e.target.value)}
+                    placeholder="e.g., Make the avatar more professional with a neutral background..."
+                    className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent resize-none"
+                    disabled={isGeneratingAvatar}
+                  />
+                </div>
+
+                <div className="mb-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={regenerateAvatarSaveAsNew}
+                      onChange={(e) => setRegenerateAvatarSaveAsNew(e.target.checked)}
+                      disabled={isGeneratingAvatar}
+                      className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Save as new avatar</span>
+                  </label>
+                  {regenerateAvatarSaveAsNew && (
+                    <div className="mt-3">
+                      <input
+                        type="text"
+                        value={regenerateAvatarName}
+                        onChange={(e) => setRegenerateAvatarName(e.target.value)}
+                        placeholder="Enter new avatar name"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                        disabled={isGeneratingAvatar}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {error && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                    {error}
+                  </div>
+                )}
+
+                {isGeneratingAvatar && (
+                  <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                    <Loader
+                      videoSize="w-16 h-16"
+                      title="Regenerating Avatar"
+                      description="Please wait while we create your new avatar..."
+                      containerClass="!max-w-sm"
+                    />
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleGenerateAvatar}
+                    disabled={(() => {
+                      if (isGeneratingAvatar) return true;
+                      const hasQuery = regenerateAvatarUserQuery.trim().length > 0;
+                      if (!hasQuery) return true;
+                      if (regenerateAvatarSaveAsNew && !regenerateAvatarName.trim()) return true;
+                      return false;
+                    })()}
+                    className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isGeneratingAvatar ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Generating...
+                      </>
+                    ) : (
+                      'Generate Avatar'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
 
       {/* Avatar Manager Popup (VEO3 only) */}
-      {showAvatarManager && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
-          <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Close Button */}
-            <button
-              type="button"
-              onClick={() => {
-                if (!isUpdatingAvatars) {
-                  setShowAvatarManager(false);
-                  setManagingAvatarSceneNumber(null);
-                  setAvatarUrls(['', '']);
-                  setError('');
-                }
-              }}
-              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Close"
-              disabled={isUpdatingAvatars}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
+      {
+        showAvatarManager && (
+          <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl mx-4 relative max-h-[90vh] overflow-hidden flex flex-col">
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isUpdatingAvatars) {
+                    setShowAvatarManager(false);
+                    setManagingAvatarSceneNumber(null);
+                    setAvatarUrls(['', '']);
+                    setError('');
+                  }
+                }}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 hover:text-gray-800 flex items-center justify-center transition-colors z-10 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Close"
+                disabled={isUpdatingAvatars}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
 
-            {/* Popup Content */}
-            <div className="flex-1 p-6 overflow-y-auto relative">
-              <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Manage VEO3 Avatars</h3>
-              <p className="text-sm text-gray-600 mb-6">
-                Select one avatar from the gallery below.
-              </p>
+              {/* Popup Content */}
+              <div className="flex-1 p-6 overflow-y-auto relative">
+                <h3 className="text-xl font-semibold text-gray-800 mb-4 pr-10">Manage VEO3 Avatars</h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  Select one avatar from the gallery below.
+                </p>
 
-              {/* Avatar Selection Gallery */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  Available Avatars
-                </label>
-                {isLoadingAvatars ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-                  </div>
-                ) : (
-                  <>
-                    {(() => {
-                      // Helper to normalize avatar to object format {name, url}
-                      const normalizeAvatar = (item) => {
-                        if (item && typeof item === 'object' && item.url) {
-                          return { name: item.name || '', url: String(item.url).trim() };
-                        }
-                        if (typeof item === 'string') {
-                          const trimmedUrl = item.trim();
-                          const presetName = presetAvatarNames[trimmedUrl];
-                          return { name: presetName || '', url: trimmedUrl };
-                        }
-                        return null;
-                      };
+                {/* Avatar Selection Gallery */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Available Avatars
+                  </label>
+                  {isLoadingAvatars ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      {(() => {
+                        // Helper to normalize avatar to object format {name, url}
+                        const normalizeAvatar = (item) => {
+                          if (item && typeof item === 'object' && item.url) {
+                            return { name: item.name || '', url: String(item.url).trim() };
+                          }
+                          if (typeof item === 'string') {
+                            const trimmedUrl = item.trim();
+                            const presetName = presetAvatarNames[trimmedUrl];
+                            return { name: presetName || '', url: trimmedUrl };
+                          }
+                          return null;
+                        };
 
-                      // Combine preset and brand assets avatars, removing duplicates
-                      const seenUrls = new Set();
-                      const allAvatars = [];
+                        // Combine preset and brand assets avatars, removing duplicates
+                        const seenUrls = new Set();
+                        const allAvatars = [];
 
-                      const addIfNotSeen = (avatar) => {
-                        const normalized = normalizeAvatar(avatar);
-                        if (normalized && normalized.url && !seenUrls.has(normalized.url)) {
-                          seenUrls.add(normalized.url);
-                          allAvatars.push(normalized);
-                        }
-                      };
+                        const addIfNotSeen = (avatar) => {
+                          const normalized = normalizeAvatar(avatar);
+                          if (normalized && normalized.url && !seenUrls.has(normalized.url)) {
+                            seenUrls.add(normalized.url);
+                            allAvatars.push(normalized);
+                          }
+                        };
 
-                      // Add preset avatars first
-                      presetAvatars.forEach(addIfNotSeen);
-                      // Add brand assets avatars
-                      brandAssetsAvatars.forEach(addIfNotSeen);
+                        // Add preset avatars first
+                        presetAvatars.forEach(addIfNotSeen);
+                        // Add brand assets avatars
+                        brandAssetsAvatars.forEach(addIfNotSeen);
 
-                      return (
-                        <div className="grid grid-cols-3 gap-4">
-                          {allAvatars.map((avatarObj, index) => {
-                            const avatarUrl = avatarObj.url;
-                            const avatarName = avatarObj.name || `Avatar ${index + 1}`;
-                            const normalizedAvatarUrl = normalizeImageUrl(avatarUrl);
-                            const isSelected = avatarUrls.some(url => normalizeImageUrl(url) === normalizedAvatarUrl);
+                        return (
+                          <div className="grid grid-cols-3 gap-4">
+                            {allAvatars.map((avatarObj, index) => {
+                              const avatarUrl = avatarObj.url;
+                              const avatarName = avatarObj.name || `Avatar ${index + 1}`;
+                              const normalizedAvatarUrl = normalizeImageUrl(avatarUrl);
+                              const isSelected = avatarUrls.some(url => normalizeImageUrl(url) === normalizedAvatarUrl);
 
-                            return (
-                              <div
-                                key={`avatar-${index}-${avatarUrl}`}
-                                onClick={() => {
-                                  if (isUpdatingAvatars) return;
-                                  if (isSelected) {
-                                    setAvatarUrls([]);
-                                  } else {
-                                    setAvatarUrls([avatarUrl]);
-                                  }
-                                }}
-                                className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 ${isSelected
-                                  ? 'border-[#13008B] shadow-lg'
-                                  : 'border-gray-200 hover:border-gray-400'
-                                  } ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              >
-                                <div className="bg-white p-2">
-                                  <img
-                                    src={avatarUrl}
-                                    alt={avatarName}
-                                    className="w-full h-32 object-contain"
-                                  />
-                                </div>
-                                <div className="bg-gray-50 px-2 py-1 text-center border-t border-gray-200">
-                                  <p className="text-xs text-gray-600">{avatarName}</p>
-                                </div>
-                                {isSelected && (
-                                  <div className="absolute top-2 right-2 bg-[#13008B] text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg">
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                      <polyline points="20 6 9 17 4 12"></polyline>
-                                    </svg>
+                              return (
+                                <div
+                                  key={`avatar-${index}-${avatarUrl}`}
+                                  onClick={() => {
+                                    if (isUpdatingAvatars) return;
+                                    if (isSelected) {
+                                      setAvatarUrls([]);
+                                    } else {
+                                      setAvatarUrls([avatarUrl]);
+                                    }
+                                  }}
+                                  className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 ${isSelected
+                                    ? 'border-[#13008B] shadow-lg'
+                                    : 'border-gray-200 hover:border-gray-400'
+                                    } ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                >
+                                  <div className="bg-white p-2">
+                                    <img
+                                      src={avatarUrl}
+                                      alt={avatarName}
+                                      className="w-full h-32 object-contain"
+                                    />
                                   </div>
-                                )}
+                                  <div className="bg-gray-50 px-2 py-1 text-center border-t border-gray-200">
+                                    <p className="text-xs text-gray-600">{avatarName}</p>
+                                  </div>
+                                  {isSelected && (
+                                    <div className="absolute top-2 right-2 bg-[#13008B] text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg">
+                                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                      </svg>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {/* Upload Avatar Button */}
+                            <div
+                              onClick={() => {
+                                if (!isUpdatingAvatars) {
+                                  setShowAvatarUploadPopup(true);
+                                }
+                              }}
+                              className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 border-dashed ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed border-gray-200' : 'border-gray-300 hover:border-[#13008B]'
+                                }`}
+                            >
+                              <div className="bg-gray-50 p-2 flex flex-col items-center justify-center h-32">
+                                <Upload className="w-8 h-8 text-gray-400 mb-2" />
+                                <p className="text-xs text-gray-600 text-center">Upload Avatar</p>
                               </div>
-                            );
-                          })}
-                          {/* Upload Avatar Button */}
-                          <div
-                            onClick={() => {
-                              if (!isUpdatingAvatars) {
-                                setShowAvatarUploadPopup(true);
-                              }
-                            }}
-                            className={`relative cursor-pointer rounded-lg overflow-hidden transition-all border-2 border-dashed ${isUpdatingAvatars ? 'opacity-50 cursor-not-allowed border-gray-200' : 'border-gray-300 hover:border-[#13008B]'
-                              }`}
-                          >
-                            <div className="bg-gray-50 p-2 flex flex-col items-center justify-center h-32">
-                              <Upload className="w-8 h-8 text-gray-400 mb-2" />
-                              <p className="text-xs text-gray-600 text-center">Upload Avatar</p>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })()}
-                    <p className="text-xs text-gray-500 mt-3">
-                      {avatarUrls.length > 0 ? '1 avatar selected' : 'No avatar selected'}
-                    </p>
-                  </>
+                        );
+                      })()}
+                      <p className="text-xs text-gray-500 mt-3">
+                        {avatarUrls.length > 0 ? '1 avatar selected' : 'No avatar selected'}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {/* Error Message */}
+                {error && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                    {error}
+                  </div>
                 )}
+
+                {/* Loading Overlay */}
+                {isUpdatingAvatars && (
+                  <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                    <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                      <div className="relative w-16 h-16">
+                        <svg className="w-16 h-16" viewBox="0 0 100 100">
+                          <circle cx="50" cy="50" r="45" stroke="#E5E7EB" strokeWidth="8" fill="none" />
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r="45"
+                            stroke="#13008B"
+                            strokeWidth="8"
+                            fill="none"
+                            strokeLinecap="round"
+                            strokeDasharray="283"
+                            strokeDashoffset="70"
+                            className="animate-spin"
+                            style={{
+                              transformOrigin: '50% 50%',
+                              animation: 'spin 1.5s linear infinite'
+                            }}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="w-3 h-3 bg-[#13008B] rounded-full" />
+                        </div>
+                      </div>
+                      <p className="text-lg font-semibold text-[#13008B]">Updating Avatars...</p>
+                      <p className="text-sm text-gray-600">Please wait while we update your avatars...</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Update Button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleUpdateVEO3Avatars}
+                    disabled={isUpdatingAvatars || avatarUrls.filter(u => u.trim()).length === 0}
+                    className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isUpdatingAvatars ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Updating...
+                      </>
+                    ) : (
+                      'Update Avatars'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Upload Avatar Popup */}
+      {
+        showAvatarUploadPopup && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50">
+            <div className="bg-white w-[90%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-[#13008B]">Upload Avatar</h3>
+                <button
+                  onClick={() => {
+                    setShowAvatarUploadPopup(false);
+                    setAvatarUploadFiles([]);
+                  }}
+                  className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50"
+                  disabled={isUploadingAvatarFiles}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto flex-1">
+                {/* Avatar Name Input */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Avatar Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={avatarName}
+                    onChange={(e) => setAvatarName(e.target.value)}
+                    placeholder="Enter avatar name"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                    disabled={isUploadingAvatarFiles}
+                  />
+                </div>
+
+                {/* Upload Box */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Select Avatar File
+                  </label>
+                  <input
+                    ref={avatarUploadFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length > 0) {
+                        setAvatarUploadFiles([files[0]]);
+                      }
+                      if (avatarUploadFileInputRef.current) {
+                        avatarUploadFileInputRef.current.value = '';
+                      }
+                    }}
+                    disabled={isUploadingAvatarFiles}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => avatarUploadFileInputRef.current?.click()}
+                    className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#13008B] hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={isUploadingAvatarFiles}
+                  >
+                    <div className="text-center">
+                      <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-sm text-gray-600">Click to select avatar file</p>
+                      <p className="text-xs text-gray-500 mt-1">Supported: JPG, PNG, WEBP</p>
+                    </div>
+                  </button>
+                </div>
+
+                {/* File List */}
+                {avatarUploadFiles.length > 0 && (
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Selected File
+                    </label>
+                    <div className="space-y-2">
+                      {avatarUploadFiles.map((file, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center flex-shrink-0">
+                              <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                              <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(2)} KB</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAvatarUploadFiles([]);
+                            }}
+                            className="ml-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                            title="Remove file"
+                            disabled={isUploadingAvatarFiles}
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Upload Button */}
+                <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAvatarUploadPopup(false);
+                      setAvatarUploadFiles([]);
+                      setAvatarName('');
+                    }}
+                    className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                    disabled={isUploadingAvatarFiles}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        if (!avatarName || !avatarName.trim()) {
+                          alert('Please enter an avatar name');
+                          return;
+                        }
+
+                        if (avatarUploadFiles.length === 0) {
+                          alert('Please select a file to upload');
+                          return;
+                        }
+
+                        const token = localStorage.getItem('token');
+                        if (!token) {
+                          alert('Missing user ID');
+                          return;
+                        }
+
+                        setIsUploadingAvatarFiles(true);
+
+                        // Create FormData request body
+                        const form = new FormData();
+                        form.append('user_id', token);
+                        form.append('name', avatarName.trim());
+                        form.append('file', avatarUploadFiles[0]);
+
+                        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
+                          method: 'POST',
+                          body: form
+                        });
+
+                        const text = await resp.text();
+                        if (!resp.ok) {
+                          throw new Error(`Upload failed: ${resp.status} ${text}`);
+                        }
+
+                        // Re-call brand assets GET API to refresh the list
+                        const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
+                        const getText = await getResp.text();
+                        let data;
+                        try { data = JSON.parse(getText); } catch (_) { data = getText; }
+
+                        if (getResp.ok && data && typeof data === 'object') {
+                          const avatarsObject = data?.avatars || {};
+                          const avatarObjects = [];
+
+                          Object.values(avatarsObject).forEach((profileAvatars) => {
+                            if (Array.isArray(profileAvatars)) {
+                              profileAvatars.forEach((avatar) => {
+                                if (avatar && typeof avatar === 'object' && avatar.url) {
+                                  avatarObjects.push({
+                                    name: avatar.name || '',
+                                    url: String(avatar.url).trim()
+                                  });
+                                }
+                              });
+                            }
+                          });
+
+                          setBrandAssetsAvatars(avatarObjects);
+                          // Update cache (store both objects and URLs for backward compatibility)
+                          try {
+                            const cacheKey = `brand_assets_images:${token}`;
+                            const cached = localStorage.getItem(cacheKey);
+                            let cachedData = {};
+                            if (cached) {
+                              try { cachedData = JSON.parse(cached); } catch (_) { }
+                            }
+                            cachedData.avatars = avatarObjects;
+                            cachedData.avatar_urls = avatarObjects.map(a => a.url); // Keep URLs for backward compatibility
+                            localStorage.setItem(cacheKey, JSON.stringify(cachedData));
+                          } catch (_) { }
+                        }
+
+                        // Close popup and reset
+                        setShowAvatarUploadPopup(false);
+                        setAvatarUploadFiles([]);
+                        setAvatarName('');
+                        alert('Avatar uploaded successfully!');
+                      } catch (err) {
+                        console.error('Avatar upload failed:', err);
+                        alert('Failed to upload avatar: ' + (err?.message || 'Unknown error'));
+                      } finally {
+                        setIsUploadingAvatarFiles(false);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={isUploadingAvatarFiles || avatarUploadFiles.length === 0 || !avatarName || !avatarName.trim()}
+                  >
+                    {isUploadingAvatarFiles ? (
+                      <span className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Uploading...
+                      </span>
+                    ) : (
+                      'Upload Avatar'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Upload Background Popup - Asset Selection Modal */}
+      {
+        showUploadBackgroundPopup && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
+            <div className="bg-white w-[96%] max-w-5xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-[#13008B]">Choose Background Image</h3>
+                <div className="flex items-center gap-4">
+                  {/* Convert Colors Toggle */}
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <span className="text-sm text-gray-700">Convert Colors:</span>
+                    <input
+                      type="checkbox"
+                      checked={convertColors}
+                      onChange={(e) => setConvertColors(e.target.checked)}
+                      disabled={isUploadingBackground}
+                      className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                    />
+                    <span className="text-sm text-gray-600">{convertColors ? 'On' : 'Off'}</span>
+                  </label>
+                  <button
+                    onClick={() => {
+                      if (!isUploadingBackground) {
+                        setShowUploadBackgroundPopup(false);
+                        setSelectedAssetUrl('');
+                        setSelectedTemplateUrls([]);
+                        setUploadingBackgroundSceneNumber(null);
+                        setUploadFrames(['background']);
+                        setAssetsTab('preset_templates'); // Reset to default tab
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg border text-sm"
+                    disabled={isUploadingBackground}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              {/* Frame Selection at Top - Always show opening and closing frame checkboxes */}
+              {uploadingBackgroundSceneNumber && (
+                <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Frames to Upload
+                  </label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={uploadFrames.includes('opening')}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setUploadFrames(prev => [...new Set([...prev, 'opening'])]);
+                          } else {
+                            setUploadFrames(prev => prev.filter(f => f !== 'opening'));
+                          }
+                        }}
+                        disabled={isUploadingBackground}
+                        className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                      />
+                      <span className="text-sm text-gray-700">Opening Frame</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={uploadFrames.includes('closing')}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setUploadFrames(prev => [...new Set([...prev, 'closing'])]);
+                          } else {
+                            setUploadFrames(prev => prev.filter(f => f !== 'closing'));
+                          }
+                        }}
+                        disabled={isUploadingBackground}
+                        className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
+                      />
+                      <span className="text-sm text-gray-700">Closing Frame</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Asset Tabs */}
+              <div className="px-4 pt-3 border-b border-gray-100">
+                <div className="flex items-center gap-3 flex-wrap">
+                  {[
+                    { key: 'preset_templates', label: 'Preset Templates' },
+                    { key: 'uploaded_templates', label: 'Uploaded Templates' },
+                    { key: 'uploaded_images', label: 'Uploaded Images' },
+                    { key: 'documents_images', label: 'Documents' },
+                    { key: 'generated_images', label: 'Generated Images' }
+                  ].map(tab => (
+                    <button
+                      key={tab.key}
+                      onClick={() => setAssetsTab(tab.key)}
+                      className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab === tab.key ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                    >{tab.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Asset Grid Content */}
+              <div className="p-4 overflow-y-auto flex-1">
+                {(isAssetsLoading || (assetsTab === 'generated_images' && isLoadingGeneratedImages)) ? (
+                  <div className="flex items-center justify-center py-16">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                      <span className="text-sm text-gray-600">
+                        {assetsTab === 'generated_images' && isLoadingGeneratedImages ? 'Loading generated images...'
+                          : 'Loading assets...'}
+                      </span>
+                    </div>
+                  </div>
+                ) : (() => {
+                  // Extract assets based on selected tab
+                  // Always start with empty array to prevent accumulation
+                  let list = [];
+
+                  const inferAspectFromUrl = (url = '') => {
+                    try {
+                      const lower = String(url).toLowerCase();
+                      if (lower.includes('/16-9/') || lower.includes('16x9') || lower.includes('16-9')) return '16:9';
+                      if (lower.includes('/9-16/') || lower.includes('9x16') || lower.includes('9-16')) return '9:16';
+                    } catch (_) { /* noop */ }
+                    return '';
+                  };
+
+                  const matchesAspectValue = (value, target) => {
+                    if (!target) return true;
+                    const normalizedTarget = normalizeTemplateAspectLabel(target);
+                    const normalizedValue = normalizeTemplateAspectLabel(
+                      typeof value === 'string' ? value : ''
+                    );
+                    if (!normalizedTarget || normalizedTarget === 'Unspecified') return true;
+                    if (!normalizedValue || normalizedValue === 'Unspecified') return true;
+                    return normalizedValue === normalizedTarget;
+                  };
+
+                  // Extract assets based on selected tab - each tab gets its own isolated list
+                  if (assetsTab === 'preset_templates') {
+                    // Only show preset templates
+                    const extracted = extractAssetsByType(assetsData.templates, 'preset_templates');
+                    list = extracted.filter(item => (item?.assetType || '') === 'preset_templates');
+                  } else if (assetsTab === 'uploaded_templates') {
+                    // Only show uploaded templates
+                    const extracted = extractAssetsByType(assetsData.templates, 'uploaded_templates');
+                    list = extracted.filter(item => (item?.assetType || '') === 'uploaded_templates');
+                  } else if (assetsTab === 'uploaded_images') {
+                    // Show uploaded images from both flat array and templates structure
+                    const flatImages = Array.isArray(assetsData.uploaded_images) ? assetsData.uploaded_images : [];
+                    const templateImages = extractAssetsByType(assetsData.templates, 'uploaded_images');
+
+                    // Filter template images to ensure they're actually uploaded_images type
+                    const filteredTemplateImages = templateImages.filter(item => (item?.assetType || '') === 'uploaded_images');
+
+                    // Combine both sources
+                    const allImages = [
+                      ...filteredTemplateImages,
+                      ...flatImages.map((img, idx) => {
+                        const url = typeof img === 'string' ? img : (img?.image_url || img?.url || '');
+                        if (!url) return null;
+                        return {
+                          id: `uploaded-img-flat-${idx}`,
+                          imageUrl: url,
+                          aspect: inferAspectFromUrl(url) || 'Unspecified',
+                          label: 'Uploaded Image',
+                          assetType: 'uploaded_images',
+                          raw: img
+                        };
+                      }).filter(Boolean)
+                    ];
+
+                    // Remove duplicates based on imageUrl and ensure assetType matches
+                    const seenUrls = new Set();
+                    list = allImages.filter(item => {
+                      const url = item?.imageUrl || item?.image_url || '';
+                      if (!url || seenUrls.has(url)) return false;
+                      if ((item?.assetType || '') !== 'uploaded_images') return false;
+                      seenUrls.add(url);
+                      return true;
+                    });
+                  } else if (assetsTab === 'documents_images') {
+                    const flatArray = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
+                    list = flatArray.map((item, idx) => {
+                      const url = typeof item === 'string' ? item : (item?.image_url || item?.url || '');
+                      if (!url) return null;
+                      return {
+                        id: `${assetsTab}-${idx}`,
+                        imageUrl: url,
+                        aspect: inferAspectFromUrl(url) || 'Unspecified',
+                        label: `${assetsTab.replace('_', ' ')} ${idx + 1}`,
+                        assetType: assetsTab
+                      };
+                    }).filter(Boolean);
+                    // Ensure all items match the tab
+                    list = list.filter(item => (item?.assetType || '') === 'documents_images');
+                  } else if (assetsTab === 'generated_images') {
+                    const generatedImages = generatedImagesData.generated_images || {};
+                    const allGeneratedImages = [];
+
+                    // Handle both old format (aspectRatio -> array) and new format (aspectRatio -> session -> array)
+                    Object.entries(generatedImages).forEach(([aspectRatio, value]) => {
+                      const normalizedAspect = normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified';
+
+                      // Check if value is an array (old format)
+                      if (Array.isArray(value)) {
+                        value.forEach((url, idx) => {
+                          if (typeof url === 'string' && url.trim()) {
+                            allGeneratedImages.push({
+                              id: `generated-${aspectRatio}-${idx}`,
+                              imageUrl: url.trim(),
+                              aspect: normalizedAspect,
+                              sessionId: '',
+                              label: `Generated Image ${idx + 1}`,
+                              assetType: 'generated_images'
+                            });
+                          }
+                        });
+                      }
+                      // Check if value is an object with session IDs (new format)
+                      else if (value && typeof value === 'object' && !Array.isArray(value)) {
+                        Object.entries(value).forEach(([sessionId, sessionUrls]) => {
+                          if (Array.isArray(sessionUrls)) {
+                            sessionUrls.forEach((url, idx) => {
+                              if (typeof url === 'string' && url.trim()) {
+                                allGeneratedImages.push({
+                                  id: `generated-${aspectRatio}-${sessionId}-${idx}`,
+                                  imageUrl: url.trim(),
+                                  aspect: normalizedAspect,
+                                  sessionId: sessionId || '',
+                                  label: `Generated Image ${idx + 1}`,
+                                  assetType: 'generated_images'
+                                });
+                              }
+                            });
+                          }
+                        });
+                      }
+                    });
+
+                    list = allGeneratedImages.filter(item => (item?.assetType || '') === 'generated_images');
+                  }
+
+                  // Filter images by aspect ratio when uploading background
+                  if (uploadingBackgroundSceneNumber && questionnaireAspectRatio) {
+                    const targetAspectRatio = normalizeTemplateAspectLabel(questionnaireAspectRatio);
+                    // Only filter if we have a valid aspect ratio (not 'Unspecified')
+                    if (targetAspectRatio && targetAspectRatio !== 'Unspecified') {
+                      list = list.filter(entry => {
+                        const entryAspect = entry?.aspect || inferAspectFromUrl(entry?.imageUrl || entry?.image_url || '');
+                        return matchesAspectValue(entryAspect, targetAspectRatio);
+                      });
+                    }
+                  }
+
+                  // Final filter to ensure all items match the current tab
+                  const finalList = list.filter(item => {
+                    const itemAssetType = item?.assetType || '';
+                    return itemAssetType === assetsTab;
+                  });
+
+                  // For generated_images, group by session and aspect ratio
+                  if (assetsTab === 'generated_images' && finalList.length > 0) {
+                    // Group images by session ID and aspect ratio
+                    const groupedBySession = {};
+                    finalList.forEach(entry => {
+                      const sessionId = entry.sessionId || 'default';
+                      const aspect = entry.aspect || 'Unspecified';
+
+                      if (!groupedBySession[sessionId]) {
+                        groupedBySession[sessionId] = {};
+                      }
+                      if (!groupedBySession[sessionId][aspect]) {
+                        groupedBySession[sessionId][aspect] = [];
+                      }
+                      groupedBySession[sessionId][aspect].push(entry);
+                    });
+
+                    return (
+                      <div className="space-y-6" key={assetsTab}>
+                        {Object.entries(groupedBySession).map(([sessionId, aspectGroups]) => (
+                          <div key={sessionId} className="space-y-4">
+                            {/* Session Header */}
+                            <div className="border-b border-gray-200 pb-2">
+                              <h4 className="text-sm font-semibold text-gray-800">
+                                {sessionId && sessionId !== 'default' ? `Session: ${sessionId}` : 'Generated Images'}
+                              </h4>
+                            </div>
+
+                            {/* Aspect Ratio Groups */}
+                            {Object.entries(aspectGroups).map(([aspect, images]) => (
+                              <div key={`${sessionId}-${aspect}`} className="space-y-2">
+                                {/* Aspect Ratio Header */}
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                                    {aspect}
+                                  </span>
+                                  <span className="text-xs text-gray-500">
+                                    ({images.length} {images.length === 1 ? 'image' : 'images'})
+                                  </span>
+                                </div>
+
+                                {/* Images Grid */}
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                  {images.map((entry, idx) => {
+                                    const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
+                                    if (!imageUrl) return null;
+
+                                    const isSelected = selectedTemplateUrls.includes(imageUrl) || selectedAssetUrl === imageUrl;
+
+                                    const handleClick = () => {
+                                      if (isSelected) {
+                                        setSelectedTemplateUrls([]);
+                                        setSelectedAssetUrl('');
+                                      } else {
+                                        setSelectedTemplateUrls([imageUrl]);
+                                        setSelectedAssetUrl(imageUrl);
+                                      }
+                                    };
+
+                                    return (
+                                      <div
+                                        key={entry.id || idx}
+                                        className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                                        onClick={handleClick}
+                                        title={entry.label || `${entry.aspect || 'Unspecified'} • Generated Image`}
+                                      >
+                                        <img
+                                          src={imageUrl}
+                                          alt={entry.label || `Generated Image ${idx + 1}`}
+                                          className="w-full h-28 object-cover"
+                                          height={entry?.raw?.base_image?.image_dimensions?.height || entry?.raw?.base_image?.imageDimensions?.height || entry?.raw?.image_dimensions?.height || entry?.raw?.imageDimensions?.height || undefined}
+                                        />
+                                        <div className="p-2">
+                                          <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
+                                            {entry.label || `Generated Image ${idx + 1}`}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4" key={assetsTab}>
+                        {/* Upload Box - Show for uploaded_templates and uploaded_images tabs */}
+                        {(assetsTab === 'uploaded_templates' || assetsTab === 'uploaded_images') && (
+                          <div
+                            className="rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 hover:border-[#13008B] hover:bg-gray-100 cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px]"
+                            onClick={() => {
+                              if (isUploadingBackground) return;
+                              if (assetsTab === 'uploaded_templates' && assetPptxUploadRef.current) {
+                                assetPptxUploadRef.current.click();
+                              } else if (assetsTab === 'uploaded_images' && assetImageUploadRef.current) {
+                                assetImageUploadRef.current.click();
+                              }
+                            }}
+                          >
+                            <div className="flex flex-col items-center gap-2 p-4 text-center">
+                              <Upload className="w-8 h-8 text-gray-400" />
+                              <span className="text-sm font-medium text-gray-700">
+                                {assetsTab === 'uploaded_templates' ? 'Upload PDF' : 'Upload Image'}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                Click to {assetsTab === 'uploaded_templates' ? 'upload PDF' : 'upload image'}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        {finalList.length === 0 && (
+                          <div className="col-span-full text-center py-8 text-sm text-gray-600">
+                            No asset found
+                          </div>
+                        )}
+                        {finalList.map((entry, idx) => {
+                          const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
+                          if (!imageUrl) return null;
+
+                          const isSelected = selectedTemplateUrls.includes(imageUrl) || selectedAssetUrl === imageUrl;
+
+                          const handleClick = () => {
+                            // For background selection, only allow single selection
+                            if (isSelected) {
+                              setSelectedTemplateUrls([]);
+                              setSelectedAssetUrl('');
+                            } else {
+                              setSelectedTemplateUrls([imageUrl]);
+                              setSelectedAssetUrl(imageUrl);
+                            }
+                          };
+
+                          return (
+                            <div
+                              key={entry.id || idx}
+                              className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                              onClick={handleClick}
+                              title={entry.label || `${entry.aspect || 'Unspecified'} • ${assetsTab.replace('_', ' ')}`}
+                            >
+                              <img
+                                src={imageUrl}
+                                alt={entry.label || `${assetsTab}-${idx}`}
+                                className="w-full h-28 object-cover"
+                                height={entry?.raw?.base_image?.image_dimensions?.height || entry?.raw?.base_image?.imageDimensions?.height || entry?.raw?.image_dimensions?.height || entry?.raw?.imageDimensions?.height || undefined}
+                              />
+                              <div className="p-2">
+                                <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
+                                  {entry.label || `${assetsTab.replace('_', ' ')} ${idx + 1}`}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Hidden File Inputs */}
+              <input
+                type="file"
+                ref={assetImageUploadRef}
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (files.length > 0) {
+                    handleUploadImages(files);
+                  }
+                }}
+              />
+              <input
+                type="file"
+                ref={assetPptxUploadRef}
+                accept=".pdf,.pptx"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleUploadPptx(file);
+                  }
+                }}
+              />
+
+              {/* Keep Default and Generate Buttons */}
+              <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
+                <button
+                  disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
+                  onClick={async () => {
+                    // Keep Default - call upload API with selected image (same as old Save)
+                    if (selectedTemplateUrls.length === 0) return;
+                    const imageUrl = selectedTemplateUrls[0];
+                    await handleSaveBackgroundFromAsset(imageUrl);
+                  }}
+                  className={`px-3 py-2 rounded-lg text-sm text-white ${selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-[#13008B] hover:bg-blue-800'
+                    }`}
+                >
+                  {isUploadingBackground ? 'Saving...' : 'Keep Default'}
+                </button>
+                <button
+                  disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || isGeneratingFromReference || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
+                  onClick={() => {
+                    // Generate - open user query popup
+                    if (selectedTemplateUrls.length === 0) return;
+                    setShowUserQueryPopup(true);
+                    setUserQuery('');
+                  }}
+                  className={`px-3 py-2 rounded-lg text-sm text-white ${selectedTemplateUrls.length === 0 || isUploadingBackground || isGeneratingFromReference || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700'
+                    }`}
+                >
+                  Generate
+                </button>
               </div>
 
               {/* Error Message */}
@@ -11868,12 +12702,112 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               )}
 
               {/* Loading Overlay */}
-              {isUpdatingAvatars && (
+              {isUploadingBackground && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                  <Loader
+                    videoSize="w-16 h-16"
+                    title="Uploading Background..."
+                    description="Please wait while we upload your background image..."
+                    containerClass="!max-w-xs"
+                    progress={uploadingBackgroundProgress > 0 ? uploadingBackgroundProgress : null}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      }
+
+      {/* User Query Popup for Generate from Reference */}
+      {
+        showUserQueryPopup && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
+            <div className="bg-white w-[96%] max-w-2xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-[#13008B]">Enter Your Query</h3>
+                <button
+                  onClick={() => {
+                    if (!isGeneratingFromReference) {
+                      setShowUserQueryPopup(false);
+                      setUserQuery('');
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg border text-sm"
+                  disabled={isGeneratingFromReference}
+                >
+                  Close
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="p-6 flex-1 overflow-y-auto">
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Describe what you want to generate from the reference image:
+                    </label>
+                    <textarea
+                      value={userQuery}
+                      onChange={(e) => setUserQuery(e.target.value)}
+                      placeholder="Enter your query here... (e.g., 'Make it more vibrant', 'Add sunset colors', 'Change to night scene')"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-[#13008B] resize-none"
+                      rows={6}
+                      disabled={isGeneratingFromReference}
+                    />
+                  </div>
+                  {error && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                      {error}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
+                <button
+                  onClick={() => {
+                    if (!isGeneratingFromReference) {
+                      setShowUserQueryPopup(false);
+                      setUserQuery('');
+                    }
+                  }}
+                  disabled={isGeneratingFromReference}
+                  className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={!userQuery.trim() || isGeneratingFromReference || selectedTemplateUrls.length === 0}
+                  onClick={async () => {
+                    if (selectedTemplateUrls.length === 0 || !userQuery.trim()) return;
+                    const imageUrl = selectedTemplateUrls[0];
+                    await handleGenerateFromReference(imageUrl, userQuery);
+                  }}
+                  className={`px-4 py-2 rounded-lg text-sm text-white ${!userQuery.trim() || isGeneratingFromReference || selectedTemplateUrls.length === 0
+                    ? 'bg-blue-300 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700'
+                    }`}
+                >
+                  {isGeneratingFromReference ? 'Generating...' : 'Save'}
+                </button>
+              </div>
+
+              {/* Loading Overlay */}
+              {isGeneratingFromReference && (
                 <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
                   <div className="flex flex-col items-center gap-4 w-full max-w-sm">
                     <div className="relative w-16 h-16">
                       <svg className="w-16 h-16" viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="45" stroke="#E5E7EB" strokeWidth="8" fill="none" />
+                        <circle
+                          cx="50"
+                          cy="50"
+                          r="45"
+                          stroke="#E5E7EB"
+                          strokeWidth="8"
+                          fill="none"
+                        />
                         <circle
                           cx="50"
                           cy="50"
@@ -11895,893 +12829,17 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         <div className="w-3 h-3 bg-[#13008B] rounded-full" />
                       </div>
                     </div>
-                    <p className="text-lg font-semibold text-[#13008B]">Updating Avatars...</p>
-                    <p className="text-sm text-gray-600">Please wait while we update your avatars...</p>
+                    <p className="text-lg font-semibold text-[#13008B]">Generating from Reference...</p>
+                    <p className="text-sm text-gray-600">Please wait while we generate your image...</p>
                   </div>
                 </div>
               )}
-
-              {/* Update Button */}
-              <div className="flex justify-end">
-                <button
-                  onClick={handleUpdateVEO3Avatars}
-                  disabled={isUpdatingAvatars || avatarUrls.filter(u => u.trim()).length === 0}
-                  className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isUpdatingAvatars ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Updating...
-                    </>
-                  ) : (
-                    'Update Avatars'
-                  )}
-                </button>
-              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
-      {/* Upload Avatar Popup */}
-      {showAvatarUploadPopup && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[90%] max-w-2xl rounded-lg shadow-xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-[#13008B]">Upload Avatar</h3>
-              <button
-                onClick={() => {
-                  setShowAvatarUploadPopup(false);
-                  setAvatarUploadFiles([]);
-                }}
-                className="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50"
-                disabled={isUploadingAvatarFiles}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto flex-1">
-              {/* Avatar Name Input */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Avatar Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={avatarName}
-                  onChange={(e) => setAvatarName(e.target.value)}
-                  placeholder="Enter avatar name"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                  disabled={isUploadingAvatarFiles}
-                />
-              </div>
-
-              {/* Upload Box */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Avatar File
-                </label>
-                <input
-                  ref={avatarUploadFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    if (files.length > 0) {
-                      setAvatarUploadFiles([files[0]]);
-                    }
-                    if (avatarUploadFileInputRef.current) {
-                      avatarUploadFileInputRef.current.value = '';
-                    }
-                  }}
-                  disabled={isUploadingAvatarFiles}
-                />
-                <button
-                  type="button"
-                  onClick={() => avatarUploadFileInputRef.current?.click()}
-                  className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-[#13008B] hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isUploadingAvatarFiles}
-                >
-                  <div className="text-center">
-                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-gray-600">Click to select avatar file</p>
-                    <p className="text-xs text-gray-500 mt-1">Supported: JPG, PNG, WEBP</p>
-                  </div>
-                </button>
-              </div>
-
-              {/* File List */}
-              {avatarUploadFiles.length > 0 && (
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Selected File
-                  </label>
-                  <div className="space-y-2">
-                    {avatarUploadFiles.map((file, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center flex-shrink-0">
-                            <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                            <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(2)} KB</p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAvatarUploadFiles([]);
-                          }}
-                          className="ml-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
-                          title="Remove file"
-                          disabled={isUploadingAvatarFiles}
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Upload Button */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAvatarUploadPopup(false);
-                    setAvatarUploadFiles([]);
-                    setAvatarName('');
-                  }}
-                  className="px-4 py-2 rounded-lg border text-sm hover:bg-gray-50"
-                  disabled={isUploadingAvatarFiles}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      if (!avatarName || !avatarName.trim()) {
-                        alert('Please enter an avatar name');
-                        return;
-                      }
-
-                      if (avatarUploadFiles.length === 0) {
-                        alert('Please select a file to upload');
-                        return;
-                      }
-
-                      const token = localStorage.getItem('token');
-                      if (!token) {
-                        alert('Missing user ID');
-                        return;
-                      }
-
-                      setIsUploadingAvatarFiles(true);
-
-                      // Create FormData request body
-                      const form = new FormData();
-                      form.append('user_id', token);
-                      form.append('name', avatarName.trim());
-                      form.append('file', avatarUploadFiles[0]);
-
-                      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
-                        method: 'POST',
-                        body: form
-                      });
-
-                      const text = await resp.text();
-                      if (!resp.ok) {
-                        throw new Error(`Upload failed: ${resp.status} ${text}`);
-                      }
-
-                      // Re-call brand assets GET API to refresh the list
-                      const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`);
-                      const getText = await getResp.text();
-                      let data;
-                      try { data = JSON.parse(getText); } catch (_) { data = getText; }
-
-                      if (getResp.ok && data && typeof data === 'object') {
-                        const avatarsObject = data?.avatars || {};
-                        const avatarObjects = [];
-
-                        Object.values(avatarsObject).forEach((profileAvatars) => {
-                          if (Array.isArray(profileAvatars)) {
-                            profileAvatars.forEach((avatar) => {
-                              if (avatar && typeof avatar === 'object' && avatar.url) {
-                                avatarObjects.push({
-                                  name: avatar.name || '',
-                                  url: String(avatar.url).trim()
-                                });
-                              }
-                            });
-                          }
-                        });
-
-                        setBrandAssetsAvatars(avatarObjects);
-                        // Update cache (store both objects and URLs for backward compatibility)
-                        try {
-                          const cacheKey = `brand_assets_images:${token}`;
-                          const cached = localStorage.getItem(cacheKey);
-                          let cachedData = {};
-                          if (cached) {
-                            try { cachedData = JSON.parse(cached); } catch (_) { }
-                          }
-                          cachedData.avatars = avatarObjects;
-                          cachedData.avatar_urls = avatarObjects.map(a => a.url); // Keep URLs for backward compatibility
-                          localStorage.setItem(cacheKey, JSON.stringify(cachedData));
-                        } catch (_) { }
-                      }
-
-                      // Close popup and reset
-                      setShowAvatarUploadPopup(false);
-                      setAvatarUploadFiles([]);
-                      setAvatarName('');
-                      alert('Avatar uploaded successfully!');
-                    } catch (err) {
-                      console.error('Avatar upload failed:', err);
-                      alert('Failed to upload avatar: ' + (err?.message || 'Unknown error'));
-                    } finally {
-                      setIsUploadingAvatarFiles(false);
-                    }
-                  }}
-                  className="px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isUploadingAvatarFiles || avatarUploadFiles.length === 0 || !avatarName || !avatarName.trim()}
-                >
-                  {isUploadingAvatarFiles ? (
-                    <span className="flex items-center gap-2">
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Uploading...
-                    </span>
-                  ) : (
-                    'Upload Avatar'
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Upload Background Popup - Asset Selection Modal */}
-      {showUploadBackgroundPopup && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[96%] max-w-5xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-[#13008B]">Choose Background Image</h3>
-              <div className="flex items-center gap-4">
-                {/* Convert Colors Toggle */}
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <span className="text-sm text-gray-700">Convert Colors:</span>
-                  <input
-                    type="checkbox"
-                    checked={convertColors}
-                    onChange={(e) => setConvertColors(e.target.checked)}
-                    disabled={isUploadingBackground}
-                    className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                  />
-                  <span className="text-sm text-gray-600">{convertColors ? 'On' : 'Off'}</span>
-                </label>
-                <button
-                  onClick={() => {
-                    if (!isUploadingBackground) {
-                      setShowUploadBackgroundPopup(false);
-                      setSelectedAssetUrl('');
-                      setSelectedTemplateUrls([]);
-                      setUploadingBackgroundSceneNumber(null);
-                      setUploadFrames(['background']);
-                      setAssetsTab('preset_templates'); // Reset to default tab
-                    }
-                  }}
-                  className="px-3 py-1.5 rounded-lg border text-sm"
-                  disabled={isUploadingBackground}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            {/* Frame Selection at Top - Always show opening and closing frame checkboxes */}
-            {uploadingBackgroundSceneNumber && (
-              <div className="px-4 pt-4 pb-3 border-b border-gray-100">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Frames to Upload
-                </label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={uploadFrames.includes('opening')}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setUploadFrames(prev => [...new Set([...prev, 'opening'])]);
-                        } else {
-                          setUploadFrames(prev => prev.filter(f => f !== 'opening'));
-                        }
-                      }}
-                      disabled={isUploadingBackground}
-                      className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                    />
-                    <span className="text-sm text-gray-700">Opening Frame</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={uploadFrames.includes('closing')}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setUploadFrames(prev => [...new Set([...prev, 'closing'])]);
-                        } else {
-                          setUploadFrames(prev => prev.filter(f => f !== 'closing'));
-                        }
-                      }}
-                      disabled={isUploadingBackground}
-                      className="w-4 h-4 text-[#13008B] border-gray-300 rounded focus:ring-[#13008B]"
-                    />
-                    <span className="text-sm text-gray-700">Closing Frame</span>
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {/* Asset Tabs */}
-            <div className="px-4 pt-3 border-b border-gray-100">
-              <div className="flex items-center gap-3 flex-wrap">
-                {[
-                  { key: 'preset_templates', label: 'Preset Templates' },
-                  { key: 'uploaded_templates', label: 'Uploaded Templates' },
-                  { key: 'uploaded_images', label: 'Uploaded Images' },
-                  { key: 'documents_images', label: 'Documents' },
-                  { key: 'generated_images', label: 'Generated Images' }
-                ].map(tab => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setAssetsTab(tab.key)}
-                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab === tab.key ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                  >{tab.label}</button>
-                ))}
-              </div>
-            </div>
-
-            {/* Asset Grid Content */}
-            <div className="p-4 overflow-y-auto flex-1">
-              {(isAssetsLoading || (assetsTab === 'generated_images' && isLoadingGeneratedImages)) ? (
-                <div className="flex items-center justify-center py-16">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
-                    <span className="text-sm text-gray-600">
-                      {assetsTab === 'generated_images' && isLoadingGeneratedImages ? 'Loading generated images...'
-                        : 'Loading assets...'}
-                    </span>
-                  </div>
-                </div>
-              ) : (() => {
-                // Extract assets based on selected tab
-                // Always start with empty array to prevent accumulation
-                let list = [];
-
-                const inferAspectFromUrl = (url = '') => {
-                  try {
-                    const lower = String(url).toLowerCase();
-                    if (lower.includes('/16-9/') || lower.includes('16x9') || lower.includes('16-9')) return '16:9';
-                    if (lower.includes('/9-16/') || lower.includes('9x16') || lower.includes('9-16')) return '9:16';
-                  } catch (_) { /* noop */ }
-                  return '';
-                };
-
-                const matchesAspectValue = (value, target) => {
-                  if (!target) return true;
-                  const normalizedTarget = normalizeTemplateAspectLabel(target);
-                  const normalizedValue = normalizeTemplateAspectLabel(
-                    typeof value === 'string' ? value : ''
-                  );
-                  if (!normalizedTarget || normalizedTarget === 'Unspecified') return true;
-                  if (!normalizedValue || normalizedValue === 'Unspecified') return true;
-                  return normalizedValue === normalizedTarget;
-                };
-
-                // Extract assets based on selected tab - each tab gets its own isolated list
-                if (assetsTab === 'preset_templates') {
-                  // Only show preset templates
-                  const extracted = extractAssetsByType(assetsData.templates, 'preset_templates');
-                  list = extracted.filter(item => (item?.assetType || '') === 'preset_templates');
-                } else if (assetsTab === 'uploaded_templates') {
-                  // Only show uploaded templates
-                  const extracted = extractAssetsByType(assetsData.templates, 'uploaded_templates');
-                  list = extracted.filter(item => (item?.assetType || '') === 'uploaded_templates');
-                } else if (assetsTab === 'uploaded_images') {
-                  // Show uploaded images from both flat array and templates structure
-                  const flatImages = Array.isArray(assetsData.uploaded_images) ? assetsData.uploaded_images : [];
-                  const templateImages = extractAssetsByType(assetsData.templates, 'uploaded_images');
-
-                  // Filter template images to ensure they're actually uploaded_images type
-                  const filteredTemplateImages = templateImages.filter(item => (item?.assetType || '') === 'uploaded_images');
-
-                  // Combine both sources
-                  const allImages = [
-                    ...filteredTemplateImages,
-                    ...flatImages.map((img, idx) => {
-                      const url = typeof img === 'string' ? img : (img?.image_url || img?.url || '');
-                      if (!url) return null;
-                      return {
-                        id: `uploaded-img-flat-${idx}`,
-                        imageUrl: url,
-                        aspect: inferAspectFromUrl(url) || 'Unspecified',
-                        label: 'Uploaded Image',
-                        assetType: 'uploaded_images',
-                        raw: img
-                      };
-                    }).filter(Boolean)
-                  ];
-
-                  // Remove duplicates based on imageUrl and ensure assetType matches
-                  const seenUrls = new Set();
-                  list = allImages.filter(item => {
-                    const url = item?.imageUrl || item?.image_url || '';
-                    if (!url || seenUrls.has(url)) return false;
-                    if ((item?.assetType || '') !== 'uploaded_images') return false;
-                    seenUrls.add(url);
-                    return true;
-                  });
-                } else if (assetsTab === 'documents_images') {
-                  const flatArray = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
-                  list = flatArray.map((item, idx) => {
-                    const url = typeof item === 'string' ? item : (item?.image_url || item?.url || '');
-                    if (!url) return null;
-                    return {
-                      id: `${assetsTab}-${idx}`,
-                      imageUrl: url,
-                      aspect: inferAspectFromUrl(url) || 'Unspecified',
-                      label: `${assetsTab.replace('_', ' ')} ${idx + 1}`,
-                      assetType: assetsTab
-                    };
-                  }).filter(Boolean);
-                  // Ensure all items match the tab
-                  list = list.filter(item => (item?.assetType || '') === 'documents_images');
-                } else if (assetsTab === 'generated_images') {
-                  const generatedImages = generatedImagesData.generated_images || {};
-                  const allGeneratedImages = [];
-
-                  // Handle both old format (aspectRatio -> array) and new format (aspectRatio -> session -> array)
-                  Object.entries(generatedImages).forEach(([aspectRatio, value]) => {
-                    const normalizedAspect = normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified';
-
-                    // Check if value is an array (old format)
-                    if (Array.isArray(value)) {
-                      value.forEach((url, idx) => {
-                        if (typeof url === 'string' && url.trim()) {
-                          allGeneratedImages.push({
-                            id: `generated-${aspectRatio}-${idx}`,
-                            imageUrl: url.trim(),
-                            aspect: normalizedAspect,
-                            sessionId: '',
-                            label: `Generated Image ${idx + 1}`,
-                            assetType: 'generated_images'
-                          });
-                        }
-                      });
-                    }
-                    // Check if value is an object with session IDs (new format)
-                    else if (value && typeof value === 'object' && !Array.isArray(value)) {
-                      Object.entries(value).forEach(([sessionId, sessionUrls]) => {
-                        if (Array.isArray(sessionUrls)) {
-                          sessionUrls.forEach((url, idx) => {
-                            if (typeof url === 'string' && url.trim()) {
-                              allGeneratedImages.push({
-                                id: `generated-${aspectRatio}-${sessionId}-${idx}`,
-                                imageUrl: url.trim(),
-                                aspect: normalizedAspect,
-                                sessionId: sessionId || '',
-                                label: `Generated Image ${idx + 1}`,
-                                assetType: 'generated_images'
-                              });
-                            }
-                          });
-                        }
-                      });
-                    }
-                  });
-
-                  list = allGeneratedImages.filter(item => (item?.assetType || '') === 'generated_images');
-                }
-
-                // Filter images by aspect ratio when uploading background
-                if (uploadingBackgroundSceneNumber && questionnaireAspectRatio) {
-                  const targetAspectRatio = normalizeTemplateAspectLabel(questionnaireAspectRatio);
-                  // Only filter if we have a valid aspect ratio (not 'Unspecified')
-                  if (targetAspectRatio && targetAspectRatio !== 'Unspecified') {
-                    list = list.filter(entry => {
-                      const entryAspect = entry?.aspect || inferAspectFromUrl(entry?.imageUrl || entry?.image_url || '');
-                      return matchesAspectValue(entryAspect, targetAspectRatio);
-                    });
-                  }
-                }
-
-                // Final filter to ensure all items match the current tab
-                const finalList = list.filter(item => {
-                  const itemAssetType = item?.assetType || '';
-                  return itemAssetType === assetsTab;
-                });
-
-                // For generated_images, group by session and aspect ratio
-                if (assetsTab === 'generated_images' && finalList.length > 0) {
-                  // Group images by session ID and aspect ratio
-                  const groupedBySession = {};
-                  finalList.forEach(entry => {
-                    const sessionId = entry.sessionId || 'default';
-                    const aspect = entry.aspect || 'Unspecified';
-
-                    if (!groupedBySession[sessionId]) {
-                      groupedBySession[sessionId] = {};
-                    }
-                    if (!groupedBySession[sessionId][aspect]) {
-                      groupedBySession[sessionId][aspect] = [];
-                    }
-                    groupedBySession[sessionId][aspect].push(entry);
-                  });
-
-                  return (
-                    <div className="space-y-6" key={assetsTab}>
-                      {Object.entries(groupedBySession).map(([sessionId, aspectGroups]) => (
-                        <div key={sessionId} className="space-y-4">
-                          {/* Session Header */}
-                          <div className="border-b border-gray-200 pb-2">
-                            <h4 className="text-sm font-semibold text-gray-800">
-                              {sessionId && sessionId !== 'default' ? `Session: ${sessionId}` : 'Generated Images'}
-                            </h4>
-                          </div>
-
-                          {/* Aspect Ratio Groups */}
-                          {Object.entries(aspectGroups).map(([aspect, images]) => (
-                            <div key={`${sessionId}-${aspect}`} className="space-y-2">
-                              {/* Aspect Ratio Header */}
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                                  {aspect}
-                                </span>
-                                <span className="text-xs text-gray-500">
-                                  ({images.length} {images.length === 1 ? 'image' : 'images'})
-                                </span>
-                              </div>
-
-                              {/* Images Grid */}
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                {images.map((entry, idx) => {
-                                  const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
-                                  if (!imageUrl) return null;
-
-                                  const isSelected = selectedTemplateUrls.includes(imageUrl) || selectedAssetUrl === imageUrl;
-
-                                  const handleClick = () => {
-                                    if (isSelected) {
-                                      setSelectedTemplateUrls([]);
-                                      setSelectedAssetUrl('');
-                                    } else {
-                                      setSelectedTemplateUrls([imageUrl]);
-                                      setSelectedAssetUrl(imageUrl);
-                                    }
-                                  };
-
-                                  return (
-                                    <div
-                                      key={entry.id || idx}
-                                      className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
-                                      onClick={handleClick}
-                                      title={entry.label || `${entry.aspect || 'Unspecified'} • Generated Image`}
-                                    >
-                                      <img
-                                        src={imageUrl}
-                                        alt={entry.label || `Generated Image ${idx + 1}`}
-                                        className="w-full h-28 object-cover"
-                                        height={entry?.raw?.base_image?.image_dimensions?.height || entry?.raw?.base_image?.imageDimensions?.height || entry?.raw?.image_dimensions?.height || entry?.raw?.imageDimensions?.height || undefined}
-                                      />
-                                      <div className="p-2">
-                                        <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
-                                          {entry.label || `Generated Image ${idx + 1}`}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }
-
-                return (
-                  <>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4" key={assetsTab}>
-                      {/* Upload Box - Show for uploaded_templates and uploaded_images tabs */}
-                      {(assetsTab === 'uploaded_templates' || assetsTab === 'uploaded_images') && (
-                        <div
-                          className="rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 hover:border-[#13008B] hover:bg-gray-100 cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px]"
-                          onClick={() => {
-                            if (isUploadingBackground) return;
-                            if (assetsTab === 'uploaded_templates' && assetPptxUploadRef.current) {
-                              assetPptxUploadRef.current.click();
-                            } else if (assetsTab === 'uploaded_images' && assetImageUploadRef.current) {
-                              assetImageUploadRef.current.click();
-                            }
-                          }}
-                        >
-                          <div className="flex flex-col items-center gap-2 p-4 text-center">
-                            <Upload className="w-8 h-8 text-gray-400" />
-                            <span className="text-sm font-medium text-gray-700">
-                              {assetsTab === 'uploaded_templates' ? 'Upload PDF' : 'Upload Image'}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              Click to {assetsTab === 'uploaded_templates' ? 'upload PDF' : 'upload image'}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                      {finalList.length === 0 && (
-                        <div className="col-span-full text-center py-8 text-sm text-gray-600">
-                          No asset found
-                        </div>
-                      )}
-                      {finalList.map((entry, idx) => {
-                        const imageUrl = entry?.imageUrl || entry?.image_url || entry?.url || (typeof entry === 'string' ? entry : '');
-                        if (!imageUrl) return null;
-
-                        const isSelected = selectedTemplateUrls.includes(imageUrl) || selectedAssetUrl === imageUrl;
-
-                        const handleClick = () => {
-                          // For background selection, only allow single selection
-                          if (isSelected) {
-                            setSelectedTemplateUrls([]);
-                            setSelectedAssetUrl('');
-                          } else {
-                            setSelectedTemplateUrls([imageUrl]);
-                            setSelectedAssetUrl(imageUrl);
-                          }
-                        };
-
-                        return (
-                          <div
-                            key={entry.id || idx}
-                            className={`rounded-lg border overflow-hidden group relative bg-white cursor-pointer ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
-                            onClick={handleClick}
-                            title={entry.label || `${entry.aspect || 'Unspecified'} • ${assetsTab.replace('_', ' ')}`}
-                          >
-                            <img
-                              src={imageUrl}
-                              alt={entry.label || `${assetsTab}-${idx}`}
-                              className="w-full h-28 object-cover"
-                              height={entry?.raw?.base_image?.image_dimensions?.height || entry?.raw?.base_image?.imageDimensions?.height || entry?.raw?.image_dimensions?.height || entry?.raw?.imageDimensions?.height || undefined}
-                            />
-                            <div className="p-2">
-                              <span className="text-xs text-gray-700 truncate block" title={imageUrl}>
-                                {entry.label || `${assetsTab.replace('_', ' ')} ${idx + 1}`}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-
-            {/* Hidden File Inputs */}
-            <input
-              type="file"
-              ref={assetImageUploadRef}
-              accept="image/*"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const files = Array.from(e.target.files || []);
-                if (files.length > 0) {
-                  handleUploadImages(files);
-                }
-              }}
-            />
-            <input
-              type="file"
-              ref={assetPptxUploadRef}
-              accept=".pdf,.pptx"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleUploadPptx(file);
-                }
-              }}
-            />
-
-            {/* Keep Default and Generate Buttons */}
-            <div className="mt-4 flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
-              <button
-                disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
-                onClick={async () => {
-                  // Keep Default - call upload API with selected image (same as old Save)
-                  if (selectedTemplateUrls.length === 0) return;
-                  const imageUrl = selectedTemplateUrls[0];
-                  await handleSaveBackgroundFromAsset(imageUrl);
-                }}
-                className={`px-3 py-2 rounded-lg text-sm text-white ${selectedTemplateUrls.length === 0 || isUploadingBackground || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)
-                  ? 'bg-blue-300 cursor-not-allowed'
-                  : 'bg-[#13008B] hover:bg-blue-800'
-                  }`}
-              >
-                {isUploadingBackground ? 'Saving...' : 'Keep Default'}
-              </button>
-              <button
-                disabled={selectedTemplateUrls.length === 0 || isUploadingBackground || isGeneratingFromReference || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)}
-                onClick={() => {
-                  // Generate - open user query popup
-                  if (selectedTemplateUrls.length === 0) return;
-                  setShowUserQueryPopup(true);
-                  setUserQuery('');
-                }}
-                className={`px-3 py-2 rounded-lg text-sm text-white ${selectedTemplateUrls.length === 0 || isUploadingBackground || isGeneratingFromReference || (uploadingBackgroundSceneNumber && uploadFrames.length === 0)
-                  ? 'bg-blue-300 cursor-not-allowed'
-                  : 'bg-green-600 hover:bg-green-700'
-                  }`}
-              >
-                Generate
-              </button>
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-                {error}
-              </div>
-            )}
-
-            {/* Loading Overlay */}
-            {isUploadingBackground && (
-              <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                <Loader
-                  videoSize="w-16 h-16"
-                  title="Uploading Background..."
-                  description="Please wait while we upload your background image..."
-                  containerClass="!max-w-xs"
-                  progress={uploadingBackgroundProgress > 0 ? uploadingBackgroundProgress : null}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* User Query Popup for Generate from Reference */}
-      {showUserQueryPopup && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50">
-          <div className="bg-white w-[96%] max-w-2xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-[#13008B]">Enter Your Query</h3>
-              <button
-                onClick={() => {
-                  if (!isGeneratingFromReference) {
-                    setShowUserQueryPopup(false);
-                    setUserQuery('');
-                  }
-                }}
-                className="px-3 py-1.5 rounded-lg border text-sm"
-                disabled={isGeneratingFromReference}
-              >
-                Close
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="p-6 flex-1 overflow-y-auto">
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Describe what you want to generate from the reference image:
-                  </label>
-                  <textarea
-                    value={userQuery}
-                    onChange={(e) => setUserQuery(e.target.value)}
-                    placeholder="Enter your query here... (e.g., 'Make it more vibrant', 'Add sunset colors', 'Change to night scene')"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-[#13008B] resize-none"
-                    rows={6}
-                    disabled={isGeneratingFromReference}
-                  />
-                </div>
-                {error && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-                    {error}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="flex items-center justify-end gap-2 border-t pt-3 px-4 pb-4">
-              <button
-                onClick={() => {
-                  if (!isGeneratingFromReference) {
-                    setShowUserQueryPopup(false);
-                    setUserQuery('');
-                  }
-                }}
-                disabled={isGeneratingFromReference}
-                className="px-4 py-2 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={!userQuery.trim() || isGeneratingFromReference || selectedTemplateUrls.length === 0}
-                onClick={async () => {
-                  if (selectedTemplateUrls.length === 0 || !userQuery.trim()) return;
-                  const imageUrl = selectedTemplateUrls[0];
-                  await handleGenerateFromReference(imageUrl, userQuery);
-                }}
-                className={`px-4 py-2 rounded-lg text-sm text-white ${!userQuery.trim() || isGeneratingFromReference || selectedTemplateUrls.length === 0
-                  ? 'bg-blue-300 cursor-not-allowed'
-                  : 'bg-green-600 hover:bg-green-700'
-                  }`}
-              >
-                {isGeneratingFromReference ? 'Generating...' : 'Save'}
-              </button>
-            </div>
-
-            {/* Loading Overlay */}
-            {isGeneratingFromReference && (
-              <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                  <div className="relative w-16 h-16">
-                    <svg className="w-16 h-16" viewBox="0 0 100 100">
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="45"
-                        stroke="#E5E7EB"
-                        strokeWidth="8"
-                        fill="none"
-                      />
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="45"
-                        stroke="#13008B"
-                        strokeWidth="8"
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeDasharray="283"
-                        strokeDashoffset="70"
-                        className="animate-spin"
-                        style={{
-                          transformOrigin: '50% 50%',
-                          animation: 'spin 1.5s linear infinite'
-                        }}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-3 h-3 bg-[#13008B] rounded-full" />
-                    </div>
-                  </div>
-                  <p className="text-lg font-semibold text-[#13008B]">Generating from Reference...</p>
-                  <p className="text-sm text-gray-600">Please wait while we generate your image...</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-    </div>
+    </div >
   );
 };
 
