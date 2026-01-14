@@ -1199,18 +1199,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             .filter((url) => url && typeof url === 'string' && url.trim())
         }
 
-        let genImage = true
-        if (row?.imageVersionData && typeof row.imageVersionData === 'object') {
-          const imageVersionData = row.imageVersionData
-          const versionKey = getLatestVersionKey(imageVersionData)
-          const verObj = imageVersionData[versionKey] || {}
-          genImage = verObj?.gen_image !== false
-        }
-
-        if (!genImage && avatarUrls.length > 0) {
-          return [avatarUrls[0]].filter(Boolean)
-        }
-
         if (isPortrait9x16) {
           if (avatarUrls.length > 0) {
             return [avatarUrls[0]].filter(Boolean)
@@ -2004,13 +1992,45 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     }
                   }
                 }
-              } else {
-                const genImage = verObj?.gen_image !== false;
-                if (isVEO3 && !genImage) {
-                  let avatarUrls = [];
+              } else if (isVEO3) {
+                let avatarUrls = [];
 
-                  if (Array.isArray(verObj?.avatar_urls)) {
-                    avatarUrls = verObj.avatar_urls.map((av) => {
+                if (Array.isArray(verObj?.avatar_urls)) {
+                  avatarUrls = verObj.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim());
+                }
+
+                if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(it?.avatar_urls)) {
+                  avatarUrls = it.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim());
+                }
+
+                if ((!avatarUrls || avatarUrls.length === 0) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                  const scene = veo3ScriptScenesByNumber[sceneNumber];
+                  if (Array.isArray(scene?.avatar_urls)) {
+                    avatarUrls = scene.avatar_urls.map((av) => {
                       if (typeof av === 'string') return av.trim();
                       return (
                         av?.imageurl ||
@@ -2024,53 +2044,18 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       );
                     }).filter(url => url && typeof url === 'string' && url.trim());
                   }
+                }
 
-                  if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(it?.avatar_urls)) {
-                    avatarUrls = it.avatar_urls.map((av) => {
-                      if (typeof av === 'string') return av.trim();
-                      return (
-                        av?.imageurl ||
-                        av?.imageUrl ||
-                        av?.image_url ||
-                        av?.url ||
-                        av?.src ||
-                        av?.link ||
-                        av?.avatar_url ||
-                        ''
-                      );
-                    }).filter(url => url && typeof url === 'string' && url.trim());
-                  }
+                if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(globalAvatarUrls) && globalAvatarUrls.length > 0) {
+                  avatarUrls = globalAvatarUrls;
+                }
 
-                  if ((!avatarUrls || avatarUrls.length === 0) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
-                    const scene = veo3ScriptScenesByNumber[sceneNumber];
-                    if (Array.isArray(scene?.avatar_urls)) {
-                      avatarUrls = scene.avatar_urls.map((av) => {
-                        if (typeof av === 'string') return av.trim();
-                        return (
-                          av?.imageurl ||
-                          av?.imageUrl ||
-                          av?.image_url ||
-                          av?.url ||
-                          av?.src ||
-                          av?.link ||
-                          av?.avatar_url ||
-                          ''
-                        );
-                      }).filter(url => url && typeof url === 'string' && url.trim());
-                    }
-                  }
-
-                  if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(globalAvatarUrls) && globalAvatarUrls.length > 0) {
-                    avatarUrls = globalAvatarUrls;
-                  }
-
-                  if (avatarUrls.length > 0) {
-                    finalRefs = avatarUrls;
-                    avatarUrlsForMeta = avatarUrls;
-                    imageFrames = [];
-                    imageDimensions = null;
-                    textElements = [];
-                  }
+                if (avatarUrls.length > 0) {
+                  finalRefs = avatarUrls;
+                  avatarUrlsForMeta = avatarUrls;
+                  imageFrames = [];
+                  imageDimensions = null;
+                  textElements = [];
                 }
               }
 
@@ -2470,6 +2455,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           pushRow(num, scene?.scene_title || scene?.title, refs, meta);
         });
       }
+
+      if (Array.isArray(globalAvatarUrls) && globalAvatarUrls.length > 0) {
+        mapped = mapped.map((row) => {
+          const modelUpper = String(row?.model || '').toUpperCase();
+          const isVEO3 = modelUpper === 'VEO3' || modelUpper === 'ANCHOR';
+          if (!isVEO3) return row;
+          return {
+            ...row,
+            avatar_urls: globalAvatarUrls
+          };
+        });
+      }
+
       return mapped;
     };
 
@@ -3503,12 +3501,44 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               }
 
               if (arr.length === 0) {
-                const genImage = verObj?.gen_image !== false;
-                if (!genImage) {
-                  let avatarUrls = [];
+                let avatarUrls = [];
 
-                  if (Array.isArray(versionAvatars)) {
-                    avatarUrls = versionAvatars.map((av) => {
+                if (Array.isArray(versionAvatars)) {
+                  avatarUrls = versionAvatars.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim());
+                }
+
+                if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(it?.avatar_urls)) {
+                  avatarUrls = it.avatar_urls.map((av) => {
+                    if (typeof av === 'string') return av.trim();
+                    return (
+                      av?.imageurl ||
+                      av?.imageUrl ||
+                      av?.image_url ||
+                      av?.url ||
+                      av?.src ||
+                      av?.link ||
+                      av?.avatar_url ||
+                      ''
+                    );
+                  }).filter(url => url && typeof url === 'string' && url.trim());
+                }
+
+                if ((!avatarUrls || avatarUrls.length === 0) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
+                  const scene = veo3ScriptScenesByNumber[sceneNumber];
+                  if (Array.isArray(scene?.avatar_urls)) {
+                    avatarUrls = scene.avatar_urls.map((av) => {
                       if (typeof av === 'string') return av.trim();
                       return (
                         av?.imageurl ||
@@ -3522,47 +3552,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       );
                     }).filter(url => url && typeof url === 'string' && url.trim());
                   }
+                }
 
-                  if ((!avatarUrls || avatarUrls.length === 0) && Array.isArray(it?.avatar_urls)) {
-                    avatarUrls = it.avatar_urls.map((av) => {
-                      if (typeof av === 'string') return av.trim();
-                      return (
-                        av?.imageurl ||
-                        av?.imageUrl ||
-                        av?.image_url ||
-                        av?.url ||
-                        av?.src ||
-                        av?.link ||
-                        av?.avatar_url ||
-                        ''
-                      );
-                    }).filter(url => url && typeof url === 'string' && url.trim());
-                  }
-
-                  if ((!avatarUrls || avatarUrls.length === 0) && veo3ScriptScenesByNumber && veo3ScriptScenesByNumber[sceneNumber]) {
-                    const scene = veo3ScriptScenesByNumber[sceneNumber];
-                    if (Array.isArray(scene?.avatar_urls)) {
-                      avatarUrls = scene.avatar_urls.map((av) => {
-                        if (typeof av === 'string') return av.trim();
-                        return (
-                          av?.imageurl ||
-                          av?.imageUrl ||
-                          av?.image_url ||
-                          av?.url ||
-                          av?.src ||
-                          av?.link ||
-                          av?.avatar_url ||
-                          ''
-                        );
-                      }).filter(url => url && typeof url === 'string' && url.trim());
-                    }
-                  }
-
-                  if (avatarUrls.length > 0) {
-                    refs = avatarUrls;
-                    avatarUrlsForMeta = avatarUrls;
-                    hasVersionedImages = true;
-                  }
+                if (avatarUrls.length > 0) {
+                  refs = avatarUrls;
+                  avatarUrlsForMeta = avatarUrls;
+                  hasVersionedImages = true;
                 }
               }
             }
