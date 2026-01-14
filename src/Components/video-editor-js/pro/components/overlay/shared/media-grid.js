@@ -47,20 +47,20 @@ export const MediaGrid = ({
 
   const sessionGroups = groupedBySession
     ? (() => {
-        const sessionMap = new Map();
-        items.forEach((item) => {
-          const sessionName = item._sessionName || "Other";
-          if (!sessionMap.has(sessionName)) {
-            sessionMap.set(sessionName, []);
-          }
-          sessionMap.get(sessionName).push(item);
-        });
-        return Array.from(sessionMap.entries()).sort((a, b) => {
-          if (a[0] === "Other") return 1;
-          if (b[0] === "Other") return -1;
-          return a[0].localeCompare(b[0]);
-        });
-      })()
+      const sessionMap = new Map();
+      items.forEach((item) => {
+        const sessionName = item._sessionName || "Other";
+        if (!sessionMap.has(sessionName)) {
+          sessionMap.set(sessionName, []);
+        }
+        sessionMap.get(sessionName).push(item);
+      });
+      return Array.from(sessionMap.entries()).sort((a, b) => {
+        if (a[0] === "Other") return 1;
+        if (b[0] === "Other") return -1;
+        return a[0].localeCompare(b[0]);
+      });
+    })()
     : null;
 
   // Handle drag start for timeline integration
@@ -148,9 +148,8 @@ export const MediaGrid = ({
                     }),
                     _jsx("p", {
                       className: "text-xs text-gray-500 mt-0.5",
-                      children: `${sessionItems.length} ${mediaType === "videos" ? "video" : "image"}${
-                        sessionItems.length !== 1 ? "s" : ""
-                      }`,
+                      children: `${sessionItems.length} ${mediaType === "videos" ? "video" : "image"}${sessionItems.length !== 1 ? "s" : ""
+                        }`,
                     }),
                   ],
                 }),
@@ -219,49 +218,45 @@ export const MediaGrid = ({
                             children: [
                               shouldShowVideo
                                 ? _jsx("video", {
-                                    src: videoUrl,
-                                    className: `absolute inset-0 w-full h-full rounded-sm object-cover transition-transform duration-200 ${
-                                      isItemLoading
-                                        ? "opacity-50"
-                                        : "group-hover:scale-105"
+                                  src: videoUrl,
+                                  className: `absolute inset-0 w-full h-full rounded-sm object-cover transition-transform duration-200 ${isItemLoading
+                                      ? "opacity-50"
+                                      : "group-hover:scale-105"
                                     }`,
-                                    muted: true,
-                                    playsInline: true,
-                                    preload: "metadata",
-                                    onLoadedMetadata: (e) => {
-                                      // Seek to 0.1s to show a frame
-                                      e.currentTarget.currentTime = 0.1;
-                                    },
-                                    draggable: false,
-                                  })
+                                  muted: true,
+                                  playsInline: true,
+                                  preload: "metadata",
+                                  onLoadedMetadata: (e) => {
+                                    // Seek to 0.1s to show a frame
+                                    e.currentTarget.currentTime = 0.1;
+                                  },
+                                  draggable: false,
+                                })
                                 : _jsx("img", {
-                                    src: thumbnailUrl,
-                                    alt: `${mediaType.slice(0, -1)} from ${
-                                      item._sourceDisplayName
+                                  src: thumbnailUrl,
+                                  alt: `${mediaType.slice(0, -1)} from ${item._sourceDisplayName
                                     }`,
-                                    className: `absolute inset-0 w-full h-full rounded-sm ${
-                                      mediaType === "images" ? "object-contain bg-gray-50" : "object-cover"
-                                    } ${
-                                      isItemLoading
-                                        ? "opacity-50"
-                                        : ""
+                                  className: `absolute inset-0 w-full h-full rounded-sm ${mediaType === "images" ? "object-contain bg-gray-50" : "object-cover"
+                                    } ${isItemLoading
+                                      ? "opacity-50"
+                                      : ""
                                     }`,
-                                    draggable: false,
-                                  }),
+                                  draggable: false,
+                                }),
                               isItemLoading &&
-                                _jsx("div", {
+                              _jsx("div", {
+                                className:
+                                  "absolute inset-0 bg-background/80 flex items-center justify-center",
+                                children: _jsx("div", {
                                   className:
-                                    "absolute inset-0 bg-background/80 flex items-center justify-center",
-                                  children: _jsx("div", {
-                                    className:
-                                      "w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin",
-                                  }),
+                                    "w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin",
                                 }),
+                              }),
                               !isItemLoading &&
-                                _jsx("div", {
-                                  className:
-                                    "absolute inset-0 bg-black/0 hover:bg-black/10 transition-all duration-200 rounded-sm",
-                                }),
+                              _jsx("div", {
+                                className:
+                                  "absolute inset-0 bg-black/0 hover:bg-black/10 transition-all duration-200 rounded-sm",
+                              }),
                             ],
                           }),
                         }),
@@ -339,45 +334,41 @@ export const MediaGrid = ({
                 children: [
                   shouldShowVideo
                     ? _jsx("video", {
-                        src: videoUrl,
-                        className: `absolute inset-0 w-full h-full rounded-sm object-cover transition-transform duration-200 ${
-                          isItemLoading ? "opacity-50" : "group-hover:scale-105"
+                      src: videoUrl,
+                      className: `absolute inset-0 w-full h-full rounded-sm object-cover transition-transform duration-200 ${isItemLoading ? "opacity-50" : "group-hover:scale-105"
                         }`,
-                        muted: true,
-                        playsInline: true,
-                        preload: "metadata",
-                        onLoadedMetadata: (e) => {
-                          // Seek to 0.1s to show a frame
-                          e.currentTarget.currentTime = 0.1;
-                        },
-                        draggable: false,
-                      })
+                      muted: true,
+                      playsInline: true,
+                      preload: "metadata",
+                      onLoadedMetadata: (e) => {
+                        // Seek to 0.1s to show a frame
+                        e.currentTarget.currentTime = 0.1;
+                      },
+                      draggable: false,
+                    })
                     : _jsx("img", {
-                        src: thumbnailUrl,
-                        alt: `${mediaType.slice(0, -1)} from ${
-                          item._sourceDisplayName
+                      src: thumbnailUrl,
+                      alt: `${mediaType.slice(0, -1)} from ${item._sourceDisplayName
                         }`,
-                        className: `absolute inset-0 w-full h-full rounded-sm transition-transform duration-200 ${
-                          mediaType === "images" ? "object-contain bg-gray-50" : "object-cover"
-                        } ${
-                          isItemLoading ? "opacity-50" : "group-hover:scale-105"
+                      className: `absolute inset-0 w-full h-full rounded-sm transition-transform duration-200 ${mediaType === "images" ? "object-contain bg-gray-50" : "object-cover"
+                        } ${isItemLoading ? "opacity-50" : "group-hover:scale-105"
                         }`,
-                        draggable: false,
-                      }),
+                      draggable: false,
+                    }),
                   isItemLoading &&
-                    _jsx("div", {
+                  _jsx("div", {
+                    className:
+                      "absolute inset-0 bg-background/80 flex items-center justify-center",
+                    children: _jsx("div", {
                       className:
-                        "absolute inset-0 bg-background/80 flex items-center justify-center",
-                      children: _jsx("div", {
-                        className:
-                          "w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin",
-                      }),
+                        "w-6 h-6 border-2 border-secondary border-t-transparent rounded-full animate-spin",
                     }),
+                  }),
                   !isItemLoading &&
-                    _jsx("div", {
-                      className:
-                        "absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-200 rounded-sm",
-                    }),
+                  _jsx("div", {
+                    className:
+                      "absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-200 rounded-sm",
+                  }),
                 ],
               }),
             }),
