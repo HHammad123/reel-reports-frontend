@@ -2571,7 +2571,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
 
       console.log('[BuildReel] Save payload - Total scenes:', airesponse.length);
 
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const text = await resp.text();
@@ -3085,7 +3085,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
 
-      const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
+      const endpoint = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
 
       // 4) First, call create-from-scratch with action "save" to save current scenes
       const saveBody = {
@@ -6704,7 +6704,7 @@ const BuildReelWizard = () => {
           action: 'save'
         };
         console.log('[BuildReel] create-from-scratch(save) request:', body);
-        const saveResp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
+        const saveResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
         const saveText = await saveResp.text();
@@ -6918,11 +6918,14 @@ const BuildReelWizard = () => {
       const body = {
         user: userPayload,
         session_id: sessionId || '',
-        current_script: { userquery: transformedUQ },
+        current_script: {
+          userquery: transformedUQ,
+          airesponse: []
+        },
         action: 'add',
         model_type: 'SORA'
       };
-      const endpoint = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
+      const endpoint = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
       console.log('[BuildReel] Step 2: Calling create-from-scratch API');
       console.log('[BuildReel] create-from-scratch request body:', JSON.stringify(body, null, 2));
       const resp = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
