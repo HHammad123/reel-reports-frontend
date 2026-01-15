@@ -455,6 +455,7 @@ const VOICEOVER_FLOW_STEPS = [
   ...VOICEOVER_TONES.map(tone => ({ id: tone.id, label: tone.label })),
   { id: 'complete', label: 'Done' }
 ]
+const GENERATED_ASSETS_PAGE_SIZE = 3
 
 const Brandimages = () => {
   const fileInputRef = useRef(null)
@@ -493,6 +494,7 @@ const Brandimages = () => {
     generated_videos: {}
   })
   const [selectedAspectRatio, setSelectedAspectRatio] = useState('16:9')
+  const [generatedAssetsPage, setGeneratedAssetsPage] = useState(1)
   const [isLoadingGeneratedAssets, setIsLoadingGeneratedAssets] = useState(false)
   const [generatedAssetsError, setGeneratedAssetsError] = useState('')
   const [isLoadingTemplateDetails, setIsLoadingTemplateDetails] = useState(false)
@@ -3559,108 +3561,6 @@ const Brandimages = () => {
         </div>
       </section>
 
-      {/* Generated Assets */}
-      <section className="rounded-xl border border-gray-200 bg-white">
-        <div className="flex items-center justify-between px-5 py-4">
-          <p className="text-gray-800 font-medium">Generated Assets</p>
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-gray-600">Aspect Ratio:</label>
-            <select
-              value={selectedAspectRatio}
-              onChange={(e) => setSelectedAspectRatio(e.target.value)}
-              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-            >
-              <option value="9:16">9:16</option>
-              <option value="16:9">16:9</option>
-            </select>
-          </div>
-        </div>
-        <div className="px-5 pb-5">
-          {isLoadingGeneratedAssets ? (
-            <div className="text-sm text-gray-500 py-4">Loading generated assets...</div>
-          ) : generatedAssetsError ? (
-            <div className="text-sm text-red-600 py-4">{generatedAssetsError}</div>
-          ) : (
-            (() => {
-              // Extract all images from the selected aspect ratio
-              // Structure: generated_images[aspectRatio][sessionName] = [url1, url2, ...]
-              const aspectRatioData = generatedAssets.generated_images?.[selectedAspectRatio]
-              
-              // Group images by session name
-              const sessionGroups = []
-              if (aspectRatioData && typeof aspectRatioData === 'object') {
-                Object.keys(aspectRatioData).forEach(sessionName => {
-                  const sessionImages = aspectRatioData[sessionName]
-                  if (Array.isArray(sessionImages) && sessionImages.length > 0) {
-                    const images = []
-                    sessionImages.forEach((imgUrl, idx) => {
-                      // Handle both string URLs and objects with url/image_url properties
-                      let imageUrl = ''
-                      if (typeof imgUrl === 'string') {
-                        imageUrl = imgUrl
-                      } else if (imgUrl && typeof imgUrl === 'object') {
-                        imageUrl = imgUrl.image_url || imgUrl.imageUrl || imgUrl.url || imgUrl.src || ''
-                      }
-                      if (imageUrl) {
-                        images.push({
-                          url: imageUrl,
-                          index: idx
-                        })
-                      }
-                    })
-                    if (images.length > 0) {
-                      sessionGroups.push({
-                        sessionName: sessionName,
-                        images: images
-                      })
-                    }
-                  }
-                })
-              }
-              
-              if (sessionGroups.length === 0) {
-                return <p className="text-sm text-gray-500">No images for {selectedAspectRatio} aspect ratio.</p>
-              }
-              
-              return (
-                <div className="flex flex-col gap-6">
-                  {sessionGroups.map((group, groupIdx) => (
-                    <div key={`session-${groupIdx}-${group.sessionName}`} className="flex flex-col gap-3">
-                      {/* Session Header */}
-                      <div className="flex flex-col gap-1">
-                        <h3 className="text-lg font-semibold text-gray-900">{group.sessionName}</h3>
-                        <p className="text-sm text-gray-500">{group.images.length} image{group.images.length !== 1 ? 's' : ''}</p>
-                      </div>
-                      {/* Images Grid */}
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {group.images.map((img, idx) => (
-                          <div key={`${group.sessionName}-${img.index}-${idx}`} className="relative group flex flex-col">
-                            <div className="relative aspect-video bg-gray-50 rounded border border-gray-200 hover:border-blue-400 transition-colors cursor-pointer overflow-hidden">
-                              <img
-                                src={img.url}
-                                alt={`Generated image from ${group.sessionName} - ${idx + 1}`}
-                                className="w-full h-full object-contain"
-                                onError={(e) => {
-                                  e.target.style.display = 'none'
-                                }}
-                                onClick={() => {
-                                  // Optional: open image in full screen or modal
-                                  window.open(img.url, '_blank')
-                                }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )
-            })()
-          )}
-        </div>
-      </section>
-
       {/* Tone & Voice Modal */}
       {isToneModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -4121,6 +4021,198 @@ const Brandimages = () => {
         </div>
       </section>
 
+      {/* Voiceovers */}
+      <section className="rounded-xl border border-gray-200 bg-white">
+        <div className="flex items-center justify-between px-5 py-4">
+          <p className="text-gray-800 font-medium">Voiceovers</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => { setVoiceTab('upload'); openUploadModal('voiceovers'); }} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b] transition-colors">Upload</button>
+            <button type="button" onClick={() => { setVoiceTab('record'); openUploadModal('voiceovers'); }} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b] transition-colors">Record</button>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          <div className="flex flex-wrap gap-2">
+            {(() => {
+              // Extract names from voiceover objects
+              const allNames = (voiceovers || []).map(v => {
+                if (typeof v === 'string') return v;
+                if (typeof v === 'object' && v !== null) {
+                  return v.name || v.voiceover_name || v.title || '';
+                }
+                return '';
+              }).filter(Boolean);
+
+              // Get unique names only
+              const uniqueNames = Array.from(new Set(allNames));
+
+              return uniqueNames.length === 0 ? (
+                <p className="text-sm text-gray-500">No voiceovers added yet.</p>
+              ) : (
+                uniqueNames.map((name, idx) => (
+                  <span key={idx} className="px-3 py-1.5 rounded-full border border-gray-300 bg-gray-50 text-sm text-gray-700">
+                    {name}
+                  </span>
+                ))
+              );
+            })()}
+            </div>
+        </div>
+      </section>
+
+      {/* Icons */}
+      <section className="rounded-xl border border-gray-200 bg-white">
+        <div className="flex items-center justify-between px-5 py-4">
+          <p className="text-gray-800 font-medium">Icons</p>
+          <div>
+            <button type="button" onClick={() => openUploadModal('icons')} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm">Upload</button>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          <div className="flex items-center gap-6 flex-wrap text-gray-900">
+            {(icons || []).length === 0 ? (
+              <p className="text-sm text-gray-500">No icons added yet.</p>
+            ) : (
+              icons.map((u, idx) => (
+                <img key={idx} src={typeof u === 'string' ? u : (u?.url || '')} alt={`icon-${idx}`} className="h-16 w-16 object-contain rounded border" />
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Generated Assets */}
+      <section className="rounded-xl border border-gray-200 bg-white">
+        <div className="flex items-center justify-between px-5 py-4">
+          <p className="text-gray-800 font-medium">Generated Assets</p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-600">Aspect Ratio:</label>
+            <select
+              value={selectedAspectRatio}
+              onChange={(e) => {
+                setSelectedAspectRatio(e.target.value)
+                setGeneratedAssetsPage(1)
+              }}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+            >
+              <option value="9:16">9:16</option>
+              <option value="16:9">16:9</option>
+            </select>
+          </div>
+        </div>
+        <div className="px-5 pb-5">
+          {isLoadingGeneratedAssets ? (
+            <div className="text-sm text-gray-500 py-4">Loading generated assets...</div>
+          ) : generatedAssetsError ? (
+            <div className="text-sm text-red-600 py-4">{generatedAssetsError}</div>
+          ) : (
+            (() => {
+              // Extract all images from the selected aspect ratio
+              // Structure: generated_images[aspectRatio][sessionName] = [url1, url2, ...]
+              const aspectRatioData = generatedAssets.generated_images?.[selectedAspectRatio]
+
+              // Group images by session name
+              const sessionGroups = []
+              if (aspectRatioData && typeof aspectRatioData === 'object') {
+                Object.keys(aspectRatioData).forEach(sessionName => {
+                  const sessionImages = aspectRatioData[sessionName]
+                  if (Array.isArray(sessionImages) && sessionImages.length > 0) {
+                    const images = []
+                    sessionImages.forEach((imgUrl, idx) => {
+                      // Handle both string URLs and objects with url/image_url properties
+                      let imageUrl = ''
+                      if (typeof imgUrl === 'string') {
+                        imageUrl = imgUrl
+                      } else if (imgUrl && typeof imgUrl === 'object') {
+                        imageUrl = imgUrl.image_url || imgUrl.imageUrl || imgUrl.url || imgUrl.src || ''
+                      }
+                      if (imageUrl) {
+                        images.push({
+                          url: imageUrl,
+                          index: idx
+                        })
+                      }
+                    })
+                    if (images.length > 0) {
+                      sessionGroups.push({
+                        sessionName: sessionName,
+                        images: images
+                      })
+                    }
+                  }
+                })
+              }
+
+              if (sessionGroups.length === 0) {
+                return <p className="text-sm text-gray-500">No images for {selectedAspectRatio} aspect ratio.</p>
+              }
+
+              const totalPages = Math.max(1, Math.ceil(sessionGroups.length / GENERATED_ASSETS_PAGE_SIZE))
+              const safePage = Math.min(generatedAssetsPage, totalPages)
+              const startIndex = (safePage - 1) * GENERATED_ASSETS_PAGE_SIZE
+              const visibleGroups = sessionGroups.slice(startIndex, startIndex + GENERATED_ASSETS_PAGE_SIZE)
+
+              return (
+                <div className="flex flex-col gap-6">
+                  {visibleGroups.map((group, groupIdx) => (
+                    <div key={`session-${groupIdx}-${group.sessionName}`} className="flex flex-col gap-3">
+                      {/* Session Header */}
+                      <div className="flex flex-col gap-1">
+                        <h3 className="text-lg font-semibold text-gray-900">{group.sessionName}</h3>
+                        <p className="text-sm text-gray-500">{group.images.length} image{group.images.length !== 1 ? 's' : ''}</p>
+                      </div>
+                      {/* Images Grid */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {group.images.map((img, idx) => (
+                          <div key={`${group.sessionName}-${img.index}-${idx}`} className="relative group flex flex-col">
+                            <div className="relative aspect-video bg-gray-50 rounded border border-gray-200 hover:border-blue-400 transition-colors cursor-pointer overflow-hidden">
+                              <img
+                                src={img.url}
+                                alt={`Generated image from ${group.sessionName} - ${idx + 1}`}
+                                className="w-full h-full object-contain"
+                                onError={(e) => {
+                                  e.target.style.display = 'none'
+                                }}
+                                onClick={() => {
+                                  // Optional: open image in full screen or modal
+                                  window.open(img.url, '_blank')
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {totalPages > 1 && (
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-gray-100 pt-4">
+                      <p className="text-xs text-gray-500">Page {safePage} of {totalPages}</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setGeneratedAssetsPage(prev => Math.max(1, prev - 1))}
+                          disabled={safePage === 1}
+                          className="px-3 py-1.5 rounded-md text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGeneratedAssetsPage(prev => Math.min(totalPages, prev + 1))}
+                          disabled={safePage === totalPages}
+                          className="px-3 py-1.5 rounded-md text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()
+          )}
+        </div>
+      </section>
+
       {isPlacementPromptOpen && placementTemplates.length > 0 && !isPlacementOverlayOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-8">
           <div className="w-full max-w-lg rounded-2xl border border-[#D8D3FF] bg-white shadow-2xl">
@@ -4173,44 +4265,6 @@ const Brandimages = () => {
           </div>
         </div>
       )}
-
-      {/* Voiceovers */}
-      <section className="rounded-xl border border-gray-200 bg-white">
-        <div className="flex items-center justify-between px-5 py-4">
-          <p className="text-gray-800 font-medium">Voiceovers</p>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => { setVoiceTab('upload'); openUploadModal('voiceovers'); }} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b] transition-colors">Upload</button>
-            <button type="button" onClick={() => { setVoiceTab('record'); openUploadModal('voiceovers'); }} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b] transition-colors">Record</button>
-          </div>
-        </div>
-        <div className="px-5 pb-5">
-          <div className="flex flex-wrap gap-2">
-            {(() => {
-              // Extract names from voiceover objects
-              const allNames = (voiceovers || []).map(v => {
-                if (typeof v === 'string') return v;
-                if (typeof v === 'object' && v !== null) {
-                  return v.name || v.voiceover_name || v.title || '';
-                }
-                return '';
-              }).filter(Boolean);
-              
-              // Get unique names only
-              const uniqueNames = Array.from(new Set(allNames));
-              
-              return uniqueNames.length === 0 ? (
-                <p className="text-sm text-gray-500">No voiceovers added yet.</p>
-              ) : (
-                uniqueNames.map((name, idx) => (
-                  <span key={idx} className="px-3 py-1.5 rounded-full border border-gray-300 bg-gray-50 text-sm text-gray-700">
-                    {name}
-                  </span>
-                ))
-              );
-            })()}
-            </div>
-        </div>
-      </section>
 
       {isPlacementOverlayOpen && placementTemplates.length > 0 && activePlacementWithPair && (
         <div className="fixed inset-0 z-50 flex w-full h-full bg-white">
@@ -4574,27 +4628,6 @@ const Brandimages = () => {
 
       {/* Colors */}
     
-
-      {/* Icons */}
-      <section className="rounded-xl border border-gray-200 bg-white">
-        <div className="flex items-center justify-between px-5 py-4">
-          <p className="text-gray-800 font-medium">Icons</p>
-          <div>
-            <button type="button" onClick={() => openUploadModal('icons')} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm">Upload</button>
-          </div>
-        </div>
-        <div className="px-5 pb-5">
-          <div className="flex items-center gap-6 flex-wrap text-gray-900">
-            {(icons || []).length === 0 ? (
-              <p className="text-sm text-gray-500">No icons added yet.</p>
-            ) : (
-              icons.map((u, idx) => (
-                <img key={idx} src={typeof u === 'string' ? u : (u?.url || '')} alt={`icon-${idx}`} className="h-16 w-16 object-contain rounded border" />
-              ))
-            )}
-          </div>
-        </div>
-      </section>
 
       {/* Upload Modal */}
       {isModalOpen && (
