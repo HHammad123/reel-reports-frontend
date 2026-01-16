@@ -5,9 +5,40 @@ import { formatAIResponse } from '../utils/formatting';
 import { normalizeGeneratedMediaResponse } from '../utils/generatedMediaUtils';
 import ChartDataEditor from './ChartDataEditor';
 import LogoImage from '../asset/mainLogo.png';
+import loadingGif from '../asset/loadingv2.gif';
 import LoadingAnimationGif from '../asset/loading.gif';
 import Loader from './Loader';
 import { useProgressLoader } from '../hooks/useProgressLoader';
+
+const SimulatedProgressLoader = ({ message, duration = 3000, showPercentage = true }) => {
+  const [percentage, setPercentage] = useState(0)
+
+  useEffect(() => {
+    setPercentage(0)
+    const interval = setInterval(() => {
+      setPercentage(prev => {
+        if (prev >= 95) return 95
+        return prev + 5
+      })
+    }, duration / 20)
+    return () => clearInterval(interval)
+  }, [duration])
+
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 p-6">
+      <img src={loadingGif} alt="Loading..." className="h-24 w-24 object-contain" />
+      {message && <p className="text-gray-600 font-medium text-center">{message}</p>}
+      <div className="w-64 bg-gray-200 rounded-full h-2 overflow-hidden relative">
+        <div
+          className="bg-[#13008B] h-2 rounded-full transition-all duration-300 ease-out"
+          style={{ width: `${percentage}%` }}
+        ></div>
+      </div>
+      {showPercentage && <p className="text-sm text-gray-500 font-semibold">{percentage}%</p>}
+    </div>
+  )
+}
+
 
 const GOOGLE_FONT_OPTIONS = [
   'Roboto',
@@ -887,6 +918,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [newSceneChartData, setNewSceneChartData] = useState('');
   const [newSceneDocSummary, setNewSceneDocSummary] = useState('');
   const [isUploadingNewSceneDoc, setIsUploadingNewSceneDoc] = useState(false);
+  const [invalidUploadModalOpen, setInvalidUploadModalOpen] = useState(false);
+  const [invalidUploadFiles, setInvalidUploadFiles] = useState([]);
   const [newSceneContent, setNewSceneContent] = useState('');
   const [newSceneSelectedIdx, setNewSceneSelectedIdx] = useState(-1);
   const [newScenePresenterPresetId, setNewScenePresenterPresetId] = useState('');
@@ -2147,46 +2180,49 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         {showGenerateSummaryModal && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
             <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-              <h3 className="text-lg font-semibold text-[#13008B]">Generate Summary</h3>
-              <p className="mt-2 text-sm text-gray-600">
-                Choose the scene position (1-based) to generate a summary for. The first scene is position 1.
-              </p>
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Scene Position
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max={Math.max(1, Array.isArray(scriptRows) ? scriptRows.length : 1)}
-                  value={generateSummaryPosition}
-                  onChange={(e) => setGenerateSummaryPosition(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#13008B] focus:outline-none focus:ring-2 focus:ring-[#13008B]/20"
-                  disabled={isGeneratingSummary}
-                />
-              </div>
-              {generateSummaryError && (
-                <div className="mt-3 text-sm text-red-600">{generateSummaryError}</div>
-              )}
-              <div className="mt-6 flex justify-end gap-3">
-                <button
-                  onClick={closeGenerateSummaryPrompt}
-                  disabled={isGeneratingSummary}
-                  className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleGenerateSummary}
-                  disabled={isGeneratingSummary}
-                  className="inline-flex items-center gap-2 rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-[#9aa0d0]"
-                >
-                  {isGeneratingSummary && (
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              {isGeneratingSummary ? (
+                <SimulatedProgressLoader message="Generating summary..." duration={5000} />
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold text-[#13008B]">Generate Summary</h3>
+                  <p className="mt-2 text-sm text-gray-600">
+                    Choose the scene position (1-based) to generate a summary for. The first scene is position 1.
+                  </p>
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Scene Position
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={Math.max(1, Array.isArray(scriptRows) ? scriptRows.length : 1)}
+                      value={generateSummaryPosition}
+                      onChange={(e) => setGenerateSummaryPosition(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#13008B] focus:outline-none focus:ring-2 focus:ring-[#13008B]/20"
+                      disabled={isGeneratingSummary}
+                    />
+                  </div>
+                  {generateSummaryError && (
+                    <div className="mt-3 text-sm text-red-600">{generateSummaryError}</div>
                   )}
-                  <span>{isGeneratingSummary ? 'Generating…' : 'Generate'}</span>
-                </button>
-              </div>
+                  <div className="mt-6 flex justify-end gap-3">
+                    <button
+                      onClick={closeGenerateSummaryPrompt}
+                      disabled={isGeneratingSummary}
+                      className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleGenerateSummary}
+                      disabled={isGeneratingSummary}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#13008B] px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-[#9aa0d0]"
+                    >
+                      <span>Generate</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -5448,21 +5484,25 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       'application/vnd.openxmlformats-officedocument.presentationml.presentation', // pptx
       'application/vnd.ms-powerpoint', // ppt
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx
-      'application/msword', // doc
-      'text/csv', // csv
-      'application/vnd.ms-excel', // xls
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' // xlsx
+      'application/msword', // doc,
+      'text/plain' // txt (mimetype may vary or be empty)
     ];
 
+    const invalidNames = [];
     const validFiles = files.filter(file => {
       const type = (file?.type || '').toLowerCase();
       const name = (file?.name || '').toLowerCase();
       const byMime = allowedTypes.includes(type);
-      const byExt = ['.pdf', '.ppt', '.pptx', '.doc', '.docx', '.csv', '.xls', '.xlsx'].some(ext => name.endsWith(ext));
-      if (byMime || byExt) return true;
-      alert(`File ${file.name} is not a supported format. Please upload PDF, PPT, PPTX, DOC, DOCX, CSV, XLS, or XLSX.`);
-      return false;
+      const byExt = ['.pdf', '.ppt', '.pptx', '.doc', '.docx', '.txt'].some(ext => name.endsWith(ext));
+      const ok = byMime || byExt;
+      if (!ok) invalidNames.push(file.name);
+      return ok;
     });
+
+    if (invalidNames.length > 0) {
+      setInvalidUploadFiles(invalidNames);
+      setInvalidUploadModalOpen(true);
+    }
 
     if (validFiles.length > 0) {
       setUploadedFiles(prev => [...prev, ...validFiles]);
@@ -5470,6 +5510,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Process documents: extract API then summary API
       await processDocuments(validFiles);
     }
+    event.target.value = '';
   };
 
   // Remove uploaded file
@@ -8721,6 +8762,37 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     enablePresenterOptions && isRegenAvatarModel && requiresRegenPresenterSelection && regenStep === 2;
   return (
     <div className='bg-white h-[79vh] flex justify-between flex-col rounded-lg mt-3 p-6 relative'>
+      {invalidUploadModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-semibold text-gray-900">Invalid Files</h3>
+              <button
+                onClick={() => { setInvalidUploadModalOpen(false); setInvalidUploadFiles([]); }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-gray-700">Only .pdf, .doc, .docx, .txt, .ppt, .pptx are allowed.</p>
+            {invalidUploadFiles && invalidUploadFiles.length > 0 && (
+              <ul className="mt-3 text-sm text-red-700 list-disc list-inside">
+                {invalidUploadFiles.map((name, idx) => (
+                  <li key={idx}>{name}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button
+                onClick={() => { setInvalidUploadModalOpen(false); setInvalidUploadFiles([]); }}
+                className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Video Type Switching Loader - Centered circular loader with text */}
       {isSwitchingVideoType && loadingVideoType && (
         <Loader
@@ -8844,75 +8916,111 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Upload Document (to summarize)</label>
-                      <input type="file" accept=".pdf,.doc,.docx,.txt" disabled={isUploadingNewSceneDoc} onChange={async (e) => {
-                        const file = e.target.files?.[0]; if (!file) return; setIsUploadingNewSceneDoc(true);
-                        try {
-                          const userId = localStorage.getItem('token');
-                          const sessionId = localStorage.getItem('session_id');
-                          if (!userId || !sessionId) throw new Error('Missing session');
-                          // Extract
-                          const form = new FormData(); form.append('files', file); form.append('user_id', userId); form.append('session_id', sessionId);
-                          const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
-                          const ex = await fetch(extractUrl, { method: 'POST', body: form }); const tx = await ex.text();
-                          if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
-                          // Summarize: requires { session, documents } using rich session object
-                          let exJson; try { exJson = JSON.parse(tx); } catch (_) { exJson = {}; }
-                          let documents = [];
-                          if (Array.isArray(exJson?.documents)) documents = exJson.documents;
-                          else if (Array.isArray(exJson)) documents = exJson;
-                          else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
-                          else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
-                          // Build session from user-session-data (align with other summarize flow)
-                          let sessionObj = { session_id: sessionId, user_id: userId };
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
+                        multiple
+                        disabled={isUploadingNewSceneDoc}
+                        onChange={async (e) => {
+                          const files = Array.from(e.target.files || []);
+                          if (files.length === 0) return;
+                          const allowed = ['pdf', 'doc', 'docx', 'txt', 'ppt', 'pptx'];
+                          const isAllowed = (f) => {
+                            const name = String(f?.name || '').toLowerCase();
+                            const ext = name.split('.').pop();
+                            return allowed.includes(ext);
+                          };
+                          const invalid = files.filter((f) => !isAllowed(f));
+                          const valids = files.filter(isAllowed);
+                          if (invalid.length > 0) {
+                            setInvalidUploadFiles(invalid.map((f) => f.name));
+                            setInvalidUploadModalOpen(true);
+                          }
+                          if (valids.length === 0) { e.target.value = ''; return; }
+                          setIsUploadingNewSceneDoc(true);
                           try {
-                            const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: sessionId })
-                            });
-                            const st = await sResp.text();
-                            let sj; try { sj = JSON.parse(st); } catch (_) { sj = {}; }
-                            const sd = sj?.session_data || sj?.session || {};
-                            sessionObj = {
-                              session_id: sd.id || sd.session_id || sessionId,
-                              user_id: sd.user_id || userId,
-                              content: Array.isArray(sd.content) ? sd.content : [],
-                              document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-                              video_duration: String(sd.video_duration || sd.videoduration || '60'),
-                              created_at: sd.created_at || new Date().toISOString(),
-                              totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
-                              messages: Array.isArray(sd.messages) ? sd.messages : [],
-                              scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
-                              videos: Array.isArray(sd.videos) ? sd.videos : [],
-                              images: Array.isArray(sd.images) ? sd.images : [],
-                              final_link: sd.final_link || '',
-                              videoType: sd.videoType || sd.video_type || '',
-                              additionalProp1: sd.additionalProp1 || {}
-                            };
-                          } catch (_) { /* keep minimal sessionObj */ }
-                          const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
-                          const sum = await fetch(summaryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: sessionObj, documents }) });
-                          const ts = await sum.text(); let js; try { js = JSON.parse(ts); } catch (_) { js = {}; }
-                          if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
-                          // Prefer the first summary object/string from response
-                          let firstSummary = '';
-                          try {
-                            const arr = Array.isArray(js?.summaries)
-                              ? js.summaries
-                              : (Array.isArray(js?.summary)
-                                ? js.summary
-                                : (Array.isArray(js?.total_summary) ? js.total_summary : []));
-                            if (Array.isArray(arr) && arr.length > 0) {
-                              const item = arr[0];
-                              firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item));
-                            } else if (typeof js?.summary === 'string') {
-                              firstSummary = js.summary;
-                            } else if (typeof js?.total_summary === 'string') {
-                              firstSummary = js.total_summary;
+                            const userId = localStorage.getItem('token');
+                            const sessionId = localStorage.getItem('session_id');
+                            if (!userId || !sessionId) throw new Error('Missing session');
+                            let combinedSummary = '';
+                            for (const file of valids) {
+                              const form = new FormData();
+                              form.append('files', file);
+                              form.append('user_id', userId);
+                              form.append('session_id', sessionId);
+                              const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
+                              const ex = await fetch(extractUrl, { method: 'POST', body: form });
+                              const tx = await ex.text();
+                              if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
+                              let exJson; try { exJson = JSON.parse(tx); } catch (_) { exJson = {}; }
+                              let documents = [];
+                              if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                              else if (Array.isArray(exJson)) documents = exJson;
+                              else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
+                              else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
+                              let sessionObj = { session_id: sessionId, user_id: userId };
+                              try {
+                                const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: sessionId })
+                                });
+                                const st = await sResp.text();
+                                let sj; try { sj = JSON.parse(st); } catch (_) { sj = {}; }
+                                const sd = sj?.session_data || sj?.session || {};
+                                sessionObj = {
+                                  session_id: sd.id || sd.session_id || sessionId,
+                                  user_id: sd.user_id || userId,
+                                  content: Array.isArray(sd.content) ? sd.content : [],
+                                  document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                                  video_duration: String(sd.video_duration || sd.videoduration || '60'),
+                                  created_at: sd.created_at || new Date().toISOString(),
+                                  totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
+                                  messages: Array.isArray(sd.messages) ? sd.messages : [],
+                                  scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+                                  videos: Array.isArray(sd.videos) ? sd.videos : [],
+                                  images: Array.isArray(sd.images) ? sd.images : [],
+                                  final_link: sd.final_link || '',
+                                  videoType: sd.videoType || sd.video_type || '',
+                                  additionalProp1: sd.additionalProp1 || {}
+                                };
+                              } catch (_) { /* keep minimal sessionObj */ }
+                              const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
+                              const sum = await fetch(summaryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: sessionObj, documents }) });
+                              const ts = await sum.text();
+                              let js; try { js = JSON.parse(ts); } catch (_) { js = {}; }
+                              if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
+                              let firstSummary = '';
+                              try {
+                                const arr = Array.isArray(js?.summaries)
+                                  ? js.summaries
+                                  : (Array.isArray(js?.summary)
+                                    ? js.summary
+                                    : (Array.isArray(js?.total_summary) ? js.total_summary : []));
+                                if (Array.isArray(arr) && arr.length > 0) {
+                                  const item = arr[0];
+                                  firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item));
+                                } else if (typeof js?.summary === 'string') {
+                                  firstSummary = js.summary;
+                                } else if (typeof js?.total_summary === 'string') {
+                                  firstSummary = js.total_summary;
+                                }
+                              } catch (_) { /* noop */ }
+                              if (firstSummary) {
+                                combinedSummary += `Summary for ${file.name}:\n${String(firstSummary)}\n\n`;
+                              }
                             }
-                          } catch (_) { /* noop */ }
-                          if (firstSummary) setNewSceneDocSummary(String(firstSummary));
-                        } catch (err) { alert(err?.message || 'Upload failed'); }
-                        finally { setIsUploadingNewSceneDoc(false); e.target.value = ''; }
-                      }} />
+                            if (combinedSummary.trim()) {
+                              setNewSceneDocSummary(combinedSummary.trim());
+                              setNewSceneSelectedIdx(-1);
+                              setNewSceneContent('');
+                            }
+                          } catch (err) {
+                            alert(err?.message || 'Upload failed');
+                          } finally {
+                            setIsUploadingNewSceneDoc(false);
+                            e.target.value = '';
+                          }
+                        }}
+                      />
                       {isUploadingNewSceneDoc && (<div className="text-xs text-gray-500 mt-1">Processing document…</div>)}
                       {(!isUploadingNewSceneDoc && newSceneDocSummary) && (
                         <div className="mt-2">
@@ -9102,85 +9210,98 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                     <label className="block text-sm font-medium text-gray-700 mb-1">Upload Document (to summarize)</label>
                     <input
                       type="file"
-                      accept=".pdf,.doc,.docx,.txt"
+                      accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
+                      multiple
                       disabled={isUploadingNewSceneDoc}
                       onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
+                        const files = Array.from(e.target.files || []);
+                        if (files.length === 0) return;
+                        const allowed = ['pdf', 'doc', 'docx', 'txt', 'ppt', 'pptx'];
+                        const isAllowed = (f) => {
+                          const name = String(f?.name || '').toLowerCase();
+                          const ext = name.split('.').pop();
+                          return allowed.includes(ext);
+                        };
+                        const invalid = files.filter((f) => !isAllowed(f));
+                        const valids = files.filter(isAllowed);
+                        if (invalid.length > 0) {
+                          setInvalidUploadFiles(invalid.map((f) => f.name));
+                          setInvalidUploadModalOpen(true);
+                        }
+                        if (valids.length === 0) { e.target.value = ''; return; }
                         setIsUploadingNewSceneDoc(true);
                         try {
                           const userId = localStorage.getItem('token');
                           const sessionId = localStorage.getItem('session_id');
                           if (!userId || !sessionId) throw new Error('Missing session');
-                          // Extract
-                          const form = new FormData();
-                          form.append('files', file);
-                          form.append('user_id', userId);
-                          form.append('session_id', sessionId);
-                          const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
-                          const ex = await fetch(extractUrl, { method: 'POST', body: form });
-                          const tx = await ex.text();
-                          if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
-                          // Summarize: requires { session, documents } using rich session object
-                          let exJson;
-                          try { exJson = JSON.parse(tx); } catch (_) { exJson = {}; }
-                          let documents = [];
-                          if (Array.isArray(exJson?.documents)) documents = exJson.documents;
-                          else if (Array.isArray(exJson)) documents = exJson;
-                          else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
-                          else if (Array.isArray(exJson?.data)) documents = exJson.data;
-                          else documents = [];
-                          // Build session from user-session-data (align with other summarize flow)
-                          let sessionObj = { session_id: sessionId, user_id: userId };
-                          try {
-                            const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: sessionId })
-                            });
-                            const st = await sResp.text();
-                            let sj; try { sj = JSON.parse(st); } catch (_) { sj = {}; }
-                            const sd = sj?.session_data || sj?.session || {};
-                            sessionObj = {
-                              session_id: sd.id || sd.session_id || sessionId,
-                              user_id: sd.user_id || userId,
-                              content: Array.isArray(sd.content) ? sd.content : [],
-                              document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
-                              video_duration: String(sd.video_duration || sd.videoduration || '60'),
-                              created_at: sd.created_at || new Date().toISOString(),
-                              totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
-                              messages: Array.isArray(sd.messages) ? sd.messages : [],
-                              scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
-                              videos: Array.isArray(sd.videos) ? sd.videos : [],
-                              images: Array.isArray(sd.images) ? sd.images : [],
-                              final_link: sd.final_link || '',
-                              videoType: sd.videoType || sd.video_type || '',
-                              additionalProp1: sd.additionalProp1 || {}
-                            };
-                          } catch (_) { /* keep minimal sessionObj */ }
-                          const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
-                          const sum = await fetch(summaryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: sessionObj, documents }) });
-                          const ts = await sum.text();
-                          let js; try { js = JSON.parse(ts); } catch (_) { js = {}; }
-                          if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
-                          // Prefer the first summary object/string from response
-                          let firstSummary = '';
-                          try {
-                            const arr = Array.isArray(js?.summaries)
-                              ? js.summaries
-                              : (Array.isArray(js?.summary)
-                                ? js.summary
-                                : (Array.isArray(js?.total_summary) ? js.total_summary : []));
-                            if (Array.isArray(arr) && arr.length > 0) {
-                              const item = arr[0];
-                              firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item));
-                            } else if (typeof js?.summary === 'string') {
-                              firstSummary = js.summary;
-                            } else if (typeof js?.total_summary === 'string') {
-                              firstSummary = js.total_summary;
+                          let combinedSummary = '';
+                          for (const file of valids) {
+                            const form = new FormData();
+                            form.append('files', file);
+                            form.append('user_id', userId);
+                            form.append('session_id', sessionId);
+                            const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
+                            const ex = await fetch(extractUrl, { method: 'POST', body: form });
+                            const tx = await ex.text();
+                            if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
+                            let exJson; try { exJson = JSON.parse(tx); } catch (_) { exJson = {}; }
+                            let documents = [];
+                            if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                            else if (Array.isArray(exJson)) documents = exJson;
+                            else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
+                            else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
+                            let sessionObj = { session_id: sessionId, user_id: userId };
+                            try {
+                              const sResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, session_id: sessionId })
+                              });
+                              const st = await sResp.text();
+                              let sj; try { sj = JSON.parse(st); } catch (_) { sj = {}; }
+                              const sd = sj?.session_data || sj?.session || {};
+                              sessionObj = {
+                                session_id: sd.id || sd.session_id || sessionId,
+                                user_id: sd.user_id || userId,
+                                content: Array.isArray(sd.content) ? sd.content : [],
+                                document_summary: Array.isArray(sd.document_summary) ? sd.document_summary : [{ additionalProp1: {} }],
+                                video_duration: String(sd.video_duration || sd.videoduration || '60'),
+                                created_at: sd.created_at || new Date().toISOString(),
+                                totalsummary: Array.isArray(sd.totalsummary) ? sd.totalsummary : [],
+                                messages: Array.isArray(sd.messages) ? sd.messages : [],
+                                scripts: Array.isArray(sd.scripts) ? sd.scripts : [],
+                                videos: Array.isArray(sd.videos) ? sd.videos : [],
+                                images: Array.isArray(sd.images) ? sd.images : [],
+                                final_link: sd.final_link || '',
+                                videoType: sd.videoType || sd.video_type || '',
+                                additionalProp1: sd.additionalProp1 || {}
+                              };
+                            } catch (_) { /* keep minimal sessionObj */ }
+                            const summaryUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`;
+                            const sum = await fetch(summaryUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: sessionObj, documents }) });
+                            const ts = await sum.text();
+                            let js; try { js = JSON.parse(ts); } catch (_) { js = {}; }
+                            if (!sum.ok) throw new Error(`summarize failed: ${sum.status} ${ts}`);
+                            let firstSummary = '';
+                            try {
+                              const arr = Array.isArray(js?.summaries)
+                                ? js.summaries
+                                : (Array.isArray(js?.summary)
+                                  ? js.summary
+                                  : (Array.isArray(js?.total_summary) ? js.total_summary : []));
+                              if (Array.isArray(arr) && arr.length > 0) {
+                                const item = arr[0];
+                                firstSummary = typeof item === 'string' ? item : (item?.summary || JSON.stringify(item));
+                              } else if (typeof js?.summary === 'string') {
+                                firstSummary = js.summary;
+                              } else if (typeof js?.total_summary === 'string') {
+                                firstSummary = js.total_summary;
+                              }
+                            } catch (_) { /* noop */ }
+                            if (firstSummary) {
+                              combinedSummary += `Summary for ${file.name}:\n${String(firstSummary)}\n\n`;
                             }
-                          } catch (_) { /* noop */ }
-                          if (firstSummary) {
-                            setNewSceneDocSummary(String(firstSummary));
-                            // Clear selected suggestion when document summary is set
+                          }
+                          if (combinedSummary.trim()) {
+                            setNewSceneDocSummary(combinedSummary.trim());
                             setNewSceneSelectedIdx(-1);
                             setNewSceneContent('');
                           }
@@ -14868,8 +14989,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white w-[95%] max-w-lg rounded-lg shadow-xl p-5 relative">
             {isRegenerating && (
-              <div className="absolute inset-0 bg-white/70 flex items-center justify-center z-10">
-                <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+              <div className="absolute inset-0 bg-white z-10 flex items-center justify-center rounded-lg">
+                <SimulatedProgressLoader message="Regenerating scene..." duration={10000} />
               </div>
             )}
             <div className="flex items-center justify-between mb-3">
@@ -15612,7 +15733,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                         ref={fileInputRef}
                         type="file"
                         multiple
-                        accept=".pdf,.ppt,.pptx,.doc,.docx,.csv,.xls,.xlsx"
+                        accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
                         onChange={handleFileSelect}
                         className="hidden"
                       />

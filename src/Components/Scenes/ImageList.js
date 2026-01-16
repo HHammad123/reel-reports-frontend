@@ -8,6 +8,7 @@ import useOverlayBackgroundRemoval from '../../hooks/useOverlayBackgroundRemoval
 import Loader from '../Loader';
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
 import { useProgressLoader } from '../../hooks/useProgressLoader';
+import loadingGif from '../../asset/loadingv2.gif';
 
 // Preset Voice Options
 const PRESET_VOICE_OPTIONS = {
@@ -4730,14 +4731,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         // Store scene number before resetting state
         const sceneNumberToRefresh = managingAvatarSceneNumber;
 
-        // Close popup
-        setShowAvatarManager(false);
-        setManagingAvatarSceneNumber(null);
-        setAvatarUrls(['', '']);
-
         // Refresh images by calling user session data API instead of reloading
         // Pass the scene number to maintain selection
         await refreshLoad(sceneNumberToRefresh);
+
+        // Close popup and reset state after refresh is complete
+        setIsUpdatingAvatars(false);
+        setShowAvatarManager(false);
+        setManagingAvatarSceneNumber(null);
+        setAvatarUrls(['', '']);
       } else {
         throw new Error('Avatar update API did not return success');
       }
@@ -11914,6 +11916,20 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   </button>
                 </div>
               </div>
+
+              {isUpdatingAvatars && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex items-center justify-center z-50 px-6 text-center">
+                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                    <img
+                      src={loadingGif}
+                      alt="Updating avatars..."
+                      className="w-24 h-24 object-contain"
+                    />
+                    <p className="text-lg font-semibold text-[#13008B]">Updating Avatars...</p>
+                    <p className="text-sm text-gray-600">Please wait while we update your avatars...</p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )
@@ -12184,39 +12200,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   </div>
                 )}
 
-                {/* Loading Overlay */}
-                {isUpdatingAvatars && (
-                  <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                    <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                      <div className="relative w-16 h-16">
-                        <svg className="w-16 h-16" viewBox="0 0 100 100">
-                          <circle cx="50" cy="50" r="45" stroke="#E5E7EB" strokeWidth="8" fill="none" />
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r="45"
-                            stroke="#13008B"
-                            strokeWidth="8"
-                            fill="none"
-                            strokeLinecap="round"
-                            strokeDasharray="283"
-                            strokeDashoffset="70"
-                            className="animate-spin"
-                            style={{
-                              transformOrigin: '50% 50%',
-                              animation: 'spin 1.5s linear infinite'
-                            }}
-                          />
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="w-3 h-3 bg-[#13008B] rounded-full" />
-                        </div>
-                      </div>
-                      <p className="text-lg font-semibold text-[#13008B]">Updating Avatars...</p>
-                      <p className="text-sm text-gray-600">Please wait while we update your avatars...</p>
-                    </div>
-                  </div>
-                )}
+
 
                 {/* Update Button */}
                 <div className="flex justify-end">
@@ -12225,17 +12209,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     disabled={isUpdatingAvatars || avatarUrls.filter(u => u.trim()).length === 0}
                     className="px-6 py-2.5 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0068] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
-                    {isUpdatingAvatars ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Updating...
-                      </>
-                    ) : (
-                      'Update Avatars'
-                    )}
+                    {isUpdatingAvatars ? 'Updating...' : 'Update Avatars'}
                   </button>
                 </div>
               </div>

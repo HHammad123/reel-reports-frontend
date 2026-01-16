@@ -3,6 +3,7 @@ import { ChevronDown, ChevronLeft, Plus, Mic, Play, Trash2, ZoomIn, Edit2, Image
 import useBrandAssets from '../../hooks/useBrandAssets'
 import CanvasImageEditor from '../ImageEdit/CanvasImageEditor'
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils'
+import loadingGif from '../../asset/loadingv2.gif'
 
 const resolveTemplateImageUrl = (item) => {
   if (!item) return ''
@@ -67,10 +68,10 @@ const normalizeTemplateEntry = (entry, label, meta = {}) => {
       ? entry.textElements
       : (Array.isArray(entry.texts) ? entry.texts : []))
   const aspect = entry?.aspect_ratio || entry?.ratio || entry?.orientation || meta.aspect || ''
-  
+
   // Extract pair_image URL if it exists
   let pairImageUrl = null
-  
+
   // First check if pair_image is nested inside base_image (most common case)
   if (entry.base_image && typeof entry.base_image === 'object' && entry.base_image.pair_image) {
     const nestedPair = entry.base_image.pair_image
@@ -80,7 +81,7 @@ const normalizeTemplateEntry = (entry, label, meta = {}) => {
       pairImageUrl = nestedPair.image_url || nestedPair.imageUrl || nestedPair.url || null
     }
   }
-  
+
   // If not found, check at template root level
   if (!pairImageUrl) {
     const pairImage = entry.pair_image || entry.pairImage
@@ -92,14 +93,14 @@ const normalizeTemplateEntry = (entry, label, meta = {}) => {
       }
     }
   }
-  
+
   // Debug logging for pair image extraction
   if (pairImageUrl) {
     console.log('✅ Pair image URL extracted:', pairImageUrl, 'for template:', label)
   } else if (entry.base_image?.pair_image || entry.pair_image || entry.pairImage) {
     console.warn('⚠️ Pair image data exists but URL not extracted for template:', label, 'Entry structure:', entry)
   }
-  
+
   return {
     url,
     label,
@@ -282,14 +283,20 @@ const inferStepFromLabel = (name = '', label = '') => {
   const meta = SLIDER_DEFINITIONS[normalizeSliderKey(name)] || {}
   const leftKey = normalizeDescriptorText(meta.left || '')
   const rightKey = normalizeDescriptorText(meta.right || '')
+
+  const isModerate = normalizedLabel.includes('moderate')
+
   const matchesLeft = leftKey && normalizedLabel.includes(leftKey)
   const matchesRight = rightKey && normalizedLabel.includes(rightKey)
-  if (matchesLeft && !matchesRight) return -2
-  if (matchesRight && !matchesLeft) return 2
+  if (matchesLeft && !matchesRight) return isModerate ? -1 : -2
+  if (matchesRight && !matchesLeft) return isModerate ? 1 : 2
   return null
 }
 
 const getStepValueForEntry = (entry = {}) => {
+  if (entry.percentage !== undefined && entry.percentage !== null && !Number.isNaN(Number(entry.percentage))) {
+    return percentToStepValue(entry.percentage)
+  }
   const inferred = inferStepFromLabel(entry.name, entry.label)
   if (typeof inferred === 'number') return inferred
   return percentToStepValue(entry.percentage)
@@ -457,6 +464,35 @@ const VOICEOVER_FLOW_STEPS = [
 ]
 const GENERATED_ASSETS_PAGE_SIZE = 3
 
+const SimulatedProgressLoader = ({ message, duration = 3000, showPercentage = true }) => {
+  const [percentage, setPercentage] = useState(0)
+
+  useEffect(() => {
+    setPercentage(0)
+    const interval = setInterval(() => {
+      setPercentage(prev => {
+        if (prev >= 95) return 95
+        return prev + 5
+      })
+    }, duration / 20)
+    return () => clearInterval(interval)
+  }, [duration])
+
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 p-6">
+      <img src={loadingGif} alt="Loading..." className="h-24 w-24 object-contain" />
+      {message && <p className="text-gray-600 font-medium text-center">{message}</p>}
+      <div className="w-64 bg-gray-200 rounded-full h-2 overflow-hidden relative">
+        <div
+          className="bg-[#13008B] h-2 rounded-full transition-all duration-300 ease-out"
+          style={{ width: `${percentage}%` }}
+        ></div>
+      </div>
+      {showPercentage && <p className="text-sm text-gray-500 font-semibold">{percentage}%</p>}
+    </div>
+  )
+}
+
 const Brandimages = () => {
   const fileInputRef = useRef(null)
   const { getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements } = useBrandAssets()
@@ -475,7 +511,7 @@ const Brandimages = () => {
   const [workingFonts, setWorkingFonts] = useState([])
   const [newFont, setNewFont] = useState('')
   const availableFonts = [
-    'Arial','Helvetica','Times New Roman','Georgia','Verdana','Roboto','Open Sans','Lato','Montserrat','Poppins','Inter','Nunito','Source Sans Pro','Merriweather'
+    'Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Verdana', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins', 'Inter', 'Nunito', 'Source Sans Pro', 'Merriweather'
   ]
   const [selectedFontOption, setSelectedFontOption] = useState(availableFonts[0])
   const [isSavingFonts, setIsSavingFonts] = useState(false)
@@ -713,7 +749,7 @@ const Brandimages = () => {
 
       setSelectedFiles([])
       setPreviewUrls([])
-      if (recordBlobUrl) { try { URL.revokeObjectURL(recordBlobUrl) } catch (_) {} }
+      if (recordBlobUrl) { try { URL.revokeObjectURL(recordBlobUrl) } catch (_) { } }
       setRecordBlobUrl('')
 
       if (nextTone) {
@@ -743,14 +779,14 @@ const Brandimages = () => {
   // Ensure pair image URL is always extracted from template structure if missing
   const activePlacementWithPair = useMemo(() => {
     if (!activePlacement) return null
-    
+
     // If pairImageUrl already exists, return as is
     if (activePlacement.pairImageUrl) return activePlacement
-    
+
     // Try to extract pair image from template structure
     let pairImageUrl = null
     const template = activePlacement.template
-    
+
     if (template?.base_image?.pair_image) {
       const pairImage = template.base_image.pair_image
       if (typeof pairImage === 'string') {
@@ -759,7 +795,7 @@ const Brandimages = () => {
         pairImageUrl = pairImage.image_url || pairImage.imageUrl || pairImage.url || null
       }
     }
-    
+
     // If still not found, check at template root level
     if (!pairImageUrl && (template?.pair_image || template?.pairImage)) {
       const pairImage = template.pair_image || template.pairImage
@@ -769,12 +805,12 @@ const Brandimages = () => {
         pairImageUrl = pairImage.image_url || pairImage.imageUrl || pairImage.url || null
       }
     }
-    
+
     // Return activePlacement with pairImageUrl if found
     if (pairImageUrl) {
       return { ...activePlacement, pairImageUrl }
     }
-    
+
     return activePlacement
   }, [activePlacement])
 
@@ -814,17 +850,17 @@ const Brandimages = () => {
     console.log('========================================')
     console.log('Image URL:', imageUrl)
     console.log('Template Label:', label)
-    
+
     const cleanUrl = typeof imageUrl === 'string' ? imageUrl.trim() : ''
-    
+
     if (!cleanUrl) {
       console.error('❌ Empty or invalid image URL')
       alert('Cannot edit: Image URL is empty or invalid')
       return
     }
-    
+
     console.log('✅ Opening image editor with URL:', cleanUrl)
-    
+
     setImageEditorSrc(cleanUrl)
     setImageEditorTemplateLabel(label)
     setImageEditorCallback(() => (typeof onSave === 'function' ? onSave : null))
@@ -1000,45 +1036,45 @@ const Brandimages = () => {
 
   const createSyncedBox = useCallback((sourceBox, sourceFormat) => {
     if (!syncEnabled) return
-    
+
     const targetFormat = sourceFormat === 'base' ? 'pair' : 'base'
     const targetBoxes = targetFormat === 'base' ? placementBoxes : pairImageBoxes
     const setTargetBoxes = targetFormat === 'base' ? setPlacementBoxesState : setPairImageBoxes
-    
+
     const mappedPosition = mapPositionToOtherFormat(sourceBox.position)
     const syncedBoxId = `${sourceBox.id}_${targetFormat}`
-    
+
     const syncedBox = {
       ...sourceBox,
       id: syncedBoxId,
       position: mappedPosition,
       synced_with: sourceBox.id
     }
-    
+
     // Update source box to reference the synced box
     if (sourceFormat === 'base') {
-      setPlacementBoxesState(prev => prev.map(box => 
+      setPlacementBoxesState(prev => prev.map(box =>
         box.id === sourceBox.id ? { ...box, synced_with: syncedBoxId } : box
       ))
     } else {
-      setPairImageBoxes(prev => prev.map(box => 
+      setPairImageBoxes(prev => prev.map(box =>
         box.id === sourceBox.id ? { ...box, synced_with: syncedBoxId } : box
       ))
     }
-    
+
     // Add to target format
     setTargetBoxes(prev => [...prev, syncedBox])
   }, [syncEnabled, placementBoxes, pairImageBoxes])
 
   const syncBoxToOtherFormat = useCallback((boxId, updatedBox, sourceFormat) => {
     if (!syncEnabled || !updatedBox.synced_with) return
-    
+
     const targetFormat = sourceFormat === 'base' ? 'pair' : 'base'
     const setTargetBoxes = targetFormat === 'base' ? setPlacementBoxesState : setPairImageBoxes
-    
+
     const mappedPosition = mapPositionToOtherFormat(updatedBox.position)
     const syncedBoxId = updatedBox.synced_with
-    
+
     setTargetBoxes(prev => prev.map(box => {
       if (box.id === syncedBoxId) {
         return {
@@ -1065,11 +1101,11 @@ const Brandimages = () => {
     const all = collectPlacementTemplates(tpls).filter(entry =>
       entry.template && entry.overlayElements.length === 0 && entry.textElements.length === 0
     )
-    
+
     // Log template data to verify pair images are extracted
     console.log('📦 PPTX Templates collected:', all.length)
     console.log('📦 Raw templates structure:', tpls)
-    
+
     // Enhanced pair image extraction for PPTX templates
     const enhancedAll = all.map((entry, idx) => {
       console.log(`Template ${idx + 1}:`, {
@@ -1080,12 +1116,12 @@ const Brandimages = () => {
         hasPairImage: !!entry.template?.base_image?.pair_image,
         templateStructure: entry.template
       })
-      
+
       // If pair image URL is missing, try comprehensive extraction
       if (!entry.pairImageUrl) {
         let extractedPairUrl = null
         const template = entry.template
-        
+
         // Method 1: Check base_image.pair_image (most common)
         if (template?.base_image?.pair_image) {
           const pairImage = template.base_image.pair_image
@@ -1095,7 +1131,7 @@ const Brandimages = () => {
             extractedPairUrl = pairImage.image_url || pairImage.imageUrl || pairImage.url || pairImage.src || null
           }
         }
-        
+
         // Method 2: Check at template root level
         if (!extractedPairUrl && (template?.pair_image || template?.pairImage)) {
           const pairImage = template.pair_image || template.pairImage
@@ -1105,7 +1141,7 @@ const Brandimages = () => {
             extractedPairUrl = pairImage.image_url || pairImage.imageUrl || pairImage.url || pairImage.src || null
           }
         }
-        
+
         // Method 3: Deep search in template structure
         if (!extractedPairUrl) {
           const deepSearch = (obj, depth = 0, maxDepth = 5) => {
@@ -1126,7 +1162,7 @@ const Brandimages = () => {
           }
           extractedPairUrl = deepSearch(template)
         }
-        
+
         if (extractedPairUrl) {
           entry.pairImageUrl = extractedPairUrl
           console.log(`✅ Extracted pair image URL for template ${idx + 1}:`, extractedPairUrl)
@@ -1134,10 +1170,10 @@ const Brandimages = () => {
           console.warn(`⚠️ No pair image found for template ${idx + 1}:`, entry.label)
         }
       }
-      
+
       return entry
     })
-    
+
     const prevSet = new Set((previousUrls || []).filter(Boolean))
     const fresh = prevSet.size ? enhancedAll.filter(item => !prevSet.has(item.url)) : enhancedAll
     setPlacementTemplates(fresh)
@@ -1230,7 +1266,7 @@ const Brandimages = () => {
         console.log(`📦 Template ${idx}: Extracted ${baseBoxes.length} boxes from base image`)
         console.log(`📦 Template ${idx}: Text elements:`, entry.template.text_elements?.length || 0)
         console.log(`📦 Template ${idx}: Overlay elements:`, entry.template.overlay_elements?.length || 0)
-        
+
         // Extract boxes from pair image if it exists
         let pairBoxes = []
         if (entry.template.base_image?.pair_image) {
@@ -1238,7 +1274,7 @@ const Brandimages = () => {
           pairBoxes = clonePlacementBoxes(extractBoxesFromTemplate(pairImageData))
           console.log(`📦 Template ${idx}: Extracted ${pairBoxes.length} boxes from pair image`)
         }
-        
+
         // If both have boxes, create sync links
         if (baseBoxes.length > 0 && pairBoxes.length > 0 && baseBoxes.length === pairBoxes.length) {
           // Link the boxes together
@@ -1254,7 +1290,7 @@ const Brandimages = () => {
           // If only base has boxes and pair image exists, they will be synced later
           console.log(`📦 Template ${idx}: Base has ${baseBoxes.length} boxes, will sync to pair image`)
         }
-        
+
         nextMap[idx] = { baseBoxes, pairBoxes }
       } else {
         nextMap[idx] = { baseBoxes: [], pairBoxes: [] }
@@ -1285,7 +1321,7 @@ const Brandimages = () => {
 
   useEffect(() => {
     if (!isPlacementOverlayOpen || !activePlacementWithPair) return
-    
+
     // Log active placement details when overlay opens
     console.log('🎯 Placement Overlay Opened:', {
       label: activePlacementWithPair.label,
@@ -1294,11 +1330,11 @@ const Brandimages = () => {
       hasPairImage: !!activePlacementWithPair.pairImageUrl,
       templateStructure: activePlacementWithPair.template
     })
-    
+
     const idx = placementSelectedIndex
     const map = placementBoxesMapRef.current
     if (idx === undefined || idx === null) return
-    
+
     // Initialize base image boxes
     if (!map[idx]) {
       const extracted = activePlacementWithPair.template
@@ -1308,7 +1344,7 @@ const Brandimages = () => {
       console.log('📦 Boxes details:', extracted)
       map[idx] = { baseBoxes: extracted, pairBoxes: [] }
     }
-    
+
     // Handle legacy format (single array) vs new format (object with baseBoxes and pairBoxes)
     let baseBoxes, pairBoxes
     if (map[idx] && typeof map[idx] === 'object' && map[idx].baseBoxes) {
@@ -1322,10 +1358,10 @@ const Brandimages = () => {
       baseBoxes = []
       pairBoxes = []
     }
-    
+
     // Set base image boxes
     setPlacementBoxesState(baseBoxes)
-    
+
     // If pair image exists and we don't have pair boxes yet, auto-sync from base boxes
     if (activePlacementWithPair.pairImageUrl && pairBoxes.length === 0 && baseBoxes.length > 0 && syncEnabled) {
       // Create synced boxes for pair image
@@ -1338,23 +1374,23 @@ const Brandimages = () => {
           synced_with: box.id
         }
       })
-      
+
       // Update base boxes with synced_with references
       const updatedBaseBoxes = baseBoxes.map((box, index) => ({
         ...box,
         synced_with: syncedPairBoxes[index]?.id || null
       }))
-      
+
       setPlacementBoxesState(updatedBaseBoxes)
       setPairImageBoxes(syncedPairBoxes)
-      
+
       // Update map to include pair boxes
       map[idx] = { baseBoxes: updatedBaseBoxes, pairBoxes: syncedPairBoxes }
     } else {
       // Use existing pair boxes if available
       setPairImageBoxes(pairBoxes)
     }
-    
+
     setPlacementSelectedBoxId(null)
     setPlacementCopiedBox(null)
     setPlacementCurrentBox(null)
@@ -1454,13 +1490,13 @@ const Brandimages = () => {
       phrase: '#FFE66D',
       overlay: '#9B59B6'
     }
-    
+
     const pairPercentToPixel = (percent, isWidth) => {
       const base = isWidth ? pairImageMetrics.width : pairImageMetrics.height
       if (!base) return 0
       return (percent / 100) * base
     }
-    
+
     pairImageBoxes.forEach((box) => {
       const x = pairPercentToPixel(box.position.x, true)
       const y = pairPercentToPixel(box.position.y, false)
@@ -1580,7 +1616,7 @@ const Brandimages = () => {
     if (format !== activeImageFormat) {
       setActiveImageFormat(format)
     }
-    
+
     const pos = format === 'base' ? placementGetMousePos(e) : pairGetMousePos(e)
     const boundsW = format === 'base' ? placementImageMetrics.width : pairImageMetrics.width
     const boundsH = format === 'base' ? placementImageMetrics.height : pairImageMetrics.height
@@ -1652,7 +1688,7 @@ const Brandimages = () => {
       const maxY = Math.max(boundsH - boxHeightPx, 0)
       const newX = Math.min(Math.max(pos.x - placementDragOffset.x, 0), maxX)
       const newY = Math.min(Math.max(pos.y - placementDragOffset.y, 0), maxY)
-      
+
       let updatedBox = null
       const updateBoxes = (prev) => prev.map(box => {
         if (box.id === placementDraggedBoxId) {
@@ -1669,13 +1705,13 @@ const Brandimages = () => {
         }
         return box
       })
-      
+
       if (activeImageFormat === 'base') {
         setPlacementBoxesState(updateBoxes)
       } else {
         setPairImageBoxes(updateBoxes)
       }
-      
+
       // Sync to other format if enabled
       if (updatedBox && syncEnabled && activePlacementWithPair?.pairImageUrl) {
         syncBoxToOtherFormat(placementDraggedBoxId, updatedBox, activeImageFormat)
@@ -1735,7 +1771,7 @@ const Brandimages = () => {
       newY = Math.min(Math.max(newY, 0), maxHeight - minSize)
       newWidth = Math.max(Math.min(newWidth, maxWidth - newX), minSize)
       newHeight = Math.max(Math.min(newHeight, maxHeight - newY), minSize)
-      
+
       let updatedBox = null
       const updateBoxes = (prev) => prev.map(box => {
         if (box.id === placementResizeBoxId) {
@@ -1753,13 +1789,13 @@ const Brandimages = () => {
         }
         return box
       })
-      
+
       if (activeImageFormat === 'base') {
         setPlacementBoxesState(updateBoxes)
       } else {
         setPairImageBoxes(updateBoxes)
       }
-      
+
       // Sync to other format if enabled
       if (updatedBox && syncEnabled && activePlacement?.pairImageUrl) {
         syncBoxToOtherFormat(placementResizeBoxId, updatedBox, activeImageFormat)
@@ -1820,19 +1856,19 @@ const Brandimages = () => {
       },
       synced_with: null
     }
-    
+
     // Add box to active format
     if (activeImageFormat === 'base') {
       setPlacementBoxesState(prev => [...prev, newBox])
     } else {
       setPairImageBoxes(prev => [...prev, newBox])
     }
-    
+
     // Sync to other format if enabled
     if (syncEnabled && activePlacement?.pairImageUrl) {
       createSyncedBox(newBox, activeImageFormat)
     }
-    
+
     setPlacementSelectedBoxId(newBox.id)
     setPlacementIsDrawing(false)
     setPlacementCurrentBox(null)
@@ -1967,12 +2003,12 @@ const Brandimages = () => {
             pairBoxes = []
           }
         }
-        
+
         const { textElements, overlayElements } = buildPlacementPayload(baseBoxes)
-        
+
         // Build base_image structure with pair_image nested inside if pair exists
         let baseImageData = entry.template?.base_image || {}
-        
+
         // If there's a pair image URL and pair boxes, include pair image data
         if (entry.pairImageUrl && pairBoxes.length > 0) {
           const pairPayload = buildPlacementPayload(pairBoxes)
@@ -1985,7 +2021,7 @@ const Brandimages = () => {
             }
           }
         }
-        
+
         return {
           entry,
           textElements,
@@ -2012,77 +2048,77 @@ const Brandimages = () => {
         throw new Error('Templates span multiple update categories. Please save each group separately.')
       }
       const [updateType = 'uploaded_templates'] = Array.from(updateTypes)
-      
+
       // Check if we have metadata - if not, we're editing a template fetched directly from API
       const hasMetadata = placementResults.some(({ entry }) => {
         const meta = entry.meta || {}
         return meta.parentIndex !== undefined && meta.parentIndex !== null
       })
-      
+
       let updatedTemplates = null
-      
+
       if (hasMetadata) {
         // Traditional flow: updating templates in the profile structure
         updatedTemplates = JSON.parse(JSON.stringify(templates || []))
-      placementResults.forEach(({ entry, updatedTemplate }) => {
-        const meta = entry.meta || {}
-        const parentIdx = meta.parentIndex
-        if (parentIdx === undefined || parentIdx === null || !updatedTemplates[parentIdx]) {
+        placementResults.forEach(({ entry, updatedTemplate }) => {
+          const meta = entry.meta || {}
+          const parentIdx = meta.parentIndex
+          if (parentIdx === undefined || parentIdx === null || !updatedTemplates[parentIdx]) {
             console.warn('Unable to locate template in profile payload, skipping local update')
             return
-        }
-        if (meta.groupType === 'preset' || meta.groupType === 'uploaded') {
-          const sourceKey = meta.sourceKey || (meta.groupType === 'preset' ? 'preset_templates' : 'uploaded_templates')
-          if (Array.isArray(updatedTemplates[parentIdx][sourceKey]) && meta.entryIndex !== undefined && meta.entryIndex !== null) {
-            updatedTemplates[parentIdx][sourceKey][meta.entryIndex] = updatedTemplate
-          } else {
-              console.warn('Template structure mismatch while saving placement, skipping')
           }
-        } else if (meta.groupType === 'direct') {
-          updatedTemplates[parentIdx] = updatedTemplate
-        } else if (meta.sourceKey && Array.isArray(updatedTemplates[parentIdx][meta.sourceKey]) && meta.entryIndex !== undefined && meta.entryIndex !== null) {
-          updatedTemplates[parentIdx][meta.sourceKey][meta.entryIndex] = updatedTemplate
-        } else {
-          updatedTemplates[parentIdx] = updatedTemplate
-        }
-      })
+          if (meta.groupType === 'preset' || meta.groupType === 'uploaded') {
+            const sourceKey = meta.sourceKey || (meta.groupType === 'preset' ? 'preset_templates' : 'uploaded_templates')
+            if (Array.isArray(updatedTemplates[parentIdx][sourceKey]) && meta.entryIndex !== undefined && meta.entryIndex !== null) {
+              updatedTemplates[parentIdx][sourceKey][meta.entryIndex] = updatedTemplate
+            } else {
+              console.warn('Template structure mismatch while saving placement, skipping')
+            }
+          } else if (meta.groupType === 'direct') {
+            updatedTemplates[parentIdx] = updatedTemplate
+          } else if (meta.sourceKey && Array.isArray(updatedTemplates[parentIdx][meta.sourceKey]) && meta.entryIndex !== undefined && meta.entryIndex !== null) {
+            updatedTemplates[parentIdx][meta.sourceKey][meta.entryIndex] = updatedTemplate
+          } else {
+            updatedTemplates[parentIdx] = updatedTemplate
+          }
+        })
       }
       // Download option removed - no longer downloading JSON file on save
-      
+
       // Only update brand profile if we have local template structure to update
       if (hasMetadata && updatedTemplates) {
-      const currentProfile = await getBrandProfileById({ userId, profileId: selectedProfileId })
-      const bi = currentProfile?.brand_identity || {}
-      const tv = currentProfile?.tone_and_voice || {}
-      const lf = currentProfile?.look_and_feel || {}
-      const vos = currentProfile?.voiceover || []
-      await updateBrandProfile({
-        userId,
-        profileId: selectedProfileId,
-        payload: {
-          brand_identity: {
-            logo: bi.logo || [],
-            icon: bi.icon || bi.icons || [],
-            fonts: bi.fonts || [],
-            colors: bi.colors || [],
-            spacing: bi.spacing,
-            tagline: bi.tagline
-          },
-          tone_and_voice: tv,
-          look_and_feel: lf,
-          template: updatedTemplates,
-          voiceover: vos
-        }
-      })
+        const currentProfile = await getBrandProfileById({ userId, profileId: selectedProfileId })
+        const bi = currentProfile?.brand_identity || {}
+        const tv = currentProfile?.tone_and_voice || {}
+        const lf = currentProfile?.look_and_feel || {}
+        const vos = currentProfile?.voiceover || []
+        await updateBrandProfile({
+          userId,
+          profileId: selectedProfileId,
+          payload: {
+            brand_identity: {
+              logo: bi.logo || [],
+              icon: bi.icon || bi.icons || [],
+              fonts: bi.fonts || [],
+              colors: bi.colors || [],
+              spacing: bi.spacing,
+              tagline: bi.tagline
+            },
+            tone_and_voice: tv,
+            look_and_feel: lf,
+            template: updatedTemplates,
+            voiceover: vos
+          }
+        })
       }
       // Prepare templates for API call with template_id, base_image, text_elements, overlay_elements
       const templatesForApi = []
-      
+
       // Process each template and check for pair_image template_id
       for (const result of placementResults) {
         const template = result.updatedTemplate
         const baseTemplateId = template.template_id || template.templateId || template.id
-        
+
         // Add the main template
         templatesForApi.push({
           template_id: baseTemplateId,
@@ -2090,13 +2126,13 @@ const Brandimages = () => {
           text_elements: template.text_elements || [],
           overlay_elements: template.overlay_elements || []
         })
-        
+
         // Check if there's a pair_image with template_id
         const pairImageTemplateId = template.base_image?.pair_image?.template_id
-        
+
         if (pairImageTemplateId) {
           console.log(`Found pair template ID: ${pairImageTemplateId} for base template: ${baseTemplateId}`)
-          
+
           try {
             // Fetch the pair template
             const pairTemplateData = await getTemplateById({
@@ -2104,12 +2140,12 @@ const Brandimages = () => {
               profileId: selectedProfileId,
               templateId: pairImageTemplateId
             })
-            
+
             console.log('Fetched pair template data:', pairTemplateData)
-            
+
             // Extract the actual template object from the response
             const pairTemplate = pairTemplateData?.template || pairTemplateData
-            
+
             // Use the same placement data (text_elements and overlay_elements) for the pair template
             templatesForApi.push({
               template_id: pairImageTemplateId,
@@ -2117,7 +2153,7 @@ const Brandimages = () => {
               text_elements: template.text_elements || [], // Same placement as base
               overlay_elements: template.overlay_elements || [] // Same placement as base
             })
-            
+
             console.log(`Added pair template ${pairImageTemplateId} with same placement data`)
           } catch (pairError) {
             console.warn(`Failed to fetch pair template ${pairImageTemplateId}:`, pairError)
@@ -2125,15 +2161,15 @@ const Brandimages = () => {
           }
         }
       }
-      
+
       const updatePayload = {
         userId,
         profileId: selectedProfileId,
         templates: templatesForApi
       }
-      
+
       console.log('Final update payload with both templates:', updatePayload)
-      
+
       try {
         await updateTemplateElements(updatePayload)
         // If we successfully updated via API and have local templates, update state
@@ -2253,11 +2289,11 @@ const Brandimages = () => {
   const fallbackUploadedImages = useMemo(() => {
     if (hasStructuredTemplates) return []
     const aggregated = []
-    ;(templates || []).forEach(item => {
-      if (item && typeof item === 'object') {
-        aggregated.push(...normalizeUploadedImages(item.uploaded_images || []))
-      }
-    })
+      ; (templates || []).forEach(item => {
+        if (item && typeof item === 'object') {
+          aggregated.push(...normalizeUploadedImages(item.uploaded_images || []))
+        }
+      })
     return aggregated
   }, [hasStructuredTemplates, normalizeUploadedImages, templates])
 
@@ -2275,36 +2311,36 @@ const Brandimages = () => {
 
   const handleDeleteTemplate = (templateEntry, label) => {
     if (!templateEntry || !templateEntry.template) return
-    
+
     const userId = localStorage.getItem('token') || ''
     const pid = selectedProfileId
-    
+
     if (!userId || !pid) {
       alert('Missing user or profile information')
       return
     }
-    
+
     // Get template_id from the template object
     const templateId = templateEntry.template.template_id || templateEntry.template.templateId || templateEntry.template.id
-    
+
     if (!templateId) {
       alert('Template ID not found')
       return
     }
-    
+
     // Get aspect_ratio from template entry or selected template aspect
-    const aspectRatio = templateEntry.meta?.aspect || 
-                        templateEntry.template?.aspect_ratio || 
-                        templateEntry.template?.ratio || 
-                        templateEntry.template?.orientation || 
-                        selectedTemplateAspect || 
-                        ''
-    
+    const aspectRatio = templateEntry.meta?.aspect ||
+      templateEntry.template?.aspect_ratio ||
+      templateEntry.template?.ratio ||
+      templateEntry.template?.orientation ||
+      selectedTemplateAspect ||
+      ''
+
     if (!aspectRatio) {
       alert('Aspect ratio is required for deletion. Please select a template aspect ratio first.')
       return
     }
-    
+
     // Open confirmation modal
     setDeleteConfirmData({
       templateEntry,
@@ -2319,9 +2355,9 @@ const Brandimages = () => {
 
   const confirmDeleteTemplate = async () => {
     if (!deleteConfirmData) return
-    
+
     const { templateId, aspectRatio, userId, profileId } = deleteConfirmData
-    
+
     setIsDeleting(true)
     try {
       // Call delete API
@@ -2331,7 +2367,7 @@ const Brandimages = () => {
         templateIds: [templateId],
         aspectRatio
       })
-      
+
       // Refresh the brand profile to get updated templates
       const refreshed = await getBrandProfileById({ userId, profileId })
       const abi = refreshed?.brand_identity || {}
@@ -2343,7 +2379,7 @@ const Brandimages = () => {
       updateTemplatesState(tpls)
       const vos = refreshed?.voiceover || []
       setVoiceovers(Array.isArray(vos) ? vos : [])
-      
+
       // Close modal
       setIsDeleteConfirmOpen(false)
       setDeleteConfirmData(null)
@@ -2357,27 +2393,27 @@ const Brandimages = () => {
 
   const confirmDeleteProfile = async () => {
     if (!deleteProfileConfirmData) return
-    
+
     const { userId, profileId } = deleteProfileConfirmData
-    
+
     setIsDeletingProfile(true)
     try {
       // Call delete API
       await deleteBrandProfile({ userId, profileId })
-      
+
       // Refresh profiles list
       const tokenUserId = localStorage.getItem('token') || ''
       if (tokenUserId) {
         const plist = await getBrandProfiles(tokenUserId)
-        plist.sort((a,b) => (b?.is_active?1:0) - (a?.is_active?1:0))
+        plist.sort((a, b) => (b?.is_active ? 1 : 0) - (a?.is_active ? 1 : 0))
         setProfiles(plist)
-        
+
         // Select the first profile (or active one if available)
         const newSelected = plist.find(p => p.is_active)?.profile_id || plist.find(p => p.is_active)?.id || plist[0]?.profile_id || plist[0]?.id || ''
         if (newSelected) {
           setSelectedProfileId(newSelected)
           setSelectedIsActive(!!plist.find(p => (p.profile_id || p.id) === newSelected)?.is_active)
-          
+
           // Load the selected profile details
           const a = await getBrandProfileById({ userId: tokenUserId, profileId: newSelected })
           const bi = a?.brand_identity || {}
@@ -2413,7 +2449,7 @@ const Brandimages = () => {
           setVoiceovers([])
         }
       }
-      
+
       // Close modal
       setIsDeleteProfileConfirmOpen(false)
       setDeleteProfileConfirmData(null)
@@ -2427,32 +2463,32 @@ const Brandimages = () => {
 
   const handleEditTemplate = async (templateEntry, label) => {
     if (!templateEntry || !templateEntry.template) return
-    
+
     const userId = localStorage.getItem('token') || ''
     const pid = selectedProfileId
-    
+
     if (!userId || !pid) {
       alert('Missing user or profile information')
       return
     }
-    
+
     // Get template_id from the template object
     const templateId = templateEntry.template.template_id || templateEntry.template.templateId || templateEntry.template.id
-    
+
     console.log('=== EDIT TEMPLATE CLICKED ===')
     console.log('Template ID being edited:', templateId)
     console.log('Label:', label)
     console.log('Template Entry:', templateEntry)
-    
+
     if (!templateId) {
       alert('Template ID not found')
       return
     }
-    
+
     try {
       // Show loading overlay
       setIsLoadingTemplateDetails(true)
-      
+
       // Call API to get template details
       console.log('=== FETCHING TEMPLATE DETAILS FROM API ===')
       console.log('API Endpoint: /v1/users/brand-assets/profiles/{user_id}/{profile_id}/templates/{template_id}')
@@ -2461,28 +2497,28 @@ const Brandimages = () => {
         profileId: pid,
         templateId
       })
-      
+
       const apiResponse = await getTemplateById({
         userId,
         profileId: pid,
         templateId
       })
-      
+
       console.log('=== API RESPONSE RECEIVED ===')
       console.log('Full API Response:', apiResponse)
       console.log('API Response Type:', typeof apiResponse)
       console.log('API Response Keys:', apiResponse ? Object.keys(apiResponse) : 'No keys')
       console.log('API Response (JSON):', JSON.stringify(apiResponse, null, 2))
-      
+
       // Validate API response
       if (!apiResponse) {
         throw new Error('API returned empty or null response')
       }
-      
+
       if (typeof apiResponse !== 'object') {
         throw new Error(`API returned invalid response type: ${typeof apiResponse}. Expected object.`)
       }
-      
+
       // Extract template data from response (API wraps it in a 'template' property)
       let templateDetails = apiResponse
       if (apiResponse.template && typeof apiResponse.template === 'object') {
@@ -2492,7 +2528,7 @@ const Brandimages = () => {
         templateDetails = apiResponse.data
         console.log('✅ Extracted template from response.data')
       }
-      
+
       // Log specific fields from the template
       console.log('=== TEMPLATE DATA ===')
       console.log('Template ID:', templateDetails.template_id || templateDetails.templateId || templateDetails.id)
@@ -2504,11 +2540,11 @@ const Brandimages = () => {
       console.log('Text Elements Count:', templateDetails.text_elements?.length || 0)
       console.log('Overlay Elements:', templateDetails.overlay_elements)
       console.log('Overlay Elements Count:', templateDetails.overlay_elements?.length || 0)
-      
+
       // Deep search function to find image URL in any nested structure
       const deepSearchImageUrl = (obj, depth = 0, maxDepth = 5) => {
         if (depth > maxDepth || !obj || typeof obj !== 'object') return null
-        
+
         // Check common URL property names
         const urlProps = ['image_url', 'imageUrl', 'url', 'src', 'href', 'link', 'file', 'path']
         for (const prop of urlProps) {
@@ -2520,7 +2556,7 @@ const Brandimages = () => {
             }
           }
         }
-        
+
         // Recursively search nested objects
         for (const key in obj) {
           if (obj.hasOwnProperty(key) && typeof obj[key] === 'object' && obj[key] !== null) {
@@ -2528,25 +2564,25 @@ const Brandimages = () => {
             if (found) return found
           }
         }
-        
+
         return null
       }
-      
+
       // Check if we can extract URL before normalization
       let extractedUrl = resolveTemplateImageUrl(templateDetails)
       console.log('Extracted URL from resolveTemplateImageUrl:', extractedUrl)
-      
+
       // If URL extraction failed, try deep search
       if (!extractedUrl || extractedUrl === '') {
         console.log('⚠️ URL extraction failed, trying deep search...')
-        
+
         // Try deep search through entire response
         const deepSearchUrl = deepSearchImageUrl(templateDetails)
         console.log('Deep search result:', deepSearchUrl)
-        
+
         // Also try specific known paths
         let fallbackUrl = ''
-        
+
         // Try base_image paths
         if (templateDetails?.base_image) {
           if (typeof templateDetails.base_image === 'string') {
@@ -2554,15 +2590,15 @@ const Brandimages = () => {
             console.log('Found URL in base_image (string):', fallbackUrl)
           } else if (typeof templateDetails.base_image === 'object') {
             // Try all possible property names
-            fallbackUrl = templateDetails.base_image.image_url || 
-                         templateDetails.base_image.imageUrl || 
-                         templateDetails.base_image.url || 
-                         templateDetails.base_image.src || 
-                         templateDetails.base_image.href ||
-                         templateDetails.base_image.link ||
-                         templateDetails.base_image.file ||
-                         templateDetails.base_image.path ||
-                         ''
+            fallbackUrl = templateDetails.base_image.image_url ||
+              templateDetails.base_image.imageUrl ||
+              templateDetails.base_image.url ||
+              templateDetails.base_image.src ||
+              templateDetails.base_image.href ||
+              templateDetails.base_image.link ||
+              templateDetails.base_image.file ||
+              templateDetails.base_image.path ||
+              ''
             if (fallbackUrl) {
               console.log('Found URL in base_image (object):', fallbackUrl)
             } else {
@@ -2575,29 +2611,29 @@ const Brandimages = () => {
             }
           }
         }
-        
+
         // If still not found, try root level
         if (!fallbackUrl) {
-          fallbackUrl = templateDetails.image_url || 
-                       templateDetails.imageUrl || 
-                       templateDetails.url || 
-                       templateDetails.src ||
-                       templateDetails.href ||
-                       templateDetails.link ||
-                       templateDetails.file ||
-                       templateDetails.path ||
-                       ''
+          fallbackUrl = templateDetails.image_url ||
+            templateDetails.imageUrl ||
+            templateDetails.url ||
+            templateDetails.src ||
+            templateDetails.href ||
+            templateDetails.link ||
+            templateDetails.file ||
+            templateDetails.path ||
+            ''
           if (fallbackUrl) {
             console.log('Found URL at root level:', fallbackUrl)
           }
         }
-        
+
         // Use deep search result if found
         if (!fallbackUrl && deepSearchUrl) {
           fallbackUrl = deepSearchUrl
           console.log('Using deep search URL:', fallbackUrl)
         }
-        
+
         // Final check - if still no URL, log everything for debugging
         if (!fallbackUrl || fallbackUrl === '') {
           console.error('❌ Could not extract image URL from API response')
@@ -2611,7 +2647,7 @@ const Brandimages = () => {
           }
           throw new Error('Template does not have a valid image URL in the API response. Please check console for details.')
         }
-        
+
         // Ensure the URL is properly structured in the response
         // This ensures normalizeTemplateEntry can find it
         if (!templateDetails.base_image) {
@@ -2619,12 +2655,12 @@ const Brandimages = () => {
           console.log('✅ Created base_image structure with URL:', fallbackUrl)
         } else if (typeof templateDetails.base_image === 'object') {
           // Add image_url if it doesn't exist in any form
-          if (!templateDetails.base_image.image_url && 
-              !templateDetails.base_image.imageUrl && 
-              !templateDetails.base_image.url && 
-              !templateDetails.base_image.src &&
-              !templateDetails.base_image.href &&
-              !templateDetails.base_image.link) {
+          if (!templateDetails.base_image.image_url &&
+            !templateDetails.base_image.imageUrl &&
+            !templateDetails.base_image.url &&
+            !templateDetails.base_image.src &&
+            !templateDetails.base_image.href &&
+            !templateDetails.base_image.link) {
             templateDetails.base_image.image_url = fallbackUrl
             console.log('✅ Added image_url to existing base_image structure:', fallbackUrl)
           } else {
@@ -2637,11 +2673,11 @@ const Brandimages = () => {
           templateDetails.base_image = { image_url: templateDetails.base_image || fallbackUrl }
           console.log('✅ Converted base_image string to object structure:', templateDetails.base_image.image_url)
         }
-        
+
         // Verify URL can now be extracted
         extractedUrl = resolveTemplateImageUrl(templateDetails)
         console.log('✅ Verified URL extraction after fallback:', extractedUrl)
-        
+
         // If still can't extract, use the fallback URL directly
         if (!extractedUrl || extractedUrl === '') {
           console.warn('⚠️ resolveTemplateImageUrl still failed, using fallback URL directly')
@@ -2654,21 +2690,21 @@ const Brandimages = () => {
           }
         }
       }
-      
+
       // Get aspect ratio from metadata or template
-      const aspectRatio = apiResponse.metadata?.aspect_ratio || 
-                         templateDetails?.aspect_ratio || 
-                         templateDetails?.ratio || 
-                         templateDetails?.orientation || 
-                         templateEntry.meta?.aspect || 
-                         ''
-      
-      
+      const aspectRatio = apiResponse.metadata?.aspect_ratio ||
+        templateDetails?.aspect_ratio ||
+        templateDetails?.ratio ||
+        templateDetails?.orientation ||
+        templateEntry.meta?.aspect ||
+        ''
+
+
       // Normalize the API response using normalizeTemplateEntry
       let normalizedEntry = normalizeTemplateEntry(templateDetails, label, {
         aspect: aspectRatio
       })
-      
+
       // If normalization failed but we have a URL, create normalized entry manually
       if (!normalizedEntry && extractedUrl) {
         console.warn('⚠️ normalizeTemplateEntry failed, creating normalized entry manually')
@@ -2678,7 +2714,7 @@ const Brandimages = () => {
         const textElements = Array.isArray(templateDetails.text_elements)
           ? templateDetails.text_elements
           : (Array.isArray(templateDetails.textElements) ? templateDetails.textElements : [])
-        
+
         // Extract pair image URL from base_image.pair_image.image_url
         let pairImageUrl = null
         if (templateDetails.base_image?.pair_image) {
@@ -2689,9 +2725,9 @@ const Brandimages = () => {
             pairImageUrl = nestedPair.image_url || nestedPair.imageUrl || nestedPair.url || null
           }
         }
-        
+
         console.log('Pair Image URL extracted:', pairImageUrl)
-        
+
         normalizedEntry = {
           url: extractedUrl,
           label: label,
@@ -2705,42 +2741,42 @@ const Brandimages = () => {
         }
         console.log('✅ Created normalized entry manually:', normalizedEntry)
       }
-      
+
       if (!normalizedEntry) {
         console.error('❌ Normalization failed after URL extraction')
         console.error('Template Details:', templateDetails)
         console.error('Extracted URL:', extractedUrl || 'Not found')
         throw new Error('Failed to normalize template data from API response. Please check console for details.')
       }
-      
+
       console.log('=== NORMALIZED ENTRY ===')
       console.log('Normalized Entry:', normalizedEntry)
       console.log('Normalized Entry (JSON):', JSON.stringify(normalizedEntry, null, 2))
       console.log('Base Image URL:', normalizedEntry.url)
       console.log('Pair Image URL:', normalizedEntry.pairImageUrl)
-      
+
       // Close loading overlay
       setIsLoadingTemplateDetails(false)
-      
+
       // Reset placement state first
       resetPlacementEditor()
       setPlacementError('')
       setTemplatePreview({ url: '', title: '' })
       setIsPlacementPromptOpen(false)
       setPlacementPendingOpen(false)
-      
+
       // Set templates and open editor after a short delay to ensure loading overlay is gone
       setTimeout(() => {
         setPlacementTemplates([normalizedEntry])
         setPlacementSelectedIndex(0)
-        
+
         // Open overlay after another short delay to ensure templates state is updated
         setTimeout(() => {
           setIsPlacementOverlayOpen(true)
           console.log('Successfully opened placement overlay with API data')
         }, 50)
       }, 150)
-      
+
     } catch (error) {
       console.error('Failed to load template details:', error)
       setIsLoadingTemplateDetails(false)
@@ -2754,8 +2790,8 @@ const Brandimages = () => {
     }
     // For 16:9 templates, use fewer columns (bigger boxes) to cover all 3 options properly
     const is16x9 = selectedTemplateAspect === '16:9' || selectedTemplateAspect === '16-9'
-    const gridCols = is16x9 
-      ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4' 
+    const gridCols = is16x9
+      ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4'
       : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4'
     return (
       <div className={`grid ${gridCols}`}>
@@ -2796,17 +2832,17 @@ const Brandimages = () => {
                     >
                       <ZoomIn size={16} />
                     </button>
-                      <button
-                        type="button"
-                      onClick={(e) => { 
+                    <button
+                      type="button"
+                      onClick={(e) => {
                         e.stopPropagation();
                         console.log('Edit clicked - item:', item);
                         console.log('Edit clicked - derived previewUrl:', previewUrl);
-                         openImageEditorForEntry({
-                           templateEntry: normalized || item,
-                           fallbackUrl: previewUrl,
-                           label
-                         })
+                        openImageEditorForEntry({
+                          templateEntry: normalized || item,
+                          fallbackUrl: previewUrl,
+                          label
+                        })
                       }}
                       className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-green-600 shadow hover:bg-green-50"
                       title="Edit image"
@@ -2864,7 +2900,7 @@ const Brandimages = () => {
   const handleTemplateModeChange = (mode) => {
     if (templateUploadMode === mode) return
     setTemplateUploadMode(mode)
-    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
     setPreviewUrls([])
     setSelectedFiles([])
     setErrorMsg('')
@@ -2880,38 +2916,38 @@ const Brandimages = () => {
   useEffect(() => {
     const userId = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : ''
     if (!userId) return
-    ;(async () => {
-      try {
-        // 1) Load profiles and order with active first
-        const plist = await getBrandProfiles(userId)
-        plist.sort((a,b) => (b?.is_active?1:0) - (a?.is_active?1:0))
-        setProfiles(plist)
-        const initial = (plist[0]?.profile_id || plist[0]?.id || '')
-        if (initial) {
-          setSelectedProfileId(initial)
-          setSelectedIsActive(!!plist[0]?.is_active)
-          // 2) Load selected profile details
-          const detail = await getBrandProfileById({ userId, profileId: initial })
-          const a = detail || {}
-          const bi = a.brand_identity || {}
-          setTagline(bi.tagline || '')
-          setSpacing(bi.spacing || '')
-          setCaptionLocation(a?.caption_location || a?.brand_identity?.caption_location || '')
-          setLogos(bi.logo || [])
-          setIcons(bi.icon || bi.icons || [])
-          setFonts(bi.fonts || [])
-          setColors(bi.colors || [])
-          const tv = a.tone_and_voice || {}
-          setToneVoice(hydrateToneVoiceState(tv))
-          const lf = a.look_and_feel || {}
-          setLookFeel(hydrateLookFeelState(lf))
-          const tpls = a?.template || a?.templates || []
-          updateTemplatesState(tpls)
-          const vos = a?.voiceover || []
-          setVoiceovers(Array.isArray(vos) ? vos : [])
-        }
-      } catch(_) { /* noop */ }
-    })()
+      ; (async () => {
+        try {
+          // 1) Load profiles and order with active first
+          const plist = await getBrandProfiles(userId)
+          plist.sort((a, b) => (b?.is_active ? 1 : 0) - (a?.is_active ? 1 : 0))
+          setProfiles(plist)
+          const initial = (plist[0]?.profile_id || plist[0]?.id || '')
+          if (initial) {
+            setSelectedProfileId(initial)
+            setSelectedIsActive(!!plist[0]?.is_active)
+            // 2) Load selected profile details
+            const detail = await getBrandProfileById({ userId, profileId: initial })
+            const a = detail || {}
+            const bi = a.brand_identity || {}
+            setTagline(bi.tagline || '')
+            setSpacing(bi.spacing || '')
+            setCaptionLocation(a?.caption_location || a?.brand_identity?.caption_location || '')
+            setLogos(bi.logo || [])
+            setIcons(bi.icon || bi.icons || [])
+            setFonts(bi.fonts || [])
+            setColors(bi.colors || [])
+            const tv = a.tone_and_voice || {}
+            setToneVoice(hydrateToneVoiceState(tv))
+            const lf = a.look_and_feel || {}
+            setLookFeel(hydrateLookFeelState(lf))
+            const tpls = a?.template || a?.templates || []
+            updateTemplatesState(tpls)
+            const vos = a?.voiceover || []
+            setVoiceovers(Array.isArray(vos) ? vos : [])
+          }
+        } catch (_) { /* noop */ }
+      })()
   }, [])
 
   // Fetch generated assets
@@ -2922,14 +2958,14 @@ const Brandimages = () => {
 
       setIsLoadingGeneratedAssets(true)
       setGeneratedAssetsError('')
-      
+
       try {
         const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
         const resp = await fetch(`${apiBase}/v1/users/user/${encodeURIComponent(userId)}/generated-media`, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' }
         })
-        
+
         const text = await resp.text()
         let json
         try {
@@ -2937,7 +2973,7 @@ const Brandimages = () => {
         } catch (_) {
           json = text
         }
-        
+
         if (!resp.ok) {
           throw new Error(`generated-media failed: ${resp.status} ${text}`)
         }
@@ -2994,7 +3030,7 @@ const Brandimages = () => {
       updateTemplatesState(tpls)
       const vos = a?.voiceover || []
       setVoiceovers(Array.isArray(vos) ? vos : [])
-    } catch(_) { /* noop */ }
+    } catch (_) { /* noop */ }
   }
 
   const handleToggleActive = async () => {
@@ -3005,7 +3041,7 @@ const Brandimages = () => {
       await activateBrandProfile({ userId, profileId: selectedProfileId })
       // Refresh profiles list and details
       const plist = await getBrandProfiles(userId)
-      plist.sort((a,b) => (b?.is_active?1:0) - (a?.is_active?1:0))
+      plist.sort((a, b) => (b?.is_active ? 1 : 0) - (a?.is_active ? 1 : 0))
       setProfiles(plist)
       const active = plist.find(p => p.is_active)
       const newSelected = active ? (active.profile_id || active.id) : selectedProfileId
@@ -3021,20 +3057,20 @@ const Brandimages = () => {
       setFonts(bi.fonts || [])
       setColors(bi.colors || [])
       const tv = a?.tone_and_voice || {}
-    setToneVoice(hydrateToneVoiceState(tv))
-    const lf = a?.look_and_feel || {}
-    setLookFeel(hydrateLookFeelState(lf))
+      setToneVoice(hydrateToneVoiceState(tv))
+      const lf = a?.look_and_feel || {}
+      setLookFeel(hydrateLookFeelState(lf))
       const tpls = a?.template || a?.templates || []
       updateTemplatesState(tpls)
       const vos = a?.voiceover || []
       setVoiceovers(Array.isArray(vos) ? vos : [])
-    } catch(_) { /* noop */ }
+    } catch (_) { /* noop */ }
   }
 
   const openUploadModal = (type) => {
     setTargetType(type)
     setSelectedFiles([])
-    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
     setPreviewUrls([])
     setErrorMsg('')
     if (type === 'templates') {
@@ -3065,13 +3101,13 @@ const Brandimages = () => {
         return
       }
       setSelectedFiles([pptFile])
-      try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+      try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
       setPreviewUrls([])
       return
     }
     const nextFiles = filesArray
     setSelectedFiles(nextFiles)
-    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
     try {
       const urls = nextFiles.map(f => URL.createObjectURL(f))
       setPreviewUrls(urls)
@@ -3124,7 +3160,7 @@ const Brandimages = () => {
           setIsModalOpen(false);
           setSelectedFiles([]);
           if (fileInputRef.current) fileInputRef.current.value = '';
-          try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+          try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
           setPreviewUrls([]);
           return;
         }
@@ -3132,13 +3168,13 @@ const Brandimages = () => {
         let aspectRatio = null;
         const aspectInput = (templateUploadAspect || '').trim();
         if (aspectInput) {
-        const normalizedAspect = aspectInput.replace(/[xX/]/g, ':').replace(/\s+/g, '');
-        const aspectMatch = normalizedAspect.match(/^(\d+):(\d+)$/);
+          const normalizedAspect = aspectInput.replace(/[xX/]/g, ':').replace(/\s+/g, '');
+          const aspectMatch = normalizedAspect.match(/^(\d+):(\d+)$/);
           if (aspectMatch) {
             aspectRatio = `${aspectMatch[1]}:${aspectMatch[2]}`;
           }
         }
-        
+
         // Store previous template URLs to identify new ones
         const previousTemplateUrls = templates
           .flatMap(t => {
@@ -3154,7 +3190,7 @@ const Brandimages = () => {
             return url
           })
           .filter(Boolean)
-        
+
         await uploadProfileTemplateImages({
           userId,
           profileId: pid,
@@ -3170,20 +3206,20 @@ const Brandimages = () => {
         setColors(abi.colors || []);
         const tpls = refreshed?.template || refreshed?.templates || [];
         updateTemplatesState(tpls);
-        
+
         // Use the same placement flow as PPTX - show "Place Now" popup
         applyPptPlacementTemplates(tpls, previousTemplateUrls);
-        
+
         const vos = refreshed?.voiceover || [];
         setVoiceovers(Array.isArray(vos) ? vos : []);
         if (aspectRatio) {
-        setSelectedTemplateAspect(aspectRatio);
-        setTemplateUploadAspect(aspectRatio);
+          setSelectedTemplateAspect(aspectRatio);
+          setTemplateUploadAspect(aspectRatio);
         }
         setIsModalOpen(false);
         setSelectedFiles([]);
         if (fileInputRef.current) fileInputRef.current.value = '';
-        try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+        try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
         setPreviewUrls([]);
         return;
       }
@@ -3225,7 +3261,7 @@ const Brandimages = () => {
         if (targetType === 'voiceovers') resetVoiceoverFlow();
         setIsModalOpen(false);
         setSelectedFiles([]);
-        try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+        try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
         setPreviewUrls([]);
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
@@ -3288,7 +3324,7 @@ const Brandimages = () => {
       if (targetType === 'voiceovers') resetVoiceoverFlow();
       setIsModalOpen(false);
       setSelectedFiles([]);
-      try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+      try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
       setPreviewUrls([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (e) {
@@ -3407,7 +3443,7 @@ const Brandimages = () => {
               {colors.map((c, i) => (
                 <div key={i} className="w-7 h-7 rounded-full border" style={{ background: c }} title={c} />
               ))}
-          </div>
+            </div>
           )}
           <button
             type="button"
@@ -3421,7 +3457,7 @@ const Brandimages = () => {
       </section>
 
       {/* Brand Identity Details */}
-    
+
 
       {/* Tone & Voice */}
       <section className="rounded-xl border border-gray-200 bg-white">
@@ -3734,9 +3770,9 @@ const Brandimages = () => {
               <button onClick={() => setIsLookModalOpen(false)} className="text-gray-500 hover:text-gray-700">✕</button>
             </div>
             <div className="space-y-4">
-              {['iconography','graphic_elements','aesthetic_consistency'].map(section => (
+              {['iconography', 'graphic_elements', 'aesthetic_consistency'].map(section => (
                 <div key={section} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                  <div className="text-sm font-semibold text-gray-800 mb-1 capitalize">{section.replace('_',' ')}</div>
+                  <div className="text-sm font-semibold text-gray-800 mb-1 capitalize">{section.replace('_', ' ')}</div>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {(workingLook[section] || []).map((m, i) => {
                       const stepValue = getStepValueForEntry(m)
@@ -3914,8 +3950,8 @@ const Brandimages = () => {
                           const previewUrl = deriveTemplateImageUrl(img.entry, normalized) || img.url || ''
                           return (
                             <div key={`uploaded-image-${idx}`} className="relative group">
-                            <button
-                              type="button"
+                              <button
+                                type="button"
                                 onClick={() => handleOpenTemplatePreview(normalized || img.entry, label)}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter' || e.key === ' ') {
@@ -3928,7 +3964,7 @@ const Brandimages = () => {
                                 {previewUrl
                                   ? <img src={previewUrl} alt={label} className="w-full h-32 object-cover" />
                                   : <div className="p-4 text-xs text-gray-500 break-all">{JSON.stringify(img.entry)}</div>}
-                            </button>
+                              </button>
                               {previewUrl && (
                                 <div className="pointer-events-none absolute inset-0 flex items-start justify-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                   <div className="pointer-events-auto flex flex-col gap-2">
@@ -3942,15 +3978,15 @@ const Brandimages = () => {
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={(e) => { 
+                                      onClick={(e) => {
                                         e.stopPropagation();
                                         console.log('Edit clicked - img.entry:', img.entry);
                                         console.log('Edit clicked - derived previewUrl:', previewUrl);
-                                         openImageEditorForEntry({
-                                           templateEntry: normalized || img.entry,
-                                           fallbackUrl: previewUrl,
-                                           label
-                                         })
+                                        openImageEditorForEntry({
+                                          templateEntry: normalized || img.entry,
+                                          fallbackUrl: previewUrl,
+                                          label
+                                        })
                                       }}
                                       className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-green-600 shadow hover:bg-green-50"
                                       title="Edit image"
@@ -3977,7 +4013,7 @@ const Brandimages = () => {
                                         <Trash2 size={16} />
                                       </button>
                                     )}
-                          </div>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -4055,7 +4091,7 @@ const Brandimages = () => {
                 ))
               );
             })()}
-            </div>
+          </div>
         </div>
       </section>
 
@@ -4291,24 +4327,23 @@ const Brandimages = () => {
             </div>
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 justify-between">
-              <div className="flex flex-wrap items-center gap-2">
-                {PLACEMENT_TYPE_OPTIONS.map((opt) => {
-                  const isActive = placementSelectedType === opt.value
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setPlacementSelectedType(opt.value)}
-                      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${
-                        isActive ? 'border-[#13008B] bg-[#13008B]/10 text-[#13008B]' : 'border-[#D1CCFF] text-[#4B3CC4] hover:border-[#13008B]/50'
-                      }`}
-                    >
-                      <span>{opt.label}</span>
-                      <span className="text-[10px] uppercase tracking-wide text-[#6F64E9]">{opt.detail}</span>
-                    </button>
-                  )
-                })}
-              </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {PLACEMENT_TYPE_OPTIONS.map((opt) => {
+                    const isActive = placementSelectedType === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setPlacementSelectedType(opt.value)}
+                        className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${isActive ? 'border-[#13008B] bg-[#13008B]/10 text-[#13008B]' : 'border-[#D1CCFF] text-[#4B3CC4] hover:border-[#13008B]/50'
+                          }`}
+                      >
+                        <span>{opt.label}</span>
+                        <span className="text-[10px] uppercase tracking-wide text-[#6F64E9]">{opt.detail}</span>
+                      </button>
+                    )
+                  })}
+                </div>
                 {activePlacementWithPair.pairImageUrl && (
                   <label className="flex items-center gap-2 text-xs font-medium text-[#13008B] cursor-pointer">
                     <input
@@ -4328,32 +4363,32 @@ const Brandimages = () => {
                   </div>
                 )}
                 <div className={`flex ${activePlacementWithPair.pairImageUrl ? 'gap-4' : ''} items-start justify-center`}>
-              <div
-                ref={placementContainerRef}
+                  <div
+                    ref={placementContainerRef}
                     className={`relative inline-flex rounded-3xl border ${activeImageFormat === 'base' ? 'border-[#FF6B6B] ring-2 ring-[#FF6B6B]/30' : 'border-[#E4E1FF]'} bg-white shadow-xl overflow-hidden`}
-              >
-                <div ref={placementCanvasWrapperRef} className="relative">
-                  <div className="absolute left-4 top-4 z-10 rounded-full bg-white/95 px-4 py-1 text-xs font-semibold text-[#13008B] shadow">
+                  >
+                    <div ref={placementCanvasWrapperRef} className="relative">
+                      <div className="absolute left-4 top-4 z-10 rounded-full bg-white/95 px-4 py-1 text-xs font-semibold text-[#13008B] shadow">
                         {activePlacementWithPair.pairImageUrl ? `Base Image ${activeImageFormat === 'base' ? '(Active)' : ''}` : activePlacementWithPair.label}
-                  </div>
-                  <img
-                    ref={placementImageRef}
+                      </div>
+                      <img
+                        ref={placementImageRef}
                         src={activePlacementWithPair.url}
                         alt={activePlacementWithPair.label}
-                    className="max-h-[420px] object-contain bg-[#F7F5FF]"
-                    onLoad={updatePlacementImageMetrics}
-                  />
-                  <canvas
-                    ref={placementCanvasRef}
-                    onMouseDown={handlePlacementMouseDown}
-                    onMouseMove={(e) => {
-                      handlePlacementMouseHover(e)
-                      handlePlacementMouseMove(e)
-                    }}
-                    onMouseUp={handlePlacementMouseUp}
-                    onMouseLeave={handlePlacementMouseUp}
-                    style={{ cursor: placementCursorStyle, position: 'absolute', top: 0, left: 0 }}
-                  />
+                        className="max-h-[420px] object-contain bg-[#F7F5FF]"
+                        onLoad={updatePlacementImageMetrics}
+                      />
+                      <canvas
+                        ref={placementCanvasRef}
+                        onMouseDown={handlePlacementMouseDown}
+                        onMouseMove={(e) => {
+                          handlePlacementMouseHover(e)
+                          handlePlacementMouseMove(e)
+                        }}
+                        onMouseUp={handlePlacementMouseUp}
+                        onMouseLeave={handlePlacementMouseUp}
+                        style={{ cursor: placementCursorStyle, position: 'absolute', top: 0, left: 0 }}
+                      />
                     </div>
                   </div>
                   {activePlacementWithPair.pairImageUrl && (
@@ -4417,43 +4452,42 @@ const Brandimages = () => {
                           <p className="text-[10px] font-semibold text-[#FF6B6B] uppercase tracking-wide">Base Image</p>
                           {placementBoxes.map((box) => {
                             const isActive = activeImageFormat === 'base' && placementSelectedBoxId === box.id
-                      return (
-                        <div
-                          key={box.id}
-                          className={`rounded-xl border px-3 py-2 text-xs transition ${
-                            isActive ? 'border-[#3B4EFD] bg-[#F1F0FF]' : 'border-[#E4E1FF] bg-white hover:border-[#3B4EFD]/50'
-                          }`}
-                        >
-                          <button
-                            type="button"
+                            return (
+                              <div
+                                key={box.id}
+                                className={`rounded-xl border px-3 py-2 text-xs transition ${isActive ? 'border-[#3B4EFD] bg-[#F1F0FF]' : 'border-[#E4E1FF] bg-white hover:border-[#3B4EFD]/50'
+                                  }`}
+                              >
+                                <button
+                                  type="button"
                                   onClick={() => {
                                     setActiveImageFormat('base')
                                     setPlacementSelectedBoxId(box.id)
                                   }}
-                            className="w-full text-left"
-                          >
-                            <div className="flex items-center justify-between">
+                                  className="w-full text-left"
+                                >
+                                  <div className="flex items-center justify-between">
                                     <span className="font-semibold text-[#13008B] capitalize">{box.type}{box.synced_with ? ' ↔️' : ''}</span>
-                              <span className="text-[10px] text-[#6F64E9]">{box.style.font_size}px</span>
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#4B3CC4]">
-                              <span>X: {box.position.x.toFixed(1)}%</span>
-                              <span>Y: {box.position.y.toFixed(1)}%</span>
-                              <span>W: {box.position.width.toFixed(1)}%</span>
-                              <span>H: {box.position.height.toFixed(1)}%</span>
-                            </div>
-                          </button>
-                          <div className="mt-2 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => deletePlacementBox(box.id)}
-                              className="flex items-center gap-1 rounded-full border border-red-100 px-2 py-1 text-[10px] font-medium text-red-500 hover:bg-red-50"
-                            >
-                              <Trash2 size={12} /> Remove
-                            </button>
-                          </div>
-                        </div>
-                      )
+                                    <span className="text-[10px] text-[#6F64E9]">{box.style.font_size}px</span>
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#4B3CC4]">
+                                    <span>X: {box.position.x.toFixed(1)}%</span>
+                                    <span>Y: {box.position.y.toFixed(1)}%</span>
+                                    <span>W: {box.position.width.toFixed(1)}%</span>
+                                    <span>H: {box.position.height.toFixed(1)}%</span>
+                                  </div>
+                                </button>
+                                <div className="mt-2 flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => deletePlacementBox(box.id)}
+                                    className="flex items-center gap-1 rounded-full border border-red-100 px-2 py-1 text-[10px] font-medium text-red-500 hover:bg-red-50"
+                                  >
+                                    <Trash2 size={12} /> Remove
+                                  </button>
+                                </div>
+                              </div>
+                            )
                           })}
                         </div>
                       )}
@@ -4465,9 +4499,8 @@ const Brandimages = () => {
                             return (
                               <div
                                 key={box.id}
-                                className={`rounded-xl border px-3 py-2 text-xs transition ${
-                                  isActive ? 'border-[#3B4EFD] bg-[#F1F0FF]' : 'border-[#E4E1FF] bg-white hover:border-[#3B4EFD]/50'
-                                }`}
+                                className={`rounded-xl border px-3 py-2 text-xs transition ${isActive ? 'border-[#3B4EFD] bg-[#F1F0FF]' : 'border-[#E4E1FF] bg-white hover:border-[#3B4EFD]/50'
+                                  }`}
                               >
                                 <button
                                   type="button"
@@ -4480,7 +4513,7 @@ const Brandimages = () => {
                                   <div className="flex items-center justify-between">
                                     <span className="font-semibold text-[#13008B] capitalize">{box.type}{box.synced_with ? ' ↔️' : ''}</span>
                                     <span className="text-[10px] text-[#6F64E9]">{box.style.font_size}px</span>
-                </div>
+                                  </div>
                                   <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#4B3CC4]">
                                     <span>X: {box.position.x.toFixed(1)}%</span>
                                     <span>Y: {box.position.y.toFixed(1)}%</span>
@@ -4522,11 +4555,10 @@ const Brandimages = () => {
                       key={`${tpl.url}-${idx}`}
                       type="button"
                       onClick={() => setPlacementSelectedIndex(idx)}
-                      className={`flex-shrink-0 flex w-full max-w-[13rem] flex-col items-center rounded-2xl border bg-white p-2 shadow-sm transition-all ${
-                        isActive
-                          ? 'border-[#3B4EFD] ring-2 ring-[#3B4EFD]/30'
-                          : 'border-[#E1DEFF] hover:border-[#3B4EFD]/40'
-                      }`}
+                      className={`flex-shrink-0 flex w-full max-w-[13rem] flex-col items-center rounded-2xl border bg-white p-2 shadow-sm transition-all ${isActive
+                        ? 'border-[#3B4EFD] ring-2 ring-[#3B4EFD]/30'
+                        : 'border-[#E1DEFF] hover:border-[#3B4EFD]/40'
+                        }`}
                     >
                       {tpl.pairImageUrl ? (
                         <div className="flex gap-1 h-32 w-full max-w-[13rem] overflow-hidden rounded-xl bg-[#F7F5FF]">
@@ -4546,13 +4578,13 @@ const Brandimages = () => {
                           </div>
                         </div>
                       ) : (
-                      <div className="flex h-32 w-full max-w-[13rem] items-center justify-center overflow-hidden rounded-xl bg-[#F7F5FF]">
-                        <img
-                          src={tpl.url}
-                          alt={tpl.label}
-                          className="max-h-full max-w-full object-contain"
-                        />
-                      </div>
+                        <div className="flex h-32 w-full max-w-[13rem] items-center justify-center overflow-hidden rounded-xl bg-[#F7F5FF]">
+                          <img
+                            src={tpl.url}
+                            alt={tpl.label}
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        </div>
                       )}
                       <p className="mt-2 px-2 text-center text-xs font-medium text-[#4B3CC4]" title={tpl.label}>
                         {tpl.label}
@@ -4577,11 +4609,10 @@ const Brandimages = () => {
                 type="button"
                 onClick={handlePlacementSave}
                 disabled={placementBoxes.length === 0 || isPlacementSaving}
-                className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${
-                  placementBoxes.length === 0 || isPlacementSaving
-                    ? 'bg-[#B7B1FF] cursor-not-allowed'
-                    : 'bg-[#13008B] hover:bg-[#0f006b]'
-                }`}
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${placementBoxes.length === 0 || isPlacementSaving
+                  ? 'bg-[#B7B1FF] cursor-not-allowed'
+                  : 'bg-[#13008B] hover:bg-[#0f006b]'
+                  }`}
               >
                 {isPlacementSaving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />}
                 {isPlacementSaving ? 'Saving…' : 'Save Placement'}
@@ -4627,7 +4658,7 @@ const Brandimages = () => {
       )}
 
       {/* Colors */}
-    
+
 
       {/* Upload Modal */}
       {isModalOpen && (
@@ -4635,10 +4666,10 @@ const Brandimages = () => {
           <div className="bg-white w-[92%] max-w-xl rounded-lg shadow-xl p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-gray-900">
-                {targetType === 'logos' ? 'Upload Brand Images' : 
-                 targetType === 'icons' ? 'Upload Icons' : 
-                 targetType === 'templates' ? 'Upload Templates' : 
-                 voiceTab === 'upload' ? 'Upload Voiceover' : 'Record Voiceover'}
+                {targetType === 'logos' ? 'Upload Brand Images' :
+                  targetType === 'icons' ? 'Upload Icons' :
+                    targetType === 'templates' ? 'Upload Templates' :
+                      voiceTab === 'upload' ? 'Upload Voiceover' : 'Record Voiceover'}
               </h3>
               <button onClick={() => { if (targetType === 'voiceovers') resetVoiceoverFlow(); setIsModalOpen(false); }} className="text-gray-500 hover:text-gray-700">✕</button>
             </div>
@@ -4653,16 +4684,15 @@ const Brandimages = () => {
                         return (
                           <div key={step.id} className="flex items-center gap-1 flex-shrink-0">
                             <div
-                              className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] flex-shrink-0 ${
-                                isActive
-                                  ? 'border-[#13008B] bg-[#13008B] text-white'
-                                  : isCompleted
-                                    ? 'border-green-500 bg-green-500 text-white'
-                                    : 'border-gray-300 text-gray-500'
-                              }`}
+                              className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] flex-shrink-0 ${isActive
+                                ? 'border-[#13008B] bg-[#13008B] text-white'
+                                : isCompleted
+                                  ? 'border-green-500 bg-green-500 text-white'
+                                  : 'border-gray-300 text-gray-500'
+                                }`}
                             >
                               {idx + 1}
-                  </div>
+                            </div>
                             <span className={`${isActive ? 'text-[#13008B]' : isCompleted ? 'text-green-600' : 'text-gray-500'} hidden sm:inline`}>{step.label}</span>
                             {idx < VOICEOVER_FLOW_STEPS.length - 1 && (
                               <div className="w-4 sm:w-6 h-px bg-gray-300 mx-1"></div>
@@ -4686,9 +4716,9 @@ const Brandimages = () => {
                           className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#13008B] focus:ring-2 focus:ring-[#13008B]/30"
                         />
                         <div className="flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
+                          <button
+                            type="button"
+                            onClick={() => {
                               const rawBaseName = typeof voiceoverBaseName === 'string' ? voiceoverBaseName : ''
                               const cleanedName = rawBaseName.trim()
                               if (!cleanedName) {
@@ -4707,7 +4737,7 @@ const Brandimages = () => {
                             className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b]"
                           >
                             Continue
-                            </button>
+                          </button>
                         </div>
                       </div>
                     )}
@@ -4751,8 +4781,8 @@ const Brandimages = () => {
                               </div>
                             </div>
                             <div className="flex items-center justify-end">
-                        <button
-                          type="button"
+                              <button
+                                type="button"
                                 onClick={() => {
                                   setSelectedFiles([])
                                   setPreviewUrls([])
@@ -4761,7 +4791,7 @@ const Brandimages = () => {
                                 className="text-xs text-gray-500 hover:text-gray-700"
                               >
                                 Remove
-                        </button>
+                              </button>
                             </div>
                           </div>
                         )}
@@ -4808,13 +4838,12 @@ const Brandimages = () => {
                         return (
                           <div key={step.id} className="flex items-center gap-1 flex-shrink-0">
                             <div
-                              className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] flex-shrink-0 ${
-                                isActive
-                                  ? 'border-[#13008B] bg-[#13008B] text-white'
-                                  : isCompleted
-                                    ? 'border-green-500 bg-green-500 text-white'
-                                    : 'border-gray-300 text-gray-500'
-                              }`}
+                              className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] flex-shrink-0 ${isActive
+                                ? 'border-[#13008B] bg-[#13008B] text-white'
+                                : isCompleted
+                                  ? 'border-green-500 bg-green-500 text-white'
+                                  : 'border-gray-300 text-gray-500'
+                                }`}
                             >
                               {idx + 1}
                             </div>
@@ -4862,7 +4891,7 @@ const Brandimages = () => {
                             className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b]"
                           >
                             Continue
-                        </button>
+                          </button>
                         </div>
                       </div>
                     )}
@@ -4894,11 +4923,10 @@ const Brandimages = () => {
                         <div className="flex flex-col gap-3">
                           <button
                             type="button"
-                            className={`px-4 py-2 rounded-md text-sm font-medium ${
-                              isRecording
-                                ? 'bg-red-600 text-white hover:bg-red-700'
-                                : 'bg-[#13008B] text-white hover:bg-[#0f006b]'
-                            }`}
+                            className={`px-4 py-2 rounded-md text-sm font-medium ${isRecording
+                              ? 'bg-red-600 text-white hover:bg-red-700'
+                              : 'bg-[#13008B] text-white hover:bg-[#0f006b]'
+                              }`}
                             onClick={async () => {
                               try {
                                 if (!isRecording) {
@@ -4922,7 +4950,7 @@ const Brandimages = () => {
                                       const blob = new Blob(chunks, { type: mimeType || 'audio/webm' })
                                       const mp3Blob = blob.type === 'audio/mpeg' ? blob : new Blob([blob], { type: 'audio/mpeg' })
                                       const url = URL.createObjectURL(mp3Blob)
-                                      if (recordBlobUrl) { try { URL.revokeObjectURL(recordBlobUrl) } catch (_) {} }
+                                      if (recordBlobUrl) { try { URL.revokeObjectURL(recordBlobUrl) } catch (_) { } }
                                       setRecordBlobUrl(url)
                                       const baseNameForFile = typeof voiceoverBaseName === 'string' ? voiceoverBaseName : ''
                                       const sanitizedName = `${(baseNameForFile || 'voiceover').trim().toLowerCase().replace(/\s+/g, '_')}_${currentVoiceTone.id}`
@@ -4959,18 +4987,18 @@ const Brandimages = () => {
                                 </div>
                               </div>
                               <div className="flex items-center justify-end">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                    if (recordBlobUrl) { try { URL.revokeObjectURL(recordBlobUrl) } catch (_) {} }
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (recordBlobUrl) { try { URL.revokeObjectURL(recordBlobUrl) } catch (_) { } }
                                     setRecordBlobUrl('')
                                     setSelectedFiles([])
                                     setPreviewUrls([])
-                                }}
-                                className="text-xs text-gray-500 hover:text-gray-700"
-                              >
-                                Re-record
-                              </button>
+                                  }}
+                                  className="text-xs text-gray-500 hover:text-gray-700"
+                                >
+                                  Re-record
+                                </button>
                               </div>
                             </div>
                           )}
@@ -5015,28 +5043,26 @@ const Brandimages = () => {
                 {isTemplateTarget && (
                   <div className="mb-4 space-y-3">
                     <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleTemplateModeChange('image')}
-                      className={`px-3 py-2 rounded-md border text-sm transition-colors ${
-                        templateUploadMode === 'image'
+                      <button
+                        type="button"
+                        onClick={() => handleTemplateModeChange('image')}
+                        className={`px-3 py-2 rounded-md border text-sm transition-colors ${templateUploadMode === 'image'
                           ? 'border-[#13008B] bg-[#13008B]/10 text-[#13008B]'
                           : 'border-gray-200 text-gray-600 hover:border-[#13008B]/40 hover:text-[#13008B]'
-                      }`}
-                    >
-                      Upload Images
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleTemplateModeChange('ppt')}
-                      className={`px-3 py-2 rounded-md border text-sm transition-colors ${
-                        templateUploadMode === 'ppt'
+                          }`}
+                      >
+                        Upload Images
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTemplateModeChange('ppt')}
+                        className={`px-3 py-2 rounded-md border text-sm transition-colors ${templateUploadMode === 'ppt'
                           ? 'border-[#13008B] bg-[#13008B]/10 text-[#13008B]'
                           : 'border-gray-200 text-gray-600 hover:border-[#13008B]/40 hover:text-[#13008B]'
-                      }`}
-                    >
-                      Upload PPT
-                    </button>
+                          }`}
+                      >
+                        Upload PPT
+                      </button>
                     </div>
                     <div className="flex items-center justify-between px-1">
                       <label className="text-sm font-medium text-gray-700">
@@ -5045,14 +5071,12 @@ const Brandimages = () => {
                       <button
                         type="button"
                         onClick={() => setConvertColors(!convertColors)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:ring-offset-2 ${
-                          convertColors ? 'bg-[#13008B]' : 'bg-gray-300'
-                        }`}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:ring-offset-2 ${convertColors ? 'bg-[#13008B]' : 'bg-gray-300'
+                          }`}
                       >
                         <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            convertColors ? 'translate-x-6' : 'translate-x-1'
-                          }`}
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${convertColors ? 'translate-x-6' : 'translate-x-1'
+                            }`}
                         />
                       </button>
                     </div>
@@ -5089,7 +5113,7 @@ const Brandimages = () => {
                   onClick={() => {
                     setSelectedFiles([]);
                     if (fileInputRef.current) fileInputRef.current.value = '';
-                    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) {}
+                    try { (previewUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch (_) { }
                     setPreviewUrls([]);
                     setErrorMsg('');
                   }}
@@ -5112,7 +5136,7 @@ const Brandimages = () => {
             )}
             {errorMsg && targetType !== 'voiceovers' && <div className="mt-3 text-sm text-red-600">{errorMsg}</div>}
             {targetType !== 'voiceovers' && (
-            <div className="mt-5 flex items-center justify-end gap-2">
+              <div className="mt-5 flex items-center justify-end gap-2">
                 <button
                   onClick={() => {
                     setIsModalOpen(false)
@@ -5124,9 +5148,9 @@ const Brandimages = () => {
                   disabled={isSaving || selectedFiles.length === 0}
                   className={`px-4 py-2 rounded-md text-white ${isSaving || selectedFiles.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
                 >
-                {isSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
+                  {isSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -5154,7 +5178,7 @@ const Brandimages = () => {
                 </select>
                 <button
                   type="button"
-                  onClick={() => setWorkingFonts(prev => Array.from(new Set([...(prev||[]), selectedFontOption])))}
+                  onClick={() => setWorkingFonts(prev => Array.from(new Set([...(prev || []), selectedFontOption])))}
                   className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md"
                 >Add</button>
               </div>
@@ -5204,7 +5228,7 @@ const Brandimages = () => {
                         const templatesAll = currentAll?.template || currentAll?.templates || [];
                         const voiceoverAll = currentAll?.voiceover || [];
                         const existing = Array.isArray(biAll.fonts) ? biAll.fonts.map(String) : [];
-                        const nextFonts = Array.from(new Set([ ...existing, ...picks ]));
+                        const nextFonts = Array.from(new Set([...existing, ...picks]));
                         if (pid) {
                           await updateBrandProfile({
                             userId,
@@ -5252,7 +5276,7 @@ const Brandimages = () => {
                 <input type="text" value={newColor} onChange={(e) => setNewColor(e.target.value)} className="flex-1 border border-gray-300 rounded-md px-3 py-2" />
                 <button
                   type="button"
-                  onClick={() => { if (newColor && /^#?[0-9a-fA-F]{3,8}$/.test(newColor)) { const hex = newColor.startsWith('#') ? newColor : `#${newColor}`; setWorkingColors(prev => Array.from(new Set([...(prev||[]), hex]))); } }}
+                  onClick={() => { if (newColor && /^#?[0-9a-fA-F]{3,8}$/.test(newColor)) { const hex = newColor.startsWith('#') ? newColor : `#${newColor}`; setWorkingColors(prev => Array.from(new Set([...(prev || []), hex]))); } }}
                   className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md"
                 >Add</button>
               </div>
@@ -5260,7 +5284,7 @@ const Brandimages = () => {
                 <div className="space-y-2">
                   <p className="text-xs text-gray-500">Drag to reorder, click × to remove</p>
                   <div className="space-y-2">
-                  {workingColors.map((c, i) => (
+                    {workingColors.map((c, i) => (
                       <div
                         key={i}
                         draggable
@@ -5303,7 +5327,7 @@ const Brandimages = () => {
                       setIsSavingColors(true); setColorsError('');
                       const userId = localStorage.getItem('token') || '';
                       const pid = selectedProfileId;
-                      
+
                       if (!userId || !pid) {
                         setColorsError('Missing user or profile information');
                         return;
@@ -5316,70 +5340,70 @@ const Brandimages = () => {
                         if (!x.startsWith('#')) x = `#${x}`;
                         return x.toLowerCase();
                       };
-                      
+
                       const normalizedColors = (workingColors || []).map(norm).filter(c => !!c);
-                      
+
                       // Get current profile data
                       const currentAll = await getBrandProfileById({ userId, profileId: pid });
-                        const biAll = currentAll?.brand_identity || {};
-                        const tvAll = currentAll?.tone_and_voice || {};
-                        const lfAll = currentAll?.look_and_feel || {};
-                        const templatesAll = currentAll?.template || currentAll?.templates || [];
-                        const voiceoverAll = currentAll?.voiceover || [];
-                      
+                      const biAll = currentAll?.brand_identity || {};
+                      const tvAll = currentAll?.tone_and_voice || {};
+                      const lfAll = currentAll?.look_and_feel || {};
+                      const templatesAll = currentAll?.template || currentAll?.templates || [];
+                      const voiceoverAll = currentAll?.voiceover || [];
+
                       // Update brand profile with new colors
-                          await updateBrandProfile({
-                            userId,
-                            profileId: pid,
-                            payload: {
-                          brand_identity: { 
-                            logo: biAll.logo || [], 
-                            icon: biAll.icon || biAll.icons || [], 
-                            fonts: biAll.fonts || [], 
-                            colors: normalizedColors, 
-                            spacing: biAll.spacing, 
-                            tagline: biAll.tagline 
+                      await updateBrandProfile({
+                        userId,
+                        profileId: pid,
+                        payload: {
+                          brand_identity: {
+                            logo: biAll.logo || [],
+                            icon: biAll.icon || biAll.icons || [],
+                            fonts: biAll.fonts || [],
+                            colors: normalizedColors,
+                            spacing: biAll.spacing,
+                            tagline: biAll.tagline
                           },
-                              tone_and_voice: tvAll,
-                              look_and_feel: lfAll,
-                              template: templatesAll,
-                              voiceover: voiceoverAll
-                            }
-                          });
-                      
+                          tone_and_voice: tvAll,
+                          look_and_feel: lfAll,
+                          template: templatesAll,
+                          voiceover: voiceoverAll
+                        }
+                      });
+
                       // Regenerate templates after updating colors
                       setIsRegeneratingTemplates(true);
                       try {
                         await regenerateTemplates({ userId, profileId: pid });
-                        
+
                         // Fetch updated profile data after regeneration
                         const updated = await getBrandProfileById({ userId, profileId: pid });
                         const bi = updated?.brand_identity || {};
                         const tv = updated?.tone_and_voice || {};
                         const lf = updated?.look_and_feel || {};
-                        
+
                         // Update all brand assets
                         setLogos(bi.logo || []);
                         setIcons(bi.icon || bi.icons || []);
                         setFonts(bi.fonts || []);
-                          setColors(bi.colors || []);
+                        setColors(bi.colors || []);
                         setTagline(bi.tagline || '');
                         setSpacing(bi.spacing || '');
-                        
+
                         // Update tone and voice
                         setToneVoice(hydrateToneVoiceState(tv));
-                        
+
                         // Update look and feel
                         setLookFeel(hydrateLookFeelState(lf));
-                        
+
                         // Update templates with regenerated ones
                         const tpls = updated?.template || updated?.templates || [];
                         updateTemplatesState(tpls);
-                        
+
                         // Update voiceovers
                         const vos = updated?.voiceover || [];
                         setVoiceovers(Array.isArray(vos) ? vos : []);
-                        
+
                       } catch (e) {
                         console.error('Failed to regenerate templates:', e);
                         setColorsError('Colors updated but template regeneration failed. Please try again.');
@@ -5390,11 +5414,11 @@ const Brandimages = () => {
                       } finally {
                         setIsRegeneratingTemplates(false);
                       }
-                      
+
                       setIsColorsModalOpen(false);
                     } catch (e) {
                       setColorsError(e?.message || 'Failed to save colors');
-                    } finally { 
+                    } finally {
                       setIsSavingColors(false);
                     }
                   }}
@@ -5411,13 +5435,10 @@ const Brandimages = () => {
       {isRegeneratingTemplates && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
           <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md mx-4">
-            <div className="flex flex-col items-center gap-4">
-              <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-blue-600"></div>
-              <h3 className="text-xl font-semibold text-gray-900">Regenerating Templates</h3>
-              <p className="text-sm text-gray-600 text-center">
-                Please wait while we regenerate your templates with the updated colors...
-              </p>
-            </div>
+            <SimulatedProgressLoader
+              message="Please wait while we regenerate your templates with the updated colors..."
+              duration={5000}
+            />
           </div>
         </div>
       )}
@@ -5426,19 +5447,16 @@ const Brandimages = () => {
       {isLoadingTemplateDetails && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
           <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md mx-4">
-            <div className="flex flex-col items-center gap-4">
-              <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-blue-600"></div>
-              <h3 className="text-xl font-semibold text-gray-900">Loading Template</h3>
-              <p className="text-sm text-gray-600 text-center">
-                Please wait while we load the template details...
-              </p>
-            </div>
+            <SimulatedProgressLoader
+              message="Please wait while we load the template details..."
+              duration={2000}
+            />
           </div>
         </div>
       )}
 
       {/* Choose the Captions Location */}
-    
+
 
       {/* Website URL Modal */}
       {isWebsiteModalOpen && (
@@ -5446,7 +5464,7 @@ const Brandimages = () => {
           <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-gray-900">Add Website URL</h3>
-              <button 
+              <button
                 onClick={() => {
                   if (!isPollingJob) {
                     setIsWebsiteModalOpen(false);
@@ -5455,7 +5473,7 @@ const Brandimages = () => {
                     setWebsiteError('');
                     setJobStatus('');
                   }
-                }} 
+                }}
                 className="text-gray-500 hover:text-gray-700"
                 disabled={isPollingJob}
               >
@@ -5463,24 +5481,10 @@ const Brandimages = () => {
               </button>
             </div>
             {isPollingJob ? (
-              <div className="space-y-4 py-6">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="relative">
-                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-[#13008B]"></div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="h-8 w-8 rounded-full bg-[#13008B]/10"></div>
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <h4 className="text-lg font-semibold text-gray-900 mb-1">Creating Profile</h4>
-                    <p className="text-sm text-gray-600"></p>
-                    <p className="text-xs text-gray-500 mt-2">This may take a few moments. Please don't close this window.</p>
-                  </div>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                  <div className="bg-[#13008B] h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
-                </div>
-              </div>
+              <SimulatedProgressLoader
+                message="Creating Profile... This may take a few moments. Please don't close this window."
+                duration={30000}
+              />
             ) : (
               <>
                 <div className="space-y-3">
@@ -5503,14 +5507,14 @@ const Brandimages = () => {
                   {websiteError && <div className="text-sm text-red-600">{websiteError}</div>}
                 </div>
                 <div className="flex items-center justify-end gap-2 mt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setIsWebsiteModalOpen(false);
                       setWebsiteUrl('');
                       setProfileName('');
                       setWebsiteError('');
                       setJobStatus('');
-                    }} 
+                    }}
                     className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200"
                     disabled={isAnalyzing}
                   >
@@ -5518,112 +5522,112 @@ const Brandimages = () => {
                   </button>
                   <button
                     onClick={async () => {
-                  try {
-                    setWebsiteError(''); setIsAnalyzing(true);
-                    const userId = localStorage.getItem('token') || '';
-                    if (!userId) { setWebsiteError('Missing user session'); return; }
-                    if (!websiteUrl || !websiteUrl.trim()) { setWebsiteError('Please enter a website URL'); return; }
-                    if (!profileName || !profileName.trim()) { setWebsiteError('Please enter a profile name'); return; }
-                    
-                    // 1) Create profile queue and get job_id
-                    const queueResponse = await createBrandProfileQueue({ 
-                      userId, 
-                      website: websiteUrl.trim(), 
-                      profileName: profileName.trim(), 
-                      setAsActive: true 
-                    });
-                    
-                    const jobId = queueResponse?.job_id || queueResponse?.jobId || queueResponse?.id;
-                    if (!jobId) {
-                      throw new Error('Failed to get job ID from queue response');
-                    }
-                    
-                    // 2) Poll job status until it's "Successfully"
-                    setIsPollingJob(true);
-                    setJobStatus('Processing...');
-                    
-                    let jobComplete = false;
-                    let pollAttempts = 0;
-                    const maxPollAttempts = 120; // 10 minutes max (5 seconds * 120)
-                    const pollInterval = 5000; // 5 seconds
-                    
-                    while (!jobComplete && pollAttempts < maxPollAttempts) {
-                      await new Promise(resolve => setTimeout(resolve, pollInterval));
-                      
                       try {
-                        const statusResponse = await getJobStatus({ userId, jobId });
-                        const status = statusResponse?.status || statusResponse?.job_status || '';
-                        
-                        if (status.toLowerCase() === 'succeeded' || status.toLowerCase() === 'succeed' || status.toLowerCase() === 'success' || status.toLowerCase() === 'successfully') {
-                          jobComplete = true;
-                          setJobStatus('Completed!');
-                        } else if (status.toLowerCase().includes('fail') || status.toLowerCase().includes('error')) {
-                          throw new Error(statusResponse?.message || 'Job failed');
-                        } else {
-                          setJobStatus(`Processing... (${status})`);
+                        setWebsiteError(''); setIsAnalyzing(true);
+                        const userId = localStorage.getItem('token') || '';
+                        if (!userId) { setWebsiteError('Missing user session'); return; }
+                        if (!websiteUrl || !websiteUrl.trim()) { setWebsiteError('Please enter a website URL'); return; }
+                        if (!profileName || !profileName.trim()) { setWebsiteError('Please enter a profile name'); return; }
+
+                        // 1) Create profile queue and get job_id
+                        const queueResponse = await createBrandProfileQueue({
+                          userId,
+                          website: websiteUrl.trim(),
+                          profileName: profileName.trim(),
+                          setAsActive: true
+                        });
+
+                        const jobId = queueResponse?.job_id || queueResponse?.jobId || queueResponse?.id;
+                        if (!jobId) {
+                          throw new Error('Failed to get job ID from queue response');
                         }
-                      } catch (pollError) {
-                        // If it's a 404 or similar, the job might not exist yet, continue polling
-                        if (pollAttempts < 10) {
+
+                        // 2) Poll job status until it's "Successfully"
+                        setIsPollingJob(true);
+                        setJobStatus('Processing...');
+
+                        let jobComplete = false;
+                        let pollAttempts = 0;
+                        const maxPollAttempts = 120; // 10 minutes max (5 seconds * 120)
+                        const pollInterval = 5000; // 5 seconds
+
+                        while (!jobComplete && pollAttempts < maxPollAttempts) {
+                          await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+                          try {
+                            const statusResponse = await getJobStatus({ userId, jobId });
+                            const status = statusResponse?.status || statusResponse?.job_status || '';
+
+                            if (status.toLowerCase() === 'succeeded' || status.toLowerCase() === 'succeed' || status.toLowerCase() === 'success' || status.toLowerCase() === 'successfully') {
+                              jobComplete = true;
+                              setJobStatus('Completed!');
+                            } else if (status.toLowerCase().includes('fail') || status.toLowerCase().includes('error')) {
+                              throw new Error(statusResponse?.message || 'Job failed');
+                            } else {
+                              setJobStatus(`Processing... (${status})`);
+                            }
+                          } catch (pollError) {
+                            // If it's a 404 or similar, the job might not exist yet, continue polling
+                            if (pollAttempts < 10) {
+                              pollAttempts++;
+                              continue;
+                            }
+                            throw pollError;
+                          }
+
                           pollAttempts++;
-                          continue;
                         }
-                        throw pollError;
+
+                        if (!jobComplete) {
+                          throw new Error('Job timed out. Please check the profile status manually.');
+                        }
+
+                        setIsPollingJob(false);
+
+                        // 3) GET all profiles, set dropdown, select the active one
+                        const plist = await getBrandProfiles(userId);
+                        plist.sort((a, b) => (b?.is_active ? 1 : 0) - (a?.is_active ? 1 : 0));
+                        setProfiles(plist);
+                        const newSelected = plist.find(p => p.is_active)?.profile_id || plist.find(p => p.is_active)?.id || plist[0]?.profile_id || plist[0]?.id || '';
+                        if (newSelected) setSelectedProfileId(newSelected);
+
+                        // 4) GET details of the selected profile and populate UI
+                        if (newSelected) {
+                          const a = await getBrandProfileById({ userId, profileId: newSelected });
+                          const bi = a?.brand_identity || {};
+                          setTagline(bi.tagline || '');
+                          setSpacing(bi.spacing || '');
+                          setCaptionLocation(a?.caption_location || a?.brand_identity?.caption_location || '');
+                          setLogos(bi.logo || []);
+                          setIcons(bi.icon || bi.icons || []);
+                          setFonts(bi.fonts || []);
+                          setColors(bi.colors || []);
+                          const tv = a?.tone_and_voice || {};
+                          setToneVoice(hydrateToneVoiceState(tv));
+                          const lf = a?.look_and_feel || {};
+                          setLookFeel(hydrateLookFeelState(lf));
+                          const tpls = a?.template || a?.templates || [];
+                          updateTemplatesState(tpls);
+                          const vos = a?.voiceover || [];
+                          setVoiceovers(Array.isArray(vos) ? vos : []);
+                        }
+
+                        setIsWebsiteModalOpen(false);
+                        setWebsiteUrl('');
+                        setProfileName('');
+                        setJobStatus('');
+                      } catch (e) {
+                        setWebsiteError(e?.message || 'Failed to create profile');
+                        setIsPollingJob(false);
+                        setJobStatus('');
+                      } finally {
+                        setIsAnalyzing(false);
                       }
-                      
-                      pollAttempts++;
-                    }
-                    
-                    if (!jobComplete) {
-                      throw new Error('Job timed out. Please check the profile status manually.');
-                    }
-                    
-                    setIsPollingJob(false);
-                    
-                    // 3) GET all profiles, set dropdown, select the active one
-                    const plist = await getBrandProfiles(userId);
-                    plist.sort((a,b) => (b?.is_active?1:0) - (a?.is_active?1:0));
-                    setProfiles(plist);
-                    const newSelected = plist.find(p => p.is_active)?.profile_id || plist.find(p => p.is_active)?.id || plist[0]?.profile_id || plist[0]?.id || '';
-                    if (newSelected) setSelectedProfileId(newSelected);
-                    
-                    // 4) GET details of the selected profile and populate UI
-                    if (newSelected) {
-                      const a = await getBrandProfileById({ userId, profileId: newSelected });
-                      const bi = a?.brand_identity || {};
-                      setTagline(bi.tagline || '');
-                      setSpacing(bi.spacing || '');
-                      setCaptionLocation(a?.caption_location || a?.brand_identity?.caption_location || '');
-                      setLogos(bi.logo || []);
-                      setIcons(bi.icon || bi.icons || []);
-                      setFonts(bi.fonts || []);
-                      setColors(bi.colors || []);
-                      const tv = a?.tone_and_voice || {};
-                      setToneVoice(hydrateToneVoiceState(tv));
-                      const lf = a?.look_and_feel || {};
-                      setLookFeel(hydrateLookFeelState(lf));
-                      const tpls = a?.template || a?.templates || [];
-                      updateTemplatesState(tpls);
-                      const vos = a?.voiceover || [];
-                      setVoiceovers(Array.isArray(vos) ? vos : []);
-                    }
-                    
-                    setIsWebsiteModalOpen(false);
-                    setWebsiteUrl('');
-                    setProfileName('');
-                    setJobStatus('');
-                  } catch (e) {
-                    setWebsiteError(e?.message || 'Failed to create profile');
-                    setIsPollingJob(false);
-                    setJobStatus('');
-                  } finally { 
-                    setIsAnalyzing(false);
-                  }
-                }}
-                disabled={isAnalyzing || isPollingJob}
-                className={`px-4 py-2 rounded-md text-white ${isAnalyzing || isPollingJob ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
-              >
-                {isPollingJob ? 'Processing…' : isAnalyzing ? 'Saving…' : 'Save'}
+                    }}
+                    disabled={isAnalyzing || isPollingJob}
+                    className={`px-4 py-2 rounded-md text-white ${isAnalyzing || isPollingJob ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+                  >
+                    {isPollingJob ? 'Processing…' : isAnalyzing ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </>
@@ -5735,20 +5739,24 @@ const Brandimages = () => {
       )}
 
       {isPreparingImageEditor && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 px-4">
-          <div className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-lg flex items-center gap-3">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#13008B]/30 border-t-[#13008B]" />
-            Preparing image editor…
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+          <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md mx-4">
+            <SimulatedProgressLoader
+              message="Preparing image editor…"
+              duration={1000}
+            />
           </div>
         </div>
       )}
 
       {/* Image Editor Modal */}
       {isSavingImageEditor && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 px-4">
-          <div className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-gray-700 shadow-lg flex items-center gap-3">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#13008B]/30 border-t-[#13008B]" />
-            Saving edited image…
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+          <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md mx-4">
+            <SimulatedProgressLoader
+              message="Saving edited image…"
+              duration={1000}
+            />
           </div>
         </div>
       )}
