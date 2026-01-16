@@ -96,8 +96,10 @@ export const CaptionStylePanel = ({ localOverlay, setLocalOverlay, }) => {
                         const currentSize = localOverlay?.styles?.fontSize;
                         const updatedStyles = {
                             ...template.styles,
-                            // Preserve font size if it exists and is different from template default
-                            ...(currentSize && currentSize !== template.styles.fontSize ? { fontSize: currentSize } : {})
+                            ...(currentSize && currentSize !== template.styles.fontSize ? { fontSize: currentSize } : {}),
+                            zIndex: (localOverlay === null || localOverlay === void 0 ? void 0 : localOverlay.styles) && typeof localOverlay.styles.zIndex === "number"
+                                ? localOverlay.styles.zIndex
+                                : (((_a = template.styles) === null || _a === void 0 ? void 0 : _a.zIndex) !== undefined ? template.styles.zIndex : 300)
                         };
                         const updatedOverlay = {
                             ...localOverlay,

@@ -56,7 +56,7 @@ export function StickersPanel() {
             rotation: 0,
             styles: {
                 opacity: 1,
-                zIndex: 1,
+                zIndex: 300,
                 ...(_a = template.config.defaultProps) === null || _a === void 0 ? void 0 : _a.styles,
             },
         };

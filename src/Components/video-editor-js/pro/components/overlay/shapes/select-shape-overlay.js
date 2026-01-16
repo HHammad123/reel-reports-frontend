@@ -92,11 +92,11 @@ export const SelectShapeOverlay = () => {
             type: OverlayType.SHAPE,
             shapeType: option.shapeType,
             styles: {
-                fill: "#3b82f6", // Default blue color
-                stroke: "#1e40af", // Default stroke color
+                fill: "#3b82f6",
+                stroke: "#1e40af",
                 strokeWidth: 2,
                 opacity: 1,
-                zIndex: 1,
+                zIndex: 300,
                 transform: "none",
             },
         };

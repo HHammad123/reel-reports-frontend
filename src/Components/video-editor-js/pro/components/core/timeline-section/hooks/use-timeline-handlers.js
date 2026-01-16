@@ -623,7 +623,7 @@ export const useTimelineHandlers = ({ overlays, playerRef, setSelectedOverlayId,
                         backgroundColor: template.styles?.backgroundColor || 'transparent', // Color picker
                         padding: template.styles?.padding || '0px', // Spacing
                         borderRadius: template.styles?.borderRadius || '0px', // Styling
-                        zIndex: 1, // Z-index
+                        zIndex: 300, // Z-index
                         transform: template.styles?.transform || "none", // Transform
                     },
                 };

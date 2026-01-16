@@ -333,6 +333,9 @@ export const useCaptions = () => {
             rotation: 0,
             isDragging: false,
             row,
+            styles: {
+                zIndex: 300,
+            },
         };
         // Update overlays with both the shifted overlays and the new overlay in a single operation
         const finalOverlays = [...updatedOverlays, newCaptionOverlay];

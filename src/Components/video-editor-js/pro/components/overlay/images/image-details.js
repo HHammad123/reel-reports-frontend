@@ -153,5 +153,5 @@ export const ImageDetails = ({ localOverlay, setLocalOverlay, onChangeImage, }) 
         ];
     }, [overlayId, localOverlay, handleStyleChange, handlePositionChange, settingsIcon, paintBucketIcon, sparklesIcon]);
     
-    return (_jsxs("div", { className: "space-y-4", children: [_jsx(ImagePreview, { overlay: localOverlay, onChangeImage: onChangeImage }), _jsx(UnifiedTabs, { tabs: tabs })] }));
+    return (_jsxs("div", { className: "space-y-4", children: [_jsx(ImagePreview, { overlay: localOverlay, onChangeImage: onChangeImage }), _jsx(UnifiedTabs, { tabs: tabs, defaultValue: "style" })] }));
 };

@@ -48,7 +48,7 @@ export const SelectTextOverlay = () => {
                 ...option.styles,
                 // Remove hardcoded fontSize to let dynamic calculation work
                 opacity: 1,
-                zIndex: 1,
+                zIndex: 300,
                 transform: "none",
                 textAlign: option.styles.textAlign,
                 fontSizeScale: 1, // Default scale factor
