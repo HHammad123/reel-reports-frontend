@@ -10,6 +10,7 @@ import VideosList from '../Scenes/VideosList';
 import ChartDataEditor from '../ChartDataEditor';
 import Loader from '../Loader';
 import { useProgressLoader } from '../../hooks/useProgressLoader';
+import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
 
 // Helper to preserve ALL fields from session_data including nested structures
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
@@ -203,6 +204,91 @@ const normalizeTemplateAspectLabel = (aspect) => {
   if (lower.includes('portrait')) return '9:16';
   if (lower.includes('landscape')) return '16:9';
   return trimmed;
+};
+
+const resolveTemplateAssetUrl = (entry) => {
+  if (!entry) return '';
+  if (typeof entry === 'string') return entry.trim();
+  if (typeof entry !== 'object') return '';
+  const baseImage = entry.base_image || entry.baseImage;
+  if (baseImage) {
+    if (typeof baseImage === 'string') return baseImage.trim();
+    if (typeof baseImage === 'object') {
+      const baseUrl = baseImage.image_url || baseImage.imageUrl || baseImage.url || baseImage.src || baseImage.href;
+      if (baseUrl) return baseUrl.trim();
+    }
+  }
+  const direct =
+    entry.image_url ||
+    entry.imageUrl ||
+    entry.url ||
+    entry.src ||
+    entry.href ||
+    entry.link ||
+    (entry.asset && (entry.asset.image_url || entry.asset.url)) ||
+    (entry.media && (entry.media.image_url || entry.media.url));
+  return typeof direct === 'string' ? direct.trim() : '';
+};
+
+const normalizeBrandAssetsResponse = (data = {}) => {
+  if (!data || typeof data !== 'object') {
+    return {
+      logos: [],
+      icons: [],
+      uploaded_images: [],
+      templates: [],
+      documents_images: []
+    };
+  }
+  const logos = Array.isArray(data.logos) ? data.logos : [];
+  const icons = Array.isArray(data.icons) ? data.icons : [];
+  const uploaded_images = Array.isArray(data.uploaded_images) ? data.uploaded_images : [];
+  const documents_images = Array.isArray(data.documents_images) ? data.documents_images : [];
+  let templates = data.templates ?? [];
+  const aspectRatioKeys = Object.keys(data).filter(key =>
+    /^(\d+):(\d+)$/.test(key) && typeof data[key] === 'object' && data[key] !== null
+  );
+  if (aspectRatioKeys.length > 0 && (!Array.isArray(templates) || templates.length === 0)) {
+    const templatesObj = {};
+    aspectRatioKeys.forEach(key => {
+      templatesObj[key] = data[key];
+    });
+    templates = templatesObj;
+  }
+  return {
+    logos,
+    icons,
+    uploaded_images,
+    templates,
+    documents_images
+  };
+};
+
+const extractAssetsByType = (templatesInput = {}, assetType = 'preset_templates') => {
+  const normalized = [];
+  if (!templatesInput || typeof templatesInput !== 'object') return normalized;
+  if (Array.isArray(templatesInput)) return normalized;
+  Object.keys(templatesInput).forEach(aspectKey => {
+    const aspectGroup = templatesInput[aspectKey];
+    if (!aspectGroup || typeof aspectGroup !== 'object') return;
+    const assets = Array.isArray(aspectGroup[assetType]) ? aspectGroup[assetType] : [];
+    assets.forEach((entry, idx) => {
+      if (!entry) return;
+      const imageUrl = resolveTemplateAssetUrl(entry);
+      if (!imageUrl) return;
+      const aspectLabel = normalizeTemplateAspectLabel(aspectKey);
+      const templateId = entry?.template_id || entry?.templateId || entry?.id || `${assetType}-${aspectKey}-${idx}`;
+      normalized.push({
+        id: String(templateId),
+        imageUrl,
+        aspect: aspectLabel,
+        label: `${assetType.replace('_', ' ')} ${idx + 1}`,
+        raw: entry,
+        assetType: assetType
+      });
+    });
+  });
+  return normalized;
 };
 
 // Module-scope helpers so both StepOne (generate) and StepTwo can use them
@@ -2237,17 +2323,103 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
   const [chartTypeSceneIndex, setChartTypeSceneIndex] = useState(null);
   const [isRegeneratingChart, setIsRegeneratingChart] = useState(false);
 
-  // Brand Assets modal state and helpers (scoped to StepTwo)
   const [showAssetsModal, setShowAssetsModal] = useState(false);
-  // Back-compat alias in case some leftover code references singular naming
   const showAssetModal = showAssetsModal;
   const setShowAssetModal = setShowAssetsModal;
   const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
-  const [assetsTab, setAssetsTab] = useState('uploaded_images');
+  const [assetsTab, setAssetsTab] = useState('templates');
   const [isAssetsLoading, setIsAssetsLoading] = useState(false);
+  const [generatedImagesData, setGeneratedImagesData] = useState({ generated_images: {}, generated_videos: {} });
+  const [isLoadingGeneratedImages, setIsLoadingGeneratedImages] = useState(false);
   const assetsUploadInputRef = useRef(null);
-  const [pendingUploadType, setPendingUploadType] = useState('uploaded_image');
+  const [pendingUploadType, setPendingUploadType] = useState('');
   const [selectedAssetUrl, setSelectedAssetUrl] = useState('');
+  const [selectedTemplateUrls, setSelectedTemplateUrls] = useState([]);
+
+  useEffect(() => {
+    if (!showAssetsModal) {
+      setIsAssetsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIsAssetsLoading(true);
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (!token) {
+          if (!cancelled) {
+            setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+            setIsAssetsLoading(false);
+          }
+          return;
+        }
+        const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+        const resp = await fetch(url);
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = {}; }
+        if (cancelled) return;
+        const normalized = normalizeBrandAssetsResponse(data);
+        if (!cancelled) {
+          setAssetsData(normalized);
+          setIsAssetsLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAssetsData({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
+          setIsAssetsLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; setIsAssetsLoading(false); };
+  }, [showAssetsModal]);
+
+  useEffect(() => {
+    if (!showAssetsModal || assetsTab !== 'generated_images') {
+      setIsLoadingGeneratedImages(false);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingGeneratedImages(true);
+    (async () => {
+      try {
+        const token = (typeof window !== 'undefined' && localStorage.getItem('token')) || '';
+        if (!token) {
+          if (!cancelled) {
+            setGeneratedImagesData({ generated_images: {}, generated_videos: {} });
+            setIsLoadingGeneratedImages(false);
+          }
+          return;
+        }
+        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(token)}/generated-media`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const text = await resp.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = null; }
+        if (cancelled) return;
+        if (!resp.ok || !data || typeof data !== 'object') {
+          if (!cancelled) {
+            setGeneratedImagesData({ generated_images: {}, generated_videos: {} });
+            setIsLoadingGeneratedImages(false);
+          }
+          return;
+        }
+        if (!cancelled) {
+          const normalized = normalizeGeneratedMediaResponse(data);
+          setGeneratedImagesData(normalized);
+          setIsLoadingGeneratedImages(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGeneratedImagesData({ generated_images: {}, generated_videos: {} });
+          setIsLoadingGeneratedImages(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; setIsLoadingGeneratedImages(false); };
+  }, [showAssetsModal, assetsTab]);
 
   // Helpers: session snapshot + update-text for a single scene
   const getSessionSnapshot = async () => {
@@ -2322,24 +2494,11 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
     try { toast.success('Scene updated'); } catch (_) { }
   };
 
-  const openAssetsModal = async () => {
-    try {
-      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
-      if (!token) { setShowAssetsModal(true); return; }
-      setIsAssetsLoading(true);
-      setShowAssetsModal(true);
-      const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
-      const resp = await fetch(url);
-      const text = await resp.text();
-      let data; try { data = JSON.parse(text); } catch (_) { data = {}; }
-      const logos = Array.isArray(data?.logos) ? data.logos : [];
-      const icons = Array.isArray(data?.icons) ? data.icons : [];
-      const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
-      const templates = Array.isArray(data?.templates) ? data.templates : [];
-      const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
-      setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
-    } catch (_) { /* noop */ }
-    finally { setIsAssetsLoading(false); }
+  const openAssetsModal = () => {
+    setSelectedAssetUrl('');
+    setSelectedTemplateUrls([]);
+    setAssetsTab('templates');
+    setShowAssetsModal(true);
   };
 
   // Helpers to persist current scenes before enhance
@@ -5886,71 +6045,236 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         <div className='fixed inset-0 z-[70] flex items-center justify-center bg-black/50'>
           <div className='bg-white w-[96%] max-w-5xl max-h-[85vh] overflow-hidden rounded-lg shadow-xl flex flex-col'>
             <div className='flex items-center justify-between p-4 border-b border-gray-200'>
-              <h3 className='text-lg font-semibold text-[#13008B]'>Choose Reference Image</h3>
+              <h3 className='text-lg font-semibold text-[#13008B]'>Choose an asset</h3>
               <button onClick={() => setShowAssetsModal(false)} className='px-3 py-1.5 rounded-lg border text-sm'>Close</button>
             </div>
             <div className='px-4 pt-3 border-b border-gray-100'>
               <div className='flex items-center gap-3 flex-wrap'>
-                {['uploaded_images', 'documents_images', 'logos', 'icons', 'templates'].map(tab => (
+                {[
+                  { key: 'templates', label: 'Templates' },
+                  { key: 'uploaded_images', label: 'Uploaded Images' },
+                  { key: 'documents_images', label: 'Documents' },
+                  { key: 'logos', label: 'Logos' },
+                  { key: 'icons', label: 'Icons' },
+                  { key: 'generated_images', label: 'Generated Images' }
+                ].map(tab => (
                   <button
-                    key={tab}
-                    onClick={() => setAssetsTab(tab)}
-                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab === tab ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                  >{tab.replace('_', ' ')}</button>
+                    key={tab.key}
+                    onClick={() => setAssetsTab(tab.key)}
+                    className={`px-3 py-1.5 rounded-full text-sm border ${assetsTab === tab.key ? 'bg-[#13008B] text-white border-[#13008B]' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                  >{tab.label}</button>
                 ))}
                 <div className='ml-auto'>
                   <button
-                    onClick={() => { setPendingUploadType(assetsTab === 'templates' ? 'template' : (assetsTab.endsWith('s') ? assetsTab.slice(0, -1) : assetsTab)); assetsUploadInputRef.current && assetsUploadInputRef.current.click(); }}
+                    onClick={() => {
+                      const uploadTypeMap = {
+                        templates: 'template',
+                        uploaded_images: 'uploaded_images',
+                        documents_images: 'document_image',
+                        logos: 'logo',
+                        icons: 'icon'
+                      };
+                      const nextType = uploadTypeMap[assetsTab] || '';
+                      setPendingUploadType(nextType);
+                      if (nextType && assetsUploadInputRef.current) {
+                        assetsUploadInputRef.current.click();
+                      }
+                    }}
                     className='px-3 py-1.5 rounded-lg border text-sm bg-white hover:bg-gray-50'
                   >
                     Upload
                   </button>
-                  <input ref={assetsUploadInputRef} type='file' accept='image/*' className='hidden' multiple onChange={async (e) => {
-                    try {
-                      const files = Array.from(e.target.files || []);
-                      if (files.length === 0) return;
-                      const token = localStorage.getItem('token');
-                      if (!token) { alert('Missing user'); return; }
-                      if (!pendingUploadType) { alert('Unknown upload type'); return; }
-                      const form = new FormData();
-                      form.append('user_id', token);
-                      form.append('file_type', pendingUploadType);
-                      files.forEach(f => form.append('files', f));
-                      const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', { method: 'POST', body: form });
-                      const upText = await upResp.text();
-                      if (!upResp.ok) throw new Error(`upload-file failed: ${upResp.status} ${upText}`);
-                      // Refresh images snapshot
-                      setIsAssetsLoading(true);
-                      const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
-                      const getText = await getResp.text();
-                      let data; try { data = JSON.parse(getText); } catch (_) { data = {}; }
-                      const logos = Array.isArray(data?.logos) ? data.logos : [];
-                      const icons = Array.isArray(data?.icons) ? data.icons : [];
-                      const uploaded_images = Array.isArray(data?.uploaded_images) ? data.uploaded_images : [];
-                      const templates = Array.isArray(data?.templates) ? data.templates : [];
-                      const documents_images = Array.isArray(data?.documents_images) ? data.documents_images : [];
-                      setAssetsData({ logos, icons, uploaded_images, templates, documents_images });
-                    } catch (err) { console.error('Upload failed:', err); alert('Failed to upload file.'); }
-                    finally { setIsAssetsLoading(false); if (assetsUploadInputRef.current) assetsUploadInputRef.current.value = ''; }
-                  }} />
+                  <input
+                    ref={assetsUploadInputRef}
+                    type='file'
+                    accept='image/*'
+                    className='hidden'
+                    multiple
+                    onChange={async (e) => {
+                      try {
+                        const files = Array.from(e.target.files || []);
+                        if (files.length === 0) return;
+                        const token = localStorage.getItem('token');
+                        if (!token) { alert('Missing user'); return; }
+                        if (!pendingUploadType) { alert('Unknown upload type'); return; }
+                        const form = new FormData();
+                        form.append('user_id', token);
+                        form.append('file_type', pendingUploadType);
+                        files.forEach(f => form.append('files', f));
+                        const upResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-file', { method: 'POST', body: form });
+                        const upText = await upResp.text();
+                        if (!upResp.ok) throw new Error(`upload-file failed: ${upResp.status} ${upText}`);
+                        setIsAssetsLoading(true);
+                        const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`);
+                        const getText = await getResp.text();
+                        let data; try { data = JSON.parse(getText); } catch (_) { data = {}; }
+                        const normalized = normalizeBrandAssetsResponse(data);
+                        setAssetsData(normalized);
+                      } catch (err) {
+                        console.error('Upload failed:', err);
+                        alert('Failed to upload file.');
+                      } finally {
+                        setIsAssetsLoading(false);
+                        if (assetsUploadInputRef.current) assetsUploadInputRef.current.value = '';
+                      }
+                    }}
+                  />
                 </div>
               </div>
             </div>
             <div className='p-4 overflow-y-auto'>
-              {isAssetsLoading ? (
+              {(isAssetsLoading || (assetsTab === 'generated_images' && isLoadingGeneratedImages)) ? (
                 <div className='flex items-center justify-center py-16'>
-                  <div className='w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
+                  <div className='flex flex-col items-center gap-3'>
+                    <div className='w-10 h-10 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin' />
+                    <span className='text-sm text-gray-600'>
+                      {assetsTab === 'generated_images' && isLoadingGeneratedImages ? 'Loading generated images...' : 'Loading assets...'}
+                    </span>
+                  </div>
                 </div>
               ) : (
                 (() => {
-                  const list = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
-                  const urls = list.map(item => (typeof item === 'string' ? item : (item?.url || item?.link || ''))).filter(Boolean);
+                  if (assetsTab === 'generated_images') {
+                    const generated = generatedImagesData.generated_images || {};
+                    const buildGroups = (entries) => {
+                      const groups = [];
+                      entries.forEach(([aspectRatio, sessions]) => {
+                        if (!sessions || typeof sessions !== 'object') return;
+                        const aspectLabel = normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified';
+                        Object.entries(sessions).forEach(([sessionName, mediaArray]) => {
+                          const urlsArray = Array.isArray(mediaArray) ? mediaArray : [];
+                          const imagesForSession = [];
+                          urlsArray.forEach((img, idx) => {
+                            let imageUrl = '';
+                            if (typeof img === 'string') {
+                              imageUrl = img;
+                            } else if (img && typeof img === 'object') {
+                              imageUrl = img.image_url || img.url || img.src || '';
+                            }
+                            if (imageUrl && imageUrl.trim()) {
+                              const trimmed = imageUrl.trim();
+                              const id = `generated-${aspectLabel}-${sessionName}-${idx}`;
+                              imagesForSession.push({
+                                id,
+                                url: trimmed,
+                                label: `Generated Image ${idx + 1}`
+                              });
+                            }
+                          });
+                          if (imagesForSession.length > 0) {
+                            groups.push({
+                              sessionName,
+                              aspectLabel,
+                              images: imagesForSession
+                            });
+                          }
+                        });
+                      });
+                      return groups;
+                    };
+                    const allEntries = Object.entries(generated);
+                    const groups = buildGroups(allEntries);
+                    if (groups.length === 0) {
+                      return (
+                        <div className='text-sm text-gray-600'>
+                          No generated images found.
+                        </div>
+                      );
+                    }
+                    return (
+                      <>
+                        {groups.map((group) => (
+                          <div key={`${group.aspectLabel}-${group.sessionName}`} className='mb-6'>
+                            <div className='flex items-center justify-between mb-3'>
+                              <div className='text-sm font-semibold text-gray-800 truncate'>
+                                Session: {group.sessionName}
+                              </div>
+                              <div className='flex items-center gap-2'>
+                                <span className='inline-flex items-center px-2 py-0.5 rounded-full border border-gray-300 text-xs text-gray-700 bg-gray-50'>
+                                  {group.aspectLabel}
+                                </span>
+                                <span className='text-xs text-gray-500'>
+                                  {group.images.length} image{group.images.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            </div>
+                            <div className='flex gap-4 overflow-x-auto pb-2'>
+                              {group.images.map((img, idx) => {
+                                const imageUrl = img.url;
+                                const isSelected = selectedTemplateUrls.includes(imageUrl);
+                                const handleClick = () => {
+                                  setSelectedTemplateUrls(prev => {
+                                    const exists = prev.includes(imageUrl);
+                                    if (exists) {
+                                      return prev.filter(u => u !== imageUrl);
+                                    }
+                                    const next = [...prev, imageUrl];
+                                    if (next.length > 3) {
+                                      next.shift();
+                                    }
+                                    return next;
+                                  });
+                                };
+                                return (
+                                  <div
+                                    key={img.id || idx}
+                                    className={`flex-shrink-0 w-40 rounded-lg border overflow-hidden bg-white cursor-pointer group ${isSelected ? 'ring-2 ring-[#13008B]' : ''}`}
+                                    onClick={handleClick}
+                                    title={img.label}
+                                  >
+                                    <img src={imageUrl} alt={img.label} className='w-full h-24 object-cover' />
+                                    <div className='px-2 py-1'>
+                                      <div className='text-[11px] text-gray-700 truncate'>
+                                        {img.label}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    );
+                  }
+                  let urls = [];
+                  if (assetsTab === 'templates') {
+                    const templatesInput = assetsData.templates || {};
+                    const combined = [
+                      ...extractAssetsByType(templatesInput, 'preset_templates'),
+                      ...extractAssetsByType(templatesInput, 'uploaded_templates')
+                    ];
+                    urls = combined.map(item => item.imageUrl).filter(Boolean);
+                  } else {
+                    const list = Array.isArray(assetsData[assetsTab]) ? assetsData[assetsTab] : [];
+                    urls = list.map(item => {
+                      if (typeof item === 'string') return item;
+                      return item?.image_url || item?.url || item?.link || '';
+                    }).filter(Boolean);
+                  }
                   return (
                     <div className='grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3'>
                       {urls.map((url, idx) => {
-                        const selected = selectedAssetUrl === url;
+                        const selected = selectedTemplateUrls.includes(url);
                         return (
-                          <button key={idx} onClick={() => setSelectedAssetUrl(url)} className={`relative block w-full pt-[100%] rounded-lg overflow-hidden border ${selected ? 'border-blue-600 ring-2 ring-blue-300' : 'border-gray-200 hover:border-gray-300'}`} title={url}>
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setSelectedTemplateUrls(prev => {
+                                const exists = prev.includes(url);
+                                if (exists) {
+                                  return prev.filter(u => u !== url);
+                                }
+                                const next = [...prev, url];
+                                if (next.length > 3) {
+                                  next.shift();
+                                }
+                                return next;
+                              });
+                            }}
+                            className={`relative block w-full pt-[100%] rounded-lg overflow-hidden border ${selected ? 'border-blue-600 ring-2 ring-blue-300' : 'border-gray-200 hover:border-gray-300'}`}
+                            title={url}
+                          >
                             <img src={url} alt={`asset-${idx}`} className='absolute inset-0 w-full h-full object-cover' />
                           </button>
                         );
@@ -5965,39 +6289,39 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
               <button
                 onClick={async () => {
                   try {
-                    if (!selectedAssetUrl) return;
-                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0, 2) : [];
-                    const next = [selectedAssetUrl, ...imgs].slice(0, 3);
-                    updateScriptScene(activeIndex, { ref_image: next });
-                    await updateTextForSelected(activeIndex, { genImage: false, descriptionOverride: '', refImagesOverride: [selectedAssetUrl] });
+                    if (selectedTemplateUrls.length === 0) return;
+                    const imagesToUse = selectedTemplateUrls.slice(0, 3);
+                    updateScriptScene(activeIndex, { ref_image: imagesToUse });
+                    await updateTextForSelected(activeIndex, { genImage: false, descriptionOverride: '', refImagesOverride: imagesToUse });
                     setSelectedAssetUrl('');
+                    setSelectedTemplateUrls([]);
                     setShowAssetsModal(false);
                   } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to keep default'); } catch (_) { alert('Failed to keep default'); } }
                 }}
-                disabled={!selectedAssetUrl}
-                className={`px-4 py-2 rounded-lg text-sm ${!selectedAssetUrl ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                disabled={selectedTemplateUrls.length === 0}
+                className={`px-4 py-2 rounded-lg text-sm ${selectedTemplateUrls.length === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
               >
                 Keep Default
               </button>
               <button
                 onClick={async () => {
                   try {
-                    if (!selectedAssetUrl) return;
+                    if (selectedTemplateUrls.length === 0) return;
                     setIsEnhancing(true);
                     const { user, sessionForBody } = await getSessionSnapshot();
                     const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
                     const sceneNumber = scene?.scene_number ?? (activeIndex + 1);
-                    const imgs = Array.isArray(scenes[activeIndex]?.ref_image) ? scenes[activeIndex].ref_image.slice(0, 2) : [];
-                    const next = [selectedAssetUrl, ...imgs].slice(0, 3);
-                    updateScriptScene(activeIndex, { ref_image: next });
-                    await updateTextForSelected(activeIndex, { genImage: true, descriptionOverride: scene?.desc || scene?.description || '', refImagesOverride: [selectedAssetUrl] });
+                    const imagesToUse = selectedTemplateUrls.slice(0, 3);
+                    updateScriptScene(activeIndex, { ref_image: imagesToUse });
+                    await updateTextForSelected(activeIndex, { genImage: true, descriptionOverride: scene?.desc || scene?.description || '', refImagesOverride: imagesToUse });
                     setSelectedAssetUrl('');
+                    setSelectedTemplateUrls([]);
                     setShowAssetsModal(false);
                   } catch (e) { console.error(e); try { toast.error(e?.message || 'Failed to generate'); } catch (_) { alert('Failed to generate'); } }
                   finally { setIsEnhancing(false); }
                 }}
-                disabled={!selectedAssetUrl}
-                className={`px-4 py-2 rounded-lg text-sm text-white ${!selectedAssetUrl ? 'bg-[#9aa0d0] cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
+                disabled={selectedTemplateUrls.length === 0}
+                className={`px-4 py-2 rounded-lg text-sm text-white ${selectedTemplateUrls.length === 0 ? 'bg-[#9aa0d0] cursor-not-allowed' : 'bg-[#13008B] hover:bg-blue-800'}`}
               >
                 Generate
               </button>
