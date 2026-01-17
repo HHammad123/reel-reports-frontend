@@ -934,57 +934,55 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   const buildUserQuery = () => ({
     userquery: [
       {
-        additonalprop1: {
-          ai_ques: [],
-          video_desc: videoDesc,
-          video_title: videoTitle,
-          audio_and_effects: [
-            {
-              answer: audioAnswer,
-              question: 'Would you like to add voice narration and voice-over',
-              voice_link: voicePreviewUrl || voiceLink || '',
-              preferred_voice_name: preferredVoiceName,
-            },
-          ],
-          purpose_and_audience: {
-            tone,
-            audience: audienceForPayload,
-            audience_other: audience === 'other' ? otherAudienceText : '',
-            goal_of_video: goalForPayload,
-            goal_other: goal === 'other' ? otherGoalText : '',
+        ai_ques: [],
+        video_desc: videoDesc,
+        video_title: videoTitle,
+        audio_and_effects: [
+          {
+            answer: audioAnswer,
+            question: 'Would you like to add voice narration and voice-over',
+            voice_link: voicePreviewUrl || voiceLink || '',
+            preferred_voice_name: preferredVoiceName,
           },
-          style_and_visual_pref: {
-            font_style: selectedFont === 'yes' ? (Array.isArray(selectedFonts) ? selectedFonts : []) : [],
-            color_pallete: Array.from(selectedColors || []),
-            logo_inclusion: selectedLogo === 'yes'
-              ? [{ answer: 'Yes', imageLink: (selectedLogoUrl || '') }]
-              : (selectedLogo === 'no' ? [{ answer: 'No', imageLink: '' }] : []),
-          },
-          content_focus_and_emphasis: contentEmphasisCsv.split(',').map((s) => s.trim()).filter(Boolean),
-          technical_and_formal_constraints: {
-            aspect_ratio: (() => {
-              if (selectedAspect === 'custom' || selectedAspect === 'other') {
-                if (customAspectWidth && customAspectHeight) return `${customAspectWidth}:${customAspectHeight}`;
-                return otherAspectText || aspectRatio;
-              }
-              const aspectMap = {
-                '16_9': '16:9 (Standard widescreen)',
-                '9_16': '9:16 (Vertical, ideal for TikTok, Reels, Stories)',
-              };
-              return aspectMap[selectedAspect] || aspectRatio;
-            })(),
-            video_format: selectedFormat === 'other' ? (otherFormatText || videoFormat) : (selectedFormat === 'mp4' ? 'MP4' : selectedFormat === 'mov' ? 'MOV' : selectedFormat === 'embedded' ? 'Embedded video link' : videoFormat),
-            video_length: (() => {
-              const durationMap = {
-                'upto1': 'Up to 1 minute',
-                '1to2': '1-2 minutes',
-                '2to3': '2-3 minutes',
-                '3to5': '3-5 minutes',
-                'longer5': 'Longer than 5 minutes',
-              };
-              return durationMap[selectedDuration] || videoLength;
-            })(),
-          },
+        ],
+        purpose_and_audience: {
+          tone,
+          audience: audienceForPayload,
+          audience_other: audience === 'other' ? otherAudienceText : '',
+          goal_of_video: goalForPayload,
+          goal_other: goal === 'other' ? otherGoalText : '',
+        },
+        style_and_visual_pref: {
+          font_style: selectedFont === 'yes' ? (Array.isArray(selectedFonts) ? selectedFonts : []) : [],
+          color_pallete: Array.from(selectedColors || []),
+          logo_inclusion: selectedLogo === 'yes'
+            ? [{ answer: 'Yes', imageLink: (selectedLogoUrl || '') }]
+            : (selectedLogo === 'no' ? [{ answer: 'No', imageLink: '' }] : []),
+        },
+        content_focus_and_emphasis: contentEmphasisCsv.split(',').map((s) => s.trim()).filter(Boolean),
+        technical_and_formal_constraints: {
+          aspect_ratio: (() => {
+            if (selectedAspect === 'custom' || selectedAspect === 'other') {
+              if (customAspectWidth && customAspectHeight) return `${customAspectWidth}:${customAspectHeight}`;
+              return otherAspectText || aspectRatio;
+            }
+            const aspectMap = {
+              '16_9': '16:9 (Standard widescreen)',
+              '9_16': '9:16 (Vertical, ideal for TikTok, Reels, Stories)',
+            };
+            return aspectMap[selectedAspect] || aspectRatio;
+          })(),
+          video_format: selectedFormat === 'other' ? (otherFormatText || videoFormat) : (selectedFormat === 'mp4' ? 'MP4' : selectedFormat === 'mov' ? 'MOV' : selectedFormat === 'embedded' ? 'Embedded video link' : videoFormat),
+          video_length: (() => {
+            const durationMap = {
+              'upto1': 'Up to 1 minute',
+              '1to2': '1-2 minutes',
+              '2to3': '2-3 minutes',
+              '3to5': '3-5 minutes',
+              'longer5': 'Longer than 5 minutes',
+            };
+            return durationMap[selectedDuration] || videoLength;
+          })(),
         },
       },
     ],
@@ -1006,7 +1004,11 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
       const raw = localStorage.getItem('buildreel_userquery');
       if (!raw) return;
       const val = JSON.parse(raw);
-      const p = val?.userquery?.[0]?.additonalprop1;
+      const arr = Array.isArray(val?.userquery) ? val.userquery : [];
+      const first = arr[0] || {};
+      const p = first && typeof first === 'object'
+        ? (first.additonalprop1 && typeof first.additonalprop1 === 'object' ? first.additonalprop1 : first)
+        : null;
       if (!p) return;
       setVideoTitle(p.video_title || '');
       setVideoDesc(p.video_desc || '');
@@ -2560,7 +2562,21 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         }
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
+      if (Array.isArray(uq) && uq.length > 0) {
+        uq = uq.map((item) => {
+          if (item && typeof item === 'object' && item.additonalprop1 && typeof item.additonalprop1 === 'object') {
+            return item.additonalprop1;
+          }
+          return item;
+        });
+      }
+
+      // Fetch full user object from session user_data for create-from-scratch save
+      const { rawUser } = await getSessionSnapshot();
+      const userForBody = rawUser || {};
+
       const body = {
+        user: userForBody,
         session_id: sessionId || '',
         current_script: {
           userquery: uq,
@@ -3067,6 +3083,10 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
       const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
       if (!sessionId) throw new Error('Missing session_id');
 
+      // 1a) Fetch full user object from session user_data for create-from-scratch API
+      const { rawUser } = await getSessionSnapshot();
+      const userForBody = rawUser || {};
+
       // 2) Build airesponse from current UI scenes (filter to only include allowed fields)
       const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
 
@@ -3084,11 +3104,20 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         }
       } catch (_) { /* noop */ }
       if (!Array.isArray(uq)) uq = [];
+      if (Array.isArray(uq) && uq.length > 0) {
+        uq = uq.map((item) => {
+          if (item && typeof item === 'object' && item.additonalprop1 && typeof item.additonalprop1 === 'object') {
+            return item.additonalprop1;
+          }
+          return item;
+        });
+      }
 
       const endpoint = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch';
 
       // 4) First, call create-from-scratch with action "save" to save current scenes
       const saveBody = {
+        user: userForBody,
         session_id: sessionId || '',
         current_script: {
           userquery: uq,
@@ -3106,6 +3135,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
 
       // 5) Then, call create-from-scratch again with action "add" to add new scene
       const addBody = {
+        user: userForBody,
         session_id: sessionId || '',
         current_script: {
           userquery: uq,
@@ -3509,8 +3539,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
           const primaryScript = scripts[0] || {};
           const userquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
           const firstUserQuery = userquery[0] || {};
-          const additonalprop1 = firstUserQuery?.additonalprop1 || {};
-          const technicalConstraints = additonalprop1?.technical_and_formal_constraints || {};
+          const technicalConstraints = firstUserQuery?.technical_and_formal_constraints || {};
           rawAspect = technicalConstraints?.aspect_ratio || '';
 
           // Extract only the numeric ratio part (e.g., "16:9" from "16:9 (Standard widescreen)")
@@ -3525,7 +3554,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         }
         const normalizedAspect = normalizeTemplateAspectLabel(rawAspect);
         const aspectParam = (normalizedAspect && normalizedAspect !== 'Unspecified') ? normalizedAspect : '';
-        const modeParam = (modelUpper === 'VEO3' || modelUpper.includes('VEO')) ? 'veo3_presets' : 'anchor_presets';
+        const modeParam = 'veo3_presets';
         const params = new URLSearchParams();
         if (userId) params.set('user_id', String(userId));
         if (aspectParam) params.set('aspect_ratio', aspectParam);
@@ -3854,8 +3883,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         const primaryScript = scripts[0] || {};
         const userquery = Array.isArray(primaryScript?.userquery) ? primaryScript.userquery : [];
         const firstUserQuery = userquery[0] || {};
-        const additonalprop1 = firstUserQuery?.additonalprop1 || {};
-        const technicalConstraints = additonalprop1?.technical_and_formal_constraints || {};
+        const technicalConstraints = firstUserQuery?.technical_and_formal_constraints || {};
         rawAspect = technicalConstraints?.aspect_ratio || '';
 
         // Extract only the numeric ratio part (e.g., "16:9" from "16:9 (Standard widescreen)")
@@ -6696,9 +6724,38 @@ const BuildReelWizard = () => {
           }
         } catch (_) { /* noop */ }
         if (!Array.isArray(uq)) uq = [];
+        if (Array.isArray(uq) && uq.length > 0) {
+          uq = uq.map((item) => {
+            if (item && typeof item === 'object' && item.additonalprop1 && typeof item.additonalprop1 === 'object') {
+              return item.additonalprop1;
+            }
+            return item;
+          });
+        }
+
+        // Fetch full user object from session user_data for storyboard save
+        let userForBody = {};
+        try {
+          const tokenForUser = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
+          if (sessionId && tokenForUser) {
+            const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ user_id: tokenForUser, session_id: sessionId })
+            });
+            const sessText = await sessResp.text();
+            let sessJson; try { sessJson = JSON.parse(sessText); } catch (_) { sessJson = {}; }
+            if (sessResp.ok) {
+              const sdForUser = sessJson?.session_data || sessJson?.session || {};
+              userForBody = sessJson?.user_data || sdForUser?.user_data || sdForUser?.user || {};
+            }
+          }
+        } catch (_) { /* noop */ }
+
         // Filter scenes to only include allowed fields (same as saveScenesToServer)
         const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
         const body = {
+          user: userForBody,
           session_id: sessionId,
           current_script: { userquery: uq, airesponse },
           action: 'save'
