@@ -302,6 +302,12 @@ const computeTimelineForIndex = (arr, idx) => {
     return `${start} - ${end} seconds`;
   } catch (_) { return '0 - 10 seconds'; }
 };
+const computeWordCount = (text) => {
+  if (typeof text !== 'string') return 0;
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+};
 
 // Hook: centralizes scene-by-scene script state and updates
 const useScriptScenes = (initial = []) => {
@@ -2316,6 +2322,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
   // Validation error modal state
   const [showValidationModal, setShowValidationModal] = useState(false);
   const [validationErrors, setValidationErrors] = useState([]);
+  const [showNarrationLimitPopup, setShowNarrationLimitPopup] = useState(false);
 
   // Chart type state (for Financial/PLOTLY videos)
   const [isChartTypeEditing, setIsChartTypeEditing] = useState(false);
@@ -2548,9 +2555,15 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
       }
 
       // 3. Narration - required
-      const narration = currentScene?.narration || '';
-      if (!narration || narration.trim() === '') {
+      const narrationValue = currentScene?.narration || '';
+      const narrationTrimmed = String(narrationValue).trim();
+      if (!narrationTrimmed) {
         errors.push(`Scene ${index + 1}: Narration is required`);
+      } else {
+        const narrationWordCount = computeWordCount(narrationTrimmed);
+        if (narrationWordCount > 20) {
+          errors.push(`Scene ${index + 1}: Narration exceed the video duration. Maximum allowed is 20 words.`);
+        }
       }
 
       // 4. Scene Description fields - required only for Avatar Based scenes
@@ -2675,6 +2688,9 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
       const validationErrors = validateAllScenes();
       if (validationErrors.length > 0) {
         setValidationErrors(validationErrors);
+        if (validationErrors.some((msg) => msg.includes('Narration exceed the video duration'))) {
+          setShowNarrationLimitPopup(true);
+        }
         setShowValidationModal(true);
         throw new Error('Validation failed');
       }
@@ -4415,14 +4431,32 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
                   )}
                 </button>
               </div>
-              <textarea
-                rows={4}
-                value={scenes[activeIndex]?.narration || ''}
-                onChange={(e) => setScene(activeIndex, { narration: e.target.value })}
-                className='w-full p-3 border rounded-lg'
-                placeholder='Narration for this scene'
-                required
-              />
+              {(() => {
+                const narrationText = scenes[activeIndex]?.narration || '';
+                const wordCount = computeWordCount(narrationText);
+                const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                return (
+                  <>
+                    <textarea
+                      rows={4}
+                      value={narrationText}
+                      onChange={(e) => setScene(activeIndex, { narration: e.target.value })}
+                      className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' :''
+                        }`}
+                      placeholder='Narration for this scene'
+                      required
+                    />
+                    <div className="mt-2 flex items-center justify-between">
+                      <p className="text-xs text-gray-500 italic">
+                        Keep 18-20 words for a perfect 10 second audio
+                      </p>
+                      <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'}`}>
+                        {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             {(() => {
               const scene = Array.isArray(script) && script[activeIndex] ? script[activeIndex] : null;
@@ -5946,7 +5980,34 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
           Back
         </button>
       </div>
-      {/* Validation Error Modal */}
+      {showNarrationLimitPopup && (
+        <div className='fixed inset-0 z-[95] flex items-center justify-center bg-black/50 backdrop-blur-sm'>
+          <div className='bg-white w-[90%] max-w-md rounded-lg shadow-xl p-6'>
+            <div className='flex items-center justify-between mb-4'>
+              <h3 className='text-lg font-semibold text-red-600'>Narration Too Long</h3>
+              <button
+                onClick={() => setShowNarrationLimitPopup(false)}
+                className='text-gray-400 hover:text-gray-600 transition-colors'
+              >
+                <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
+                </svg>
+              </button>
+            </div>
+            <p className='text-sm text-gray-700'>
+              Narration exceed the video duration. Maximum allowed is 20 words.
+            </p>
+            <div className='mt-6 flex justify-end'>
+              <button
+                onClick={() => setShowNarrationLimitPopup(false)}
+                className='px-4 py-2 rounded-lg bg-[#13008B] text-white text-sm font-medium hover:bg-blue-800 transition-colors'
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showValidationModal && (
         <div className='fixed inset-0 z-[90] flex items-center justify-center bg-black/50 backdrop-blur-sm'>
           <div className='bg-white w-[90%] max-w-md rounded-lg shadow-xl p-6'>
@@ -7008,6 +7069,11 @@ const BuildReelWizard = () => {
         // Narration is always required
         if (!narration) {
           validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration is required`);
+        } else {
+          const narrationWordCount = computeWordCount(narration);
+          if (narrationWordCount > 20) {
+            validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration exceed the video duration. Maximum allowed is 20 words.`);
+          }
         }
 
         // Description is required for Infographic and Financial scenes
