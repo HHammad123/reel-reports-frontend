@@ -715,6 +715,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [showShortGenPopup, setShowShortGenPopup] = useState(false); // no longer used for images
   const [showImagesOverlay, setShowImagesOverlay] = useState(false);
   const [showMissingAvatarPopup, setShowMissingAvatarPopup] = useState(false);
+  const [showNarrationLimitPopup, setShowNarrationLimitPopup] = useState(false);
   const [missingAvatarScenes, setMissingAvatarScenes] = useState([]);
   const [imagesJobId, setImagesJobId] = useState('');
   const [videoCountdown, setVideoCountdown] = useState(0);
@@ -10377,14 +10378,19 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               };
                               const saveInlineNarration = async () => {
                                 try {
-                                  setIsSavingNarration(true);
                                   const nextNarration = pendingNarration || '';
                                   const scene =
                                     Array.isArray(scriptRows) && scriptRows[currentSceneIndex]
                                       ? scriptRows[currentSceneIndex]
                                       : null;
                                   const descriptionText = scene?.description || '';
-                                  const computedWordCount = computeWordCount(nextNarration || descriptionText);
+                                  const wordCount = computeWordCount(nextNarration || descriptionText);
+                                  if (wordCount > 20) {
+                                    setShowNarrationLimitPopup(true);
+                                    return;
+                                  }
+                                  setIsSavingNarration(true);
+                                  const computedWordCount = wordCount;
                                   handleSceneUpdate(currentSceneIndex, 'narration', nextNarration);
                                   handleSceneUpdate(currentSceneIndex, 'word_count', computedWordCount);
 
@@ -10429,7 +10435,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                       </p>
                                       <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'
                                         }`}>
-                                        {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                        {wordCount} / 20 words
                                       </p>
                                     </div>
                                   </>
@@ -10517,7 +10523,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                             </p>
                                             <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'
                                               }`}>
-                                              {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                              {wordCount} / 20 words
                                             </p>
                                           </div>
                                         )}
@@ -15357,6 +15363,25 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                 OK
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {showNarrationLimitPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[90%] max-w-md rounded-lg shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold text-red-600">Narration Too Long</h4>
+              <button
+                onClick={() => setShowNarrationLimitPopup(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors text-2xl leading-none"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-sm text-gray-700">
+              Narration exceed the video duration. Maximum allowed is 20 words.
+            </p>
           </div>
         </div>
       )}

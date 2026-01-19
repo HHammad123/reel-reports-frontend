@@ -228,6 +228,13 @@ const truncateText = (text, maxWords = 9) => {
   return words.slice(0, maxWords).join(' ') + '...';
 };
 
+const computeWordCount = (text) => {
+  if (typeof text !== 'string') return 0;
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+};
+
 // Helper function to format description for display (hides ** marks, shows bold titles)
 const formatDescription = (description, truncate = false) => {
   const sections = parseDescription(description);
@@ -9050,11 +9057,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             )}
                           </div>
                           {editingField === 'narration' ? (
-                            <textarea
-                              className="w-full h-24 border border-[#D8DFFF] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                              value={editedNarration}
-                              onChange={(e) => setEditedNarration(e.target.value)}
-                            />
+                            (() => {
+                              const wordCount = computeWordCount(editedNarration);
+                              const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                              return (
+                                <>
+                                  <textarea
+                                    className={`w-full h-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' : 'border-red-300 bg-red-50'
+                                      }`}
+                                    value={editedNarration}
+                                    onChange={(e) => setEditedNarration(e.target.value)}
+                                  />
+                                  <div className="mt-2 flex items-center justify-between">
+                                    <p className="text-xs text-gray-500 italic">
+                                      Keep 18-20 words for a perfect 10 second audio
+                                    </p>
+                                    <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'}`}>
+                                      {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                    </p>
+                                  </div>
+                                </>
+                              );
+                            })()
                           ) : (
                             <input
                               type="text"
@@ -9744,11 +9768,28 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                 )}
                               </div>
                               {editingField === 'narration' ? (
-                                <textarea
-                                  className="w-full h-24 border border-[#D8DFFF] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#13008B]"
-                                  value={editedNarration}
-                                  onChange={(e) => setEditedNarration(e.target.value)}
-                                />
+                                (() => {
+                                  const wordCount = computeWordCount(editedNarration);
+                                  const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                                  return (
+                                    <>
+                                      <textarea
+                                        className={`w-full h-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' : 'border-red-300 bg-red-50'
+                                          }`}
+                                        value={editedNarration}
+                                        onChange={(e) => setEditedNarration(e.target.value)}
+                                      />
+                                      <div className="mt-2 flex items-center justify-between">
+                                        <p className="text-xs text-gray-500 italic">
+                                          Keep 18-20 words for a perfect 10 second audio
+                                        </p>
+                                        <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'}`}>
+                                          {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                        </p>
+                                      </div>
+                                    </>
+                                  );
+                                })()
                               ) : (
                                 <input
                                   type="text"
