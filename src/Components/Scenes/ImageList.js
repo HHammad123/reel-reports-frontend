@@ -405,6 +405,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [chartEditorData, setChartEditorData] = useState(null);
   const [chartEditorLoading, setChartEditorLoading] = useState(false);
   const [chartEditorError, setChartEditorError] = useState('');
+  const [showNarrationLimitPopup, setShowNarrationLimitPopup] = useState(false);
 
   const handleSaveNarration = async () => {
     if (!selected) return;
@@ -489,6 +490,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         };
 
       const nextNarration = (editedNarration || '').trim();
+
+      const wordCount = computeWordCount(nextNarration);
+      if (wordCount > 20) {
+        setShowNarrationLimitPopup(true);
+        setIsSavingField(false);
+        return;
+      }
 
       const payload = {
         user,
@@ -9063,7 +9071,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               return (
                                 <>
                                   <textarea
-                                    className={`w-full h-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' : 'border-red-300 bg-red-50'
+                                    className={`w-full h-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' : ''
                                       }`}
                                     value={editedNarration}
                                     onChange={(e) => setEditedNarration(e.target.value)}
@@ -9072,7 +9080,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                     <p className="text-xs text-gray-500 italic">
                                       Keep 18-20 words for a perfect 10 second audio
                                     </p>
-                                    <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'}`}>
+                                    <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : ''}`}>
                                       {wordCount} {wordCount === 1 ? 'word' : 'words'}
                                     </p>
                                   </div>
@@ -13119,6 +13127,26 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           </div>
         )
       }
+
+      {showNarrationLimitPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[90%] max-w-md rounded-lg shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-semibold text-red-600">Narration Too Long</h4>
+              <button
+                onClick={() => setShowNarrationLimitPopup(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors text-2xl leading-none"
+                title="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-sm text-gray-700">
+              Narration exceed the video duration. Maximum allowed is 20 words.
+            </p>
+          </div>
+        </div>
+      )}
 
     </div >
   );
