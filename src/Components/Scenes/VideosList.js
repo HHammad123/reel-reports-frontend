@@ -3123,26 +3123,25 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
   const normalizeOverlayForComparison = useCallback((overlay) => {
     if (!overlay) return null;
 
-    // Extract only the properties that matter for comparison
     const normalized = {
       id: overlay.id,
       type: overlay.type,
       from: overlay.from || 0,
       durationInFrames: overlay.durationInFrames || 0,
       row: overlay.row ?? 0,
-      // Position properties (normalize to handle both x/y and left/top)
       x: overlay.x ?? overlay.left ?? 0,
       y: overlay.y ?? overlay.top ?? 0,
       width: overlay.width || 0,
       height: overlay.height || 0,
-      // Content properties
       content: overlay.content || '',
       text: overlay.text || overlay.content || '',
       src: overlay.src || '',
       volume: overlay.volume ?? 1,
+      hasBackground: overlay.has_background,
+      animationEnter: overlay.animation?.enter,
+      animationExit: overlay.animation?.exit,
     };
 
-    // Handle styles - normalize to consistent format
     if (overlay.styles) {
       normalized.styles = {
         fontSize: overlay.styles.fontSize || overlay.styles.fontSizeScale || overlay.fontSize || '',
@@ -3313,45 +3312,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
 
         throw new Error(`Failed to delete layer: ${response.status} ${JSON.stringify(responseData)}`);
       }
-      // Only call user session data API for text layers
-      if (layerName === 'text_overlay') {
-        // STEP 2: Refresh user session data to get updated layers
-        try {
-          // Wait a bit for backend to process the deletion
-          await new Promise(resolve => setTimeout(resolve, 500));
-
-          // Get user_id (use 'token' from localStorage, not 'user_id')
-          const user_id = localStorage.getItem('token');
-
-          if (!user_id) {
-            console.warn('⚠️ [DELETE-LAYER] Missing user_id for refresh');
-          } else {
-            // Call user session data API to get updated data
-            const refreshResponse = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ user_id: user_id, session_id: session_id })
-            });
-
-            const refreshText = await refreshResponse.text();
-            let refreshData;
-            try {
-              refreshData = JSON.parse(refreshText);
-            } catch {
-              refreshData = refreshText;
-            }
-
-            if (refreshResponse.ok && refreshData?.session_data) {
-              // Data refresh complete - the component will automatically update when items state changes
-            } else {
-              console.warn('⚠️ [DELETE-LAYER] Failed to refresh user session data:', refreshResponse.status);
-            }
-          }
-        } catch (refreshError) {
-          console.error('❌ [DELETE-LAYER] Error refreshing user session data:', refreshError);
-          // Don't throw - layer was already deleted successfully
-        }
-      }
+      await refreshUserSessionData();
     } catch (error) {
       console.error('❌ [DELETE-LAYER] Error deleting layer:', error);
       // Only show alert if it's not a 404 error (which we handle silently)
@@ -3570,6 +3531,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         sceneRange = sceneFrameRanges[0] || { startFrame: 0, endFrame: 150, sceneNumber: targetScene };
         console.warn('⚠️ [SAVE-SINGLE-LAYER] Could not determine scene, using fallback:', targetScene);
       }
+
+      overlay.sceneNumber = targetScene;
 
       // Calculate timing
       let absoluteStartFrame = overlayStartFrame;
@@ -3801,7 +3764,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       if (!response.ok) {
         throw new Error(`Failed to save layer: ${response.status} ${JSON.stringify(responseData)}`);
       }
-      // Mark as saved
+
+      await refreshUserSessionData();
+
       savedOverlayIdsRef.current.add(overlay.id);
 
       // Update snapshot
@@ -3874,6 +3839,301 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       console.error('❌ [DELETE-OVERLAY] Error deleting overlay:', error);
     }
   }, []);
+
+  const rebuildSessionMediaFromSessionData = (sessionData) => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const videosArray = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
+
+    const getLogoLayerDataForSession = (entry) => {
+      if (Array.isArray(entry?.videos?.v1?.layers)) {
+        const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+        if (logoLayer) {
+          return {
+            url: logoLayer.url,
+            timing: logoLayer.timing || { start: "00:00:00", end: null },
+            position: logoLayer.position || { x: 0.9, y: 0.1 },
+            bounding_box: logoLayer.bounding_box || null,
+            size: logoLayer.size || null,
+            scale: logoLayer.scale !== undefined ? logoLayer.scale : 1,
+            opacity: logoLayer.opacity !== undefined ? logoLayer.opacity : 1,
+            rotation: logoLayer.rotation || 0,
+            style: logoLayer.style || {},
+            blend_mode: logoLayer.blend_mode || 'normal',
+            enabled: logoLayer.enabled !== undefined ? logoLayer.enabled : true,
+            animation: logoLayer.animation || { type: 'none', duration: 0.5 },
+          };
+        }
+      }
+      return null;
+    };
+
+    const getAudioLayerDataForSession = (entry) => {
+      if (Array.isArray(entry?.videos?.v1?.layers)) {
+        const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+        if (audioLayer) {
+          return {
+            url: audioLayer.url,
+            timing: audioLayer.timing || { start: "00:00:00", end: null },
+            volume: audioLayer.volume !== undefined ? audioLayer.volume : 1,
+            enabled: audioLayer.enabled !== undefined ? audioLayer.enabled : true,
+          };
+        }
+      }
+      return null;
+    };
+
+    const getChartLayerDataForSession = (entry) => {
+      if (Array.isArray(entry?.videos?.v1?.layers)) {
+        const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+        if (chartLayer) {
+          return {
+            url: chartLayer.url,
+            position: chartLayer.position || { x: 0.5, y: 0.5 },
+            bounding_box: chartLayer.bounding_box || null,
+            scaling: chartLayer.scaling || { scale_x: 1, scale_y: 1, fit_mode: 'contain' },
+            animation: chartLayer.animation || { type: 'none', duration: 0.5 },
+            layout: chartLayer.layout || { align: 'center', verticalAlign: 'middle' },
+            opacity: chartLayer.opacity !== undefined ? chartLayer.opacity : 1,
+          };
+        }
+      }
+      return null;
+    };
+
+    const getSubtitleLayerDataForSession = (entry) => {
+      if (Array.isArray(entry?.videos?.v1?.layers)) {
+        const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+        if (subtitleLayer) {
+          return {
+            url: subtitleLayer.url || null,
+            text: subtitleLayer.text || '',
+            timing: subtitleLayer.timing || { start: "00:00:00", end: null },
+            position: subtitleLayer.position || { x: 0.5, y: 0.85 },
+            bounding_box: subtitleLayer.bounding_box || null,
+            style: {
+              fontSize: subtitleLayer.fontSize || subtitleLayer.style?.fontSize || 24,
+              fontFamily: subtitleLayer.fontFamily || subtitleLayer.style?.fontFamily || 'Inter',
+              fontWeight: subtitleLayer.fontWeight || subtitleLayer.style?.fontWeight || '600',
+              color: subtitleLayer.fill || subtitleLayer.style?.color || subtitleLayer.style?.fill || '#FFFFFF',
+            },
+            enabled: subtitleLayer.enabled !== undefined ? subtitleLayer.enabled : true,
+          };
+        }
+      }
+      return null;
+    };
+
+    const sessionVideos = videosArray.map((it, idx) => {
+      const rawBaseUrl =
+        it.videos?.v1?.base_video_url ||
+        it.videos?.base_video_url ||
+        it.video?.v1?.base_video_url ||
+        it.video?.base_video_url ||
+        it.url ||
+        it.video_url ||
+        it.videos?.v1?.video_url ||
+        it.videos?.video_url ||
+        it.video?.v1?.video_url ||
+        it.video?.video_url ||
+        '';
+
+      const audioLayerData = getAudioLayerDataForSession(it);
+      const rawAudioUrl =
+        audioLayerData?.url ||
+        it.audioUrl ||
+        it.audio_url ||
+        it.audio_only_url ||
+        it.videos?.v1?.audio_url ||
+        it.videos?.v1?.audio_only_url ||
+        it.videos?.audio_url ||
+        it.videos?.audio_only_url ||
+        it.video?.v1?.audio_url ||
+        it.video?.v1?.audio_only_url ||
+        it.video?.audio_url ||
+        it.video?.audio_only_url ||
+        '';
+
+      const chartLayerDataForSession = getChartLayerDataForSession(it);
+      const rawChartVideoUrl =
+        chartLayerDataForSession?.url ||
+        it.chartVideoUrl ||
+        it.chart_video_url ||
+        it.videos?.v1?.chart_video_url ||
+        it.videos?.chart_video_url ||
+        it.video?.v1?.chart_video_url ||
+        it.video?.chart_video_url ||
+        '';
+
+      const logoLayerDataForSession = getLogoLayerDataForSession(it);
+      const rawLogoUrl = logoLayerDataForSession?.url || '';
+
+      const subtitleLayerDataForSession = getSubtitleLayerDataForSession(it);
+
+      return {
+        id: it.id || `session-${idx}`,
+        name: it.title || it.name || `Video ${idx + 1}`,
+        title: it.title || it.name || `Video ${idx + 1}`,
+        path: rawBaseUrl,
+        url: rawBaseUrl,
+        src: rawBaseUrl,
+        baseVideoUrl: rawBaseUrl,
+        base_video_url: rawBaseUrl,
+        audioUrl: rawAudioUrl,
+        audio_url: rawAudioUrl,
+        audioVolume: audioLayerData?.volume || 1,
+        audioLayerData,
+        chartVideoUrl: rawChartVideoUrl,
+        chart_video_url: rawChartVideoUrl,
+        chartLayerData: chartLayerDataForSession,
+        logoUrl: rawLogoUrl,
+        logo_url: rawLogoUrl,
+        logoLayerData: logoLayerDataForSession,
+        subtitleLayerData: subtitleLayerDataForSession,
+        subtitleUrl: subtitleLayerDataForSession?.url || null,
+        subtitleText: subtitleLayerDataForSession?.text || '',
+        type: 'video',
+        duration: it.mediaSrcDuration || it.duration || 10,
+        mediaSrcDuration: it.mediaSrcDuration || it.duration || 10,
+        thumbnail: it.thumbnail || it.poster || rawBaseUrl || '',
+        size: it.size || 0,
+        _session: true,
+        videos: it.videos || {},
+      };
+    });
+
+    const logoImages = [];
+    videosArray.forEach((it, idx) => {
+      const logoLayerDataForSession = getLogoLayerDataForSession(it);
+      if (logoLayerDataForSession && logoLayerDataForSession.enabled && logoLayerDataForSession.url) {
+        const rawLogoUrl = logoLayerDataForSession.url;
+        logoImages.push({
+          id: `logo-${it.id || `session-${idx}`}`,
+          name: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+          title: `Logo - ${it.title || it.name || `Video ${idx + 1}`}`,
+          path: rawLogoUrl,
+          url: rawLogoUrl,
+          src: rawLogoUrl,
+          logoUrl: rawLogoUrl,
+          logo_url: rawLogoUrl,
+          logoLayerData: logoLayerDataForSession,
+          type: 'image',
+          duration: 0,
+          mediaSrcDuration: 0,
+          thumbnail: rawLogoUrl,
+          size: 0,
+          _session: true,
+          _isLogo: true,
+          _parentVideoId: it.id || `session-${idx}`,
+        });
+      }
+    });
+
+    const chartVideos = [];
+    videosArray.forEach((it, idx) => {
+      const chartLayerDataForSession = getChartLayerDataForSession(it);
+      if (chartLayerDataForSession && chartLayerDataForSession.url) {
+        const rawChartVideoUrl = chartLayerDataForSession.url;
+        const isVideoFile = rawChartVideoUrl.match(/\.(mp4|webm|mov|avi|mkv|flv|wmv|m4v)(\?|$)/i);
+        if (isVideoFile) {
+          chartVideos.push({
+            id: `chart-${it.id || `session-${idx}`}`,
+            name: `Chart - ${it.title || it.name || `Video ${idx + 1}`}`,
+            title: `Chart - ${it.title || it.name || `Video ${idx + 1}`}`,
+            path: rawChartVideoUrl,
+            url: rawChartVideoUrl,
+            src: rawChartVideoUrl,
+            chartVideoUrl: rawChartVideoUrl,
+            chart_video_url: rawChartVideoUrl,
+            chartLayerData: chartLayerDataForSession,
+            type: 'video',
+            duration: it.mediaSrcDuration || it.duration || 10,
+            mediaSrcDuration: it.mediaSrcDuration || it.duration || 10,
+            thumbnail: rawChartVideoUrl || it.thumbnail || '',
+            size: it.size || 0,
+            _session: true,
+            _isChartVideo: true,
+            _parentVideoId: it.id || `session-${idx}`,
+          });
+        }
+      }
+    });
+
+    const sessionImages = [];
+    const sessionDataImages = Array.isArray(sessionData?.images) ? sessionData.images : [];
+    sessionDataImages.forEach((img, idx) => {
+      const imageUrl = typeof img === 'string'
+        ? img
+        : (img?.image_url || img?.imageUrl || img?.url || img?.src || img?.ref_image?.[0] || '');
+
+      if (!imageUrl) return;
+
+      const imageFrames = Array.isArray(img?.imageFrames) ? img.imageFrames : [];
+      const firstFrame = imageFrames[0] || {};
+      const frameImageUrl = firstFrame?.image_url || firstFrame?.url || firstFrame?.src || imageUrl;
+
+      sessionImages.push({
+        id: `session-img-${idx}`,
+        name: img?.scene_title || img?.title || `Session Image ${idx + 1}`,
+        title: img?.scene_title || img?.title || `Session Image ${idx + 1}`,
+        path: frameImageUrl,
+        url: frameImageUrl,
+        src: frameImageUrl,
+        type: 'image',
+        duration: 0,
+        mediaSrcDuration: 0,
+        thumbnail: frameImageUrl,
+        size: 0,
+        _session: true,
+        _isSessionImage: true,
+        sceneNumber: img?.scene_number || img?.sceneNumber || (idx + 1),
+      });
+    });
+
+    window.__SESSION_MEDIA_FILES = sessionVideos;
+    window.__SESSION_MEDIA_FILES = [...window.__SESSION_MEDIA_FILES, ...logoImages, ...chartVideos, ...sessionImages];
+    setSessionMediaVersion(prev => prev + 1);
+  };
+
+  const refreshUserSessionData = async () => {
+    const session_id = localStorage.getItem('session_id');
+    const user_id = localStorage.getItem('token');
+    if (!session_id || !user_id) {
+      return null;
+    }
+    try {
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id, session_id })
+      });
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+      if (!response.ok) {
+        console.warn('⚠️ [SESSION-REFRESH] Failed to refresh user session data after manage-layers:', {
+          status: response.status,
+          data
+        });
+        return null;
+      }
+      console.log('✅ [SESSION-REFRESH] User session data refreshed after manage-layers');
+      const sessionData = data?.session_data || data?.session || null;
+      if (sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)) {
+        rebuildSessionMediaFromSessionData(sessionData);
+      }
+      return data;
+    } catch (error) {
+      console.error('❌ [SESSION-REFRESH] Error refreshing user session data after manage-layers:', error);
+      return null;
+    }
+  };
 
   // Convert frames to HH:MM:SS format
   const framesToTime = useCallback((frames, fps = 30) => {
@@ -4140,6 +4400,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         const updateStartTime = Date.now();
         const updateResult = await updateBaseVideos(baseVideoChanges);
         const updateDuration = Date.now() - updateStartTime;
+        await refreshUserSessionData();
       } else {
       }
 
@@ -4151,6 +4412,14 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
 
       const overlayChanges = detectOverlayChanges(currentOverlays, savedOverlaysSnapshot);
       const deletedOverlayIds = overlayChanges?.deletedOverlays || [];
+      const modifiedOverlayIds = overlayChanges?.modifiedOverlays || [];
+      const newOverlayIds = overlayChanges?.newOverlays || [];
+
+      if (newOverlayIds.length > 0 && (deletedOverlayIds.length > 0 || modifiedOverlayIds.length > 0)) {
+        setError('please save your previous work');
+        setIsSavingLayers(false);
+        return;
+      }
 
       const fps = APP_CONFIG.fps || 30;
       const sceneFrameRanges = [];
@@ -4195,7 +4464,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         return null;
       };
 
-      const getLayerNameForDeletedOverlay = (overlay) => {
+      const getLayerNameForOverlay = (overlay) => {
         if (!overlay || !overlay.type) {
           return null;
         }
@@ -4221,18 +4490,120 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         return null;
       };
 
-      if (deletedOverlayIds.length > 0) {
-        const overlaysBySceneAndLayer = {};
+      const getNormalizedPositionAndBox = (overlay) => {
+        let position = null;
+        let boundingBox = null;
 
+        if (overlay.position && typeof overlay.position.x === 'number' && typeof overlay.position.y === 'number') {
+          position = {
+            x: Math.max(0, Math.min(1, overlay.position.x)),
+            y: Math.max(0, Math.min(1, overlay.position.y))
+          };
+        }
+
+        if (overlay.bounding_box && typeof overlay.bounding_box.x === 'number' && typeof overlay.bounding_box.y === 'number' && typeof overlay.bounding_box.width === 'number' && typeof overlay.bounding_box.height === 'number') {
+          boundingBox = {
+            x: Math.max(0, Math.min(1, overlay.bounding_box.x)),
+            y: Math.max(0, Math.min(1, overlay.bounding_box.y)),
+            width: Math.max(0, Math.min(1, overlay.bounding_box.width)),
+            height: Math.max(0, Math.min(1, overlay.bounding_box.height))
+          };
+        }
+
+        if ((!position || !boundingBox) && overlay.left !== undefined && overlay.top !== undefined) {
+          let canvasWidth = 1920;
+          let canvasHeight = 1080;
+          if (aspectRatio === '9:16' || aspectRatio === '9/16') {
+            canvasWidth = 1080;
+            canvasHeight = 1920;
+          }
+          const width = overlay.width || 0;
+          const height = overlay.height || 0;
+          if (!position) {
+            const centerX = overlay.left + width / 2;
+            const centerY = overlay.top + height / 2;
+            position = {
+              x: Math.max(0, Math.min(1, centerX / canvasWidth)),
+              y: Math.max(0, Math.min(1, centerY / canvasHeight))
+            };
+          }
+          if (!boundingBox && width > 0 && height > 0) {
+            boundingBox = {
+              x: Math.max(0, Math.min(1, overlay.left / canvasWidth)),
+              y: Math.max(0, Math.min(1, overlay.top / canvasHeight)),
+              width: Math.max(0, Math.min(1, width / canvasWidth)),
+              height: Math.max(0, Math.min(1, height / canvasHeight))
+            };
+          }
+        }
+
+        return { position, bounding_box: boundingBox };
+      };
+
+      const computeTimingForOverlay = (overlay, sceneRangeLocal) => {
+        if (!sceneRangeLocal) {
+          return null;
+        }
+        let absoluteStartFrame = overlay.from;
+        if (absoluteStartFrame === undefined || absoluteStartFrame === null || isNaN(absoluteStartFrame) || !isFinite(absoluteStartFrame)) {
+          absoluteStartFrame = 0;
+        } else {
+          absoluteStartFrame = Number(absoluteStartFrame);
+          if (isNaN(absoluteStartFrame) || !isFinite(absoluteStartFrame)) {
+            absoluteStartFrame = 0;
+          }
+        }
+        let overlayDurationFrames = overlay.durationInFrames;
+        if (overlayDurationFrames === undefined || overlayDurationFrames === null || isNaN(overlayDurationFrames) || !isFinite(overlayDurationFrames) || overlayDurationFrames <= 0) {
+          if (sceneRangeLocal && sceneRangeLocal.durationFrames && !isNaN(sceneRangeLocal.durationFrames) && sceneRangeLocal.durationFrames > 0) {
+            overlayDurationFrames = sceneRangeLocal.durationFrames;
+          } else {
+            overlayDurationFrames = 5 * fps;
+          }
+        } else {
+          overlayDurationFrames = Number(overlayDurationFrames);
+          if (isNaN(overlayDurationFrames) || !isFinite(overlayDurationFrames) || overlayDurationFrames <= 0) {
+            overlayDurationFrames = 5 * fps;
+          }
+        }
+        let absoluteEndFrame = absoluteStartFrame + overlayDurationFrames;
+        const sceneStartFrame = Number(sceneRangeLocal.startFrame || 0);
+        let sceneEndFrame = sceneRangeLocal.endFrame !== undefined && sceneRangeLocal.endFrame !== null ? Number(sceneRangeLocal.endFrame) : null;
+        if (sceneEndFrame !== null && !isNaN(sceneEndFrame) && isFinite(sceneEndFrame) && sceneEndFrame > 0) {
+          absoluteEndFrame = Math.min(absoluteEndFrame, sceneEndFrame);
+        }
+        let relativeStartFrame = absoluteStartFrame - sceneStartFrame;
+        if (!isNaN(relativeStartFrame) && isFinite(relativeStartFrame)) {
+          relativeStartFrame = Math.max(0, relativeStartFrame);
+        } else {
+          relativeStartFrame = 0;
+        }
+        let relativeEndFrame = absoluteEndFrame - sceneStartFrame;
+        if (!isNaN(relativeEndFrame) && isFinite(relativeEndFrame)) {
+          relativeEndFrame = Math.max(relativeStartFrame + 1, relativeEndFrame);
+        } else {
+          relativeEndFrame = relativeStartFrame + 1;
+        }
+        const start = framesToTime(relativeStartFrame, fps);
+        const end = framesToTime(relativeEndFrame, fps);
+        if (!start || !end || typeof start !== 'string' || typeof end !== 'string' || start.includes('NaN') || end.includes('NaN') || start.includes('Infinity') || end.includes('Infinity')) {
+          return null;
+        }
+        return { start, end };
+      };
+
+      const overlaysBySceneAndLayer = {};
+
+      if (deletedOverlayIds.length > 0 || modifiedOverlayIds.length > 0) {
         for (const overlay of savedOverlaysSnapshot) {
           if (!overlay || overlay.id === undefined || overlay.id === null) {
             continue;
           }
-          const layerName = getLayerNameForDeletedOverlay(overlay);
+          const layerName = getLayerNameForOverlay(overlay);
           if (!layerName) {
             continue;
           }
-          const sceneNumber = findSceneNumberForFrame(overlay.from || 0);
+          const sceneNumber = overlay.sceneNumber || findSceneNumberForFrame(overlay.from || 0);
           if (!sceneNumber) {
             continue;
           }
@@ -4242,18 +4613,217 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
           }
           overlaysBySceneAndLayer[key].push(overlay);
         }
+      }
 
+      if (modifiedOverlayIds.length > 0) {
+        for (const modifiedId of modifiedOverlayIds) {
+          const modifiedIdStr = String(modifiedId);
+          const currentOverlay = currentOverlays.find(o => String(o?.id) === modifiedIdStr);
+          if (!currentOverlay) {
+            continue;
+          }
+          const savedOverlayForId = savedOverlaysSnapshot.find(o => String(o?.id) === modifiedIdStr);
+          const layerName = getLayerNameForOverlay(currentOverlay) || getLayerNameForOverlay(savedOverlayForId);
+          if (!layerName) {
+            continue;
+          }
+          let sceneNumber = currentOverlay.sceneNumber || savedOverlayForId?.sceneNumber || findSceneNumberForFrame(currentOverlay.from || 0);
+          if (!sceneNumber) {
+            sceneNumber = selectedVideo?.sceneNumber || selectedVideo?.scene_number || sceneFrameRanges[0]?.sceneNumber || 1;
+          }
+          const sceneRangeLocal = sceneFrameRanges.find(r => r.sceneNumber === sceneNumber) || null;
+          const key = `${sceneNumber}:${layerName}`;
+          const overlaysInSceneLayer = overlaysBySceneAndLayer[key] || [];
+          let layerIndex = null;
+          if (layerName !== 'logo' && layerName !== 'subtitles') {
+            let index = overlaysInSceneLayer.findIndex(o => String(o?.id) === modifiedIdStr);
+            if (index < 0) {
+              index = 0;
+            }
+            layerIndex = index;
+          }
+
+          const updates = {};
+
+          if (layerName === 'text_overlay') {
+            const text = currentOverlay.text || currentOverlay.content || '';
+            if (text) {
+              updates.text = text;
+            }
+            if (currentOverlay.styles?.fontSize) {
+              const fontSize = parseInt(String(currentOverlay.styles.fontSize).replace('px', '')) || null;
+              if (fontSize) {
+                updates.fontSize = fontSize;
+              }
+            }
+            if (currentOverlay.styles?.color) {
+              updates.color = currentOverlay.styles.color;
+            }
+            if (currentOverlay.styles?.fontWeight) {
+              updates.fontWeight = currentOverlay.styles.fontWeight;
+            } else if (currentOverlay.styles?.bold || currentOverlay.styles?.fontWeight === 'bold') {
+              updates.fontWeight = 'bold';
+            }
+            if (currentOverlay.styles?.textAlign) {
+              updates.alignment = currentOverlay.styles.textAlign;
+            } else if (currentOverlay.styles?.align) {
+              updates.alignment = currentOverlay.styles.align;
+            }
+            const normalized = getNormalizedPositionAndBox(currentOverlay);
+            if (normalized.position) {
+              updates.position = normalized.position;
+            }
+            if (normalized.bounding_box) {
+              updates.bounding_box = normalized.bounding_box;
+            }
+            const timing = computeTimingForOverlay(currentOverlay, sceneRangeLocal);
+            if (timing) {
+              updates.timing = timing;
+            }
+            if (currentOverlay.animation) {
+              if (currentOverlay.animation.enter) {
+                updates.enter_animation = currentOverlay.animation.enter;
+              }
+              if (currentOverlay.animation.exit) {
+                updates.exit_animation = currentOverlay.animation.exit;
+              }
+            }
+          } else if (layerName === 'logo') {
+            if (currentOverlay.src) {
+              updates.url = currentOverlay.src;
+            }
+            const normalized = getNormalizedPositionAndBox(currentOverlay);
+            if (normalized.position) {
+              updates.position = normalized.position;
+            }
+            if (normalized.bounding_box) {
+              updates.bounding_box = normalized.bounding_box;
+            }
+            const timing = computeTimingForOverlay(currentOverlay, sceneRangeLocal);
+            if (timing) {
+              updates.timing = timing;
+            }
+          } else if (layerName === 'chart') {
+            if (currentOverlay.src) {
+              updates.url = currentOverlay.src;
+            }
+            if (currentOverlay.has_background !== undefined) {
+              updates.has_background = currentOverlay.has_background;
+            }
+            const normalized = getNormalizedPositionAndBox(currentOverlay);
+            if (normalized.position) {
+              updates.position = normalized.position;
+            }
+            if (normalized.bounding_box) {
+              updates.bounding_box = normalized.bounding_box;
+            }
+            const timing = computeTimingForOverlay(currentOverlay, sceneRangeLocal);
+            if (timing) {
+              updates.timing = timing;
+            }
+          } else if (layerName === 'audio') {
+            const timing = computeTimingForOverlay(currentOverlay, sceneRangeLocal);
+            if (timing) {
+              updates.timing = timing;
+            }
+            if (currentOverlay.volume !== undefined) {
+              updates.volume = currentOverlay.volume;
+            }
+          } else if (layerName === 'subtitles') {
+            const normalized = getNormalizedPositionAndBox(currentOverlay);
+            if (normalized.position) {
+              updates.position = normalized.position;
+            }
+            if (normalized.bounding_box) {
+              updates.bounding_box = normalized.bounding_box;
+            }
+            const timing = computeTimingForOverlay(currentOverlay, sceneRangeLocal);
+            if (timing) {
+              updates.timing = timing;
+            }
+          }
+
+          if (Object.keys(updates).length === 0) {
+            continue;
+          }
+
+          const layerSelector = {
+            name: layerName
+          };
+          if (layerName !== 'logo' && layerName !== 'subtitles' && layerName !== 'chart' && layerIndex !== null) {
+            layerSelector.index = Number(layerIndex);
+          }
+
+          const requestBody = {
+            session_id: session_id,
+            scene_number: sceneNumber,
+            operation: "update_layer",
+            layer_selector: layerSelector,
+            updates: updates
+          };
+
+          const response = await fetch(
+            'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/manage-layers',
+            {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(requestBody)
+            }
+          );
+
+          const responseText = await response.text();
+          let responseData;
+          try {
+            responseData = JSON.parse(responseText);
+          } catch {
+            responseData = responseText;
+          }
+
+          if (!response.ok) {
+            console.error('❌ [SAVE-LAYERS] Failed to update layer via manage-layers:', {
+              sceneNumber,
+              layerName,
+              layerIndex,
+              overlayId: modifiedIdStr,
+              status: response.status,
+              statusText: response.statusText,
+              responseData,
+              requestBody
+            });
+            throw new Error(`Failed to update layer: ${response.status} ${JSON.stringify(responseData)}`);
+          }
+
+          await refreshUserSessionData();
+        }
+
+        const currentSnapshotForUpdate = savedOverlaysSnapshotRef.current || [];
+        const updatedSnapshotForUpdate = currentSnapshotForUpdate.map(overlay => {
+          if (!overlay || overlay.id === undefined || overlay.id === null) {
+            return overlay;
+          }
+          const current = currentOverlays.find(o => String(o?.id) === String(overlay.id));
+          if (!current) {
+            return overlay;
+          }
+          return current;
+        });
+        savedOverlaysSnapshotRef.current = JSON.parse(JSON.stringify(updatedSnapshotForUpdate));
+      }
+
+      if (deletedOverlayIds.length > 0) {
         for (const deletedId of deletedOverlayIds) {
           const deletedIdStr = String(deletedId);
           const overlay = savedOverlaysSnapshot.find(o => String(o?.id) === deletedIdStr);
           if (!overlay) {
             continue;
           }
-          const layerName = getLayerNameForDeletedOverlay(overlay);
+          const layerName = getLayerNameForOverlay(overlay);
           if (!layerName) {
             continue;
           }
-          let sceneNumber = findSceneNumberForFrame(overlay.from || 0);
+          let sceneNumber = overlay.sceneNumber || findSceneNumberForFrame(overlay.from || 0);
           if (!sceneNumber) {
             sceneNumber = selectedVideo?.sceneNumber || selectedVideo?.scene_number || sceneFrameRanges[0]?.sceneNumber || 1;
           }
@@ -4815,6 +5385,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 });
                 throw new Error(errorMsg);
               }
+
+              await refreshUserSessionData();
+
               // Mark overlay as saved
               if (overlay?.id !== undefined) {
                 savedOverlayIdsRef.current.add(overlay.id);
@@ -5361,7 +5934,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 });
                 throw new Error(errorMsg);
               }
-              // Mark overlay as saved
+
+              await refreshUserSessionData();
+
               if (overlay?.id !== undefined) {
                 savedOverlayIdsRef.current.add(overlay.id);
                 overlaysSavedInThisOperation.add(overlay.id);
@@ -6263,6 +6838,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         if (cancelled) break;
 
         const file = videoFiles[i];
+        const sceneNumber = file.sceneNumber || file.scene_number || (i + 1);
         try {
           // CRITICAL: GLOBAL LAYER ORGANIZATION (all scenes share the same rows)
           // This ensures proper layer organization across all scenes:
@@ -6511,6 +7087,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 content: textLayerData.text || '', // Ensure content is always a string
                 src: textOverlaySrc, // URL for text overlay video/text source (can be null if no URL)
                 styles: textStyles, // Complete styles from helper - TextStylePanel will never need to auto-apply defaults
+                sceneNumber: sceneNumber,
               };
 
               newOverlays.push(textOverlay);
@@ -6630,6 +7207,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                   duration: logoLayerData.animation?.duration || 0.5,
                 },
               },
+              sceneNumber: sceneNumber,
             });
           }
 
@@ -6895,6 +7473,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 opacity: 0, // START HIDDEN
               },
               className: chartHasBackground ? '' : 'chart-no-background',
+              sceneNumber: sceneNumber,
             });
 
           }
@@ -7041,6 +7620,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                     duration: stickerLayerData.animation?.duration || 0.5,
                   },
                 },
+                sceneNumber: sceneNumber,
               });
             });
           }
@@ -7131,6 +7711,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                 exit: 'none',
               },
             },
+            sceneNumber: sceneNumber,
           });
 
           // STEP 6: Audio processing (see below)
@@ -7384,6 +7965,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               styles: {
                 volume: audioVolume, // Use volume from layer or default to 1
               },
+              sceneNumber: sceneNumber,
             };
 
             newOverlays.push(audioOverlay);
@@ -7583,6 +8165,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
                     duration: subtitleLayerData.animation?.duration || 0.3,
                   },
                 },
+                sceneNumber: sceneNumber,
               });
 
               // Subtitle added to timeline
