@@ -21,7 +21,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
   const [error, setError] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
-  
+
   // Progress bar for script generation using useProgressLoader hook
   const generatingScriptProgress = useProgressLoader(isGenerating, 95, 60000);
   const [hasGeneratedScript, setHasGeneratedScript] = useState(() => {
@@ -114,36 +114,36 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
 
 
   const handleGenerateScript = async () => {
-     try {
-       const sessionId = localStorage.getItem('session_id');
-       const token = localStorage.getItem('token');
-       // Try to resolve a real user id (prefer user meta over token fallback)
-       let userMetaLocal = {};
-       try { userMetaLocal = JSON.parse(localStorage.getItem('user') || '{}') || {}; } catch (_) {}
-       const storedUserId = localStorage.getItem('user_id');
-       const effectiveUserId = userMetaLocal?.id || storedUserId || token || '';
-       const guidelinesRaw = localStorage.getItem('guidelines_payload');
-       const guidelines = guidelinesRaw ? JSON.parse(guidelinesRaw) : null;
- 
-       const aiQues = (questions || []).filter(Boolean).map(q => ({ question: q.question, answer: answers[q.id] || '' }));
- 
-       // Presenter option (from Guidelines selection)
-       let presenterOpt = null;
-       try {
-         const raw = (sessionId && localStorage.getItem(`presenter_option:${sessionId}`)) || localStorage.getItem('presenter_option');
-         if (raw) presenterOpt = JSON.parse(raw);
-       } catch (_) { /* noop */ }
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+      // Try to resolve a real user id (prefer user meta over token fallback)
+      let userMetaLocal = {};
+      try { userMetaLocal = JSON.parse(localStorage.getItem('user') || '{}') || {}; } catch (_) { }
+      const storedUserId = localStorage.getItem('user_id');
+      const effectiveUserId = userMetaLocal?.id || storedUserId || token || '';
+      const guidelinesRaw = localStorage.getItem('guidelines_payload');
+      const guidelines = guidelinesRaw ? JSON.parse(guidelinesRaw) : null;
+
+      const aiQues = (questions || []).filter(Boolean).map(q => ({ question: q.question, answer: answers[q.id] || '' }));
+
+      // Presenter option (from Guidelines selection)
+      let presenterOpt = null;
+      try {
+        const raw = (sessionId && localStorage.getItem(`presenter_option:${sessionId}`)) || localStorage.getItem('presenter_option');
+        if (raw) presenterOpt = JSON.parse(raw);
+      } catch (_) { /* noop */ }
 
       // Build questionnaire_context per required schema
       // Fetch current session + user data snapshot
       let sessionPayload = {};
       let userPayload = {};
-       try {
-         const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ user_id: effectiveUserId, session_id: sessionId })
-         });
+      try {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: effectiveUserId, session_id: sessionId })
+        });
         const text = await resp.text();
         let parsed;
         try {
@@ -152,7 +152,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           parsed = {};
         }
         if (!resp.ok) {
-           console.warn('Failed to load session data; status:', resp.status);
+          console.warn('Failed to load session data; status:', resp.status);
         } else {
           const sd = parsed?.session_data ?? parsed?.session;
           const ud = parsed?.user_data ?? parsed?.user;
@@ -162,10 +162,10 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           if (ud && typeof ud === 'object' && !Array.isArray(ud)) {
             userPayload = { ...ud };
           }
-         }
-       } catch (e) {
-         console.error('Error fetching current session data:', e);
-       }
+        }
+      } catch (e) {
+        console.error('Error fetching current session data:', e);
+      }
 
       // Derive video type from latest session data or localStorage
       if (sessionPayload && typeof sessionPayload === 'object' && !Array.isArray(sessionPayload)) {
@@ -214,7 +214,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
 
       console.log('Generate Script request:', scriptEndpoint, fullPayload);
       setIsGenerating(true);
-      setProgress(10); // Start at 10% immediately to show progress bar
+      // setProgress(10); // Let useProgressLoader handle the initial progress
       try {
         const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${scriptEndpoint}`, {
           method: 'POST',
@@ -225,13 +225,8 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           throw new Error(`HTTP error! status: ${resp.status}`);
         }
 
-        setProgress(40); // API call started, receiving response
-
-        // Stream the response and update progress
-        const contentLengthHeader = resp.headers.get('Content-Length') || resp.headers.get('content-length');
-        const total = contentLengthHeader ? parseInt(contentLengthHeader, 10) : undefined;
+        // Stream the response
         const reader = resp.body.getReader();
-        let received = 0;
         let textSoFar = '';
         const decoder = new TextDecoder();
 
@@ -239,22 +234,11 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           const { done, value } = await reader.read();
           if (done) break;
           if (value) {
-            received += value.length;
             textSoFar += decoder.decode(value, { stream: true });
-            // Update progress based on received data
-            if (total && total > 0) {
-              const calculatedProgress = Math.min(95, Math.floor((received / total) * 100));
-              // Ensure progress is at least 60% when receiving data
-              setProgress(Math.max(60, calculatedProgress));
-            } else {
-              setProgress(70); // Set to 70% when streaming without total
-            }
           }
         }
         // flush decoder
         textSoFar += decoder.decode();
-
-        setProgress(85); // Processing response
 
         let data;
         try {
@@ -263,11 +247,14 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
           data = textSoFar;
         }
         setProgress(100); // Complete
+        // Short delay to ensure user sees 100% completion
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         console.log('Generated script response:', data);
         try { localStorage.setItem('last_generated_script', JSON.stringify(data)); } catch (_) { /* noop */ }
         try { localStorage.setItem('has_generated_script', 'true'); } catch (_) { /* noop */ }
         setHasGeneratedScript(true);
-       try { window.addAiMessageToChat && window.addAiMessageToChat(data); } catch (_) { /* noop */ }
+        try { window.addAiMessageToChat && window.addAiMessageToChat(data); } catch (_) { /* noop */ }
         try { window.dispatchEvent(new CustomEvent('script-generated', { detail: data })); } catch (_) { /* noop */ }
         try {
           window.goToChat && window.goToChat();
@@ -283,16 +270,16 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
             } catch (_) { /* noop */ }
           }, 150);
         } catch (_) { /* noop */ }
-       } finally {
-         setIsGenerating(false);
+      } finally {
+        setIsGenerating(false);
         setTimeout(() => setProgress(0), 600);
-       }
-     } catch (e) {
-       console.error('Error generating script payload:', e);
-       setIsGenerating(false);
-       setProgress(0);
-     }
-   };
+      }
+    } catch (e) {
+      console.error('Error generating script payload:', e);
+      setIsGenerating(false);
+      setProgress(0);
+    }
+  };
 
   const renderQuestion = (question) => {
     switch (question.type) {
@@ -412,11 +399,10 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
             <button
               onClick={handleGenerateScript}
               disabled={isGenerating}
-              className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                isGenerating
+              className={`px-6 py-3 rounded-lg font-medium transition-colors ${isGenerating
                   ? 'bg-purple-300 text-white cursor-not-allowed'
                   : 'bg-purple-600 text-white hover:bg-purple-700'
-              }`}
+                }`}
             >
               {isGenerating ? 'Generating…' : 'Generate Script'}
             </button>
@@ -472,7 +458,7 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
               </>
             )}
           </div>
-          
+
           {currentQuestion && renderQuestion(currentQuestion)}
 
           {/* Voice-over tools moved to Guidelines step */}
@@ -492,11 +478,10 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
             <button
               onClick={handleGoToLast}
               disabled={questions.length === 0 || isLastQuestion}
-              className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                (questions.length === 0 || isLastQuestion)
+              className={`px-6 py-3 rounded-lg font-medium transition-colors ${(questions.length === 0 || isLastQuestion)
                   ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+                }`}
             >
               Go to Last
             </button>
@@ -504,35 +489,33 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
               <button
                 onClick={handleNext}
                 disabled={!canProceed}
-                className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                  canProceed
+                className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 ${canProceed
                     ? 'bg-purple-600 text-white hover:bg-purple-700'
                     : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                }`}
+                  }`}
               >
                 Next
                 <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
               <>
-                
-                
-                  <button
-                    onClick={handleGenerateScript}
-                    disabled={isGenerating}
-                    className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 ${
-                      isGenerating ? 'bg-[#cc96ff] text-white cursor-not-allowed' : 'bg-[#9333ea] text-white hover:bg-[#37125a]'
+
+
+                <button
+                  onClick={handleGenerateScript}
+                  disabled={isGenerating}
+                  className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 ${isGenerating ? 'bg-[#cc96ff] text-white cursor-not-allowed' : 'bg-[#9333ea] text-white hover:bg-[#37125a]'
                     }`}
-                  >
-                    {isGenerating ? (
-                      <>
-                        <span className="inline-block w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />
-                        Generating...
-                      </>
-                    ) : 'Generate Script'}
-                  </button>
-                  
-              
+                >
+                  {isGenerating ? (
+                    <>
+                      <span className="inline-block w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />
+                      Generating...
+                    </>
+                  ) : 'Generate Script'}
+                </button>
+
+
               </>
             )}
           </div>
@@ -559,13 +542,12 @@ const DynamicQuestion = ({ questionsData, onNextStep, onPreviousStep }) => {
               <button
                 key={index}
                 onClick={() => setCurrentQuestionIndex(index)}
-                className={`w-3 h-3 rounded-full transition-colors ${
-                  index === currentQuestionIndex
+                className={`w-3 h-3 rounded-full transition-colors ${index === currentQuestionIndex
                     ? 'bg-purple-600'
                     : index < currentQuestionIndex
-                    ? 'bg-green-500'
-                    : 'bg-gray-300'
-                }`}
+                      ? 'bg-green-500'
+                      : 'bg-gray-300'
+                  }`}
               >
                 {index < currentQuestionIndex ? (
                   <CheckCircle className="w-3 h-3 text-white" />

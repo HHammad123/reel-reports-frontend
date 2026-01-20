@@ -992,18 +992,62 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
     // Get image refs (non-avatar images)
     const orderedRefs = getOrderedRefs(currentRow);
+
+    // Robust check for VEO3 image in deep structure (similar to getSceneImages)
+    let extractedImageForTab = '';
+    if (currentRow && (selectedModel === 'VEO3' || selectedModel === 'ANCHOR')) {
+      // Strategy A: Check row.images
+      if (currentRow.images && typeof currentRow.images === 'object' && !Array.isArray(currentRow.images)) {
+        const versionKey = getLatestVersionKey(currentRow.images);
+        const verObj = currentRow.images[versionKey] || {};
+        if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+          const firstImgObj = verObj.images[0];
+          const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+          const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+          if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+            extractedImageForTab = imgUrl.trim();
+          }
+        }
+      }
+      // Strategy B: Check imageVersionData
+      if (!extractedImageForTab && currentRow.imageVersionData && typeof currentRow.imageVersionData === 'object') {
+        let imagesContainer = null;
+        if (currentRow.imageVersionData.images && typeof currentRow.imageVersionData.images === 'object' && !Array.isArray(currentRow.imageVersionData.images)) {
+          imagesContainer = currentRow.imageVersionData.images;
+        } else if (currentRow.imageVersionData.current_version || currentRow.imageVersionData.v1 || currentRow.imageVersionData.v2) {
+          imagesContainer = currentRow.imageVersionData;
+        }
+        if (imagesContainer) {
+          const versionKey = getLatestVersionKey(imagesContainer);
+          const verObj = imagesContainer[versionKey] || {};
+          if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+            const firstImgObj = verObj.images[0];
+            const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+            const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+            if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+              extractedImageForTab = imgUrl.trim();
+            }
+          }
+        }
+      }
+    }
+
     const avatarSet = getAvatarUrlSet(currentRow);
     const nonAvatarImages = orderedRefs.filter(url => {
       const normalized = normalizeSimpleUrl(url);
       return normalized && !avatarSet.has(normalized);
     });
-    const hasImage = nonAvatarImages.length > 0;
+
+    const hasImage = nonAvatarImages.length > 0 || !!extractedImageForTab;
 
     // Set active tab based on what's available
-    if (hasAvatar && activeImageTab !== 1) {
-      setActiveImageTab(1);
-    } else if (!hasAvatar && hasImage && activeImageTab !== 0) {
-      setActiveImageTab(0);
+    // Only force switch if the current selection is invalid
+    if (activeImageTab === 1 && !hasAvatar) {
+      // If on avatar tab but no avatar, switch to image if available
+      if (hasImage) setActiveImageTab(0);
+    } else if (activeImageTab === 0 && !hasImage) {
+      // If on image tab but no image, switch to avatar if available
+      if (hasAvatar) setActiveImageTab(1);
     }
   }, [selected, rows, isPortrait9x16, activeImageTab, getOrderedRefs, getAvatarUrlSet, normalizeSimpleUrl, getAvatarUrlsFromImageVersion]);
   const chartCacheBuster = React.useMemo(() => {
@@ -1215,21 +1259,52 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             .filter((url) => url && typeof url === 'string' && url.trim())
         }
 
-        if (isPortrait9x16) {
-          if (avatarUrls.length > 0) {
-            return [avatarUrls[0]].filter(Boolean)
+        // Robust Image Extraction (same as getImg2/genImage logic)
+        let extractedImage = '';
+
+        // Strategy A: Check row.images directly (if it's the version container)
+        if (row?.images && typeof row.images === 'object' && !Array.isArray(row.images)) {
+          const versionKey = getLatestVersionKey(row.images);
+          const verObj = row.images[versionKey] || {};
+
+          if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+            const firstImgObj = verObj.images[0];
+            const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+            const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+            if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+              extractedImage = imgUrl.trim();
+            }
           }
-          if (imageRefs.length > 0) {
-            return [imageRefs[0]].filter(Boolean)
-          }
-          return []
         }
 
-        if (imageRefs.length === 0 && avatarUrls.length > 0) {
-          return [avatarUrls[0]].filter(Boolean)
+        // Strategy B: Check imageVersionData (standard path)
+        if (!extractedImage && row?.imageVersionData && typeof row.imageVersionData === 'object') {
+          let imagesContainer = null;
+          if (row.imageVersionData.images && typeof row.imageVersionData.images === 'object' && !Array.isArray(row.imageVersionData.images)) {
+            imagesContainer = row.imageVersionData.images;
+          } else if (row.imageVersionData.current_version || row.imageVersionData.v1 || row.imageVersionData.v2) {
+            imagesContainer = row.imageVersionData;
+          }
+
+          if (imagesContainer) {
+            const versionKey = getLatestVersionKey(imagesContainer);
+            const verObj = imagesContainer[versionKey] || {};
+            if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+              const firstImgObj = verObj.images[0];
+              const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+              const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+              if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+                extractedImage = imgUrl.trim();
+              }
+            }
+          }
         }
 
-        const combined = [...new Set([...imageRefs, ...avatarUrls])].filter(Boolean)
+        const validImageRefs = extractedImage ? [extractedImage] : imageRefs;
+
+        // Return both image and avatar for the grid to display
+        // Priority: Image, then Avatar
+        const combined = [...new Set([...validImageRefs, ...avatarUrls])].filter(Boolean)
         return combined
       }
 
@@ -7419,6 +7494,48 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                 }
 
                 if (isVeo3Model) {
+                  // PRIORITY: Extract base image directly from session data path
+                  // session_data.images[0].images.v1.images[0].base_image.image_url
+
+                  // Strategy A: Check selected.images directly (if it's the version container)
+                  if (selected?.images && typeof selected.images === 'object' && !Array.isArray(selected.images)) {
+                    const versionKey = getLatestVersionKey(selected.images);
+                    const verObj = selected.images[versionKey] || {};
+
+                    if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+                      const firstImgObj = verObj.images[0];
+                      const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+                      const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+                      if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+                        return imgUrl.trim();
+                      }
+                    }
+                  }
+
+                  // Strategy B: Check imageVersionData
+                  if (selected?.imageVersionData && typeof selected.imageVersionData === 'object') {
+                    let imagesContainer = null;
+                    if (selected.imageVersionData.images && typeof selected.imageVersionData.images === 'object' && !Array.isArray(selected.imageVersionData.images)) {
+                      imagesContainer = selected.imageVersionData.images;
+                    } else if (selected.imageVersionData.current_version || selected.imageVersionData.v1 || selected.imageVersionData.v2) {
+                      imagesContainer = selected.imageVersionData;
+                    }
+
+                    if (imagesContainer) {
+                      const versionKey = getLatestVersionKey(imagesContainer);
+                      const verObj = imagesContainer[versionKey] || {};
+
+                      if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+                        const firstImgObj = verObj.images[0];
+                        const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+                        const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+                        if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+                          return imgUrl.trim();
+                        }
+                      }
+                    }
+                  }
+
                   // For VEO3 Image tab, get the actual image (non-avatar)
                   // Use similar logic to getVeo3ImageTabImages: get ordered refs, filter out avatars
                   if (currentRow) {
@@ -7499,11 +7616,48 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
               if (isVeoScene) {
                 let genImage = true;
+                // Strategy A: Check selected.images directly
+                let imagesContainerA = null;
+                if (selected?.images && typeof selected.images === 'object' && !Array.isArray(selected.images)) {
+                  imagesContainerA = selected.images;
+                }
+
+                // Strategy B: Check imageVersionData
+                let imagesContainerB = null;
                 if (selected?.imageVersionData && typeof selected.imageVersionData === 'object') {
-                  const imageVersionData = selected.imageVersionData;
-                  const versionKey = getLatestVersionKey(imageVersionData);
-                  const verObj = imageVersionData[versionKey] || {};
-                  genImage = verObj?.gen_image !== false;
+                  if (selected.imageVersionData.images && typeof selected.imageVersionData.images === 'object' && !Array.isArray(selected.imageVersionData.images)) {
+                    imagesContainerB = selected.imageVersionData.images;
+                  } else if (selected.imageVersionData.current_version || selected.imageVersionData.v1 || selected.imageVersionData.v2) {
+                    imagesContainerB = selected.imageVersionData;
+                  }
+                }
+
+                const imagesContainer = imagesContainerA || imagesContainerB;
+
+                if (imagesContainer) {
+                  const versionKey = getLatestVersionKey(imagesContainer);
+                  const verObj = imagesContainer[versionKey] || {};
+
+                  // Check existing gen_image flag
+                  const isGenImageEnabled = verObj?.gen_image !== false;
+
+                  // Check for presence of base image URL in the specific path
+                  // session_data.images[0].images.v1.images[0].base_image.image_url
+                  let hasBaseImageUrl = false;
+                  if (verObj?.images && Array.isArray(verObj.images) && verObj.images.length > 0) {
+                    const firstImgObj = verObj.images[0];
+                    const baseImgObj = firstImgObj?.base_image || firstImgObj?.baseImage;
+                    const imgUrl = baseImgObj?.image_url || baseImgObj?.imageUrl || baseImgObj?.url;
+                    if (imgUrl && typeof imgUrl === 'string' && imgUrl.trim()) {
+                      hasBaseImageUrl = true;
+                    }
+                  }
+
+                  // genImage is true only if enabled AND image URL exists
+                  genImage = isGenImageEnabled && hasBaseImageUrl;
+                } else {
+                  // If data structure is missing, assume no image
+                  genImage = false;
                 }
 
                 let avatarUrl = '';
@@ -7576,8 +7730,12 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               let showImageTab = false;
 
               if (isVeo3Portrait) {
-                // For 9:16 VEO3: show Avatar tab if avatar exists, else show Image tab
-                if (hasAvatar) {
+                // For 9:16 VEO3: show both tabs if available
+                if (hasAvatar && hasImage) {
+                  showTabs = true;
+                  showAvatarTab = true;
+                  showImageTab = true;
+                } else if (hasAvatar) {
                   showTabs = true;
                   showAvatarTab = true;
                   showImageTab = false;

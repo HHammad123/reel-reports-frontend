@@ -8,55 +8,78 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
   const [hoveredCol, setHoveredCol] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Validate waterfall chart data
-const validateWaterfallData = (data) => {
-  if (!data || !data.series || !data.series.data || !data.series.data[0]) {
-    return 'Invalid waterfall data structure';
-  }
-  
-  const seriesData = data.series.data[0];
-  const y = seriesData.y || [];
-  const measure = seriesData.measure || [];
-  
-  // Check exactly one series
-  if (data.series.data.length !== 1) {
-    return 'Waterfall charts must have exactly ONE data series';
-  }
-  
-  // Check measure array exists
-  if (!Array.isArray(measure) || measure.length === 0) {
-    return 'Waterfall charts must have a measure array';
-  }
-  
-  // Check measure matches y length
-  if (measure.length !== y.length) {
-    return 'Measure array must have the same length as Y values';
-  }
-  
-  // Check first measure is absolute
-  if (measure[0] !== 'absolute') {
-    return 'First measure must be "absolute"';
-  }
-  
-  // Check last measure is total
-  if (measure[measure.length - 1] !== 'total') {
-    return 'Last measure must be "total"';
-  }
-  
-  // Check middle measures are relative
-  for (let i = 1; i < measure.length - 1; i++) {
-    if (measure[i] !== 'relative') {
-      return `Measure at position ${i + 1} must be "relative" (found "${measure[i]}")`;
+  // Format number with commas
+  const formatNumber = (value) => {
+    if (value === null || value === undefined || value === '') return '';
+    const num = parseFloat(value);
+    if (isNaN(num)) return '';
+
+    // Check if number has decimals
+    if (num % 1 === 0) {
+      // Integer - format with commas, no decimals
+      return num.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    } else {
+      // Has decimals - format with commas and preserve decimals
+      return num.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
     }
-  }
-  
-  return null; // Valid
-};
+  };
+
+  // Parse formatted number (remove commas)
+  const parseFormattedNumber = (value) => {
+    if (value === null || value === undefined || value === '') return '';
+    const cleaned = String(value).replace(/,/g, '');
+    return cleaned;
+  };
+
+  // Validate waterfall chart data
+  const validateWaterfallData = (data) => {
+    if (!data || !data.series || !data.series.data || !data.series.data[0]) {
+      return 'Invalid waterfall data structure';
+    }
+
+    const seriesData = data.series.data[0];
+    const y = seriesData.y || [];
+    const measure = seriesData.measure || [];
+
+    // Check exactly one series
+    if (data.series.data.length !== 1) {
+      return 'Waterfall charts must have exactly ONE data series';
+    }
+
+    // Check measure array exists
+    if (!Array.isArray(measure) || measure.length === 0) {
+      return 'Waterfall charts must have a measure array';
+    }
+
+    // Check measure matches y length
+    if (measure.length !== y.length) {
+      return 'Measure array must have the same length as Y values';
+    }
+
+    // Check first measure is absolute
+    if (measure[0] !== 'absolute') {
+      return 'First measure must be "absolute"';
+    }
+
+    // Check last measure is total
+    if (measure[measure.length - 1] !== 'total') {
+      return 'Last measure must be "total"';
+    }
+
+    // Check middle measures are relative
+    for (let i = 1; i < measure.length - 1; i++) {
+      if (measure[i] !== 'relative') {
+        return `Measure at position ${i + 1} must be "relative" (found "${measure[i]}")`;
+      }
+    }
+
+    return null; // Valid
+  };
   // Deep comparison function
   const deepEqual = (obj1, obj2) => {
     if (obj1 === obj2) return true;
     if (obj1 == null || obj2 == null) return false;
-    
+
     // Handle arrays
     if (Array.isArray(obj1) && Array.isArray(obj2)) {
       if (obj1.length !== obj2.length) return false;
@@ -65,21 +88,21 @@ const validateWaterfallData = (data) => {
       }
       return true;
     }
-    
+
     // Handle non-array objects
     if (typeof obj1 !== 'object' || typeof obj2 !== 'object') return false;
     if (Array.isArray(obj1) || Array.isArray(obj2)) return false;
-    
+
     const keys1 = Object.keys(obj1);
     const keys2 = Object.keys(obj2);
-    
+
     if (keys1.length !== keys2.length) return false;
-    
+
     for (const key of keys1) {
       if (!keys2.includes(key)) return false;
       if (!deepEqual(obj1[key], obj2[key])) return false;
     }
-    
+
     return true;
   };
 
@@ -96,18 +119,18 @@ const validateWaterfallData = (data) => {
       try {
         const parsed = typeof chartData === 'string' ? JSON.parse(chartData) : chartData;
         let processedData = JSON.parse(JSON.stringify(parsed));
-        
+
         // Ensure data structure matches the chart type
         if (processedData && processedData.series && chartType) {
           const isPieDonut = chartType === 'pie' || chartType === 'donut';
           const series = processedData.series || {};
-          
+
           // Check current structure
           const hasLabels = Array.isArray(series.labels);
           const hasValues = Array.isArray(series.data?.[0]?.values);
           const hasX = Array.isArray(series.x);
           const hasY = Array.isArray(series.data?.[0]?.y);
-          
+
           // Transform if needed
           if (isPieDonut) {
             // Pie/Donut needs labels and values
@@ -115,7 +138,7 @@ const validateWaterfallData = (data) => {
               // Convert from bar/line format to pie/donut format
               const x = Array.isArray(series.x) ? series.x : [];
               let yValues = [];
-              
+
               if (Array.isArray(series.data?.[0]?.y)) {
                 yValues = series.data[0].y;
               } else if (Array.isArray(series.data?.[0]?.values)) {
@@ -125,7 +148,7 @@ const validateWaterfallData = (data) => {
               } else if (Array.isArray(series.values)) {
                 yValues = series.values;
               }
-              
+
               if (x.length > 0 && yValues.length > 0) {
                 const minLength = Math.min(x.length, yValues.length);
                 processedData = {
@@ -155,7 +178,7 @@ const validateWaterfallData = (data) => {
               // Convert from pie/donut format to bar/line format
               const labels = Array.isArray(series.labels) ? series.labels : [];
               const values = Array.isArray(series.data?.[0]?.values) ? series.data[0].values : [];
-              
+
               if (labels.length > 0 && values.length > 0) {
                 const minLength = Math.min(labels.length, values.length);
                 processedData = {
@@ -181,7 +204,7 @@ const validateWaterfallData = (data) => {
             }
           }
         }
-        
+
         const cloned = JSON.parse(JSON.stringify(processedData));
         setLocalChartData(cloned);
         setOriginalChartData(JSON.parse(JSON.stringify(cloned)));
@@ -201,10 +224,10 @@ const validateWaterfallData = (data) => {
   // Update cell value
   const updateCell = (path, value) => {
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
     let current = newData;
-    
+
     // Navigate to the parent of the target property
     for (let i = 0; i < path.length - 1; i++) {
       const key = path[i];
@@ -232,10 +255,10 @@ const validateWaterfallData = (data) => {
         current = current[key];
       }
     }
-    
+
     // Get the final key
     const finalKey = path[path.length - 1];
-    
+
     // For numeric paths (y, values), try to parse as number
     const isNumericPath = path.includes('y') || path.includes('values');
     if (isNumericPath) {
@@ -244,7 +267,7 @@ const validateWaterfallData = (data) => {
     } else {
       current[finalKey] = value;
     }
-    
+
     // Sync changes with formatting.series_info
     if (newData.formatting && newData.formatting.series_info) {
       // For pie/donut charts, sync label changes with formatting.series_info
@@ -254,7 +277,7 @@ const validateWaterfallData = (data) => {
           newData.formatting.series_info[labelIndex].name = value;
         }
       }
-      
+
       // For regular charts, sync series name changes with formatting.series_info
       if (path[0] === 'series' && path[1] === 'data' && path[3] === 'name') {
         const seriesIndex = parseInt(path[2], 10);
@@ -263,7 +286,7 @@ const validateWaterfallData = (data) => {
         }
       }
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -273,15 +296,15 @@ const validateWaterfallData = (data) => {
   // Add row (at the end)
   const addRow = () => {
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
-    
+
     if (chartType === 'pie' || chartType === 'donut') {
       const newLabel = 'New Category';
       newData.series.labels.push(newLabel);
       newData.series.data[0].values.push(0);
       if (newData.formatting && newData.formatting.series_info) {
-        newData.formatting.series_info.push({name: newLabel, color: '#000000'});
+        newData.formatting.series_info.push({ name: newLabel, color: '#000000' });
       }
     } else if (chartType.includes('waterfall')) {
       newData.series.x.push('New Item');
@@ -293,7 +316,7 @@ const validateWaterfallData = (data) => {
       newData.series.x.push('New');
       newData.series.data.forEach(series => series.y.push(0));
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -303,15 +326,15 @@ const validateWaterfallData = (data) => {
   // Insert row at specific index
   const insertRow = (rowIndex) => {
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
-    
+
     if (chartType === 'pie' || chartType === 'donut') {
       const newLabel = 'New Category';
       newData.series.labels.splice(rowIndex, 0, newLabel);
       newData.series.data[0].values.splice(rowIndex, 0, 0);
       if (newData.formatting && newData.formatting.series_info) {
-        newData.formatting.series_info.splice(rowIndex, 0, {name: newLabel, color: '#000000'});
+        newData.formatting.series_info.splice(rowIndex, 0, { name: newLabel, color: '#000000' });
       }
     } else if (chartType.includes('waterfall')) {
       newData.series.x.splice(rowIndex, 0, 'New Item');
@@ -323,7 +346,7 @@ const validateWaterfallData = (data) => {
       newData.series.x.splice(rowIndex, 0, 'New');
       newData.series.data.forEach(series => series.y.splice(rowIndex, 0, 0));
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -333,9 +356,9 @@ const validateWaterfallData = (data) => {
   // Remove row
   const removeRow = (rowIndex) => {
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
-    
+
     if (chartType === 'pie' || chartType === 'donut') {
       if (newData.series.labels.length <= 1) {
         alert('Cannot remove the last row');
@@ -364,7 +387,7 @@ const validateWaterfallData = (data) => {
       newData.series.x.splice(rowIndex, 1);
       newData.series.data.forEach(series => series.y.splice(rowIndex, 1));
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -374,33 +397,33 @@ const validateWaterfallData = (data) => {
   // Add series/column (at the end)
   const addColumn = () => {
     if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
-    alert('Waterfall charts can only have one series');
-    return;
-  }
-  
-  if (chartType === 'pie' || chartType === 'donut') {
-    alert('Cannot add series to pie/donut charts');
-    return;
-  }
-    
+      alert('Waterfall charts can only have one series');
+      return;
+    }
+
+    if (chartType === 'pie' || chartType === 'donut') {
+      alert('Cannot add series to pie/donut charts');
+      return;
+    }
+
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
     const newSeriesName = 'New Series';
     const newSeries = {
       name: newSeriesName,
       y: new Array(newData.series.x.length).fill(0)
     };
-    
+
     if (chartType.includes('waterfall_stacked')) {
       newSeries.measure = newData.series.data[0].measure.slice();
     }
-    
+
     newData.series.data.push(newSeries);
     if (newData.formatting && newData.formatting.series_info) {
-      newData.formatting.series_info.push({name: newSeriesName, color: '#000000'});
+      newData.formatting.series_info.push({ name: newSeriesName, color: '#000000' });
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -410,33 +433,33 @@ const validateWaterfallData = (data) => {
   // Insert column at specific index
   const insertColumn = (colIndex) => {
     if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
-    alert('Waterfall charts can only have one series');
-    return;
-  }
-  
-  if (chartType === 'pie' || chartType === 'donut') {
-    alert('Cannot add series to pie/donut charts');
-    return;
-  }
-    
+      alert('Waterfall charts can only have one series');
+      return;
+    }
+
+    if (chartType === 'pie' || chartType === 'donut') {
+      alert('Cannot add series to pie/donut charts');
+      return;
+    }
+
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
     const newSeriesName = 'New Series';
     const newSeries = {
       name: newSeriesName,
       y: new Array(newData.series.x.length).fill(0)
     };
-    
+
     if (chartType.includes('waterfall_stacked')) {
       newSeries.measure = newData.series.data[0].measure.slice();
     }
-    
+
     newData.series.data.splice(colIndex, 0, newSeries);
     if (newData.formatting && newData.formatting.series_info) {
-      newData.formatting.series_info.splice(colIndex, 0, {name: newSeriesName, color: '#000000'});
+      newData.formatting.series_info.splice(colIndex, 0, { name: newSeriesName, color: '#000000' });
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -446,29 +469,29 @@ const validateWaterfallData = (data) => {
   // Remove column
   const removeColumn = (colIndex) => {
     if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
-    alert('Cannot remove the only series from waterfall charts');
-    return;
-  }
-  
-  if (chartType === 'pie' || chartType === 'donut') {
-    alert('Cannot remove series from pie/donut charts');
-    return;
-  }
-    
+      alert('Cannot remove the only series from waterfall charts');
+      return;
+    }
+
+    if (chartType === 'pie' || chartType === 'donut') {
+      alert('Cannot remove series from pie/donut charts');
+      return;
+    }
+
     if (!localChartData) return;
-    
+
     const newData = JSON.parse(JSON.stringify(localChartData));
-    
+
     if (newData.series.data.length <= 1) {
       alert('Cannot remove the last column');
       return;
     }
-    
+
     newData.series.data.splice(colIndex, 1);
     if (newData.formatting && newData.formatting.series_info) {
       newData.formatting.series_info.splice(colIndex, 1);
     }
-    
+
     setLocalChartData(newData);
     if (onDataChange) {
       onDataChange(newData);
@@ -479,7 +502,7 @@ const validateWaterfallData = (data) => {
   const renderTable = () => {
     if (!localChartData || !localChartData.series) {
       return (
-        <div style={{padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '16px'}}>
+        <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '16px' }}>
           📋 No chart data available
         </div>
       );
@@ -508,24 +531,24 @@ const validateWaterfallData = (data) => {
     const data = Array.isArray(series.data) ? series.data : [];
 
     return (
-      <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
-        <table style={{width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db'}}>
+      <div style={{ overflow: 'auto', width: '100%', position: 'relative', padding: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db' }}>
           <thead>
-            <tr style={{backgroundColor: '#f3f4f6', position: 'relative'}}>
+            <tr style={{ backgroundColor: '#f3f4f6', position: 'relative' }}>
               <th style={cellStyle}></th>
               {data.map((series, idx) => (
-                <th 
+                <th
                   key={idx}
-                  style={{...headerStyle, position: 'relative', overflow: 'visible'}}
+                  style={{ ...headerStyle, position: 'relative', overflow: 'visible' }}
                   onMouseEnter={() => setHoveredCol(idx)}
                   onMouseLeave={() => setHoveredCol(null)}
                 >
-                  <div style={{position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', paddingRight: '20px'}}>
+                  <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', paddingRight: '20px' }}>
                     <input
                       type="text"
                       value={series.name}
                       onChange={(e) => updateCell(['series', 'data', idx, 'name'], e.target.value)}
-                      style={{...inputStyle, flex: 1, width: '100%'}}
+                      style={{ ...inputStyle, flex: 1, width: '100%' }}
                     />
                     {hoveredCol === idx && (
                       <button
@@ -548,8 +571,8 @@ const validateWaterfallData = (data) => {
                   )}
                 </th>
               ))}
-              <th 
-                style={{...cellStyle, position: 'relative', minWidth: '40px'}}
+              <th
+                style={{ ...cellStyle, position: 'relative', minWidth: '40px' }}
                 onMouseEnter={() => setHoveredCol(data.length)}
                 onMouseLeave={() => setHoveredCol(null)}
               >
@@ -571,15 +594,15 @@ const validateWaterfallData = (data) => {
                 <tr
                   onMouseEnter={() => setHoveredRow(rowIdx)}
                   onMouseLeave={() => setHoveredRow(null)}
-                  style={{position: 'relative'}}
+                  style={{ position: 'relative' }}
                 >
-                  <td style={{...rowHeaderStyle, position: 'relative'}}>
-                    <div style={{position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px'}}>
+                  <td style={{ ...rowHeaderStyle, position: 'relative' }}>
+                    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px' }}>
                       <input
                         type="text"
                         value={label}
                         onChange={(e) => updateCell(['series', 'x', rowIdx], e.target.value)}
-                        style={{...inputStyle, flex: 1, width: '100%'}}
+                        style={{ ...inputStyle, flex: 1, width: '100%' }}
                       />
                       {hoveredRow === rowIdx && (
                         <button
@@ -605,50 +628,50 @@ const validateWaterfallData = (data) => {
                     // Safely access series.y with fallback
                     const seriesY = Array.isArray(series.y) ? series.y : [];
                     const yValue = seriesY[rowIdx] ?? '';
-                    
+
                     return (
-                    <td key={colIdx} style={cellStyle}>
-                      <input
-                        type="number"
-                          value={yValue}
+                      <td key={colIdx} style={cellStyle}>
+                        <input
+                          type="text"
+                          value={formatNumber(yValue)}
                           onChange={(e) => {
-                            const inputValue = e.target.value;
+                            const inputValue = parseFormattedNumber(e.target.value);
                             // Update the specific cell value directly
                             // First ensure the y array exists and has enough elements
                             if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-                            
+
                             const newData = JSON.parse(JSON.stringify(localChartData));
                             if (!newData.series.data[colIdx]) return;
-                            
+
                             // Ensure y array exists
                             if (!Array.isArray(newData.series.data[colIdx].y)) {
                               newData.series.data[colIdx].y = [];
                             }
-                            
+
                             // Ensure array is long enough
                             while (newData.series.data[colIdx].y.length <= rowIdx) {
                               newData.series.data[colIdx].y.push(0);
                             }
-                            
+
                             // Update the specific cell
                             const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
                             newData.series.data[colIdx].y[rowIdx] = isNaN(numValue) ? 0 : numValue;
-                            
+
                             setLocalChartData(newData);
                             if (onDataChange) {
                               onDataChange(newData);
                             }
                           }}
-                        style={inputStyle}
-                      />
-                    </td>
+                          style={inputStyle}
+                        />
+                      </td>
                     );
                   })}
                   <td style={cellStyle}></td>
                 </tr>
                 {hoveredRow === rowIdx && (
-                  <tr style={{height: '2px', position: 'relative'}}>
-                    <td colSpan={data.length + 2} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                  <tr style={{ height: '2px', position: 'relative' }}>
+                    <td colSpan={data.length + 2} style={{ padding: 0, border: 'none', position: 'relative', height: '2px' }}>
                       <button
                         onClick={() => insertRow(rowIdx + 1)}
                         style={insertRowBetweenButtonStyle}
@@ -665,7 +688,7 @@ const validateWaterfallData = (data) => {
               onMouseEnter={() => setHoveredRow(x.length)}
               onMouseLeave={() => setHoveredRow(null)}
             >
-              <td style={{...rowHeaderStyle, position: 'relative'}}>
+              <td style={{ ...rowHeaderStyle, position: 'relative' }}>
                 {hoveredRow === x.length && (
                   <button
                     onClick={addRow}
@@ -692,7 +715,7 @@ const validateWaterfallData = (data) => {
     // Safely extract labels and data with fallbacks
     if (!localChartData || !localChartData.series) {
       return (
-        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+        <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
           <div>Loading chart data...</div>
         </div>
       );
@@ -706,17 +729,17 @@ const validateWaterfallData = (data) => {
     // Validate data structure
     if (labels.length === 0 || values.length === 0) {
       return (
-        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+        <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
           <div>No chart data available. Please add data to display the chart.</div>
         </div>
       );
     }
 
     return (
-      <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
-        <table style={{width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db'}}>
+      <div style={{ overflow: 'auto', width: '100%', position: 'relative', padding: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db' }}>
           <thead>
-            <tr style={{backgroundColor: '#f3f4f6'}}>
+            <tr style={{ backgroundColor: '#f3f4f6' }}>
               <th style={headerStyle}>Category</th>
               <th style={headerStyle}>Value</th>
             </tr>
@@ -727,15 +750,15 @@ const validateWaterfallData = (data) => {
                 <tr
                   onMouseEnter={() => setHoveredRow(idx)}
                   onMouseLeave={() => setHoveredRow(null)}
-                  style={{position: 'relative'}}
+                  style={{ position: 'relative' }}
                 >
-                  <td style={{...rowHeaderStyle, position: 'relative'}}>
-                    <div style={{position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px'}}>
+                  <td style={{ ...rowHeaderStyle, position: 'relative' }}>
+                    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px' }}>
                       <input
                         type="text"
                         value={label}
                         onChange={(e) => updateCell(['series', 'labels', idx], e.target.value)}
-                        style={{...inputStyle, flex: 1, width: '100%'}}
+                        style={{ ...inputStyle, flex: 1, width: '100%' }}
                       />
                       {hoveredRow === idx && (
                         <button
@@ -759,65 +782,43 @@ const validateWaterfallData = (data) => {
                   </td>
                   <td style={cellStyle}>
                     <input
-                      type="number"
-                      value={values[idx] ?? ''}
+                      type="text"
+                      value={formatNumber(values[idx] ?? '')}
                       onChange={(e) => {
-  const inputValue = e.target.value;
-  if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-  
-  const newData = JSON.parse(JSON.stringify(localChartData));
-  if (!newData.series.data[0]) {
-    newData.series.data[0] = { y: [], measure: [] };
-  }
-  
-  // Ensure measure array exists
-  if (!Array.isArray(newData.series.data[0].measure)) {
-    newData.series.data[0].measure = [];
-  }
-  
-  // Ensure array is long enough
-  while (newData.series.data[0].measure.length <= idx) {
-    newData.series.data[0].measure.push('absolute');
-  }
-  
-  // ✅ ADD THIS VALIDATION
-  const measureArray = newData.series.data[0].measure;
-  const isFirst = idx === 0;
-  const isLast = idx === measureArray.length - 1;
-  
-  // Force first to be absolute
-  if (isFirst && inputValue !== 'absolute') {
-    alert('First measure must be "absolute"');
-    return;
-  }
-  
-  // Force last to be total
-  if (isLast && inputValue !== 'total') {
-    alert('Last measure must be "total"');
-    return;
-  }
-  
-  // Force middle to be relative
-  if (!isFirst && !isLast && inputValue !== 'relative') {
-    alert('Middle measures must be "relative"');
-    return;
-  }
-  
-  // Update the specific cell
-  newData.series.data[0].measure[idx] = inputValue;
-  
-  setLocalChartData(newData);
-  if (onDataChange) {
-    onDataChange(newData);
-  }
-}}
+                        const inputValue = parseFormattedNumber(e.target.value);
+                        if (!localChartData || !localChartData.series || !localChartData.series.data) return;
+
+                        const newData = JSON.parse(JSON.stringify(localChartData));
+                        if (!newData.series.data[0]) {
+                          newData.series.data[0] = { values: [] };
+                        }
+
+                        // Ensure values array exists
+                        if (!Array.isArray(newData.series.data[0].values)) {
+                          newData.series.data[0].values = [];
+                        }
+
+                        // Ensure array is long enough
+                        while (newData.series.data[0].values.length <= idx) {
+                          newData.series.data[0].values.push(0);
+                        }
+
+                        // Update the specific cell
+                        const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                        newData.series.data[0].values[idx] = isNaN(numValue) ? 0 : numValue;
+
+                        setLocalChartData(newData);
+                        if (onDataChange) {
+                          onDataChange(newData);
+                        }
+                      }}
                       style={inputStyle}
                     />
                   </td>
                 </tr>
                 {hoveredRow === idx && (
-                  <tr style={{height: '2px', position: 'relative'}}>
-                    <td colSpan={2} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                  <tr style={{ height: '2px', position: 'relative' }}>
+                    <td colSpan={2} style={{ padding: 0, border: 'none', position: 'relative', height: '2px' }}>
                       <button
                         onClick={() => insertRow(idx + 1)}
                         style={insertRowBetweenButtonStyle}
@@ -834,7 +835,7 @@ const validateWaterfallData = (data) => {
               onMouseEnter={() => setHoveredRow(labels.length)}
               onMouseLeave={() => setHoveredRow(null)}
             >
-              <td style={{...rowHeaderStyle, position: 'relative'}}>
+              <td style={{ ...rowHeaderStyle, position: 'relative' }}>
                 {hoveredRow === labels.length && (
                   <button
                     onClick={addRow}
@@ -858,7 +859,7 @@ const validateWaterfallData = (data) => {
     // Safely extract x and data with fallbacks
     if (!localChartData || !localChartData.series) {
       return (
-        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+        <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
           <div>Loading chart data...</div>
         </div>
       );
@@ -874,17 +875,17 @@ const validateWaterfallData = (data) => {
     // Validate data structure
     if (x.length === 0) {
       return (
-        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+        <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
           <div>No chart data available. Please add data to display the chart.</div>
         </div>
       );
     }
 
     return (
-      <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
-        <table style={{width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db'}}>
+      <div style={{ overflow: 'auto', width: '100%', position: 'relative', padding: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db' }}>
           <thead>
-            <tr style={{backgroundColor: '#f3f4f6'}}>
+            <tr style={{ backgroundColor: '#f3f4f6' }}>
               <th style={headerStyle}>Step</th>
               <th style={headerStyle}>Value</th>
               <th style={headerStyle}>Measure</th>
@@ -896,15 +897,15 @@ const validateWaterfallData = (data) => {
                 <tr
                   onMouseEnter={() => setHoveredRow(idx)}
                   onMouseLeave={() => setHoveredRow(null)}
-                  style={{position: 'relative'}}
+                  style={{ position: 'relative' }}
                 >
-                  <td style={{...rowHeaderStyle, position: 'relative'}}>
-                    <div style={{position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px'}}>
+                  <td style={{ ...rowHeaderStyle, position: 'relative' }}>
+                    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px' }}>
                       <input
                         type="text"
                         value={label}
                         onChange={(e) => updateCell(['series', 'x', idx], e.target.value)}
-                        style={{...inputStyle, flex: 1, width: '100%'}}
+                        style={{ ...inputStyle, flex: 1, width: '100%' }}
                       />
                       {hoveredRow === idx && (
                         <button
@@ -928,31 +929,31 @@ const validateWaterfallData = (data) => {
                   </td>
                   <td style={cellStyle}>
                     <input
-                      type="number"
-                      value={y[idx] ?? ''}
+                      type="text"
+                      value={formatNumber(y[idx] ?? '')}
                       onChange={(e) => {
-                        const inputValue = e.target.value;
+                        const inputValue = parseFormattedNumber(e.target.value);
                         if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-                        
+
                         const newData = JSON.parse(JSON.stringify(localChartData));
                         if (!newData.series.data[0]) {
                           newData.series.data[0] = { y: [], measure: [] };
                         }
-                        
+
                         // Ensure y array exists
                         if (!Array.isArray(newData.series.data[0].y)) {
                           newData.series.data[0].y = [];
                         }
-                        
+
                         // Ensure array is long enough
                         while (newData.series.data[0].y.length <= idx) {
                           newData.series.data[0].y.push(0);
                         }
-                        
+
                         // Update the specific cell
                         const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
                         newData.series.data[0].y[idx] = isNaN(numValue) ? 0 : numValue;
-                        
+
                         setLocalChartData(newData);
                         if (onDataChange) {
                           onDataChange(newData);
@@ -964,40 +965,40 @@ const validateWaterfallData = (data) => {
                   <td style={cellStyle}>
                     <select
                       value={measure[idx] ?? 'absolute'}
-                        disabled={idx === 0 || idx === measure.length - 1} // ✅ ADD THIS
+                      disabled={idx === 0 || idx === measure.length - 1} // ✅ ADD THIS
 
                       onChange={(e) => {
                         const inputValue = e.target.value;
                         if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-                        
+
                         const newData = JSON.parse(JSON.stringify(localChartData));
                         if (!newData.series.data[0]) {
                           newData.series.data[0] = { y: [], measure: [] };
                         }
-                        
+
                         // Ensure measure array exists
                         if (!Array.isArray(newData.series.data[0].measure)) {
                           newData.series.data[0].measure = [];
                         }
-                        
+
                         // Ensure array is long enough
                         while (newData.series.data[0].measure.length <= idx) {
                           newData.series.data[0].measure.push('absolute');
                         }
-                        
+
                         // Update the specific cell
                         newData.series.data[0].measure[idx] = inputValue;
-                        
+
                         setLocalChartData(newData);
                         if (onDataChange) {
                           onDataChange(newData);
                         }
                       }}
-                        style={{
-    ...selectStyle,
-    backgroundColor: (idx === 0 || idx === measure.length - 1) ? '#f3f4f6' : 'transparent', // ✅ ADD THIS
-    cursor: (idx === 0 || idx === measure.length - 1) ? 'not-allowed' : 'pointer' // ✅ ADD THIS
-  }}
+                      style={{
+                        ...selectStyle,
+                        backgroundColor: (idx === 0 || idx === measure.length - 1) ? '#f3f4f6' : 'transparent', // ✅ ADD THIS
+                        cursor: (idx === 0 || idx === measure.length - 1) ? 'not-allowed' : 'pointer' // ✅ ADD THIS
+                      }}
 
                     >
                       <option value="absolute">absolute</option>
@@ -1007,8 +1008,8 @@ const validateWaterfallData = (data) => {
                   </td>
                 </tr>
                 {hoveredRow === idx && (
-                  <tr style={{height: '2px', position: 'relative'}}>
-                    <td colSpan={3} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                  <tr style={{ height: '2px', position: 'relative' }}>
+                    <td colSpan={3} style={{ padding: 0, border: 'none', position: 'relative', height: '2px' }}>
                       <button
                         onClick={() => insertRow(idx + 1)}
                         style={insertRowBetweenButtonStyle}
@@ -1025,7 +1026,7 @@ const validateWaterfallData = (data) => {
               onMouseEnter={() => setHoveredRow(x.length)}
               onMouseLeave={() => setHoveredRow(null)}
             >
-              <td style={{...rowHeaderStyle, position: 'relative'}}>
+              <td style={{ ...rowHeaderStyle, position: 'relative' }}>
                 {hoveredRow === x.length && (
                   <button
                     onClick={addRow}
@@ -1050,7 +1051,7 @@ const validateWaterfallData = (data) => {
     // Safely extract x and data with fallbacks
     if (!localChartData || !localChartData.series) {
       return (
-        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+        <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
           <div>Loading chart data...</div>
         </div>
       );
@@ -1063,32 +1064,32 @@ const validateWaterfallData = (data) => {
     // Validate data structure
     if (data.length === 0 || x.length === 0) {
       return (
-        <div style={{padding: '20px', textAlign: 'center', color: '#6b7280'}}>
+        <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
           <div>No chart data available. Please add data to display the chart.</div>
         </div>
       );
     }
 
     return (
-      <div style={{overflow: 'auto', width: '100%', position: 'relative', padding: '12px'}}>
-        <table style={{width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db'}}>
+      <div style={{ overflow: 'auto', width: '100%', position: 'relative', padding: '12px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', border: '1px solid #d1d5db' }}>
           <thead>
-            <tr style={{backgroundColor: '#f3f4f6'}}>
+            <tr style={{ backgroundColor: '#f3f4f6' }}>
               <th style={cellStyle}></th>
               {data.map((series, idx) => (
-                <th 
-                  key={idx} 
-                  style={{...headerStyle, position: 'relative', overflow: 'visible'}} 
+                <th
+                  key={idx}
+                  style={{ ...headerStyle, position: 'relative', overflow: 'visible' }}
                   colSpan={2}
                   onMouseEnter={() => setHoveredCol(idx)}
                   onMouseLeave={() => setHoveredCol(null)}
                 >
-                  <div style={{position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', paddingRight: '20px'}}>
+                  <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', paddingRight: '20px' }}>
                     <input
                       type="text"
                       value={series.name}
                       onChange={(e) => updateCell(['series', 'data', idx, 'name'], e.target.value)}
-                      style={{...inputStyle, flex: 1, width: '100%'}}
+                      style={{ ...inputStyle, flex: 1, width: '100%' }}
                     />
                     {hoveredCol === idx && (
                       <button
@@ -1111,8 +1112,8 @@ const validateWaterfallData = (data) => {
                   )}
                 </th>
               ))}
-              <th 
-                style={{...cellStyle, position: 'relative', minWidth: '40px'}}
+              <th
+                style={{ ...cellStyle, position: 'relative', minWidth: '40px' }}
                 onMouseEnter={() => setHoveredCol(data.length)}
                 onMouseLeave={() => setHoveredCol(null)}
               >
@@ -1127,7 +1128,7 @@ const validateWaterfallData = (data) => {
                 )}
               </th>
             </tr>
-            <tr style={{backgroundColor: '#f9fafb'}}>
+            <tr style={{ backgroundColor: '#f9fafb' }}>
               <th style={headerStyle}>Step</th>
               {data.map((_, idx) => (
                 <React.Fragment key={idx}>
@@ -1143,15 +1144,15 @@ const validateWaterfallData = (data) => {
                 <tr
                   onMouseEnter={() => setHoveredRow(rowIdx)}
                   onMouseLeave={() => setHoveredRow(null)}
-                  style={{position: 'relative'}}
+                  style={{ position: 'relative' }}
                 >
-                  <td style={{...rowHeaderStyle, position: 'relative'}}>
-                    <div style={{position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px'}}>
+                  <td style={{ ...rowHeaderStyle, position: 'relative' }}>
+                    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', paddingRight: '20px' }}>
                       <input
                         type="text"
                         value={label}
                         onChange={(e) => updateCell(['series', 'x', rowIdx], e.target.value)}
-                        style={{...inputStyle, flex: 1, width: '100%'}}
+                        style={{ ...inputStyle, flex: 1, width: '100%' }}
                       />
                       {hoveredRow === rowIdx && (
                         <button
@@ -1177,92 +1178,92 @@ const validateWaterfallData = (data) => {
                     // Safely access series properties with fallbacks
                     const seriesY = Array.isArray(series.y) ? series.y : [];
                     const seriesMeasure = Array.isArray(series.measure) ? series.measure : [];
-                    
+
                     // Ensure arrays are long enough for the current row index
                     const yValue = seriesY[rowIdx] ?? '';
                     const measureValue = seriesMeasure[rowIdx] ?? 'absolute';
-                    
+
                     return (
-                    <React.Fragment key={colIdx}>
-                      <td style={cellStyle}>
-                        <input
-                          type="number"
-                            value={yValue}
+                      <React.Fragment key={colIdx}>
+                        <td style={cellStyle}>
+                          <input
+                            type="text"
+                            value={formatNumber(yValue)}
                             onChange={(e) => {
-                              const inputValue = e.target.value;
+                              const inputValue = parseFormattedNumber(e.target.value);
                               if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-                              
+
                               const newData = JSON.parse(JSON.stringify(localChartData));
                               if (!newData.series.data[colIdx]) {
                                 newData.series.data[colIdx] = { y: [], measure: [] };
                               }
-                              
+
                               // Ensure y array exists
                               if (!Array.isArray(newData.series.data[colIdx].y)) {
                                 newData.series.data[colIdx].y = [];
                               }
-                              
+
                               // Ensure array is long enough
                               while (newData.series.data[colIdx].y.length <= rowIdx) {
                                 newData.series.data[colIdx].y.push(0);
                               }
-                              
+
                               // Update the specific cell
                               const numValue = inputValue === '' ? 0 : parseFloat(inputValue);
                               newData.series.data[colIdx].y[rowIdx] = isNaN(numValue) ? 0 : numValue;
-                              
+
                               setLocalChartData(newData);
                               if (onDataChange) {
                                 onDataChange(newData);
                               }
                             }}
-                          style={inputStyle}
-                        />
-                      </td>
-                      <td style={cellStyle}>
-                        <select
+                            style={inputStyle}
+                          />
+                        </td>
+                        <td style={cellStyle}>
+                          <select
                             value={measureValue}
                             onChange={(e) => {
                               const inputValue = e.target.value;
                               if (!localChartData || !localChartData.series || !localChartData.series.data) return;
-                              
+
                               const newData = JSON.parse(JSON.stringify(localChartData));
                               if (!newData.series.data[colIdx]) {
                                 newData.series.data[colIdx] = { y: [], measure: [] };
                               }
-                              
+
                               // Ensure measure array exists
                               if (!Array.isArray(newData.series.data[colIdx].measure)) {
                                 newData.series.data[colIdx].measure = [];
                               }
-                              
+
                               // Ensure array is long enough
                               while (newData.series.data[colIdx].measure.length <= rowIdx) {
                                 newData.series.data[colIdx].measure.push('absolute');
                               }
-                              
+
                               // Update the specific cell
                               newData.series.data[colIdx].measure[rowIdx] = inputValue;
-                              
+
                               setLocalChartData(newData);
                               if (onDataChange) {
                                 onDataChange(newData);
                               }
                             }}
-                          style={selectStyle}
-                        >
-                          <option value="absolute">absolute</option>
-                          <option value="relative">relative</option>
-                          <option value="total">total</option>
-                        </select>
-                      </td>
-                    </React.Fragment>
+                            style={selectStyle}
+                          >
+                            <option value="absolute">absolute</option>
+                            <option value="relative">relative</option>
+                            <option value="total">total</option>
+                          </select>
+                        </td>
+                      </React.Fragment>
                     );
                   })}
                 </tr>
                 {hoveredRow === rowIdx && (
-                  <tr style={{height: '2px', position: 'relative'}}>
-                    <td colSpan={data.length * 2 + 1} style={{padding: 0, border: 'none', position: 'relative', height: '2px'}}>
+                  <tr style={{ height: '2px', position: 'relative' }}>
+                    <td colSpan={data.length * 2 + 1} style={{ padding: 0, border: 'none', position: 'relative', height: '2px' }}>
                       <button
                         onClick={() => insertRow(rowIdx + 1)}
                         style={insertRowBetweenButtonStyle}
@@ -1279,7 +1280,7 @@ const validateWaterfallData = (data) => {
               onMouseEnter={() => setHoveredRow(x.length)}
               onMouseLeave={() => setHoveredRow(null)}
             >
-              <td style={{...rowHeaderStyle, position: 'relative'}}>
+              <td style={{ ...rowHeaderStyle, position: 'relative' }}>
                 {hoveredRow === x.length && (
                   <button
                     onClick={addRow}
@@ -1458,48 +1459,48 @@ const validateWaterfallData = (data) => {
 
   if (error) {
     return (
-      <div style={{padding: '20px', color: '#ef4444', backgroundColor: '#fee2e2', borderRadius: '8px', marginBottom: '10px'}}>
+      <div style={{ padding: '20px', color: '#ef4444', backgroundColor: '#fee2e2', borderRadius: '8px', marginBottom: '10px' }}>
         ❌ {error}
       </div>
     );
   }
 
   return (
-    <div style={{width: '100%'}}>
+    <div style={{ width: '100%' }}>
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
       `}</style>
-      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
-        <h3 style={{margin: 0, fontSize: '16px', fontWeight: '600'}}>Chart Data Editor</h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+        <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>Chart Data Editor</h3>
         {onSave && (
           <button
             onClick={async () => {
-  if (onSave && !isSaving) {
-    // ✅ ADD VALIDATION HERE
-    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
-      const validationError = validateWaterfallData(localChartData);
-      if (validationError) {
-        alert('Validation Error: ' + validationError);
-        return;
-      }
-    }
-    
-    setIsSaving(true);
-    try {
-      await onSave(localChartData);
-      // Update original data after successful save
-      setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
-    } catch (err) {
-      console.error('Error saving chart data:', err);
-      // Error is already handled by onSave callback
-    } finally {
-      setIsSaving(false);
-    }
-  }
-}}
+              if (onSave && !isSaving) {
+                // ✅ ADD VALIDATION HERE
+                if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+                  const validationError = validateWaterfallData(localChartData);
+                  if (validationError) {
+                    alert('Validation Error: ' + validationError);
+                    return;
+                  }
+                }
+
+                setIsSaving(true);
+                try {
+                  await onSave(localChartData);
+                  // Update original data after successful save
+                  setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
+                } catch (err) {
+                  console.error('Error saving chart data:', err);
+                  // Error is already handled by onSave callback
+                } finally {
+                  setIsSaving(false);
+                }
+              }
+            }}
           >
             {isSaving ? (
               <>
@@ -1520,8 +1521,8 @@ const validateWaterfallData = (data) => {
           </button>
         )}
       </div>
-      
-      <div style={{border: '1px solid #d1d5db', borderRadius: '8px', backgroundColor: 'white', overflow: 'auto', maxHeight: '600px', minHeight: '200px'}}>
+
+      <div style={{ border: '1px solid #d1d5db', borderRadius: '8px', backgroundColor: 'white', overflow: 'auto', maxHeight: '600px', minHeight: '200px' }}>
         {renderTable()}
       </div>
     </div>

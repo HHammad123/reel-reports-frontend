@@ -33,7 +33,7 @@ export default function useBrandAssets() {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(`GET brand-assets by id failed: ${resp.status}`);
       setAnalysis(data);
-      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) { }
       return data;
     } catch (e) {
       setError(e?.message || 'Failed to load brand assets');
@@ -155,7 +155,7 @@ export default function useBrandAssets() {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(`update failed: ${resp.status}`);
       setAnalysis(data);
-      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) { }
       return data;
     } catch (e) {
       setError(e?.message || 'Failed to update brand assets');
@@ -178,7 +178,7 @@ export default function useBrandAssets() {
         throw new Error(`profiles update failed: ${resp.status} ${text}`);
       }
       setAnalysis(data);
-      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) { }
       return data;
     } catch (e) {
       setError(e?.message || 'Failed to update brand profile');
@@ -201,7 +201,7 @@ export default function useBrandAssets() {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(`analyze-website failed: ${resp.status}`);
       setAnalysis(data);
-      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) { }
       return data;
     } catch (e) {
       setError(e?.message || 'Failed to analyze website');
@@ -224,9 +224,9 @@ export default function useBrandAssets() {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(`profiles/create failed: ${resp.status}`);
       setAnalysis(data);
-      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) {}
-      try { localStorage.setItem(`last_analyzed_website:${userId}`, url); } catch (_) {}
-      try { localStorage.setItem(`last_profile_name:${userId}`, profileName); } catch (_) {}
+      try { localStorage.setItem(`brand_assets_analysis:${userId}`, JSON.stringify(data)); } catch (_) { }
+      try { localStorage.setItem(`last_analyzed_website:${userId}`, url); } catch (_) { }
+      try { localStorage.setItem(`last_profile_name:${userId}`, profileName); } catch (_) { }
       return data;
     } catch (e) {
       setError(e?.message || 'Failed to create brand profile');
@@ -260,7 +260,7 @@ export default function useBrandAssets() {
     if (!userId || !jobId) throw new Error('userId and jobId are required');
     try {
       const url = `${API_BASE}/users/brand-assets/profiles/job-status/${encodeURIComponent(jobId)}?user_id=${encodeURIComponent(userId)}`;
-      const resp = await fetch(url, { 
+      const resp = await fetch(url, {
         method: 'GET'
       });
       const data = await resp.json().catch(() => ({}));
@@ -281,7 +281,7 @@ export default function useBrandAssets() {
     const form = new FormData();
     form.append('user_id', userId);
     form.append('file_type', fileType); // logo | icon | template
-    try { files.filter(Boolean).forEach(f => form.append('files', f)); } catch (_) {}
+    try { files.filter(Boolean).forEach(f => form.append('files', f)); } catch (_) { }
     setLoading(true); setError('');
     try {
       const resp = await fetch(`${API_BASE}/users/brand-assets/upload-file`, { method: 'POST', body: form });
@@ -360,7 +360,7 @@ export default function useBrandAssets() {
       form.append('name', name);
       form.append('type', type);
       form.append('file', file);
-      
+
       const resp = await fetch(`${API_BASE}/users/brand-assets/upload-voiceover`, {
         method: 'POST',
         body: form
@@ -475,13 +475,13 @@ export default function useBrandAssets() {
       // Try the exact endpoint as specified by user
       // API expects templates array with template_id and aspect_ratio
       const url = `${API_BASE}/users/brand-assets/profiles/delete-template-elements`;
-      
+
       // Build templates array with template_id and aspect_ratio
       const templates = templateIds.map(templateId => ({
         template_id: templateId,
         aspect_ratio: aspectRatio
       }));
-      
+
       let resp = await fetch(url, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -492,7 +492,7 @@ export default function useBrandAssets() {
           aspect_ratio: aspectRatio
         })
       });
-      
+
       // If DELETE fails with 405, try POST
       if (!resp.ok && resp.status === 405) {
         resp = await fetch(url, {
@@ -516,5 +516,22 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
-  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, reset };
+  // DELETE /v1/users/brand-assets/profiles/{user_id}/{profile_id}/voiceovers/{voiceover_id}
+  const deleteVoiceover = useCallback(async ({ userId, profileId, voiceoverId }) => {
+    if (!userId || !profileId || !voiceoverId) throw new Error('userId, profileId, and voiceoverId are required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/profiles/${encodeURIComponent(userId)}/${encodeURIComponent(profileId)}/voiceovers/${encodeURIComponent(voiceoverId)}`;
+      const resp = await fetch(url, { method: 'DELETE' });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`delete voiceover failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to delete voiceover');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, deleteVoiceover, reset };
 }

@@ -495,7 +495,7 @@ const SimulatedProgressLoader = ({ message, duration = 3000, showPercentage = tr
 
 const Brandimages = () => {
   const fileInputRef = useRef(null)
-  const { getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements } = useBrandAssets()
+  const { getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements, deleteVoiceover } = useBrandAssets()
   const [logos, setLogos] = useState([])
   const [icons, setIcons] = useState([])
   const [fonts, setFonts] = useState([])
@@ -516,12 +516,15 @@ const Brandimages = () => {
   const [selectedFontOption, setSelectedFontOption] = useState(availableFonts[0])
   const [isSavingFonts, setIsSavingFonts] = useState(false)
   const [fontsError, setFontsError] = useState('')
+  const [draggedFontIndex, setDraggedFontIndex] = useState(null)
   // Colors modal state
   const [isColorsModalOpen, setIsColorsModalOpen] = useState(false)
   const [workingColors, setWorkingColors] = useState([])
   const [newColor, setNewColor] = useState('#4f46e5')
   const [isSavingColors, setIsSavingColors] = useState(false)
   const [colorsError, setColorsError] = useState('')
+  const [showVoiceoverDeleteConfirm, setShowVoiceoverDeleteConfirm] = useState(false)
+  const [voiceoverToDelete, setVoiceoverToDelete] = useState(null)
   const [draggedColorIndex, setDraggedColorIndex] = useState(null)
   const [isRegeneratingTemplates, setIsRegeneratingTemplates] = useState(false)
   // Generated Assets state
@@ -775,6 +778,41 @@ const Brandimages = () => {
     }, 1500)
     return () => clearTimeout(timer)
   }, [isModalOpen, voiceWizardStep, resetVoiceoverFlow])
+
+  const handleDeleteVoiceover = useCallback((voiceover) => {
+    setVoiceoverToDelete(voiceover)
+    setShowVoiceoverDeleteConfirm(true)
+  }, [])
+
+  const confirmDeleteVoiceover = useCallback(async () => {
+    if (!voiceoverToDelete) return
+
+    const userId = localStorage.getItem('token') || ''
+    const profileId = selectedProfileId
+    const voiceoverId = voiceoverToDelete.id || voiceoverToDelete._id || voiceoverToDelete.voiceover_id
+
+    if (!userId || !profileId || !voiceoverId) {
+      console.error('Missing required IDs for deletion', { userId, profileId, voiceoverId, voiceoverToDelete })
+      setErrorMsg('Cannot delete: Missing voiceover ID')
+      setShowVoiceoverDeleteConfirm(false)
+      return
+    }
+
+    try {
+      await deleteVoiceover({ userId, profileId, voiceoverId })
+
+      // Refresh profile
+      const refreshed = await getBrandProfileById({ userId, profileId })
+      const updatedVoiceovers = refreshed?.voiceover || []
+      setVoiceovers(Array.isArray(updatedVoiceovers) ? updatedVoiceovers : [])
+
+      setVoiceoverToDelete(null)
+      setShowVoiceoverDeleteConfirm(false)
+    } catch (err) {
+      console.error('Failed to delete voiceover:', err)
+      setErrorMsg(err?.message || 'Failed to delete voiceover')
+    }
+  }, [voiceoverToDelete, deleteVoiceover, selectedProfileId, getBrandProfileById])
 
   // Ensure pair image URL is always extracted from template structure if missing
   const activePlacementWithPair = useMemo(() => {
@@ -5198,13 +5236,40 @@ const Brandimages = () => {
                 >Add</button>
               </div> */}
               {workingFonts && workingFonts.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {workingFonts.map((f, i) => (
-                    <span key={i} className="px-2 py-1 rounded-full border text-sm flex items-center gap-2">
-                      {f}
-                      <button onClick={() => setWorkingFonts(prev => prev.filter(x => x !== f))} title="Remove" className="text-gray-500 hover:text-gray-800">✕</button>
-                    </span>
-                  ))}
+                <div className="space-y-2">
+                  <p className="text-xs text-gray-500">Drag to reorder, click × to remove</p>
+                  <div className="space-y-2">
+                    {workingFonts.map((f, i) => (
+                      <div
+                        key={i}
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedFontIndex(i);
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (draggedFontIndex !== null && draggedFontIndex !== i) {
+                            const newFonts = [...workingFonts];
+                            const [removed] = newFonts.splice(draggedFontIndex, 1);
+                            newFonts.splice(i, 0, removed);
+                            setWorkingFonts(newFonts);
+                          }
+                          setDraggedFontIndex(null);
+                        }}
+                        onDragEnd={() => setDraggedFontIndex(null)}
+                        className={`px-3 py-2 rounded-lg border text-sm flex items-center gap-3 cursor-move hover:bg-gray-50 transition-colors ${draggedFontIndex === i ? 'opacity-50 border-blue-500' : 'border-gray-300'}`}
+                      >
+                        <span className="text-gray-400 cursor-move">☰</span>
+                        <span className="flex-1" style={{ fontFamily: f }}>{f}</span>
+                        <button onClick={() => setWorkingFonts(prev => prev.filter((_, idx) => idx !== i))} title="Remove" className="text-gray-500 hover:text-red-600 transition-colors">✕</button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
               {fontsError && <div className="text-sm text-red-600">{fontsError}</div>}
@@ -5227,8 +5292,8 @@ const Brandimages = () => {
                         const lfAll = currentAll?.look_and_feel || {};
                         const templatesAll = currentAll?.template || currentAll?.templates || [];
                         const voiceoverAll = currentAll?.voiceover || [];
-                        const existing = Array.isArray(biAll.fonts) ? biAll.fonts.map(String) : [];
-                        const nextFonts = Array.from(new Set([...existing, ...picks]));
+                        // Use picks directly as the new state to allow deletions
+                        const nextFonts = picks;
                         if (pid) {
                           await updateBrandProfile({
                             userId,
@@ -5732,6 +5797,51 @@ const Brandimages = () => {
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
                 )}
                 {isDeletingProfile ? 'Deleting...' : 'Delete Profile'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Voiceover Confirmation Modal */}
+      {showVoiceoverDeleteConfirm && voiceoverToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Delete Voiceover</h3>
+              <button
+                onClick={() => {
+                  setShowVoiceoverDeleteConfirm(false)
+                  setVoiceoverToDelete(null)
+                }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Are you sure you want to delete <span className="font-semibold">"{voiceoverToDelete.name || 'this voiceover'}"</span>?
+              </p>
+              <p className="text-xs text-red-600 font-medium">
+                This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowVoiceoverDeleteConfirm(false)
+                  setVoiceoverToDelete(null)
+                }}
+                className="px-4 py-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteVoiceover}
+                className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 flex items-center gap-2"
+              >
+                Delete
               </button>
             </div>
           </div>

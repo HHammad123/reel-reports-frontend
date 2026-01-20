@@ -10,6 +10,17 @@ import LoadingAnimationGif from '../asset/loading.gif';
 import Loader from './Loader';
 import { useProgressLoader } from '../hooks/useProgressLoader';
 
+const formatTitle = (text) => {
+  if (!text) return '';
+  if (text === '-') return '-';
+  return text
+    .replace(/_/g, ' ')
+    .trim()
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
 const SimulatedProgressLoader = ({ message, duration = 3000, showPercentage = true }) => {
   const [percentage, setPercentage] = useState(0)
 
@@ -709,9 +720,13 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   const [isSubmittingSummary, setIsSubmittingSummary] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatusText, setUploadStatusText] = useState('');
+  const [uploadSuccess, setUploadSuccess] = useState(false);
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [isGeneratingQuestionnaire, setIsGeneratingQuestionnaire] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [isGeneratingImages, setIsGeneratingImages] = useState(false);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false); // no longer used for images
   const [showImagesOverlay, setShowImagesOverlay] = useState(false);
   const [showMissingAvatarPopup, setShowMissingAvatarPopup] = useState(false);
@@ -1001,9 +1016,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Progress states for loaders (partial - will complete after all state declarations)
   // Progress bars for loaders using useProgressLoader hook
   const questionnaireProgress = useProgressLoader(isGeneratingQuestionnaire, 95, 30000);
+  const generatingScriptProgress = useProgressLoader(isGeneratingScript, 95, 60000);
   const chartTypeProgress = useProgressLoader(isApplyingChartType, 95, 20000);
   const switchingModelProgress = useProgressLoader(isSwitchingModel, 95, 20000);
   const switchingVideoTypeProgress = useProgressLoader(isSwitchingVideoType, 95, 20000);
+  const generatingImagesProgress = useProgressLoader(isGeneratingImages, 95, 45000);
   const [isEditingAnchorOptions, setIsEditingAnchorOptions] = useState(false);
   const [isEditingAnchorPrompt, setIsEditingAnchorPrompt] = useState(false);
   const [isEditingAdvancedStyles, setIsEditingAdvancedStyles] = useState(false);
@@ -2918,6 +2935,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // 5. Extract and display images from job-status response
   const triggerGenerateScenes = React.useCallback(async () => {
     try {
+      setIsGeneratingImages(true);
       const token = localStorage.getItem('token');
       const sessionId = localStorage.getItem('session_id');
       if (!token || !sessionId) throw new Error('Missing user token or session_id');
@@ -2936,8 +2954,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const user = sessionData?.user_data || sd?.user_data || sd?.user || {};
 
       // VALIDATION: Check all VEO3 scenes have non-empty avatar_urls array before proceeding
-      // This validates user selections - when users select avatars, they are saved in the session data
-      // and will be checked here before generating the storyboard
       const scripts = Array.isArray(sd.scripts) && sd.scripts.length > 0 ? sd.scripts : [];
       const currentScript = scripts[0] || null; // Get current version (first script)
       const airesponse = Array.isArray(currentScript?.airesponse) ? currentScript.airesponse : [];
@@ -2950,15 +2966,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
         if (isVEO3) {
           const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
-
-          // Check if avatar_urls array exists and is not empty (validates user's avatar selection)
-          // avatar_urls is compulsory for VEO3 scenes
           const avatarUrls = Array.isArray(scene?.avatar_urls) ? scene.avatar_urls : [];
           const hasAvatarUrls = avatarUrls.length > 0 && avatarUrls.some(url => {
             return typeof url === 'string' && url.trim().length > 0;
           });
-
-          // If avatar_urls is missing (user hasn't selected avatar), add scene to missing list
           if (!hasAvatarUrls) {
             missingScenes.push(sceneNumber);
           }
@@ -2967,9 +2978,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       // If any VEO3 scenes are missing avatar_urls selections, show popup with scene numbers and stop
       if (missingScenes.length > 0) {
+        setIsGeneratingImages(false);
         setMissingAvatarScenes(missingScenes);
         setShowMissingAvatarPopup(true);
-        return; // Stop execution - user must select avatar for all VEO3 scenes first
+        return; // Stop execution
       }
 
       // 3) Call /v1/generate-images-queue API (POST) with user_id and session_id
@@ -3005,34 +3017,43 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
             }
             if (!statusResp.ok) {
               console.error(`job-status failed: ${statusResp.status} ${statusText}`);
+              setIsGeneratingImages(false);
               return;
             }
             const status = String(statusData?.status || statusData?.job_status || '').toLowerCase();
+
             if (status === 'succeeded' || status === 'success' || status === 'completed') {
               try { localStorage.removeItem('images_generate_pending'); } catch (_) { }
               console.log('Image generation job completed successfully');
+
+              setIsGeneratingImages(false);
+              // Navigate to images list ONLY after success
+              if (typeof onOpenImagesList === 'function') {
+                onOpenImagesList(jobId || '');
+              } else {
+                setShowImagesOverlay(true);
+              }
+            } else if (status === 'failed' || status === 'error') {
+              try { localStorage.removeItem('images_generate_pending'); } catch (_) { }
+              setIsGeneratingImages(false);
+              alert('Image generation failed. Please try again.');
             } else {
               // Continue polling every 3 seconds
               setTimeout(pollJobStatus, 3000);
             }
           } catch (error) {
             console.error('Error polling job-status:', error);
+            setIsGeneratingImages(false);
           }
         };
         // Start polling after a short delay
         setTimeout(pollJobStatus, 3000);
+      } else {
+        setIsGeneratingImages(false);
+        throw new Error('No job ID returned from image generation service');
       }
-      // Show short popup then navigate to images list
-      setShowShortGenPopup(true);
-      setTimeout(() => {
-        setShowShortGenPopup(false);
-        if (typeof onOpenImagesList === 'function') {
-          onOpenImagesList(jobId || '');
-        } else {
-          setShowImagesOverlay(true);
-        }
-      }, 5000);
     } catch (e) {
+      setIsGeneratingImages(false);
       console.error('Failed to start scenes images generation:', e);
       alert(e?.message || 'Failed to start image generation');
     }
@@ -5551,6 +5572,17 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
     if (files.length === 0) return;
 
     setIsUploading(true);
+    setUploadSuccess(false);
+    setUploadProgress(0);
+    setUploadStatusText('Initializing upload...');
+
+    // Simulate progress while waiting for API
+    const progressInterval = setInterval(() => {
+      setUploadProgress(prev => {
+        if (prev >= 90) return 90;
+        return prev + 5;
+      });
+    }, 500);
 
     try {
       const sessionId = localStorage.getItem('session_id');
@@ -5559,6 +5591,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       if (!sessionId || !token) {
         throw new Error('Missing session_id or token');
       }
+
+      setUploadStatusText('Preparing session...');
 
       // Determine authoritative video type from user-session-data
       let isFinancialVT = false;
@@ -5576,6 +5610,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Process each file sequentially
       for (const file of files) {
         try {
+          setUploadStatusText(`Uploading and processing ${file.name}...`);
+
           // Call extract API
           const extractFormData = new FormData();
           extractFormData.append('files', file);
@@ -5619,9 +5655,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         }
       }
 
+      // Success
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      setUploadStatusText('Processing complete!');
+      setUploadSuccess(true);
+
     } catch (error) {
       console.error('Error calling extract API:', error);
+      clearInterval(progressInterval);
+      setUploadStatusText('Error during upload.');
     } finally {
+      if (progressInterval) clearInterval(progressInterval);
       setIsUploading(false);
     }
   };
@@ -5840,6 +5885,18 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
   // Call summary API once for all processed files, sending the combined extract response after session data
   const callSummaryAPIForAll = async () => {
     try {
+      setUploadProgress(0);
+      setUploadStatusText('Initializing summary generation...');
+      setUploadSuccess(false);
+
+      // Simulate progress since summary API is a single call
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) return 90;
+          return prev + 2;
+        });
+      }, 300);
+
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
 
@@ -5847,6 +5904,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         throw new Error('Missing session_id or token');
       }
 
+      setUploadStatusText('Preparing documents for summary...');
       // Collect documents from all files that have extractData (robust to response shapes)
       const combinedDocuments = uploadedFiles
         .filter(f => f.extractData)
@@ -5862,6 +5920,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         console.warn('No extracted documents available to send. Proceeding with empty documents array.');
       }
 
+      setUploadStatusText('Syncing session data...');
       // Build session object from user-session-data API as source of truth
       let sessionObjAll = {};
       try {
@@ -5915,6 +5974,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
       console.log('Calling summary API for ALL files. Request Body:', requestBody);
 
+      setUploadStatusText('Analyzing content...');
       // Determine video type to choose correct summary endpoint
       let vtLower = 'hybrid';
       try {
@@ -5936,6 +5996,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         vtLower = String(localStorage.getItem(`video_type_value:${sessionId}`) || 'hybrid').toLowerCase();
       }
 
+      setUploadStatusText('Generating summary with AI...');
       // Unified summarize endpoint for all video types
       const summaryResponse = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/summarize_documents`, {
         method: 'POST',
@@ -5952,6 +6013,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const summaryData = await summaryResponse.json();
       console.log('Summary API Response (ALL files):', summaryData);
 
+      setUploadStatusText('Finalizing summary...');
       // After summarization completes for all files, attempt to set/update the session title once
       try {
         const sessionIdAll = localStorage.getItem('session_id');
@@ -5983,6 +6045,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         (Array.isArray(summaryData?.documents?.[0]?.content)
           ? summaryData.documents[0].content.join('\n')
           : 'Document summary completed successfully.');
+
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      setUploadStatusText('Summary generated successfully!');
+      setUploadSuccess(true);
 
       // Show user message for uploaded files
       setIsSummarizing(true);
@@ -6031,6 +6098,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
     } catch (error) {
       console.error('Error calling summary API (ALL files):', error);
+      setUploadStatusText('Error generating summary.');
       // Show error message in chat
       setChatHistory(prev => ([
         ...prev,
@@ -11013,14 +11081,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                         };
                                         // Check for opening_frame first, then fallback to opening
                                         const currentData = isEditingOpeningFrame ? editedOpeningFrame : normalizeOpeningData(scene?.opening_frame || scene?.openingFrame || scene?.opening);
-                                        const formatTitle = (key) => {
-                                          const cleaned = key.replace(/_/g, ' ').trim();
-                                          if (!cleaned) return '';
-                                          return cleaned
-                                            .split(' ')
-                                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                                            .join(' ');
-                                        };
+
                                         const formatValue = (val) => {
                                           if (val == null) return '';
                                           if (typeof val === 'object') return JSON.stringify(val, null, 2);
@@ -11175,14 +11236,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                         };
                                         // Check for closing_frame first, then fallback to choosing_frame (for backward compatibility)
                                         const currentData = isEditingClosingFrame ? editedClosingFrame : normalizeClosingFrameData(scene?.closing_frame || scene?.closingFrame || scene?.choosing_frame || scene?.choosingFrame);
-                                        const formatTitle = (key) => {
-                                          const cleaned = key.replace(/_/g, ' ').trim();
-                                          if (!cleaned) return '';
-                                          return cleaned
-                                            .split(' ')
-                                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                                            .join(' ');
-                                        };
+
                                         const formatValue = (val) => {
                                           if (val == null) return '';
                                           if (typeof val === 'object') return JSON.stringify(val, null, 2);
@@ -11345,14 +11399,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                         };
                                         // Check for background_frame first, then fallback to background (for backward compatibility)
                                         const currentData = isEditingBackgroundFrame ? editedBackgroundFrame : normalizeBackgroundFrameData(scene?.background_frame || scene?.backgroundFrame || scene?.background || {});
-                                        const formatTitle = (key) => {
-                                          const cleaned = key.replace(/_/g, ' ').trim();
-                                          if (!cleaned) return '';
-                                          return cleaned
-                                            .split(' ')
-                                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                                            .join(' ');
-                                        };
+
                                         const formatValue = (val) => {
                                           if (val == null) return '';
                                           if (typeof val === 'object') return JSON.stringify(val, null, 2);
@@ -11444,7 +11491,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           try { return JSON.stringify(d, null, 2); } catch (_) { return String(d); }
                         })();
                         const isCurrentlyEditingChartType = isChartTypeEditing && chartTypeSceneIndex === currentSceneIndex;
-                        const displayChartType = isCurrentlyEditingChartType ? pendingChartTypeValue : chartType;
+                        const displayChartType = isCurrentlyEditingChartType ? pendingChartTypeValue : formatTitle(chartType);
                         const hasChartTypeChanged = isCurrentlyEditingChartType && pendingChartTypeValue !== chartType;
 
                         const startEditingChartType = () => {
@@ -11671,14 +11718,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                         };
                         const veo3Template = normalizeVeo3Template(scene?.veo3_prompt_template);
                         const priorityOrder = ['subject', 'background', 'action', 'style', 'camera', 'preset', 'ambiance', 'composition', 'focus_and_lens', 'focus', 'lens', 'lighting'];
-                        const formatTitle = (key) => {
-                          const cleaned = key.replace(/_/g, ' ').trim();
-                          if (!cleaned) return '';
-                          return cleaned
-                            .split(' ')
-                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                            .join(' ');
-                        };
+
                         const formatValue = (val) => {
                           if (val == null) return '';
                           if (typeof val === 'object') return JSON.stringify(val, null, 2);
@@ -13813,14 +13853,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                               return typeof data === 'object' ? data : {};
                                             };
                                             const currentData = isEditingAnimationDesc ? editedAnimationDesc : normalizeAnimationDescData(animationDesc);
-                                            const formatTitle = (key) => {
-                                              const cleaned = key.replace(/_/g, ' ').trim();
-                                              if (!cleaned) return '';
-                                              return cleaned
-                                                .split(' ')
-                                                .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                                                .join(' ');
-                                            };
+
                                             const formatValue = (val) => {
                                               if (val == null) return '';
                                               if (typeof val === 'object') return JSON.stringify(val, null, 2);
@@ -15388,6 +15421,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       {/* Short 5s popup for job-based generation */}
       {/* Inline Images view replaces chat when active */}
       {/* Global lightweight loaders for other actions */}
+      {isGeneratingScript && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Generating Script…"
+          progress={generatingScriptProgress > 0 ? generatingScriptProgress : null}
+        />
+      )}
       {isGeneratingQuestionnaire && (
         <Loader
           fullScreen
@@ -15395,6 +15437,16 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           overlayBg="bg-black/30"
           title="Generating Questionnaire…"
           progress={questionnaireProgress > 0 ? questionnaireProgress : null}
+        />
+      )}
+      {isGeneratingImages && (
+        <Loader
+          fullScreen
+          zIndex="z-40"
+          overlayBg="bg-black/30"
+          title="Generating Storyboard…"
+          description="Please wait while we generate your storyboard images..."
+          progress={generatingImagesProgress > 0 ? generatingImagesProgress : null}
         />
       )}
       {(isUpdatingText || isSavingReorder || isUploadingAvatar || isUploadingSceneImages) && (
@@ -15679,7 +15731,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                         </div>
                                       )}
                                       <span className={`text-sm font-medium ${isGeneratingQuestionnaire ? 'text-gray-400' : 'text-gray-900'}`}>
-                                        {isGeneratingQuestionnaire ? 'Generating Questionnaire...' : 'Generate Script'}
+                                        {isGeneratingQuestionnaire ? 'Generating Questionnaire...' : 'Generate Questionnarie'}
                                       </span>
                                     </button>
                                   );
@@ -15711,6 +15763,15 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       {!scenesMode && (
         <div className="bg-white border-gray-200 p-4 lg:p-1">
           <div className="max-w-8xl mx-auto">
+            {/* Hidden file input - kept outside conditional to prevent unmounting */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
             {uploadedFiles.length === 0 ? (
               // Show normal chat input when no files
               <div className="space-y-1">
@@ -15752,16 +15813,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                       >
                         <Paperclip className="w-4 h-4" />
                       </button>
-
-                      {/* Hidden file input */}
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple
-                        accept=".pdf,.doc,.docx,.txt,.ppt,.pptx"
-                        onChange={handleFileSelect}
-                        className="hidden"
-                      />
 
                       {/* Other buttons */}
                       {/* <button  onClick={() => fileInputRef.current?.click()} className="p-1.5 lg:p-2 text-gray-400 hover:text-gray-600 transition-colors">
@@ -15813,24 +15864,27 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   ))}
                 </div>
 
-                {/* Ready Status - Show when files are processed */}
-                {!isUploading && uploadedFiles.length > 0 && uploadedFiles.some(file => file.extractData) && (
-                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="flex items-center justify-center gap-2 text-green-700">
-                      <div className="w-4 h-4 bg-green-600 rounded-full flex items-center justify-center">
-                        <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
+                {(isUploading || isSummarizing || uploadSuccess || isGeneratingQuestionnaire) && (
+                  <div className="mt-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex flex-col items-center justify-center gap-3 w-full">
+                      <div className="w-full bg-blue-200 rounded-full h-2.5">
+                        <div
+                          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+                          style={{ width: `${isGeneratingQuestionnaire ? questionnaireProgress : uploadProgress}%` }}
+                        ></div>
                       </div>
-                      <span className="text-sm font-medium">Documents ready! Use the "Send All to Chat" button below to process with AI</span>
-                    </div>
-                  </div>
-                )}
-                {(isUploading || isSummarizing) && (
-                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center justify-center gap-2 text-blue-700">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-700"></div>
-                      <span className="text-sm font-medium">{isUploading ? 'Processing documents...' : 'Generating a summary...'}</span>
+                      <div className="flex items-center justify-between w-full text-blue-700">
+                        <span className="text-sm font-medium">
+                          {isGeneratingQuestionnaire ? 'Generating Script...' : (uploadStatusText || 'Processing...')}
+                        </span>
+                        <span className="text-sm font-bold">{Math.round(isGeneratingQuestionnaire ? questionnaireProgress : uploadProgress)}%</span>
+                      </div>
+                      {((!isGeneratingQuestionnaire && uploadProgress === 100) || (isGeneratingQuestionnaire && questionnaireProgress >= 100)) && (
+                        <div className="flex items-center gap-2 text-green-600 text-sm font-medium animate-pulse">
+                          <Check className="w-4 h-4" />
+                          <span>Success!</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
