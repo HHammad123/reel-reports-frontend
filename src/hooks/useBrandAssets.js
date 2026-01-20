@@ -533,5 +533,29 @@ export default function useBrandAssets() {
     } finally { setLoading(false); }
   }, []);
 
-  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, deleteVoiceover, reset };
+  const deleteAsset = useCallback(async ({ userId, assetType, assetName }) => {
+    if (!userId || !assetType || !assetName) throw new Error('userId, assetType, and assetName are required');
+    setLoading(true); setError('');
+    try {
+      const url = `${API_BASE}/users/brand-assets/delete-asset`;
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          asset_type: assetType,
+          asset_name: assetName
+        })
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`delete asset failed: ${resp.status} ${text}`);
+      return data;
+    } catch (e) {
+      setError(e?.message || 'Failed to delete asset');
+      throw e;
+    } finally { setLoading(false); }
+  }, []);
+
+  return { loading, error, assets, analysis, setAssets, setAnalysis, uploadBrandAssets, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, getBrandAssets, getBrandAssetsByUserId, getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, updateBrandAssets, updateBrandProfile, getTemplateById, replaceTemplateImage, regenerateTemplates, deleteTemplateElements, deleteVoiceover, deleteAsset, reset };
 }

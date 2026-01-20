@@ -501,14 +501,14 @@ const createLineChart = (data, presetData, chartData, chartType, sections) => {
     const areaColor = getValue('areas', 'color', seriesName, color)
 
     // Label properties
-    const showLabels = getValue('segment_values', 'show', seriesName, false)
-    const labelFormat = getValue('segment_values', 'format', seriesName, '.0f')
-    const labelPrefix = getValue('segment_values', 'prefix', seriesName, '')
-    const labelSuffix = getValue('segment_values', 'suffix', seriesName, '')
-    const labelPosition = getValue('segment_values', 'position', seriesName, 'top center')
-    const labelFontSize = getValue('segment_values', 'font_size', seriesName, 14)
-    const labelFontColor = getValue('segment_values', 'font_color', seriesName, color)
-    const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Verdana'))
+    const showLabels = getValue('data_labels', 'show', seriesName, false)
+    const labelFormat = getValue('data_labels', 'format', seriesName, '.0f')
+    const labelPrefix = getValue('data_labels', 'prefix', seriesName, '')
+    const labelSuffix = getValue('data_labels', 'suffix', seriesName, '')
+    const labelPosition = getValue('data_labels', 'position', seriesName, 'top center')
+    const labelFontSize = getValue('data_labels', 'font_size', seriesName, 14)
+    const labelFontColor = getValue('data_labels', 'font_color', seriesName, color)
+    const labelFontFamily = resolveBrandFont(getValue('data_labels', 'font_family', seriesName, 'Verdana'))
 
     const textValues = showLabels ? yValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
 
@@ -3717,7 +3717,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={getConfig(sectionsState, 'segment_values', 'show', selectedSeriesForSection.dataLabels) !== false}
+                      checked={getConfig(sectionsState, 'data_labels', 'show', selectedSeriesForSection.dataLabels) === true}
                       onChange={(e) => {
                         const seriesTarget = (chartTypeState === 'pie' || chartTypeState === 'donut') ? 'global' : selectedSeriesForSection.dataLabels
                         console.log('🏷️ Data Labels checkbox changed:', {
@@ -3725,7 +3725,7 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                           series: seriesTarget,
                           chartType: chartTypeState
                         })
-                        updateSection('segment_values', 'show', e.target.checked, seriesTarget)
+                        updateSection('data_labels', 'show', e.target.checked, seriesTarget)
                       }}
                       className="w-4 h-4"
                     />
@@ -3739,8 +3739,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <div>
                       <label className="text-xs text-gray-600 block mb-1">Position ({selectedSeriesForSection.dataLabels})</label>
                       <select
-                        value={getConfig(sectionsState, 'segment_values', 'position', selectedSeriesForSection.dataLabels) || 'inside'}
-                        onChange={(e) => updateSection('segment_values', 'position', e.target.value, selectedSeriesForSection.dataLabels)}
+                        value={getConfig(sectionsState, 'data_labels', 'position', selectedSeriesForSection.dataLabels) || 'inside'}
+                        onChange={(e) => updateSection('data_labels', 'position', e.target.value, selectedSeriesForSection.dataLabels)}
                         className="w-full text-sm border rounded px-2 py-1"
                       >
                         {(chartTypeState === 'pie' || chartTypeState === 'donut') ? (
@@ -3755,8 +3755,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Format ({selectedSeriesForSection.dataLabels})</label>
                     <input
                       type="text"
-                      value={getConfig(sectionsState, 'segment_values', 'format', selectedSeriesForSection.dataLabels) || '.0f'}
-                      onChange={(e) => updateSection('segment_values', 'format', e.target.value, selectedSeriesForSection.dataLabels)}
+                      value={getConfig(sectionsState, 'data_labels', 'format', selectedSeriesForSection.dataLabels) || '.0f'}
+                      onChange={(e) => updateSection('data_labels', 'format', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full text-sm border rounded px-2 py-1"
                       placeholder=".0f, .1f, .2f, .0%, .1%"
                     />
@@ -3765,8 +3765,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Prefix ({selectedSeriesForSection.dataLabels})</label>
                     <input
                       type="text"
-                      value={getConfig(sectionsState, 'segment_values', 'prefix', selectedSeriesForSection.dataLabels) || ''}
-                      onChange={(e) => updateSection('segment_values', 'prefix', e.target.value, selectedSeriesForSection.dataLabels)}
+                      value={getConfig(sectionsState, 'data_labels', 'prefix', selectedSeriesForSection.dataLabels) || ''}
+                      onChange={(e) => updateSection('data_labels', 'prefix', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
                   </div>
@@ -3774,16 +3774,16 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Suffix ({selectedSeriesForSection.dataLabels})</label>
                     <input
                       type="text"
-                      value={getConfig(sectionsState, 'segment_values', 'suffix', selectedSeriesForSection.dataLabels) || ''}
-                      onChange={(e) => updateSection('segment_values', 'suffix', e.target.value, selectedSeriesForSection.dataLabels)}
+                      value={getConfig(sectionsState, 'data_labels', 'suffix', selectedSeriesForSection.dataLabels) || ''}
+                      onChange={(e) => updateSection('data_labels', 'suffix', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
                   </div>
                   <div>
                     <label className="text-xs text-gray-600 block mb-1">Font ({selectedSeriesForSection.dataLabels})</label>
                     <select
-                      value={resolveBrandFont(getConfig(sectionsState, 'segment_values', 'font_family', selectedSeriesForSection.dataLabels)) || 'Verdana'}
-                      onChange={(e) => updateSection('segment_values', 'font_family', e.target.value, selectedSeriesForSection.dataLabels)}
+                      value={resolveBrandFont(getConfig(sectionsState, 'data_labels', 'font_family', selectedSeriesForSection.dataLabels)) || 'Verdana'}
+                      onChange={(e) => updateSection('data_labels', 'font_family', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full text-sm border rounded px-2 py-1"
                     >
                       {FONTS.map(font => <option key={font} value={font}>{font}</option>)}
@@ -3793,10 +3793,10 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Font Size ({selectedSeriesForSection.dataLabels})</label>
                     <input
                       type="number"
-                      value={getConfig(sectionsState, 'segment_values', 'font_size', selectedSeriesForSection.dataLabels) ?? ''}
+                      value={getConfig(sectionsState, 'data_labels', 'font_size', selectedSeriesForSection.dataLabels) ?? ''}
                       onChange={(e) => {
                         const val = e.target.value === '' ? null : parseInt(e.target.value)
-                        updateSection('segment_values', 'font_size', val, selectedSeriesForSection.dataLabels)
+                        updateSection('data_labels', 'font_size', val, selectedSeriesForSection.dataLabels)
                       }}
                       className="w-full text-sm border rounded px-2 py-1"
                     />
@@ -3805,8 +3805,8 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
                     <label className="text-xs text-gray-600 block mb-1">Font Color ({selectedSeriesForSection.dataLabels})</label>
                     <input
                       type="color"
-                      value={getConfig(sectionsState, 'segment_values', 'font_color', selectedSeriesForSection.dataLabels) || '#FFFFFF'}
-                      onChange={(e) => updateSection('segment_values', 'font_color', e.target.value, selectedSeriesForSection.dataLabels)}
+                      value={getConfig(sectionsState, 'data_labels', 'font_color', selectedSeriesForSection.dataLabels) || '#FFFFFF'}
+                      onChange={(e) => updateSection('data_labels', 'font_color', e.target.value, selectedSeriesForSection.dataLabels)}
                       className="w-full h-8 border rounded"
                     />
                   </div>

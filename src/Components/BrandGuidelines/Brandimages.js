@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronLeft, Plus, Mic, Play, Trash2, ZoomIn, Edit2, ImageIcon } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Plus, Mic, Play, Trash2, ZoomIn, Edit2, ImageIcon, Mic2 } from 'lucide-react'
 import useBrandAssets from '../../hooks/useBrandAssets'
 import CanvasImageEditor from '../ImageEdit/CanvasImageEditor'
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils'
@@ -495,11 +495,13 @@ const SimulatedProgressLoader = ({ message, duration = 3000, showPercentage = tr
 
 const Brandimages = () => {
   const fileInputRef = useRef(null)
-  const { getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements, deleteVoiceover } = useBrandAssets()
+  const { getBrandProfiles, getBrandProfileById, activateBrandProfile, deleteBrandProfile, getBrandAssetsByUserId, uploadBrandFiles, uploadTemplatesPptx, uploadProfileTemplateImages, uploadVoiceover, updateTemplateElements, updateBrandAssets, updateBrandProfile, analyzeWebsite, createBrandProfile, createBrandProfileQueue, getJobStatus, regenerateTemplates, getTemplateById, replaceTemplateImage, deleteTemplateElements, deleteVoiceover, deleteAsset } = useBrandAssets()
   const [logos, setLogos] = useState([])
   const [icons, setIcons] = useState([])
   const [fonts, setFonts] = useState([])
   const [colors, setColors] = useState([])
+  const [voiceovers, setVoiceovers] = useState([])
+  const [selectedVoiceover, setSelectedVoiceover] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [targetType, setTargetType] = useState('logos') // 'logos' | 'icons' | 'templates'
   const [selectedFiles, setSelectedFiles] = useState([])
@@ -562,7 +564,6 @@ const Brandimages = () => {
   const [templates, setTemplates] = useState([])
   const [selectedTemplateAspect, setSelectedTemplateAspect] = useState('')
   const [templateUploadAspect, setTemplateUploadAspect] = useState('')
-  const [voiceovers, setVoiceovers] = useState([])
   const [templatePreview, setTemplatePreview] = useState({ url: '', title: '' })
   const [templateUploadMode, setTemplateUploadMode] = useState('image') // 'image' | 'ppt'
   const [convertColors, setConvertColors] = useState(true)
@@ -778,11 +779,6 @@ const Brandimages = () => {
     }, 1500)
     return () => clearTimeout(timer)
   }, [isModalOpen, voiceWizardStep, resetVoiceoverFlow])
-
-  const handleDeleteVoiceover = useCallback((voiceover) => {
-    setVoiceoverToDelete(voiceover)
-    setShowVoiceoverDeleteConfirm(true)
-  }, [])
 
   const confirmDeleteVoiceover = useCallback(async () => {
     if (!voiceoverToDelete) return
@@ -3372,6 +3368,29 @@ const Brandimages = () => {
     }
   }
 
+  const handleDeleteVoiceover = async () => {
+    if (!selectedVoiceover) return;
+    const userId = localStorage.getItem('token') || '';
+    if (!userId) return;
+
+    try {
+      await deleteAsset({
+        userId,
+        assetType: 'voiceover',
+        assetName: selectedVoiceover
+      });
+
+      if (selectedProfileId) {
+        const updatedProfile = await getBrandProfileById({ userId, profileId: selectedProfileId });
+        syncStateFromProfile(updatedProfile);
+      }
+      setSelectedVoiceover(null);
+    } catch (err) {
+      console.error("Failed to delete voiceover", err);
+      setErrorMsg('Failed to delete voiceover');
+    }
+  }
+
   return (
     <div className="space-y-6 overflow-y-scroll h-[80vh]">
       <div className="flex items-center justify-between gap-3">
@@ -4100,6 +4119,16 @@ const Brandimages = () => {
         <div className="flex items-center justify-between px-5 py-4">
           <p className="text-gray-800 font-medium">Voiceovers</p>
           <div className="flex items-center gap-2">
+            {selectedVoiceover && (
+              <button
+                type="button"
+                onClick={handleDeleteVoiceover}
+                className="px-4 py-2 rounded-md bg-red-600 text-white text-sm hover:bg-red-700 transition-colors flex items-center gap-2"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
+            )}
             <button type="button" onClick={() => { setVoiceTab('upload'); openUploadModal('voiceovers'); }} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b] transition-colors">Upload</button>
             <button type="button" onClick={() => { setVoiceTab('record'); openUploadModal('voiceovers'); }} className="px-4 py-2 rounded-md bg-[#13008B] text-white text-sm hover:bg-[#0f006b] transition-colors">Record</button>
           </div>
@@ -4123,9 +4152,16 @@ const Brandimages = () => {
                 <p className="text-sm text-gray-500">No voiceovers added yet.</p>
               ) : (
                 uniqueNames.map((name, idx) => (
-                  <span key={idx} className="px-3 py-1.5 rounded-full border border-gray-300 bg-gray-50 text-sm text-gray-700">
-                    {name}
-                  </span>
+                  <div
+                    key={idx}
+                    className='flex justify-center flex-col items-center cursor-pointer'
+                    onClick={() => setSelectedVoiceover(name === selectedVoiceover ? null : name)}
+                  >
+                    <span className={`px-[30px] py-[30px] flex justify-center item-center rounded-full border ${selectedVoiceover === name ? 'border-[#13008B] bg-[#13008B]/10' : 'border-gray-300 bg-gray-50'} text-gray-700 text-lg transition-colors`}>
+                      <Mic size={30} className={selectedVoiceover === name ? 'text-[#13008B]' : ''} />
+                    </span>
+                    <span className={`mt-2 ${selectedVoiceover === name ? 'text-[#13008B] font-medium' : ''}`}>{name}</span>
+                  </div>
                 ))
               );
             })()}
