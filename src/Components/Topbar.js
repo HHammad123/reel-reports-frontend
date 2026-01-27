@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
-import { FaBars, FaPlus, FaSignOutAlt } from "react-icons/fa";
+import { FaBars, FaPlus, FaSignOutAlt, FaWallet } from "react-icons/fa";
 import { selectUser, selectIsAuthenticated, logoutUser } from '../redux/slices/userSlice';
 import { selectVideoJob } from '../redux/slices/videoJobSlice';
 import { useSidebar } from '../Contexts/SidebarContext';
@@ -44,6 +44,7 @@ const Topbar = () => {
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [selectedIsActive, setSelectedIsActive] = useState(false);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+  const [credits, setCredits] = useState(null);
 
   // Update local auth state when Redux state changes
   useEffect(() => {
@@ -51,6 +52,40 @@ const Topbar = () => {
       setLocalAuthState({ user, token: localStorage.getItem('token'), isAuthenticated: true });
     }
   }, [user, isAuthenticated]);
+
+  // Fetch credits
+  useEffect(() => {
+    const fetchCredits = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token || !effectiveUser?.email) return;
+
+        const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/admin/users/list', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({})
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const users = Array.isArray(data?.users) ? data.users : (Array.isArray(data) ? data : []);
+          const currentUser = users.find(u => u.email === effectiveUser.email);
+          if (currentUser && currentUser.credits_summary) {
+            setCredits(currentUser.credits_summary);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch credits:', error);
+      }
+    };
+
+    if (effectiveIsAuthenticated && effectiveUser) {
+      fetchCredits();
+    }
+  }, [effectiveIsAuthenticated, effectiveUser?.email]);
 
   // Fetch profiles on mount
   useEffect(() => {
@@ -228,6 +263,15 @@ const Topbar = () => {
         {effectiveIsAuthenticated && effectiveUser ? (
           <div className="flex items-center gap-3">
             <Link to="/profile" className="group inline-flex items-center gap-2 !no-underline hover:!no-underline">
+              {credits && credits.credits_balance !== undefined && (
+                <div className="hidden md:flex items-center gap-2 mr-2 bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-1.5 rounded-full border border-blue-100 shadow-sm">
+                  <FaWallet className="text-[#13008B] w-3.5 h-3.5" />
+                  <div className="flex flex-col items-start leading-none">
+                    <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Credits</span>
+                    <span className="text-sm font-bold text-[#13008B]">{credits.credits_balance.toLocaleString()}</span>
+                  </div>
+                </div>
+              )}
               <div className="h-11 w-11 rounded-full bg-gradient-to-br from-[#FFB347] via-[#FFA13D] to-[#FF8A3D] p-[2px] transition group-hover:from-[#FFA13D] group-hover:to-[#FF6A3D]">
                 <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-white">
                   {effectiveUser.picture ? (

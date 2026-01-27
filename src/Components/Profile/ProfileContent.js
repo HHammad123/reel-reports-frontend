@@ -1,6 +1,7 @@
 import React from 'react'
 import { useSelector } from 'react-redux'
 import { selectUser, selectIsAuthenticated } from '../../redux/slices/userSlice'
+import { Wallet, TrendingDown, Coins } from 'lucide-react'
 
 const ProfileContent = ({ userProfile }) => {
   // Redux selectors
@@ -38,6 +39,42 @@ const ProfileContent = ({ userProfile }) => {
   // Check authentication - use Redux if available, otherwise check localStorage
   const effectiveIsAuthenticated = isAuthenticated || localAuthState.isAuthenticated;
   const hasUserData = user || parsedProfile || localAuthState.user;
+
+  const [credits, setCredits] = React.useState(null);
+
+  React.useEffect(() => {
+    const fetchCredits = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const email = displayUser.email;
+
+        if (!token || !email) return;
+
+        const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/admin/users/list', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({})
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const users = Array.isArray(data?.users) ? data.users : (Array.isArray(data) ? data : []);
+          const currentUser = users.find(u => u.email === email);
+
+          if (currentUser && currentUser.credits_summary) {
+            setCredits(currentUser.credits_summary);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch credits:', error);
+      }
+    };
+
+    fetchCredits();
+  }, [displayUser.email]);
 
   // Helper function to get initials
   const getInitials = (user) => {
@@ -91,7 +128,7 @@ const ProfileContent = ({ userProfile }) => {
     <div className='w-full h-full'>
       <div className="flex">
         {/* Profile Content */}
-        <div className="w-full h-[85vh] rounded-lg p-8 bg-white">
+        <div className="w-full h-[85vh] overflow-y-scroll  rounded-lg p-8 bg-white">
           {/* Header */}
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-gray-900">Profile</h2>
@@ -169,6 +206,59 @@ const ProfileContent = ({ userProfile }) => {
                   {displayUser.company || displayUser.organization || 'Not provided'}
                 </span>
               </div>
+
+              {/* Credits Summary */}
+              {credits && (
+                <div className="mt-8">
+                  <h4 className="text-xl font-bold text-gray-800 mb-5 flex items-center gap-2">
+                    <Wallet className="w-5 h-5 text-[#13008B]" />
+                    Credits Overview
+                  </h4>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Main Balance Card */}
+                    <div className="col-span-1 md:col-span-2 bg-gradient-to-r from-[#13008B] to-[#4B3CC4] rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full -mr-10 -mt-10"></div>
+                      <div className="absolute bottom-0 left-0 w-24 h-24 bg-white opacity-5 rounded-full -ml-10 -mb-10"></div>
+
+                      <div className="relative z-10">
+                        <div className="text-blue-100 text-sm font-medium mb-1">Available Balance</div>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-4xl font-bold">{credits.credits_balance?.toLocaleString() || 0}</span>
+                          <span className="text-blue-200 text-sm">credits</span>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between text-sm text-blue-100">
+                          <span>Total Purchased: {credits.credits_purchased?.toLocaleString() || 0}</span>
+                          <button className="bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold text-white">
+                            Buy More
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stats Cards */}
+                    <div className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center">
+                        <TrendingDown className="w-5 h-5 text-orange-500" />
+                      </div>
+                      <div>
+                        <div className="text-gray-500 text-xs font-medium uppercase tracking-wide">Consumed</div>
+                        <div className="text-lg font-bold text-gray-900">{credits.credits_consumed?.toLocaleString() || 0}</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center">
+                        <Coins className="w-5 h-5 text-green-600" />
+                      </div>
+                      <div>
+                        <div className="text-gray-500 text-xs font-medium uppercase tracking-wide">Amount Spent</div>
+                        <div className="text-lg font-bold text-gray-900">${credits.amount_spent?.toLocaleString() || 0}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Edit Profile Button */}

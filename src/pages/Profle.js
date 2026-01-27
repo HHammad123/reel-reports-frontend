@@ -14,7 +14,7 @@ const Profile = () => {
   const navigate = useNavigate();
   const user = useSelector(selectUser);
   const isAuthenticated = useSelector(selectIsAuthenticated);
-  
+
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -23,10 +23,10 @@ const Profile = () => {
     try {
       setLoading(true);
       setError('');
-      
+
       // Get user_id from token or user object
       const userId = localStorage.getItem('token') || user?.id || user?.user_id || '';
-      
+
       if (!userId) {
         throw new Error('User ID not found');
       }
@@ -49,7 +49,7 @@ const Profile = () => {
       // Handle different response structures
       const profileData = data?.user || data?.data || data;
       setUserProfile(profileData);
-      
+
       // Also update localStorage for consistency
       try {
         localStorage.setItem('user', JSON.stringify(profileData));
@@ -78,11 +78,11 @@ const Profile = () => {
       navigate('/login');
       return;
     }
-    
+
     // Check authentication from Redux or localStorage
     const localAuth = localStorage.getItem('isAuthenticated') === 'true';
     const token = localStorage.getItem('token');
-    
+
     // If authenticated (Redux or localStorage) and have token, fetch profile
     if ((isAuthenticated || localAuth) && token) {
       fetchUserProfile();
@@ -94,9 +94,9 @@ const Profile = () => {
 
   return (
     <div className='flex h-screen bg-[#E5E2FF]'>
-      <Sidebar/>
+      <Sidebar />
       <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
-        <Topbar/>
+        <Topbar />
         <div className='h-[77vh] my-2 flex items-start justify-start'>
           <ProfileSidebar />
           {loading ? (
