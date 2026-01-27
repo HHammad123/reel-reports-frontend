@@ -5002,6 +5002,19 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               }
             }
 
+            // Sort overlays by start time to ensure correct order
+            textOverlays.sort((a, b) => {
+              const startA = a.from || 0;
+              const startB = b.from || 0;
+              return startA - startB;
+            });
+
+            otherOverlays.sort((a, b) => {
+              const startA = a.from || 0;
+              const startB = b.from || 0;
+              return startA - startB;
+            });
+
             // Process text overlays individually with start_time and end_time at root level
             for (const overlay of textOverlays) {
               const layerName = getLayerName(overlay.type);
@@ -8505,6 +8518,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               }
               return overlay;
             });
+
+          // Sort finalOverlays by start time (timing-based ordering)
+          finalOverlays.sort((a, b) => (a.from || 0) - (b.from || 0));
 
           // Group final overlays by new compacted row for logging
           const finalOverlaysByRow = {};

@@ -24,6 +24,10 @@ export const useTimelineTransforms = () => {
         const maxRow = Math.max(0, ...Array.from(rowMap.keys()));
         for (let i = 0; i <= maxRow; i++) {
             const overlaysInRow = rowMap.get(i) || [];
+            
+            // Sort overlays in row by start time to ensure correct timeline ordering
+            overlaysInRow.sort((a, b) => (a.from || 0) - (b.from || 0));
+
             const items = overlaysInRow.map(overlay => {
                 const baseItem = {
                     id: overlay.id.toString(),

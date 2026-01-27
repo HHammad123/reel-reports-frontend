@@ -3334,7 +3334,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                 if (modelUpper === 'VEO3') {
                                   return <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">Avatar</span>;
                                 } else if (modelUpper === 'ANCHOR') {
-                                  return <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded">Anchor (Beta)</span>;
+                                  {/* return <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded">Anchor (Beta)</span>; */ }
                                 }
                                 return null;
                               })()}
@@ -8918,7 +8918,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Avatar Type</label>
                     <div className="flex gap-3 flex-wrap">
-                      {['Presenter', 'Anchor (Beta)'].map((atype) => (
+                      {['Avatar'].map((atype) => (
                         <button
                           key={atype}
                           onClick={async () => {
@@ -8941,7 +8941,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                               }
                             }
                           }}
-                          className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${(atype === 'Anchor (Beta)' && newSceneAvatarType === 'Anchor') || (atype === 'Presenter' && newSceneAvatarType === 'Presenter')
+                          className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${(atype === 'Anchor (Beta)' && newSceneAvatarType === 'Anchor') || (atype === 'Avatar' && newSceneAvatarType === 'Avatar')
                             ? 'bg-[#13008B] text-white'
                             : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                             }`}
