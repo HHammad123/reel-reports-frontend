@@ -229,9 +229,9 @@ const ProfileContent = ({ userProfile }) => {
                         </div>
                         <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between text-sm text-blue-100">
                           <span>Total Purchased: {credits.credits_purchased?.toLocaleString() || 0}</span>
-                          <button className="bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold text-white">
+                          {/* <button className="bg-white/20 hover:bg-white/30 transition-colors px-3 py-1 rounded-lg text-xs font-semibold text-white">
                             Buy More
-                          </button>
+                          </button> */}
                         </div>
                       </div>
                     </div>

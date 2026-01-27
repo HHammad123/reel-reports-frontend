@@ -35,6 +35,7 @@ import AdminFinalVideos from './pages/AdminFinalVideos';
 import VideoEditor from './pages/VideoEditor';
 import VideoEditorPage from './pages/VideoEditorPage';
 import FreeTrialOver from './pages/FreeTrialOver';
+import ManageCredits from './pages/ManageCredits';
 
 
 function App() {
@@ -267,6 +268,11 @@ function App() {
           <Route path="/admin/logs/:userId/final-videos" element={
             <ProtectedRoute>
               <AdminFinalVideos />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/managecredits" element={
+            <ProtectedRoute>
+              <ManageCredits />
             </ProtectedRoute>
           } />
         </Routes>

@@ -1,7 +1,7 @@
 import React from 'react'
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars, FaFileAlt } from "react-icons/fa";
+import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars, FaFileAlt, FaWallet } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
@@ -10,57 +10,57 @@ import LogoImage from "../asset/mainLogo.png";
 import { MoreVertical } from 'lucide-react';
 
 const Sidebar = () => {
-   const { sidebarOpen, setSidebarOpen } = useSidebar();
-   const location = useLocation();
-   const navigate = useNavigate();
-   const dispatch = useDispatch();
-   
-   // Redux selectors
-   const user = useSelector(selectUser);
-   const isAuthenticated = useSelector(selectIsAuthenticated);
-   
-   // Fallback to localStorage for role detection (for reload scenarios)
-   const [localUser, setLocalUser] = useState(() => {
-     try {
-       const storedUser = localStorage.getItem('user');
-       return storedUser ? JSON.parse(storedUser) : null;
-     } catch (e) {
-       return null;
-     }
-   });
-   
-   // Update local user when Redux user changes
-   useEffect(() => {
-     if (user) {
-       setLocalUser(user);
-     } else if (isAuthenticated) {
-       // If authenticated but no user in Redux, try localStorage
-       try {
-         const storedUser = localStorage.getItem('user');
-         if (storedUser) {
-           setLocalUser(JSON.parse(storedUser));
-         }
-       } catch (e) {
-         // ignore
-       }
-     }
-   }, [user, isAuthenticated]);
-   
-   // Use Redux user if available, otherwise fallback to localStorage
-   const effectiveUser = user || localUser;
-   
-   const { pathname } = location;
-   const splitLocation = pathname.split("/");
-   const baseNavClass = "w-full mb-3 rounded-xl p-4 flex items-center gap-3 text-left text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50";
-   const activeClass = `${baseNavClass}  bg-white/25 shadow-lg shadow-black/10`;
-   const inactiveClass = `${baseNavClass}  hover:bg-white/20`;
-   const rawRole = (effectiveUser?.role || effectiveUser?.user_role || effectiveUser?.type || effectiveUser?.userType || '').toString().toLowerCase();
-   const isAdmin = rawRole === 'admin'; 
+  const { sidebarOpen, setSidebarOpen } = useSidebar();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+
+  // Redux selectors
+  const user = useSelector(selectUser);
+  const isAuthenticated = useSelector(selectIsAuthenticated);
+
+  // Fallback to localStorage for role detection (for reload scenarios)
+  const [localUser, setLocalUser] = useState(() => {
+    try {
+      const storedUser = localStorage.getItem('user');
+      return storedUser ? JSON.parse(storedUser) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  // Update local user when Redux user changes
+  useEffect(() => {
+    if (user) {
+      setLocalUser(user);
+    } else if (isAuthenticated) {
+      // If authenticated but no user in Redux, try localStorage
+      try {
+        const storedUser = localStorage.getItem('user');
+        if (storedUser) {
+          setLocalUser(JSON.parse(storedUser));
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [user, isAuthenticated]);
+
+  // Use Redux user if available, otherwise fallback to localStorage
+  const effectiveUser = user || localUser;
+
+  const { pathname } = location;
+  const splitLocation = pathname.split("/");
+  const baseNavClass = "w-full mb-3 rounded-xl p-4 flex items-center gap-3 text-left text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50";
+  const activeClass = `${baseNavClass}  bg-white/25 shadow-lg shadow-black/10`;
+  const inactiveClass = `${baseNavClass}  hover:bg-white/20`;
+  const rawRole = (effectiveUser?.role || effectiveUser?.user_role || effectiveUser?.type || effectiveUser?.userType || '').toString().toLowerCase();
+  const isAdmin = rawRole === 'admin';
   // Sessions state for chat history
   const [sessions, setSessions] = useState([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsError, setSessionsError] = useState('');
-  
+
   // Menu and dialog states
   const [openMenuId, setOpenMenuId] = useState(null);
   const [showRenameDialog, setShowRenameDialog] = useState(false);
@@ -74,39 +74,39 @@ const Sidebar = () => {
   const menuRef = useRef(null);
 
   const fetchSessions = useCallback(async () => {
-      try {
-        setIsLoadingSessions(true);
-        setSessionsError('');
-        // Prefer token from localStorage, fallback to redux user id
-        const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
-        if (!token) {
-          setSessions([]);
-          return;
-        }
-        const body = { user_id: token };
-        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/v1/users/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const text = await resp.text();
-        let data; try { data = JSON.parse(text); } catch (_) { data = text; }
-        if (!resp.ok) throw new Error(`users/sessions failed: ${resp.status} ${text}`);
-        const list = Array.isArray(data?.sessions) ? data.sessions : [];
-        setSessions(list);
-        try { localStorage.setItem('user_sessions', JSON.stringify(list)); } catch (_) { /* noop */ }
-      } catch (e) {
-        console.error('Failed to fetch sessions:', e);
-        setSessionsError('Unable to load sessions.');
-        // try cache
-        try {
-          const cached = localStorage.getItem('user_sessions');
-          if (cached) setSessions(JSON.parse(cached));
-        } catch (_) { /* noop */ }
-      } finally {
-        setIsLoadingSessions(false);
+    try {
+      setIsLoadingSessions(true);
+      setSessionsError('');
+      // Prefer token from localStorage, fallback to redux user id
+      const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
+      if (!token) {
+        setSessions([]);
+        return;
       }
-    }, [user]);
+      const body = { user_id: token };
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/v1/users/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+      if (!resp.ok) throw new Error(`users/sessions failed: ${resp.status} ${text}`);
+      const list = Array.isArray(data?.sessions) ? data.sessions : [];
+      setSessions(list);
+      try { localStorage.setItem('user_sessions', JSON.stringify(list)); } catch (_) { /* noop */ }
+    } catch (e) {
+      console.error('Failed to fetch sessions:', e);
+      setSessionsError('Unable to load sessions.');
+      // try cache
+      try {
+        const cached = localStorage.getItem('user_sessions');
+        if (cached) setSessions(JSON.parse(cached));
+      } catch (_) { /* noop */ }
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, [user]);
 
   // Load sessions for this user on mount and refresh when titles update
   React.useEffect(() => {
@@ -153,7 +153,7 @@ const Sidebar = () => {
       alert('Please enter a valid session name');
       return;
     }
-    
+
     try {
       setIsRenaming(true);
       const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
@@ -161,7 +161,7 @@ const Sidebar = () => {
         alert('Please login to rename session.');
         return;
       }
-      
+
       const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -171,7 +171,7 @@ const Sidebar = () => {
           new_title: renameNewTitle.trim()
         })
       });
-      
+
       const text = await response.text();
       let data;
       try {
@@ -179,14 +179,14 @@ const Sidebar = () => {
       } catch (_) {
         data = text;
       }
-      
+
       if (!response.ok) {
         throw new Error(`Rename failed: ${response.status} ${text}`);
       }
-      
+
       // Refresh sessions list
       await fetchSessions();
-      
+
       // Close dialog and reset state
       setShowRenameDialog(false);
       setRenameSessionId(null);
@@ -203,7 +203,7 @@ const Sidebar = () => {
   // Handle delete session
   const handleDeleteSession = async () => {
     if (!deleteSessionId) return;
-    
+
     try {
       setIsDeleting(true);
       const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
@@ -211,7 +211,7 @@ const Sidebar = () => {
         alert('Please login to delete session.');
         return;
       }
-      
+
       const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -220,7 +220,7 @@ const Sidebar = () => {
           user_id: token
         })
       });
-      
+
       const text = await response.text();
       let data;
       try {
@@ -228,21 +228,21 @@ const Sidebar = () => {
       } catch (_) {
         data = text;
       }
-      
+
       if (!response.ok) {
         throw new Error(`Delete failed: ${response.status} ${text}`);
       }
-      
+
       // If deleted session is the current one, navigate away
       const currentSessionId = localStorage.getItem('session_id');
       if (deleteSessionId === currentSessionId) {
         localStorage.removeItem('session_id');
         navigate('/');
       }
-      
+
       // Refresh sessions list
       await fetchSessions();
-      
+
       // Close dialog and reset state
       setShowDeleteDialog(false);
       setDeleteSessionId(null);
@@ -262,17 +262,17 @@ const Sidebar = () => {
 
   const createSessionAndNavigate = async () => {
     try {
-      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
+      try { localStorage.setItem('is_creating_session', 'true'); } catch (_) { }
       const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
       if (!token) {
         alert('Please login to start a chat.');
         navigate('/login');
         return;
       }
-      
+
       // Check user validation status - check both Redux and localStorage
       let userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
-      
+
       // Fallback to localStorage if not in Redux
       if (!userStatus || userStatus === '') {
         try {
@@ -285,9 +285,9 @@ const Sidebar = () => {
           console.warn('Error reading user from localStorage:', e);
         }
       }
-      
+
       const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
-      
+
       // Check if user is admin (also check localStorage)
       let checkIsAdmin = isAdmin;
       if (!checkIsAdmin) {
@@ -302,7 +302,7 @@ const Sidebar = () => {
           // ignore
         }
       }
-      
+
       // Only allow if status is 'validated' OR user is admin, otherwise show trial over modal
       if (normalizedStatus !== 'validated' && !checkIsAdmin) {
         console.log('Blocking access - Status:', normalizedStatus, 'IsAdmin:', checkIsAdmin);
@@ -329,7 +329,7 @@ const Sidebar = () => {
         }
       } catch (_) { /* noop */ }
       // Hint Typetabs to show Hybrid by default on entry
-      try { localStorage.setItem('force_typetab_hybrid', 'true'); } catch(_){}
+      try { localStorage.setItem('force_typetab_hybrid', 'true'); } catch (_) { }
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -351,13 +351,13 @@ const Sidebar = () => {
       console.error('Failed to create new session:', e);
       alert('Unable to start a new chat. Please try again.');
     } finally {
-      try { localStorage.removeItem('is_creating_session'); } catch(_){}
+      try { localStorage.removeItem('is_creating_session'); } catch (_) { }
     }
   };
 
   const createSessionAndGoBuildReel = async () => {
     try {
-      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
+      try { localStorage.setItem('is_creating_session', 'true'); } catch (_) { }
       const userToken = localStorage.getItem('token') || user?.id || user?.user_id || '';
       if (!userToken) {
         navigate('/login');
@@ -384,7 +384,7 @@ const Sidebar = () => {
       console.error('Failed to create build reel session:', e);
       alert('Unable to open Build Reel. Please try again.');
     } finally {
-      try { localStorage.removeItem('is_creating_session'); } catch(_){}
+      try { localStorage.removeItem('is_creating_session'); } catch (_) { }
     }
   };
 
@@ -392,12 +392,12 @@ const Sidebar = () => {
     try {
       // Dispatch Redux logout action
       await dispatch(logoutUser());
-      
+
       // Clear any remaining localStorage items
       localStorage.removeItem('session_id');
       localStorage.removeItem('chat_history');
       localStorage.removeItem('auth');
-      
+
       // Navigate to login
       navigate('/login');
     } catch (error) {
@@ -411,9 +411,8 @@ const Sidebar = () => {
     <>
       {/* Sidebar */}
       <aside
-        className={`relative flex h-full flex-col text-white transition-all duration-300 ease-in-out min-w-0 ${
-          sidebarOpen ? 'w-72' : 'w-0'
-        } overflow-hidden`}
+        className={`relative flex h-full flex-col text-white transition-all duration-300 ease-in-out min-w-0 ${sidebarOpen ? 'w-72' : 'w-0'
+          } overflow-hidden`}
         style={{
           background: `linear-gradient(
             to bottom,
@@ -436,292 +435,298 @@ const Sidebar = () => {
           <div className="flex-1 min-h-0 overflow-y-auto">
             {/* Main Navigation */}
             <div className="mb-2 px-6">
-                <button
-                  onClick={createSessionAndNavigate}
-                  className={splitLocation[1] === 'chat' ? activeClass : inactiveClass}
-                >
-                  <FaPlay className="h-5 w-5" />
-                  <span>Generate Reel</span>
-                </button>
-                <button
-                  onClick={createSessionAndGoBuildReel}
-                  className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
-                >
-                  <FaThLarge className="h-5 w-5" />
-                  <span>Build Reel</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    try {
-                      navigate('/media');
-                    } catch (err) {
-                      console.error('Navigation error:', err);
-                      window.location.href = '/media';
+              <button
+                onClick={createSessionAndNavigate}
+                className={splitLocation[1] === 'chat' ? activeClass : inactiveClass}
+              >
+                <FaPlay className="h-5 w-5" />
+                <span>Generate Reel</span>
+              </button>
+              <button
+                onClick={createSessionAndGoBuildReel}
+                className={splitLocation[1] === 'buildreel' ? activeClass : inactiveClass}
+              >
+                <FaThLarge className="h-5 w-5" />
+                <span>Build Reel</span>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  try {
+                    navigate('/media');
+                  } catch (err) {
+                    console.error('Navigation error:', err);
+                    window.location.href = '/media';
+                  }
+                }}
+                className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
+              >
+                <FaImage className="h-5 w-5" />
+                <span>My Media</span>
+              </button>
+
+              {isAdmin && (
+                <div className="mt-8">
+                  <p className="mb-3 text-xs uppercase tracking-wide text-white/70">Admin</p>
+                  <button
+                    onClick={() => navigate('/admin/users')}
+                    className={
+                      pathname.startsWith('/admin/users') && !pathname.includes('/create')
+                        ? activeClass
+                        : inactiveClass
                     }
-                  }}
-                  className={splitLocation[1] === 'media' ? activeClass : inactiveClass}
-                >
-                  <FaImage className="h-5 w-5" />
-                  <span>My Media</span>
-                </button>
+                  >
+                    <FaUsers className="h-5 w-5" />
+                    <span>All Users</span>
+                  </button>
+                  <button
+                    onClick={() => navigate('/admin/users/create')}
+                    className={pathname === '/admin/users/create' ? activeClass : inactiveClass}
+                  >
+                    <FaUserPlus className="h-5 w-5" />
+                    <span>Create User</span>
+                  </button>
+                  <button
+                    onClick={() => navigate('/admin/logs')}
+                    className={pathname === '/admin/logs' ? activeClass : inactiveClass}
+                  >
+                    <FaFileAlt className="h-5 w-5" />
+                    <span>Logs</span>
+                  </button>
+                  <button
+                    onClick={() => navigate('/admin/managecredits')}
+                    className={pathname === '/admin/managecredits' ? activeClass : inactiveClass}
+                  >
+                    <FaWallet className="h-5 w-5" />
+                    <span>Manage Credits</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
-                {isAdmin && (
-                  <div className="mt-8">
-                    <p className="mb-3 text-xs uppercase tracking-wide text-white/70">Admin</p>
-                    <button
-                      onClick={() => navigate('/admin/users')}
-                      className={
-                        pathname.startsWith('/admin/users') && !pathname.includes('/create')
-                          ? activeClass
-                          : inactiveClass
-                      }
-                    >
-                      <FaUsers className="h-5 w-5" />
-                      <span>All Users</span>
-                    </button>
-                    <button
-                      onClick={() => navigate('/admin/users/create')}
-                      className={pathname === '/admin/users/create' ? activeClass : inactiveClass}
-                    >
-                      <FaUserPlus className="h-5 w-5" />
-                      <span>Create User</span>
-                    </button>
-                    <button
-                      onClick={() => navigate('/admin/logs')}
-                      className={pathname === '/admin/logs' ? activeClass : inactiveClass}
-                    >
-                      <FaFileAlt className="h-5 w-5" />
-                      <span>Logs</span>
-                    </button>
-                  </div>
-                )}
-              </div>
+            {/* Chat History */}
+            <div className="px-6 pb-4">
+              <div className="mb-5">
+                <h2 className="mb-3 text-sm uppercase tracking-wide text-white/70">Chats History</h2>
+                <div className="space-y-2">
+                  {isLoadingSessions && <div className="text-xs text-purple-100/80">Loading…</div>}
+                  {!isLoadingSessions && sessionsError && sessions.length === 0 && (
+                    <div className="text-xs text-red-100">{sessionsError}</div>
+                  )}
+                  {!isLoadingSessions && sessions.length === 0 && !sessionsError && (
+                    <div className="text-xs text-purple-100/80">No sessions yet</div>
+                  )}
+                  {sessions.map((s, index) => {
+                    const id = s?.id || s?.session_id || '';
+                    const label = s?.title || 'New Chat';
+                    // Extract session ID from URL (e.g., /chat/{sessionId} or /buildreel/{sessionId})
+                    const urlSessionId = pathname.split('/').length > 2 ? pathname.split('/')[2] : null;
+                    // Also check localStorage as fallback
+                    const localStorageSessionId = localStorage.getItem('session_id');
+                    const isActive = id && (id === urlSessionId || id === localStorageSessionId);
+                    const isMenuOpen = openMenuId === id;
 
-              {/* Chat History */}
-              <div className="px-6 pb-4">
-                <div className="mb-5">
-                  <h2 className="mb-3 text-sm uppercase tracking-wide text-white/70">Chats History</h2>
-                  <div className="space-y-2">
-                    {isLoadingSessions && <div className="text-xs text-purple-100/80">Loading…</div>}
-                    {!isLoadingSessions && sessionsError && sessions.length === 0 && (
-                      <div className="text-xs text-red-100">{sessionsError}</div>
-                    )}
-                    {!isLoadingSessions && sessions.length === 0 && !sessionsError && (
-                      <div className="text-xs text-purple-100/80">No sessions yet</div>
-                    )}
-                    {sessions.map((s, index) => {
-                      const id = s?.id || s?.session_id || '';
-                      const label = s?.title || 'New Chat';
-                      // Extract session ID from URL (e.g., /chat/{sessionId} or /buildreel/{sessionId})
-                      const urlSessionId = pathname.split('/').length > 2 ? pathname.split('/')[2] : null;
-                      // Also check localStorage as fallback
-                      const localStorageSessionId = localStorage.getItem('session_id');
-                      const isActive = id && (id === urlSessionId || id === localStorageSessionId);
-                      const isMenuOpen = openMenuId === id;
-                      
-                      return (
-                        <div
-                          key={id || index}
-                          className="relative group"
-                        >
-                          <div className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white transition flex items-center justify-between gap-2 ${
-                            isActive 
-                              ? 'bg-white/25 shadow-lg shadow-black/10 font-medium' 
-                              : 'bg-white/10 hover:bg-white/20'
+                    return (
+                      <div
+                        key={id || index}
+                        className="relative group"
+                      >
+                        <div className={`w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white transition flex items-center justify-between gap-2 ${isActive
+                          ? 'bg-white/25 shadow-lg shadow-black/10 font-medium'
+                          : 'bg-white/10 hover:bg-white/20'
                           }`}>
+                          <button
+                            type="button"
+                            className="flex-1 truncate text-left"
+                            onClick={async () => {
+                              if (!id) return;
+
+                              // Check user validation status before navigating
+                              let userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
+
+                              // Fallback to localStorage if not in Redux
+                              if (!userStatus || userStatus === '') {
+                                try {
+                                  const storedUser = localStorage.getItem('user');
+                                  if (storedUser) {
+                                    const parsedUser = JSON.parse(storedUser);
+                                    userStatus = (parsedUser?.status || parsedUser?.validation_status || '').toString().toLowerCase();
+                                  }
+                                } catch (e) {
+                                  // ignore
+                                }
+                              }
+
+                              const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
+
+                              // Check if user is admin (also check localStorage)
+                              let checkIsAdmin = isAdmin;
+                              if (!checkIsAdmin) {
+                                try {
+                                  const storedUser = localStorage.getItem('user');
+                                  if (storedUser) {
+                                    const parsedUser = JSON.parse(storedUser);
+                                    const localRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase();
+                                    checkIsAdmin = localRole === 'admin';
+                                  }
+                                } catch (e) {
+                                  // ignore
+                                }
+                              }
+
+                              // Only allow if status is 'validated' OR user is admin, otherwise show trial over modal
+                              if (normalizedStatus !== 'validated' && !checkIsAdmin) {
+                                console.log('Blocking session access - Status:', normalizedStatus, 'IsAdmin:', checkIsAdmin);
+                                setShowTrialOverModal(true);
+                                return;
+                              }
+
+                              try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
+
+                              // Call user-session-data API to check videoType
+                              try {
+                                const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
+                                if (token) {
+                                  const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ user_id: token, session_id: id })
+                                  });
+                                  const sessionText = await sessionResp.text();
+                                  let sessionData;
+                                  try {
+                                    sessionData = JSON.parse(sessionText);
+                                  } catch (_) {
+                                    sessionData = sessionText;
+                                  }
+
+                                  if (sessionResp.ok && sessionData) {
+                                    const sd = sessionData?.session_data || sessionData?.session || {};
+                                    const videoType = sd?.videoType || sd?.video_type || '';
+
+                                    // If videoType is 'custom', navigate to buildreel
+                                    if (videoType === 'custom') {
+                                      // Check what exists in the session
+                                      const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+                                      const airesponse = scripts.length > 0 && Array.isArray(scripts[0]?.airesponse) ? scripts[0].airesponse : [];
+                                      const hasScript = airesponse.length > 0;
+
+                                      // Check for images in session_data.images array
+                                      const images = Array.isArray(sd?.images) ? sd.images : [];
+                                      // Also check for ref_image in scenes
+                                      const hasRefImages = airesponse.some(scene => {
+                                        const refImages = Array.isArray(scene?.ref_image) ? scene.ref_image : [];
+                                        return refImages.length > 0 && refImages.some(img => img && String(img).trim() !== '');
+                                      });
+                                      const hasImages = images.length > 0 || hasRefImages;
+
+                                      // Check for videos
+                                      const videos = Array.isArray(sd?.videos) ? sd.videos : [];
+                                      const hasVideos = videos.length > 0;
+
+                                      // Determine step and subView
+                                      let targetStep = 1;
+                                      let targetSubView = 'editor';
+
+                                      if (hasVideos) {
+                                        targetStep = 2;
+                                        targetSubView = 'videos';
+                                      } else if (hasImages) {
+                                        targetStep = 2;
+                                        targetSubView = 'images';
+                                      } else if (hasScript) {
+                                        targetStep = 2;
+                                        targetSubView = 'editor';
+                                      } else {
+                                        targetStep = 1;
+                                        targetSubView = 'editor';
+                                      }
+
+                                      // Set step and subView in localStorage before navigating
+                                      try {
+                                        localStorage.setItem('buildreel_current_step', String(targetStep));
+                                        localStorage.setItem('buildreel_subview', targetSubView);
+                                      } catch (_) { /* noop */ }
+
+                                      try {
+                                        navigate(`/buildreel/${id}`);
+                                      } catch (navError) {
+                                        console.error('Navigation error, using window.location:', navError);
+                                        window.location.href = `/buildreel/${id}`;
+                                      }
+                                      return;
+                                    }
+                                  }
+                                }
+                              } catch (sessionError) {
+                                console.error('Failed to fetch session data:', sessionError);
+                                // Continue to default chat navigation if session data fetch fails
+                              }
+
+                              // Default: navigate to chat
+                              try {
+                                navigate(`/chat/${id}`);
+                              } catch (navError) {
+                                console.error('Navigation error, using window.location:', navError);
+                                window.location.href = `/chat/${id}`;
+                              }
+                            }}
+                            title={label}
+                          >
+                            {label}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenMenuId(isMenuOpen ? null : id);
+                            }}
+                            className="flex-shrink-0 p-1 rounded hover:bg-white/20 transition-colors"
+                            title="More options"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Dropdown Menu */}
+                        {isMenuOpen && (
+                          <div
+                            ref={menuRef}
+                            className="absolute right-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] overflow-hidden"
+                          >
                             <button
                               type="button"
-                              className="flex-1 truncate text-left"
-                              onClick={async () => {
-                                if (!id) return;
-                                
-                                // Check user validation status before navigating
-                                let userStatus = (user?.status || user?.validation_status || '').toString().toLowerCase();
-                                
-                                // Fallback to localStorage if not in Redux
-                                if (!userStatus || userStatus === '') {
-                                  try {
-                                    const storedUser = localStorage.getItem('user');
-                                    if (storedUser) {
-                                      const parsedUser = JSON.parse(storedUser);
-                                      userStatus = (parsedUser?.status || parsedUser?.validation_status || '').toString().toLowerCase();
-                                    }
-                                  } catch (e) {
-                                    // ignore
-                                  }
-                                }
-                                
-                                const normalizedStatus = userStatus === 'non_validated' ? 'not_validated' : userStatus;
-                                
-                                // Check if user is admin (also check localStorage)
-                                let checkIsAdmin = isAdmin;
-                                if (!checkIsAdmin) {
-                                  try {
-                                    const storedUser = localStorage.getItem('user');
-                                    if (storedUser) {
-                                      const parsedUser = JSON.parse(storedUser);
-                                      const localRole = (parsedUser?.role || parsedUser?.user_role || parsedUser?.type || parsedUser?.userType || '').toString().toLowerCase();
-                                      checkIsAdmin = localRole === 'admin';
-                                    }
-                                  } catch (e) {
-                                    // ignore
-                                  }
-                                }
-                                
-                                // Only allow if status is 'validated' OR user is admin, otherwise show trial over modal
-                                if (normalizedStatus !== 'validated' && !checkIsAdmin) {
-                                  console.log('Blocking session access - Status:', normalizedStatus, 'IsAdmin:', checkIsAdmin);
-                                  setShowTrialOverModal(true);
-                                  return;
-                                }
-                                
-                                try { localStorage.setItem('session_id', id); } catch (_) { /* noop */ }
-                                
-                                // Call user-session-data API to check videoType
-                                try {
-                                  const token = localStorage.getItem('token') || user?.id || user?.user_id || '';
-                                  if (token) {
-                                    const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ user_id: token, session_id: id })
-                                    });
-                                    const sessionText = await sessionResp.text();
-                                    let sessionData;
-                                    try {
-                                      sessionData = JSON.parse(sessionText);
-                                    } catch (_) {
-                                      sessionData = sessionText;
-                                    }
-                                    
-                                    if (sessionResp.ok && sessionData) {
-                                      const sd = sessionData?.session_data || sessionData?.session || {};
-                                      const videoType = sd?.videoType || sd?.video_type || '';
-                                      
-                                      // If videoType is 'custom', navigate to buildreel
-                                      if (videoType === 'custom') {
-                                        // Check what exists in the session
-                                        const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
-                                        const airesponse = scripts.length > 0 && Array.isArray(scripts[0]?.airesponse) ? scripts[0].airesponse : [];
-                                        const hasScript = airesponse.length > 0;
-                                        
-                                        // Check for images in session_data.images array
-                                        const images = Array.isArray(sd?.images) ? sd.images : [];
-                                        // Also check for ref_image in scenes
-                                        const hasRefImages = airesponse.some(scene => {
-                                          const refImages = Array.isArray(scene?.ref_image) ? scene.ref_image : [];
-                                          return refImages.length > 0 && refImages.some(img => img && String(img).trim() !== '');
-                                        });
-                                        const hasImages = images.length > 0 || hasRefImages;
-                                        
-                                        // Check for videos
-                                        const videos = Array.isArray(sd?.videos) ? sd.videos : [];
-                                        const hasVideos = videos.length > 0;
-                                        
-                                        // Determine step and subView
-                                        let targetStep = 1;
-                                        let targetSubView = 'editor';
-                                        
-                                        if (hasVideos) {
-                                          targetStep = 2;
-                                          targetSubView = 'videos';
-                                        } else if (hasImages) {
-                                          targetStep = 2;
-                                          targetSubView = 'images';
-                                        } else if (hasScript) {
-                                          targetStep = 2;
-                                          targetSubView = 'editor';
-                                        } else {
-                                          targetStep = 1;
-                                          targetSubView = 'editor';
-                                        }
-                                        
-                                        // Set step and subView in localStorage before navigating
-                                        try {
-                                          localStorage.setItem('buildreel_current_step', String(targetStep));
-                                          localStorage.setItem('buildreel_subview', targetSubView);
-                                        } catch (_) { /* noop */ }
-                                        
-                                        try {
-                                          navigate(`/buildreel/${id}`);
-                                        } catch (navError) {
-                                          console.error('Navigation error, using window.location:', navError);
-                                          window.location.href = `/buildreel/${id}`;
-                                        }
-                                        return;
-                                      }
-                                    }
-                                  }
-                                } catch (sessionError) {
-                                  console.error('Failed to fetch session data:', sessionError);
-                                  // Continue to default chat navigation if session data fetch fails
-                                }
-                                
-                                // Default: navigate to chat
-                                try {
-                                  navigate(`/chat/${id}`);
-                                } catch (navError) {
-                                  console.error('Navigation error, using window.location:', navError);
-                                  window.location.href = `/chat/${id}`;
-                                }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRenameSessionId(id);
+                                setRenameNewTitle(label);
+                                setShowRenameDialog(true);
+                                setOpenMenuId(null);
                               }}
-                              title={label}
+                              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                             >
-                              {label}
+                              Rename
                             </button>
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setOpenMenuId(isMenuOpen ? null : id);
+                                setDeleteSessionId(id);
+                                setShowDeleteDialog(true);
+                                setOpenMenuId(null);
                               }}
-                              className="flex-shrink-0 p-1 rounded hover:bg-white/20 transition-colors"
-                              title="More options"
+                              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
                             >
-                              <MoreVertical className="w-4 h-4" />
+                              Delete
                             </button>
                           </div>
-                          
-                          {/* Dropdown Menu */}
-                          {isMenuOpen && (
-                            <div
-                              ref={menuRef}
-                              className="absolute right-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-gray-200 min-w-[120px] overflow-hidden"
-                            >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setRenameSessionId(id);
-                                  setRenameNewTitle(label);
-                                  setShowRenameDialog(true);
-                                  setOpenMenuId(null);
-                                }}
-                                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                              >
-                                Rename
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteSessionId(id);
-                                  setShowDeleteDialog(true);
-                                  setOpenMenuId(null);
-                                }}
-                                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 transition-colors"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
+              </div>
             </div>
           </div>
 
