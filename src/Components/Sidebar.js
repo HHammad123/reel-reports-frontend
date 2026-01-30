@@ -607,37 +607,29 @@ const Sidebar = () => {
 
                                     // If videoType is 'custom', navigate to buildreel
                                     if (videoType === 'custom') {
-                                      // Check what exists in the session
-                                      const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
-                                      const airesponse = scripts.length > 0 && Array.isArray(scripts[0]?.airesponse) ? scripts[0].airesponse : [];
-                                      const hasScript = airesponse.length > 0;
-
-                                      // Check for images in session_data.images array
-                                      const images = Array.isArray(sd?.images) ? sd.images : [];
-                                      // Also check for ref_image in scenes
-                                      const hasRefImages = airesponse.some(scene => {
-                                        const refImages = Array.isArray(scene?.ref_image) ? scene.ref_image : [];
-                                        return refImages.length > 0 && refImages.some(img => img && String(img).trim() !== '');
-                                      });
-                                      const hasImages = images.length > 0 || hasRefImages;
-
-                                      // Check for videos
-                                      const videos = Array.isArray(sd?.videos) ? sd.videos : [];
-                                      const hasVideos = videos.length > 0;
-
+                                      // Check title for step determination
+                                      // User requirement: if title is null -> step 1, if title exists -> step 2
+                                      const sessionTitle = sd?.title || sd?.session_title || '';
+                                      
                                       // Determine step and subView
                                       let targetStep = 1;
                                       let targetSubView = 'editor';
 
-                                      if (hasVideos) {
+                                      if (sessionTitle && sessionTitle.trim()) {
                                         targetStep = 2;
-                                        targetSubView = 'videos';
-                                      } else if (hasImages) {
-                                        targetStep = 2;
-                                        targetSubView = 'images';
-                                      } else if (hasScript) {
-                                        targetStep = 2;
+                                        // Default subview for step 2
                                         targetSubView = 'editor';
+                                        
+                                        // Optional: keep existing logic for subview refinement if needed, 
+                                        // but ensure step is 2 if title exists.
+                                        const videos = Array.isArray(sd?.videos) ? sd.videos : [];
+                                        const images = Array.isArray(sd?.images) ? sd.images : [];
+                                        
+                                        if (videos.length > 0) {
+                                          targetSubView = 'videos';
+                                        } else if (images.length > 0) {
+                                          targetSubView = 'images';
+                                        }
                                       } else {
                                         targetStep = 1;
                                         targetSubView = 'editor';
