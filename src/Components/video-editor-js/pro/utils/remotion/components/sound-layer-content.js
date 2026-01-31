@@ -23,7 +23,7 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // Safety check - don't render Audio if src is missing
     if (!overlay.src || overlay.src.trim() === '') {
         if (process.env.NODE_ENV === 'development') {
-        console.warn('SoundLayerContent: No src provided for sound overlay', overlay);
+            console.warn('SoundLayerContent: No src provided for sound overlay', overlay);
         }
         return null;
     }
@@ -70,19 +70,19 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // startFromSound is typically 0 (start from beginning of audio file)
     // Convert frames to seconds if startFromSound appears to be in frames (value > 10)
     const startFromSoundValue = overlay.startFromSound || 0;
-    const trimBeforeSeconds = startFromSoundValue > 10 
+    const trimBeforeSeconds = startFromSoundValue > 10
         ? (startFromSoundValue / fps)  // Likely in frames, convert to seconds
         : startFromSoundValue;  // Already in seconds (0 means start from beginning)
-        
+
     // CRITICAL: For Scene 1 audio (startsAtFrameZero), ensure trimBefore is 0 and audio starts at frame 0
     const finalTrimBefore = startsAtFrameZero ? 0 : trimBeforeSeconds;
-    
+
     // CRITICAL FIX: Mute Remotion's audio element for Scene 1 to prevent echo
     // EditorProvider handles playing the preloaded audio element for Scene 1
     // We keep Html5Audio rendering so Remotion tracks time, but we silence it
-    return (_jsx(Html5Audio, { 
-        src: audioSrc, 
-        trimBefore: finalTrimBefore, 
+    return (_jsx(Html5Audio, {
+        src: audioSrc,
+        trimBefore: finalTrimBefore,
         volume: startsAtFrameZero ? 0 : finalVolume, // Mute if Scene 1
         muted: startsAtFrameZero // Explicitly mute
     }));

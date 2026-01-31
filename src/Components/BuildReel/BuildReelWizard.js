@@ -1535,7 +1535,7 @@ const Accordion = ({ title, children, defaultOpen = false }) => {
   );
 };
 
-const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuration }) => {
+const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuration, sessionData, user, onRefreshSession }) => {
   const [localScript, setLocalScript] = useState({});
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [assetsData, setAssetsData] = useState({ templates: [], logos: [], icons: [], uploaded_images: [], documents_images: [] });
@@ -1543,6 +1543,108 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
   const [assetsTab, setAssetsTab] = useState('preset_templates');
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [showChartEditor, setShowChartEditor] = useState(false);
+  const [changeCount, setChangeCount] = useState(0);
+  const [newTextLine, setNewTextLine] = useState('');
+
+  const autoSaveScript = async (currentScript) => {
+    try {
+      let freshSession = sessionData;
+      let freshUser = user;
+
+      // 1. Fetch latest session data BEFORE
+      if (onRefreshSession) {
+        const freshData = await onRefreshSession();
+        if (freshData) {
+          freshSession = freshData.sessionData;
+          freshUser = freshData.user;
+        }
+      }
+
+      if (!freshSession || !freshUser) {
+        console.warn('Auto-save skipped: Missing sessionData or user');
+        return;
+      }
+
+      console.log('Auto-saving script...', currentScript);
+
+      // 2. Construct current_script
+      // Fetch the latest script from session data (without versioning, assuming first one)
+      const latestScript = (freshSession.scripts && freshSession.scripts.length > 0) ? freshSession.scripts[0] : {};
+
+      let aiResponse = latestScript.airesponse || latestScript.aiResponse || [];
+      // Ensure aiResponse is an array
+      if (!Array.isArray(aiResponse)) aiResponse = [];
+
+      // Update the specific scene in aiResponse with current localScript values
+      const updatedAiResponse = aiResponse.map(scene => {
+        if (String(scene.scene_number) === String(currentScript.scene_number)) {
+          return { ...scene, ...currentScript };
+        }
+        return scene;
+      });
+
+      let userQuery = latestScript.userquery || latestScript.userQuery || [];
+      if (!Array.isArray(userQuery)) {
+        if (userQuery && typeof userQuery === 'object') userQuery = [userQuery];
+        else userQuery = [];
+      }
+
+      // If userQuery is empty, try to fetch from session root if it exists there
+      if (userQuery.length === 0) {
+        let rootQuery = freshSession.userQuery || freshSession.userquery || freshSession.user_query;
+        if (rootQuery) {
+          if (Array.isArray(rootQuery)) userQuery = rootQuery;
+          else userQuery = [rootQuery];
+        }
+      }
+
+      // If still empty, use fallback structure or current script aspect ratio
+      if (userQuery.length === 0) {
+        // Default structure based on user request
+        const rawAspect = currentScript.aspect_ratio || '16:9';
+        const formattedAspect = rawAspect.replace(':', '_');
+
+        userQuery = [{
+          guidelines: {
+            technical_and_formal_constraints: {
+              aspect_ratio: formattedAspect
+            }
+          }
+        }];
+      }
+
+      const body = {
+        user: freshUser,
+        session_id: freshSession.session_id || (typeof window !== 'undefined' ? localStorage.getItem('session_id') : ''),
+        current_script: {
+          userquery: userQuery,
+          airesponse: updatedAiResponse
+        },
+        action: 'save',
+        model_type: currentScript.model || 'SORA'
+      };
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        console.error('Auto-save failed:', await response.text());
+      } else {
+        console.log('Auto-save successful');
+        // 3. Fetch session data AFTER
+        if (onRefreshSession) await onRefreshSession();
+      }
+
+    } catch (error) {
+      console.error('Error during auto-save:', error);
+    }
+  };
+
 
   // Initialize local script
   useEffect(() => {
@@ -1601,14 +1703,36 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
   };
 
   const updateField = (key, value) => {
-    setLocalScript(prev => ({ ...prev, [key]: value }));
+    setLocalScript(prev => {
+      const updated = { ...prev, [key]: value };
+
+      const newCount = changeCount + 1;
+      setChangeCount(newCount);
+
+      if (newCount >= 4) {
+        autoSaveScript(updated);
+        setChangeCount(0);
+      }
+
+      return updated;
+    });
   };
 
   const updateNestedField = (parentKey, childKey, value) => {
     setLocalScript(prev => {
       const parent = prev[parentKey] && typeof prev[parentKey] === 'object' ? { ...prev[parentKey] } : {};
       parent[childKey] = value;
-      return { ...prev, [parentKey]: parent };
+      const updated = { ...prev, [parentKey]: parent };
+
+      const newCount = changeCount + 1;
+      setChangeCount(newCount);
+
+      if (newCount >= 4) {
+        autoSaveScript(updated);
+        setChangeCount(0);
+      }
+
+      return updated;
     });
   };
 
@@ -1896,13 +2020,57 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
               </div>
               <div className="col-span-full">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Text to be Included</label>
-                <textarea
-                  value={Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included.join('\n') : (localScript.text_to_be_included || '')}
-                  onChange={(e) => updateField('text_to_be_included', e.target.value.split('\n'))}
-                  rows={2}
-                  className="w-full p-2 border border-gray-300 rounded-lg"
-                  placeholder="One line per text item"
-                />
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={newTextLine}
+                    onChange={(e) => setNewTextLine(e.target.value)}
+                    className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent text-sm"
+                    placeholder="Add text line..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (newTextLine.trim()) {
+                          const current = Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included : [];
+                          updateField('text_to_be_included', [...current, newTextLine.trim()]);
+                          setNewTextLine('');
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (newTextLine.trim()) {
+                        const current = Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included : [];
+                        updateField('text_to_be_included', [...current, newTextLine.trim()]);
+                        setNewTextLine('');
+                      }
+                    }}
+                    className="px-3 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors flex items-center gap-1"
+                  >
+                    <FaPlus size={12} /> Add
+                  </button>
+                </div>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {(Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included : []).map((text, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-100">
+                      <span className="text-sm text-gray-700">{text}</span>
+                      <button
+                        onClick={() => {
+                          const newArr = [...(localScript.text_to_be_included || [])];
+                          newArr.splice(idx, 1);
+                          updateField('text_to_be_included', newArr);
+                        }}
+                        className="text-gray-400 hover:text-red-500 p-1"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {(!localScript.text_to_be_included || localScript.text_to_be_included.length === 0) && (
+                    <p className="text-xs text-gray-400 italic">No text included yet.</p>
+                  )}
+                </div>
               </div>
               <div className="col-span-full">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Colors</label>
@@ -1959,12 +2127,57 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
               </div>
               <div className="col-span-full">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Text to be Included</label>
-                <textarea
-                  value={Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included.join('\n') : (localScript.text_to_be_included || '')}
-                  onChange={(e) => updateField('text_to_be_included', e.target.value.split('\n'))}
-                  rows={2}
-                  className="w-full p-2 border border-gray-300 rounded-lg"
-                />
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={newTextLine}
+                    onChange={(e) => setNewTextLine(e.target.value)}
+                    className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent text-sm"
+                    placeholder="Add text line..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (newTextLine.trim()) {
+                          const current = Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included : [];
+                          updateField('text_to_be_included', [...current, newTextLine.trim()]);
+                          setNewTextLine('');
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (newTextLine.trim()) {
+                        const current = Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included : [];
+                        updateField('text_to_be_included', [...current, newTextLine.trim()]);
+                        setNewTextLine('');
+                      }
+                    }}
+                    className="px-3 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors flex items-center gap-1"
+                  >
+                    <FaPlus size={12} /> Add
+                  </button>
+                </div>
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  {(Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included : []).map((text, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-100">
+                      <span className="text-sm text-gray-700">{text}</span>
+                      <button
+                        onClick={() => {
+                          const newArr = [...(localScript.text_to_be_included || [])];
+                          newArr.splice(idx, 1);
+                          updateField('text_to_be_included', newArr);
+                        }}
+                        className="text-gray-400 hover:text-red-500 p-1"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {(!localScript.text_to_be_included || localScript.text_to_be_included.length === 0) && (
+                    <p className="text-xs text-gray-400 italic">No text included yet.</p>
+                  )}
+                </div>
               </div>
               <div className="col-span-full">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
@@ -1976,7 +2189,7 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
                   }}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 >
-                  {['Select', 'Clustered Bar', 'Clustered Column', 'Line', 'Pie', 'Stacked Bar', 'Stacked Column', 'Waterfall Bar', 'Waterfall Column', 'Donut'].map(t => (
+                  {['Clustered Bar', 'Clustered Column', 'Line', 'Pie', 'Stacked Bar', 'Stacked Column', 'Waterfall Bar', 'Waterfall Column', 'Donut'].map(t => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
@@ -2202,6 +2415,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
   const dropdownRef = useRef(null);
   const [isSceneMenuOpen, setIsSceneMenuOpen] = useState(false);
   const sceneMenuRef = useRef(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -2210,6 +2424,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         setIsDropdownOpen(false);
       }
       if (sceneMenuRef.current && !sceneMenuRef.current.contains(event.target)) {
+        // Check if the click is on the trigger button (which we might need to track, but simply closing is usually fine if we don't click inside the menu)
         setIsSceneMenuOpen(false);
       }
     };
@@ -2274,42 +2489,19 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
                 <span>Scene {scene.scene_number || idx + 1}</span>
 
                 {isActive && (
-                  <div className="relative flex items-center" ref={sceneMenuRef}>
+                  <div className="relative flex items-center">
                     <button
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setMenuPosition({ top: rect.bottom + 5, left: rect.left });
                         setIsSceneMenuOpen(!isSceneMenuOpen);
                       }}
                       className="p-0.5 hover:bg-white/20 rounded-full transition-colors"
                     >
                       <MoreVertical size={16} />
                     </button>
-
-                    {isSceneMenuOpen && (
-                      <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden ring-1 ring-black ring-opacity-5 text-left">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (onEditScene) onEditScene(activeScene);
-                            setIsSceneMenuOpen(false);
-                          }}
-                          className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2 transition-colors"
-                        >
-                          <Edit size={16} className="text-gray-400" /> Edit & View
-                        </button>
-                        <div className="h-px bg-gray-100 my-0"></div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (onDeleteScene) onDeleteScene(activeScene);
-                            setIsSceneMenuOpen(false);
-                          }}
-                          className="w-full text-left px-4 py-3 hover:bg-red-50 text-sm font-medium text-red-600 flex items-center gap-2 transition-colors"
-                        >
-                          <Trash2 size={16} className="text-red-400" /> Delete
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -2319,6 +2511,42 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
       )}
 
       <VideosList jobId={typeof window !== 'undefined' ? localStorage.getItem('current_video_job_id') : ''} />
+
+      {/* Scene Menu - Fixed Position to avoid overflow clipping */}
+      {isSceneMenuOpen && (
+        <div
+          ref={sceneMenuRef}
+          style={{
+            position: 'fixed',
+            top: `${menuPosition.top}px`,
+            left: `${menuPosition.left}px`,
+            zIndex: 60
+          }}
+          className="w-48 bg-white rounded-lg shadow-xl border border-gray-100 overflow-hidden ring-1 ring-black ring-opacity-5 text-left"
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onEditScene) onEditScene(activeScene);
+              setIsSceneMenuOpen(false);
+            }}
+            className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2 transition-colors"
+          >
+            <Edit size={16} className="text-gray-400" /> Edit & View
+          </button>
+          <div className="h-px bg-gray-100 my-0"></div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onDeleteScene) onDeleteScene(activeScene);
+              setIsSceneMenuOpen(false);
+            }}
+            className="w-full text-left px-4 py-3 hover:bg-red-50 text-sm font-medium text-red-600 flex items-center gap-2 transition-colors"
+          >
+            <Trash2 size={16} className="text-red-400" /> Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -2373,6 +2601,9 @@ const BuildReelWizard = () => {
     }
   });
   const [hasImages, setHasImages] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [sceneToDeleteConfirm, setSceneToDeleteConfirm] = useState(null);
+  const [isDeletingScene, setIsDeletingScene] = useState(false);
   const [imagesJobId, setImagesJobId] = useState('');
   const [videosJobId, setVideosJobId] = useState('');
   const [hasVideosAvailable, setHasVideosAvailable] = useState(false);
@@ -2383,6 +2614,8 @@ const BuildReelWizard = () => {
   // Scene Script Modal State
   const [showSceneScriptModal, setShowSceneScriptModal] = useState(false);
   const [currentScriptContent, setCurrentScriptContent] = useState('');
+  const [sessionDataState, setSessionDataState] = useState(null);
+  const [userState, setUserState] = useState(null);
 
   const handleChange = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -2390,16 +2623,44 @@ const BuildReelWizard = () => {
     setForm((f) => ({ ...f, scenes }));
   };
 
+  const handleRefreshSession = async () => {
+    const sessionId = localStorage.getItem('session_id');
+    const token = localStorage.getItem('token');
+    if (!sessionId || !token) return null;
+
+    const data = await fetchSessionData(token, sessionId);
+    if (data) {
+      const sData = data.session_data || data.session;
+      const uData = data.user_data || data.user;
+      setSessionDataState(sData);
+      setUserState(uData);
+      return { sessionData: sData, user: uData };
+    }
+    return null;
+  };
+
   const handleEditScene = (scene) => {
     setCurrentScriptContent(scene);
     setShowSceneScriptModal(true);
   };
 
-  const handleDeleteScene = async (sceneToDelete) => {
-    if (!window.confirm('Are you sure you want to delete this scene?')) return;
+  const handleDeleteScene = (sceneToDelete) => {
+    setSceneToDeleteConfirm(sceneToDelete);
+    setShowDeleteConfirm(true);
+  };
+
+  const executeDeleteScene = async () => {
+    if (isDeletingScene || !sceneToDeleteConfirm) return;
+    setIsDeletingScene(true);
+
+    const sceneToDelete = sceneToDeleteConfirm;
     const sessionId = localStorage.getItem('session_id');
     const token = localStorage.getItem('token');
-    if (!sessionId || !token) return;
+
+    if (!sessionId || !token) {
+      setIsDeletingScene(false);
+      return;
+    }
 
     try {
       // 1. Fetch user session data
@@ -2409,10 +2670,13 @@ const BuildReelWizard = () => {
       const userObj = sessionDataResp.user_data || sessionDataResp.user || {};
       const sessionObj = sessionDataResp.session_data || sessionDataResp.session || {};
 
+      // Ensure consistent session object structure for delete payload
+      const sessionForBody = sanitizeSessionSnapshot(sessionObj, sessionId, token);
+
       // 2. Call delete-scene API
       const payload = {
         user: userObj,
-        session: sessionObj,
+        session: sessionForBody,
         scene_number: sceneToDelete.scene_number
       };
 
@@ -2439,9 +2703,14 @@ const BuildReelWizard = () => {
         setForm(f => ({ ...f, scripts }));
       }
 
+      setShowDeleteConfirm(false);
+      setSceneToDeleteConfirm(null);
+
     } catch (error) {
       console.error('Error deleting scene:', error);
       alert('Failed to delete scene. Please try again.');
+    } finally {
+      setIsDeletingScene(false);
     }
   };
 
@@ -2534,6 +2803,9 @@ const BuildReelWizard = () => {
           }
           return;
         }
+
+        setSessionDataState(sessionData.session_data || sessionData.session);
+        setUserState(sessionData.user_data || sessionData.user);
 
         const sd = sessionData?.session_data || sessionData?.session || {};
 
@@ -3453,7 +3725,39 @@ const BuildReelWizard = () => {
         onClose={() => setShowSceneScriptModal(false)}
         scriptContent={currentScriptContent}
         videoDuration={form.videoDuration}
+        sessionData={sessionDataState}
+        user={userState}
+        onRefreshSession={handleRefreshSession}
       />
+
+      {/* Confirm Delete Scene Popup */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-5">
+            <h3 className="text-lg font-semibold text-[#13008B]">Delete This Scene?</h3>
+            <p className="mt-2 text-sm text-gray-700">
+              Are you sure you want to delete Scene {sceneToDeleteConfirm?.scene_number}? This action cannot be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { if (!isDeletingScene) setShowDeleteConfirm(false); }}
+                disabled={isDeletingScene}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${isDeletingScene ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeDeleteScene}
+                disabled={isDeletingScene}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white ${isDeletingScene ? 'bg-red-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+              >
+                {isDeletingScene && (<span className="w-4 h-4 border-2 border-white/80 border-t-transparent rounded-full animate-spin" />)}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </>
   );
