@@ -66,10 +66,10 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       return 'Last measure must be "total"';
     }
 
-    // Check middle measures are relative
+    // Check middle measures are relative or total
     for (let i = 1; i < measure.length - 1; i++) {
-      if (measure[i] !== 'relative') {
-        return `Measure at position ${i + 1} must be "relative" (found "${measure[i]}")`;
+      if (measure[i] !== 'relative' && measure[i] !== 'total') {
+        return `Measure at position ${i + 1} must be "relative" or "total" (found "${measure[i]}")`;
       }
     }
 
@@ -396,12 +396,13 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Add series/column (at the end)
   const addColumn = () => {
-    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    const type = String(chartType || '').toLowerCase();
+    if (type === 'waterfall' || type === 'waterfall_bar' || type === 'waterfall_column') {
       alert('Waterfall charts can only have one series');
       return;
     }
 
-    if (chartType === 'pie' || chartType === 'donut') {
+    if (type === 'pie' || type === 'donut') {
       alert('Cannot add series to pie/donut charts');
       return;
     }
@@ -432,7 +433,8 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Insert column at specific index
   const insertColumn = (colIndex) => {
-    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    const type = String(chartType || '').toLowerCase();
+    if (type === 'waterfall' || type === 'waterfall_bar' || type === 'waterfall_column') {
       alert('Waterfall charts can only have one series');
       return;
     }
@@ -468,12 +470,13 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
   // Remove column
   const removeColumn = (colIndex) => {
-    if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+    const type = String(chartType || '').toLowerCase();
+    if (type === 'waterfall' || type === 'waterfall_bar' || type === 'waterfall_column') {
       alert('Cannot remove the only series from waterfall charts');
       return;
     }
 
-    if (chartType === 'pie' || chartType === 'donut') {
+    if (type === 'pie' || type === 'donut') {
       alert('Cannot remove series from pie/donut charts');
       return;
     }
@@ -508,9 +511,10 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       );
     }
 
-    const isPieDonut = chartType === 'pie' || chartType === 'donut';
-    const isWaterfall = chartType === 'waterfall_bar' || chartType === 'waterfall_column';
-    const isWaterfallStacked = chartType.includes('waterfall_stacked');
+    const type = String(chartType || '').toLowerCase();
+    const isPieDonut = type === 'pie' || type === 'donut';
+    const isWaterfall = type === 'waterfall' || type === 'waterfall_bar' || type === 'waterfall_column';
+    const isWaterfallStacked = type.includes('waterfall_stacked');
 
     if (isPieDonut) {
       return renderPieTable();
@@ -1480,7 +1484,8 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
             onClick={async () => {
               if (onSave && !isSaving) {
                 // ✅ ADD VALIDATION HERE
-                if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
+                const type = String(chartType || '').toLowerCase();
+                if (type === 'waterfall' || type === 'waterfall_bar' || type === 'waterfall_column') {
                   const validationError = validateWaterfallData(localChartData);
                   if (validationError) {
                     alert('Validation Error: ' + validationError);

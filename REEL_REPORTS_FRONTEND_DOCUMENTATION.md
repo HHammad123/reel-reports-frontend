@@ -753,7 +753,7 @@ const Sidebar = () => {
           return;
         }
         const body = { user_id: token };
-        const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/sessions', {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/users/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
@@ -1410,7 +1410,7 @@ const DashboardItems = () => {
     try {
       const userToken = token || localStorage.getItem('token') || '';
       if (!userToken) { navigate('/login'); return; }
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/sessions/new', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userToken })
       });
       const text = await resp.text();
@@ -1550,7 +1550,7 @@ import {
 } from '../../redux/slices/userSlice';
 
 const AUTH_BASE = 'https://jsauth-dfbpgpdmgughg6aj.centralindia-01.azurewebsites.net';
-const OAUTH_BASE = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+const OAUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/';
 
 const LoginForm = ({activeTab,setActiveTab}) => {
     const navigate = useNavigate();
@@ -1692,7 +1692,7 @@ import {
 } from '../../redux/slices/userSlice';
 
 const AUTH_BASE = 'https://auth-js-g3hnh7gbc4c5fje4.uaenorth-01.azurewebsites.net';
-const OAUTH_BASE = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+const OAUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/';
 
 const SignupForm = ({activeTab,setActiveTab}) => {
     const navigate = useNavigate();
@@ -2312,7 +2312,7 @@ export const useAuth = () => {
 // Custom hook for Brand Assets API
 import { useCallback, useState } from 'react';
 
-const API_BASE = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1';
+const API_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1';
 
 export default function useBrandAssets() {
   const [loading, setLoading] = useState(false);
@@ -3022,7 +3022,7 @@ const Result = () => {
         setIsLoading(true); setError('');
         const token = localStorage.getItem('token') || '';
         if (videoId) {
-          const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/videos/get', {
+          const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/users/videos/get', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, video_id: videoId })
           });
           const text = await resp.text();

@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { FaPlus, FaAngleRight, FaEyeDropper, FaAngleUp, FaAngleDown, FaCheck, FaMicrophone, FaDesktop, FaMobileAlt, FaChartPie, FaUserTie, FaCoins } from 'react-icons/fa';
-import { ChevronLeft, ChevronRight, MoreHorizontal, RefreshCcw, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Image, MoreHorizontal, Paperclip, RefreshCcw, Trash2, X, Edit, MoreVertical, ChevronUp } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { ChevronDown, Sparkles } from 'lucide-react';
 import useBrandAssets from '../../hooks/useBrandAssets';
@@ -205,6 +205,19 @@ const normalizeTemplateAspectLabel = (aspect) => {
   if (lower.includes('portrait')) return '9:16';
   if (lower.includes('landscape')) return '16:9';
   return trimmed;
+};
+
+// Helper to check if aspect ratio matches (same as Chat.js)
+const matchesAspectValue = (value, target) => {
+  if (!target) return true;
+  const normalizedTarget = normalizeTemplateAspectLabel(target);
+  const normalizedValue = normalizeTemplateAspectLabel(
+    typeof value === 'string' ? value : ''
+  );
+  if (!normalizedTarget || normalizedTarget === 'Unspecified') return true;
+  // If the source aspect is missing, allow it (so uploaded assets without aspect still show)
+  if (!normalizedValue || normalizedValue === 'Unspecified') return true;
+  return normalizedValue === normalizedTarget;
 };
 
 const resolveTemplateAssetUrl = (entry) => {
@@ -1424,63 +1437,709 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   );
 };
 
-const SceneScriptModal = ({ isOpen, onClose, scriptContent }) => {
-  if (!isOpen) return null;
+const getSampleChartData = (type) => {
+  const t = type?.toLowerCase() || 'bar';
+
+  if (t === 'pie' || t === 'donut') {
+    return {
+      series: {
+        labels: ['Category A', 'Category B', 'Category C'],
+        data: [{ values: [30, 50, 20] }]
+      }
+    };
+  }
+
+  if (t === 'waterfall') {
+    return {
+      series: {
+        x: ['Sales', 'Consulting', 'Net Revenue', 'Purchases', 'Other Expenses', 'Profit Before Tax'],
+        data: [{
+          name: 'Financials',
+          y: [60, 80, 0, -40, -20, 0],
+          measure: ['absolute', 'relative', 'total', 'relative', 'relative', 'total']
+        }]
+      }
+    };
+  }
+
+  if (t === 'scatter') {
+    return {
+      series: {
+        x: ['1', '2', '3', '4', '5'],
+        data: [{ name: 'Points', y: [10, 15, 13, 17, 20] }]
+      }
+    };
+  }
+
+  return {
+    series: {
+      x: ['Q1', 'Q2', 'Q3', 'Q4'],
+      data: [{
+        name: 'Series 1',
+        y: [100, 150, 120, 180]
+      }]
+    }
+  };
+};
+
+const Accordion = ({ title, children, defaultOpen = false }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between p-4 border-b border-gray-100">
-          <h3 className="text-lg font-bold text-gray-900">Scene Script</h3>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 18 18" /></svg>
-          </button>
-        </div>
-        <div className="p-6 overflow-y-auto flex-1">
-          <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono bg-gray-50 p-4 rounded-lg border border-gray-200">
-            {typeof scriptContent === 'string' ? scriptContent : JSON.stringify(scriptContent, null, 2)}
-          </pre>
-        </div>
-        <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium">
-            Close
-          </button>
-          <button onClick={onClose} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
-            Confirm & Add
-          </button>
-        </div>
-      </div>
+    <div className="border border-gray-200 rounded-lg mb-4">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 transition-colors rounded-t-lg font-medium text-gray-700"
+      >
+        {title}
+        {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+      </button>
+      {isOpen && <div className="p-4 bg-white border-t border-gray-200 rounded-b-lg space-y-3">{children}</div>}
     </div>
   );
 };
 
-const AddSceneDropdown = ({ onAdd }) => {
+const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuration }) => {
+  const [localScript, setLocalScript] = useState({});
+  const [showAssetsModal, setShowAssetsModal] = useState(false);
+  const [assetsData, setAssetsData] = useState({ templates: [], logos: [], icons: [], uploaded_images: [], documents_images: [] });
+  const [generatedImagesData, setGeneratedImagesData] = useState({ generated_images: {}, generated_videos: {} });
+  const [assetsTab, setAssetsTab] = useState('preset_templates');
+  const [isLoadingAssets, setIsLoadingAssets] = useState(false);
+  const [showChartEditor, setShowChartEditor] = useState(false);
+
+  // Initialize local script
+  useEffect(() => {
+    if (isOpen && scriptContent) {
+      setLocalScript(typeof scriptContent === 'string' ? {} : JSON.parse(JSON.stringify(scriptContent)));
+    }
+  }, [isOpen, scriptContent]);
+
+  // Load assets when assets modal opens
+  useEffect(() => {
+    if (showAssetsModal) {
+      const loadAssets = async () => {
+        setIsLoadingAssets(true);
+        try {
+          const token = localStorage.getItem('token');
+          if (token) {
+            // Fetch Brand Assets
+            const assetsPromise = fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`)
+              .then(async (r) => {
+                if (r.ok) return normalizeBrandAssetsResponse(await r.json());
+                const local = localStorage.getItem('brand_assets');
+                return local ? normalizeBrandAssetsResponse(JSON.parse(local)) : {};
+              })
+              .catch(() => {
+                const local = localStorage.getItem('brand_assets');
+                return local ? normalizeBrandAssetsResponse(JSON.parse(local)) : {};
+              });
+
+            // Fetch Generated Media
+            const generatedPromise = fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${encodeURIComponent(token)}/generated-media`)
+              .then(async (r) => {
+                if (r.ok) return normalizeGeneratedMediaResponse(await r.json());
+                return { generated_images: {}, generated_videos: {} };
+              })
+              .catch(() => ({ generated_images: {}, generated_videos: {} }));
+
+            const [assets, generated] = await Promise.all([assetsPromise, generatedPromise]);
+            setAssetsData(assets);
+            setGeneratedImagesData(generated);
+          }
+        } catch (e) {
+          console.error("Failed to load assets", e);
+        } finally {
+          setIsLoadingAssets(false);
+        }
+      };
+      loadAssets();
+    }
+  }, [showAssetsModal]);
+
+  if (!isOpen) return null;
+
+  const handleSave = () => {
+    if (onSave) onSave(localScript);
+    onClose();
+  };
+
+  const updateField = (key, value) => {
+    setLocalScript(prev => ({ ...prev, [key]: value }));
+  };
+
+  const updateNestedField = (parentKey, childKey, value) => {
+    setLocalScript(prev => {
+      const parent = prev[parentKey] && typeof prev[parentKey] === 'object' ? { ...prev[parentKey] } : {};
+      parent[childKey] = value;
+      return { ...prev, [parentKey]: parent };
+    });
+  };
+
+  const animationDescFields = [
+    { key: 'lighting', label: 'Lighting' },
+    { key: 'style_mood', label: 'Style & Mood' },
+    { key: 'transition_type', label: 'Transition Type' },
+    { key: 'scene_description', label: 'Scene Description' },
+    { key: 'subject_description', label: 'Subject Description' },
+    { key: 'action_specification', label: 'Action Specification' },
+    { key: 'content_modification', label: 'Content Modification' },
+    { key: 'camera_specifications', label: 'Camera Specifications' },
+    { key: 'geometric_preservation', label: 'Geometric Preservation' }
+  ];
+
+  const backgroundFrameFields = [
+    { key: 'style', label: 'Style' },
+    { key: 'action', label: 'Action' },
+    { key: 'setting', label: 'Setting' },
+    { key: 'subject', label: 'Subject' },
+    { key: 'composition', label: 'Composition' },
+    { key: 'final_prompt', label: 'Final Prompt' },
+    { key: 'factual_details', label: 'Factual Details' },
+    { key: 'camera_lens_shadow_lighting', label: 'Camera, Lens, Shadow & Lighting' }
+  ];
+
+  const renderNestedFields = (parentKey, fields) => (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {fields.map(({ key, label }) => (
+        <div key={key}>
+          <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
+          <textarea
+            value={localScript[parentKey]?.[key] || ''}
+            onChange={(e) => updateNestedField(parentKey, key, e.target.value)}
+            rows={2}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+          />
+        </div>
+      ))}
+    </div>
+  );
+
+  const model = String(localScript.model || '').toUpperCase();
+  const isVeo = model === 'VEO3' || model.includes('VEO') || model === 'AVATAR';
+  const isSora = model === 'SORA' || model.includes('SORA') || model === 'INFOGRAPHIC';
+  const isPlotly = model === 'PLOTLY' || model === 'FINANCIAL' || model.includes('FINANCIAL');
+
+  // Filter by aspect ratio if possible
+  const scriptAspect = localScript.aspect_ratio || '16:9';
+  const normalizedTargetAspect = normalizeTemplateAspectLabel(scriptAspect);
+
+  let currentAssets = [];
+  let generatedGroups = [];
+
+  if (assetsTab === 'generated_images') {
+    const generatedImages = generatedImagesData.generated_images || {};
+    // Iterate to build groups
+    Object.entries(generatedImages).forEach(([aspectRatio, sessions]) => {
+      if (!sessions || typeof sessions !== 'object') return;
+      const aspectLabel = normalizeTemplateAspectLabel(aspectRatio) || 'Unspecified';
+
+      // Filter by aspect
+      if (normalizedTargetAspect && normalizedTargetAspect !== 'Unspecified') {
+        if (!matchesAspectValue(aspectLabel, normalizedTargetAspect)) return;
+      }
+
+      Object.entries(sessions).forEach(([sessionName, mediaArray]) => {
+        const urlsArray = Array.isArray(mediaArray) ? mediaArray : [];
+        const validImages = [];
+
+        urlsArray.forEach((img, idx) => {
+          let imageUrl = '';
+          if (typeof img === 'string') imageUrl = img;
+          else if (img && typeof img === 'object') imageUrl = img.image_url || img.url || '';
+
+          if (imageUrl && imageUrl.trim()) {
+            validImages.push({
+              id: `gen-${aspectLabel}-${sessionName}-${idx}`,
+              imageUrl: imageUrl.trim(),
+              label: `Generated Image ${idx + 1}`,
+              aspect: aspectLabel
+            });
+          }
+        });
+
+        if (validImages.length > 0) {
+          generatedGroups.push({
+            sessionName,
+            aspect: aspectLabel,
+            images: validImages
+          });
+        }
+      });
+    });
+  } else {
+    // Brand Assets
+    const extracted = extractAssetsByType(assetsData?.templates || {}, assetsTab === 'uploaded_images' ? 'uploaded_images' : assetsTab);
+
+    // Add flat lists for certain tabs
+    if (assetsTab === 'uploaded_images') {
+      (assetsData.uploaded_images || []).forEach((img, i) => {
+        const url = typeof img === 'string' ? img : (img?.image_url || '');
+        if (url) extracted.push({ id: `upl-${i}`, imageUrl: url, label: 'Uploaded', aspect: 'Unspecified' });
+      });
+    }
+
+    if (assetsTab === 'documents_images') {
+      (assetsData.documents_images || []).forEach((img, i) => {
+        const url = typeof img === 'string' ? img : (img?.image_url || '');
+        if (url) extracted.push({ id: `doc-${i}`, imageUrl: url, label: 'Document', aspect: 'Unspecified' });
+      });
+    }
+
+    // Filter
+    currentAssets = extracted.filter(asset => {
+      if (!normalizedTargetAspect || normalizedTargetAspect === 'Unspecified') return true;
+      return matchesAspectValue(asset.aspect, normalizedTargetAspect);
+    });
+
+    // Fallback if empty and we have a target aspect
+    if (currentAssets.length === 0 && normalizedTargetAspect && assetsTab.includes('templates')) {
+      currentAssets = extracted;
+    }
+  }
+
+  const handleAssetSelect = (asset) => {
+    if (asset.imageUrl) {
+      if (isPlotly) {
+        updateNestedField('background_frame', 'final_prompt', asset.imageUrl);
+      } else {
+        // For VEO3 and SORA
+        updateField('ref_image', [asset.imageUrl]);
+      }
+      setShowAssetsModal(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-4 border-b border-gray-100">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">Script Editor</h3>
+            <div className="flex gap-4 mt-1 text-xs text-gray-500 font-medium">
+              <span className="bg-gray-100 px-2 py-0.5 rounded">Scene {localScript.scene_number || '#'}</span>
+              <span className="bg-gray-100 px-2 py-0.5 rounded">{localScript.model || 'Unknown Type'}</span>
+              <span className="bg-gray-100 px-2 py-0.5 rounded">{videoDuration || '60'}s</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          {/* Common Fields */}
+          <div className="col-span-full space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Scene Title</label>
+              <input
+                type="text"
+                value={localScript.scene_title || ''}
+                onChange={(e) => updateField('scene_title', e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Narration</label>
+              <textarea
+                value={localScript.narration || ''}
+                onChange={(e) => updateField('narration', e.target.value)}
+                rows={3}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+              />
+            </div>
+
+            {/* Gen Image Checkbox */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="gen_image"
+                checked={localScript.gen_image !== false} // Default to true
+                onChange={(e) => updateField('gen_image', e.target.checked)}
+                className="w-4 h-4 text-[#13008B] rounded focus:ring-[#13008B]"
+              />
+              <label htmlFor="gen_image" className="text-sm font-medium text-gray-700">Generate Image with AI</label>
+            </div>
+
+            {/* Choose Template if Gen Image unchecked */}
+            {localScript.gen_image === false && (
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-sm text-gray-600 mb-2">Select an image from your templates or uploads:</p>
+                <button
+                  onClick={() => setShowAssetsModal(true)}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <span className="w-5 h-5 bg-gray-200 rounded overflow-hidden">
+                    {(isPlotly ? localScript.background_frame : (localScript.ref_image && localScript.ref_image[0])) ? (
+                      <img
+                        src={isPlotly ? localScript.background_frame : localScript.ref_image[0]}
+                        alt="Selected"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Image />
+                    )}
+                  </span>
+                  Choose from template
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Model Specific Fields */}
+
+          {/* VEO3 */}
+          {isVeo && (
+            <div className="col-span-full space-y-4 border-t border-gray-100 pt-4">
+              <h4 className="font-bold text-sm text-gray-900">VEO3 Template Details</h4>
+              <Accordion title="VEO Prompt Template" defaultOpen={true}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { label: 'User', key: 'user' },
+                    { label: 'System', key: 'system' },
+                    { label: 'Style', key: 'styleCard' },
+                    { label: 'Camera', key: 'cameraCard' },
+                    { label: 'Subject', key: 'subject' },
+                    { label: 'Action', key: 'action' },
+                    { label: 'Ambiance', key: 'ambiance' },
+                    { label: 'Background', key: 'background' },
+                    { label: 'Composition', key: 'composition' },
+                    { label: 'Focus & Lens', key: 'focus_and_lens' }
+                  ].map(field => (
+                    <div key={field.key}>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">{field.label}</label>
+                      <textarea
+                        value={localScript[field.key] || ''}
+                        onChange={(e) => updateField(field.key, e.target.value)}
+                        rows={1}
+                        className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </Accordion>
+
+              <Accordion title="Animation Description" defaultOpen={true}>
+                {renderNestedFields('animation_desc', animationDescFields)}
+              </Accordion>
+
+              <Accordion title="Background Frame" defaultOpen={true}>
+                {renderNestedFields('background_frame', backgroundFrameFields)}
+              </Accordion>
+            </div>
+          )}
+
+          {/* SORA */}
+          {isSora && (
+            <>
+              <div className="col-span-full">
+                <Accordion title="Opening Frame" defaultOpen={true}>
+                  {renderNestedFields('opening_frame', backgroundFrameFields)}
+                </Accordion>
+              </div>
+              <div className="col-span-full">
+                <Accordion title="Closing Frame" defaultOpen={true}>
+                  <textarea
+                    value={localScript.closing_frame || ''}
+                    onChange={(e) => updateField('closing_frame', e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-lg"
+                    placeholder="Description for closing frame"
+                    rows={3}
+                  />
+                </Accordion>
+              </div>
+              <div className="col-span-full">
+                <Accordion title="Animation Description" defaultOpen={true}>
+                  {renderNestedFields('animation_desc', animationDescFields)}
+                </Accordion>
+              </div>
+              <div className="col-span-full">
+                <Accordion title="Background Frame" defaultOpen={true}>
+                  {renderNestedFields('background_frame', backgroundFrameFields)}
+                </Accordion>
+              </div>
+              <div className="col-span-full">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Text to be Included</label>
+                <textarea
+                  value={Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included.join('\n') : (localScript.text_to_be_included || '')}
+                  onChange={(e) => updateField('text_to_be_included', e.target.value.split('\n'))}
+                  rows={2}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="One line per text item"
+                />
+              </div>
+              <div className="col-span-full">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Colors</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {(localScript.colors || []).map((color, idx) => (
+                    <div key={idx} className="flex items-center gap-1 bg-gray-100 rounded-full px-2 py-1">
+                      <div className="w-4 h-4 rounded-full border border-gray-300" style={{ backgroundColor: color }}></div>
+                      <span className="text-xs uppercase">{color}</span>
+                      <button onClick={() => {
+                        const newColors = [...(localScript.colors || [])];
+                        newColors.splice(idx, 1);
+                        updateField('colors', newColors);
+                      }} className="text-gray-400 hover:text-red-500 ml-1">&times;</button>
+                    </div>
+                  ))}
+                </div>
+                <HexColorPicker
+                  color={localScript.tempColor || '#000000'}
+                  onChange={(c) => updateField('tempColor', c)}
+                />
+                <button
+                  onClick={() => {
+                    const c = localScript.tempColor || '#000000';
+                    updateField('colors', [...(localScript.colors || []), c]);
+                  }}
+                  className="mt-2 px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+                >
+                  Add Color
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* PLOTLY */}
+          {isPlotly && (
+            <>
+              <div className="col-span-full">
+                <Accordion title="Background Frame" defaultOpen={true}>
+                  {renderNestedFields('background_frame', backgroundFrameFields)}
+                  <div className="mt-2">
+                    <button
+                      onClick={() => setShowAssetsModal(true)}
+                      className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center gap-2 text-sm"
+                    >
+                      <Paperclip size={16} /> Select Reference Image
+                    </button>
+                  </div>
+                </Accordion>
+              </div>
+              <div className="col-span-full">
+                <Accordion title="Animation Description" defaultOpen={true}>
+                  {renderNestedFields('animation_desc', animationDescFields)}
+                </Accordion>
+              </div>
+              <div className="col-span-full">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Text to be Included</label>
+                <textarea
+                  value={Array.isArray(localScript.text_to_be_included) ? localScript.text_to_be_included.join('\n') : (localScript.text_to_be_included || '')}
+                  onChange={(e) => updateField('text_to_be_included', e.target.value.split('\n'))}
+                  rows={2}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div className="col-span-full">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
+                <select
+                  value={localScript.chart_type || 'Bar'}
+                  onChange={(e) => updateField('chart_type', e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  {['Bar', 'Line', 'Pie', 'Donut', 'Waterfall', 'Funnel', 'Gauge', 'Scatter', 'Area', 'Radar'].map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-full">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data</label>
+                <div className="flex items-center gap-4">
+                  <div className="text-sm text-gray-500 italic">
+                    {localScript.chart_data ? 'Data configured' : 'No data configured'}
+                  </div>
+                  <button
+                    onClick={() => {
+                      // Initialize with sample data if empty
+                      if (!localScript.chart_data) {
+                        updateField('chart_data', getSampleChartData(localScript.chart_type));
+                      }
+                      setShowChartEditor(true);
+                    }}
+                    className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 text-sm font-medium"
+                  >
+                    Edit Chart Data
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium">
+            Close
+          </button>
+          <button onClick={handleSave} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
+            Confirm & Add
+          </button>
+        </div>
+      </div>
+
+      {/* Assets Modal Overlay */}
+      {showAssetsModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+          <div className="bg-white w-[90%] max-w-4xl max-h-[90vh] rounded-xl flex flex-col shadow-2xl">
+            <div className="flex-shrink-0 flex items-center justify-between p-4 border-b border-gray-200">
+              <h3 className="font-bold text-lg">Select Asset ({normalizedTargetAspect})</h3>
+              <button onClick={() => setShowAssetsModal(false)}><X /></button>
+            </div>
+            <div className="flex-shrink-0 flex gap-3 p-4 border-b border-gray-100 flex-wrap">
+              {[
+                { key: 'preset_templates', label: 'Preset Templates' },
+                ...(isVeo ? [{ key: 'veo3_templates', label: 'Veo 3 Template' }] : []),
+                { key: 'uploaded_templates', label: 'Uploaded Templates' },
+                { key: 'uploaded_images', label: 'Uploaded Images' },
+                { key: 'documents_images', label: 'Documents' },
+                { key: 'generated_images', label: 'Generated Images' }
+              ].map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setAssetsTab(tab.key)}
+                  className={`px-3 py-1.5 rounded-full text-sm border whitespace-nowrap transition-colors ${assetsTab === tab.key
+                    ? 'bg-[#13008B] text-white border-[#13008B]'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 mt-9 bg-gray-50">
+              {isLoadingAssets ? (
+                <div className="flex justify-center py-10">
+                  <Loader title={
+                    assetsTab === 'generated_images' ? 'Loading generated images...' :
+                      ['preset_templates', 'uploaded_templates', 'veo3_templates'].includes(assetsTab) ? 'Loading templates by aspect ratio...' :
+                        'Loading assets...'
+                  } />
+                </div>
+              ) : (
+                <>
+                  {assetsTab === 'generated_images' ? (
+                    <div className="space-y-8">
+                      {generatedGroups.map((group, gIdx) => (
+                        <div key={gIdx} className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-bold text-gray-800 text-sm">Session: {group.sessionName}</h4>
+                            <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">{group.aspect} {group.images.length} images</span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                            {group.images.map((asset, i) => (
+                              <div
+                                key={asset.id}
+                                onClick={() => handleAssetSelect(asset)}
+                                className="group relative cursor-pointer rounded-lg overflow-hidden border-2 border-transparent hover:border-[#13008B] transition-all bg-white shadow-sm"
+                              >
+                                <div className="aspect-video bg-gray-200 relative">
+                                  {asset.imageUrl ? (
+                                    <img src={asset.imageUrl} alt={asset.label} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-gray-400">No Image</div>
+                                  )}
+                                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                                </div>
+                                <div className="p-2 text-xs truncate font-medium text-gray-700">{asset.label}</div>
+                                {asset.aspect && asset.aspect !== 'Unspecified' && (
+                                  <div className="px-2 pb-1 text-[10px] text-gray-400">{asset.aspect}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {generatedGroups.length === 0 && (
+                        <div className="col-span-full text-center py-10 text-gray-500">No generated images found for {normalizedTargetAspect}</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                      {currentAssets.map((asset, i) => (
+                        <div
+                          key={i}
+                          onClick={() => handleAssetSelect(asset)}
+                          className="group relative cursor-pointer rounded-lg overflow-hidden border-2 border-transparent hover:border-[#13008B] transition-all bg-white shadow-sm"
+                        >
+                          <div className="aspect-video bg-gray-200 relative">
+                            {asset.imageUrl ? (
+                              <img src={asset.imageUrl} alt={asset.label} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-gray-400">No Image</div>
+                            )}
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+                          </div>
+                          <div className="p-2 text-xs truncate font-medium text-gray-700">{asset.label}</div>
+                          {asset.aspect && asset.aspect !== 'Unspecified' && (
+                            <div className="px-2 pb-1 text-[10px] text-gray-400">{asset.aspect}</div>
+                          )}
+                        </div>
+                      ))}
+                      {currentAssets.length === 0 && (
+                        <div className="col-span-full text-center py-10 text-gray-500">No assets found in this category for {normalizedTargetAspect}</div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chart Editor Modal */}
+      {showChartEditor && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
+          <div className="bg-white w-[95%] max-w-6xl max-h-[90vh] rounded-xl flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="font-bold text-lg">Chart Data Editor</h3>
+              <button onClick={() => setShowChartEditor(false)}><X /></button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ChartDataEditor
+                chartType={localScript.chart_type || 'Bar'}
+                chartData={localScript.chart_data || null}
+                onSave={(newData) => {
+                  updateField('chart_data', newData);
+                  setShowChartEditor(false);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AddSceneDropdown = ({ onAdd, hasScripts }) => {
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [videoType, setVideoType] = useState('Infographic');
 
   return (
     <div className="absolute top-full right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 p-4 flex flex-col gap-4">
-      {/* Aspect Ratio Section */}
-      <div>
-        <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Aspect Ratio</h3>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setAspectRatio('9:16')}
-            className={`flex-1 p-3 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${aspectRatio === '9:16' ? 'border-[#13008B] bg-blue-50 text-[#13008B]' : 'border-gray-100 hover:border-gray-200 text-gray-500'
-              }`}
-          >
-            <div className="w-6 h-10 border-2 border-current rounded-sm"></div>
-            <span className="text-xs font-bold">9:16</span>
-          </button>
-          <button
-            onClick={() => setAspectRatio('16:9')}
-            className={`flex-1 p-3 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${aspectRatio === '16:9' ? 'border-[#13008B] bg-blue-50 text-[#13008B]' : 'border-gray-100 hover:border-gray-200 text-gray-500'
-              }`}
-          >
-            <div className="w-10 h-6 border-2 border-current rounded-sm"></div>
-            <span className="text-xs font-bold">16:9</span>
-          </button>
+      {/* Aspect Ratio Section - Only show if NO scripts exist */}
+      {!hasScripts && (
+        <div>
+          <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Aspect Ratio</h3>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setAspectRatio('9:16')}
+              className={`flex-1 p-3 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${aspectRatio === '9:16' ? 'border-[#13008B] bg-blue-50 text-[#13008B]' : 'border-gray-100 hover:border-gray-200 text-gray-500'
+                }`}
+            >
+              <div className="w-6 h-10 border-2 border-current rounded-sm"></div>
+              <span className="text-xs font-bold">9:16</span>
+            </button>
+            <button
+              onClick={() => setAspectRatio('16:9')}
+              className={`flex-1 p-3 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${aspectRatio === '16:9' ? 'border-[#13008B] bg-blue-50 text-[#13008B]' : 'border-gray-100 hover:border-gray-200 text-gray-500'
+                }`}
+            >
+              <div className="w-10 h-6 border-2 border-current rounded-sm"></div>
+              <span className="text-xs font-bold">16:9</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Video Type Section */}
       <div>
@@ -1515,22 +2174,38 @@ const AddSceneDropdown = ({ onAdd }) => {
   );
 };
 
-const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, hasImages = false, onGoToStoryboard, addScene }) => {
+const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, hasImages = false, onGoToStoryboard, addScene, onEditScene, onDeleteScene }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const [isSceneMenuOpen, setIsSceneMenuOpen] = useState(false);
+  const sceneMenuRef = useRef(null);
 
-  // Close dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setIsDropdownOpen(false);
       }
+      if (sceneMenuRef.current && !sceneMenuRef.current.contains(event.target)) {
+        setIsSceneMenuOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const latestScript = values.scripts && values.scripts.length > 0 ? values.scripts[0] : null;
+  const scenes = latestScript && latestScript.airesponse ? latestScript.airesponse : [];
+  const activeScene = scenes[activeIndex] || scenes[0] || null;
+
+  // Adjust activeIndex if out of bounds
+  useEffect(() => {
+    if (scenes.length > 0 && activeIndex >= scenes.length) {
+      setActiveIndex(Math.max(0, scenes.length - 1));
+    }
+  }, [scenes.length, activeIndex]);
 
   // Simplified StepTwo with VideosList and Add Scene button
   return (
@@ -1548,6 +2223,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
 
           {isDropdownOpen && (
             <AddSceneDropdown
+              hasScripts={values.scripts && values.scripts.length > 0}
               onAdd={(options) => {
                 setIsDropdownOpen(false);
                 addScene(options);
@@ -1556,6 +2232,70 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
           )}
         </div>
       </div>
+
+      {/* Horizontal Scenes List (Pills) */}
+      {scenes.length > 0 && (
+        <div className="flex items-center gap-3 overflow-x-auto mb-6 pb-2 scrollbar-hide">
+          {scenes.map((scene, idx) => {
+            const isActive = activeIndex === idx;
+            return (
+              <div
+                key={idx}
+                onClick={() => {
+                  setActiveIndex(idx);
+                  setIsSceneMenuOpen(false);
+                }}
+                className={`relative flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap min-w-[100px] cursor-pointer ${isActive
+                  ? 'bg-[#13008B] text-white shadow-md'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+              >
+                <span>Scene {scene.scene_number || idx + 1}</span>
+
+                {isActive && (
+                  <div className="relative flex items-center" ref={sceneMenuRef}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsSceneMenuOpen(!isSceneMenuOpen);
+                      }}
+                      className="p-0.5 hover:bg-white/20 rounded-full transition-colors"
+                    >
+                      <MoreVertical size={16} />
+                    </button>
+
+                    {isSceneMenuOpen && (
+                      <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden ring-1 ring-black ring-opacity-5 text-left">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onEditScene) onEditScene(activeScene);
+                            setIsSceneMenuOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700 flex items-center gap-2 transition-colors"
+                        >
+                          <Edit size={16} className="text-gray-400" /> Edit & View
+                        </button>
+                        <div className="h-px bg-gray-100 my-0"></div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onDeleteScene) onDeleteScene(activeScene);
+                            setIsSceneMenuOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-red-50 text-sm font-medium text-red-600 flex items-center gap-2 transition-colors"
+                        >
+                          <Trash2 size={16} className="text-red-400" /> Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <VideosList jobId={typeof window !== 'undefined' ? localStorage.getItem('current_video_job_id') : ''} />
     </div>
@@ -1591,7 +2331,7 @@ const BuildReelWizard = () => {
       return 1;
     }
   });
-  const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], userquery: null });
+  const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], scripts: [], userquery: null, videoDuration: '60' });
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
   const [isSavingStoryboard, setIsSavingStoryboard] = useState(false);
@@ -1629,6 +2369,61 @@ const BuildReelWizard = () => {
     setForm((f) => ({ ...f, scenes }));
   };
 
+  const handleEditScene = (scene) => {
+    setCurrentScriptContent(scene);
+    setShowSceneScriptModal(true);
+  };
+
+  const handleDeleteScene = async (sceneToDelete) => {
+    if (!window.confirm('Are you sure you want to delete this scene?')) return;
+    const sessionId = localStorage.getItem('session_id');
+    const token = localStorage.getItem('token');
+    if (!sessionId || !token) return;
+
+    try {
+      // 1. Fetch user session data
+      const sessionDataResp = await fetchSessionData(token, sessionId);
+      if (!sessionDataResp) throw new Error('Failed to fetch session data');
+
+      const userObj = sessionDataResp.user_data || sessionDataResp.user || {};
+      const sessionObj = sessionDataResp.session_data || sessionDataResp.session || {};
+
+      // 2. Call delete-scene API
+      const payload = {
+        user: userObj,
+        session: sessionObj,
+        scene_number: sceneToDelete.scene_number
+      };
+
+      console.log('[BuildReel] Deleting scene:', payload);
+
+      const deleteResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/delete-scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!deleteResp.ok) {
+        const err = await deleteResp.text();
+        throw new Error(`Delete failed: ${err}`);
+      }
+
+      console.log('[BuildReel] Scene deleted successfully');
+
+      // 3. Refresh session data to update UI
+      const updatedData = await fetchSessionData(token, sessionId);
+      if (updatedData) {
+        const sd = updatedData.session_data || updatedData.session || {};
+        const scripts = Array.isArray(sd.scripts) ? sd.scripts : [];
+        setForm(f => ({ ...f, scripts }));
+      }
+
+    } catch (error) {
+      console.error('Error deleting scene:', error);
+      alert('Failed to delete scene. Please try again.');
+    }
+  };
+
   // Persist step changes to localStorage
   useEffect(() => {
     try {
@@ -1652,6 +2447,33 @@ const BuildReelWizard = () => {
 
   // Track if we've already restored session to prevent multiple restores
   const hasRestoredSessionRef = useRef(false);
+
+  // Helper function to fetch session data (reused in createFromScratch and restoreSession)
+  const fetchSessionData = async (token, sessionId) => {
+    try {
+      const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: token, session_id: sessionId })
+      });
+      const sessText = await sessResp.text();
+      let sessionData;
+      try {
+        sessionData = JSON.parse(sessText);
+      } catch (_) {
+        sessionData = sessText;
+      }
+
+      if (!sessResp.ok) {
+        console.error('Failed to load session data:', sessText);
+        return null;
+      }
+      return sessionData;
+    } catch (e) {
+      console.error('Error fetching session data:', e);
+      return null;
+    }
+  };
 
   // Restore session data and scenes when step > 1 on mount
   useEffect(() => {
@@ -1678,21 +2500,9 @@ const BuildReelWizard = () => {
         setIsRestoringSession(true);
 
         // Load session data
-        const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: token, session_id: sessionId })
-        });
-        const sessText = await sessResp.text();
-        let sessionData;
-        try {
-          sessionData = JSON.parse(sessText);
-        } catch (_) {
-          sessionData = sessText;
-        }
+        const sessionData = await fetchSessionData(token, sessionId);
 
-        if (!sessResp.ok) {
-          console.error('Failed to load session data:', sessText);
+        if (!sessionData) {
           // If session data fetch fails, reset to step 1
           console.log('[BuildReel] Session data fetch failed, resetting to step 1');
           setStep(1);
@@ -1746,6 +2556,13 @@ const BuildReelWizard = () => {
           }
         }
 
+        // Auto-open Scene Script Modal if scenes exist (per user request)
+        if (airesponse.length > 0) {
+          const latestScene = airesponse[0]; // Open the first scene of the latest script
+          setCurrentScriptContent(latestScene);
+          setShowSceneScriptModal(true);
+        }
+
         // REMOVED: If no scenes found in session, reset to step 1
         // We now rely solely on title to determine step.
 
@@ -1760,6 +2577,7 @@ const BuildReelWizard = () => {
         console.log('[BuildReel] Session restore - currentScript:', currentScript);
         console.log('[BuildReel] Session restore - airesponse length:', airesponse.length);
         console.log('[BuildReel] Session restore - hasSceneDescriptionFields:', hasSceneDescriptionFields);
+        setForm(f => ({ ...f, scripts: scripts, videoDuration: String(sd?.video_duration || '60') }));
         if (airesponse.length > 0) {
           console.log('[BuildReel] Session restore - first scene from airesponse:', {
             scene_number: airesponse[0]?.scene_number,
@@ -2248,6 +3066,7 @@ const BuildReelWizard = () => {
 
     try {
       if (options) {
+        setIsCreatingScenes(true);
         console.log('[BuildReel] Adding scene with options:', options);
         // If adding a scene via options, we need to fetch user data and call the scene creation API
         const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
@@ -2278,7 +3097,7 @@ const BuildReelWizard = () => {
         // Avatar -> VEO3-avatar
         // Financial Scene -> PLOTLY-financial
         // Infographic -> SORA-info
-        let modelType = 'SORA-info'; // Default
+        let modelType = 'SORA'; // Default
         const selectedType = options.videoType || 'Infographic';
 
         if (selectedType === 'Avatar') {
@@ -2306,7 +3125,7 @@ const BuildReelWizard = () => {
             airesponse: []
           },
           action: "add",
-          modelType: modelType
+          model_type: modelType
         };
 
         console.log('[BuildReel] Calling Scene Creation API with payload:', payload);
@@ -2326,11 +3145,33 @@ const BuildReelWizard = () => {
         const sceneData = await sceneResp.json();
         console.log('[BuildReel] Scene Creation Response:', sceneData);
 
-        // Open Scene Modal with the script content
-        // Assuming response has 'script' or 'message' field, falling back to full response
-        const scriptContent = sceneData?.script || sceneData?.message || sceneData;
-        setCurrentScriptContent(scriptContent);
-        setShowSceneScriptModal(true);
+        // Fetch session data again to get latest scripts and update state
+        const updatedSessionData = await fetchSessionData(token, sessionId);
+        if (updatedSessionData) {
+          const sd = updatedSessionData?.session_data || updatedSessionData?.session || {};
+          const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
+          setForm(f => ({ ...f, scripts: scripts }));
+
+          // Auto-open script editor with the latest scene
+          const currentScript = scripts[0] || {};
+          const airesponse = Array.isArray(currentScript.airesponse) ? currentScript.airesponse : [];
+          if (airesponse.length > 0) {
+            // Use the first scene from the latest script, similar to restore logic
+            const latestScene = airesponse[0];
+            setCurrentScriptContent(latestScene);
+            setShowSceneScriptModal(true);
+          } else {
+            // Fallback to previous logic if no scripts found in session (though unexpected)
+            const scriptContent = sceneData?.script || sceneData?.message || sceneData;
+            setCurrentScriptContent(scriptContent);
+            setShowSceneScriptModal(true);
+          }
+        } else {
+          // Fallback if session fetch fails
+          const scriptContent = sceneData?.script || sceneData?.message || sceneData;
+          setCurrentScriptContent(scriptContent);
+          setShowSceneScriptModal(true);
+        }
 
         setIsCreatingScenes(false);
         return; // Stop here, don't proceed to default step transition logic
@@ -2495,6 +3336,8 @@ const BuildReelWizard = () => {
               hasImages={hasImages}
               onGoToStoryboard={() => setSubView('images')}
               addScene={createFromScratch}
+              onEditScene={handleEditScene}
+              onDeleteScene={handleDeleteScene}
             />
           )}
           {subView === 'images' && (
@@ -2521,6 +3364,13 @@ const BuildReelWizard = () => {
             </div>
           )}
         </>
+      )}
+      {isCreatingScenes && (
+        <Loader
+          title="Creating Scene"
+          fullScreen={true}
+          progress={creatingScriptProgress}
+        />
       )}
       {showShortGenPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -2581,6 +3431,7 @@ const BuildReelWizard = () => {
         isOpen={showSceneScriptModal}
         onClose={() => setShowSceneScriptModal(false)}
         scriptContent={currentScriptContent}
+        videoDuration={form.videoDuration}
       />
 
     </>

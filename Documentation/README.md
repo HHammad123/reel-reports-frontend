@@ -46,7 +46,7 @@ https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net
 
 ### Reel Videos Test Service
 ```
-https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net
+https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/
 ```
 
 ### Auth Service

@@ -9,7 +9,7 @@ import { selectVideoJob, updateJobStatus, setJob } from '../redux/slices/videoJo
 // Download video function - handles CORS and ensures complete download
 const downloadVideo = async (videoUrl, videoName) => {
   let loadingMsg = null;
-  
+
   try {
     // Show loading indicator
     loadingMsg = document.createElement('div');
@@ -17,7 +17,7 @@ const downloadVideo = async (videoUrl, videoName) => {
     loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#13008B;color:white;padding:20px;border-radius:8px;z-index:10000;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
     loadingMsg.textContent = 'Preparing download...';
     document.body.appendChild(loadingMsg);
-    
+
     // Try fetch approach first (more reliable for binary data)
     const response = await fetch(videoUrl, {
       method: 'GET',
@@ -25,22 +25,22 @@ const downloadVideo = async (videoUrl, videoName) => {
         'Accept': 'video/*,*/*',
       },
     });
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    
+
     // Get content type
     const contentType = response.headers.get('content-type') || 'video/mp4';
-    
+
     // Read the response as blob (handles binary data correctly)
     const blob = await response.blob();
-    
+
     // Verify blob is valid and not empty
     if (!blob || blob.size === 0) {
       throw new Error('Downloaded file is empty or invalid');
     }
-    
+
     // Determine file extension from content type or URL
     let extension = 'mp4';
     if (contentType.includes('webm')) extension = 'webm';
@@ -50,21 +50,21 @@ const downloadVideo = async (videoUrl, videoName) => {
       const match = videoUrl.toLowerCase().match(/\.(\w+)$/);
       if (match) extension = match[1];
     }
-    
+
     // Create download link
     const url = window.URL.createObjectURL(blob);
     const downloadLink = document.createElement('a');
     downloadLink.href = url;
-    downloadLink.download = videoName 
-      ? (videoName.endsWith('.mp4') || videoName.endsWith('.webm') || videoName.endsWith('.mov') 
-         ? videoName 
-         : `${videoName}.${extension}`)
+    downloadLink.download = videoName
+      ? (videoName.endsWith('.mp4') || videoName.endsWith('.webm') || videoName.endsWith('.mov')
+        ? videoName
+        : `${videoName}.${extension}`)
       : `video.${extension}`;
     downloadLink.style.display = 'none';
-    
+
     document.body.appendChild(downloadLink);
     downloadLink.click();
-    
+
     // Cleanup after a delay
     setTimeout(() => {
       window.URL.revokeObjectURL(url);
@@ -75,15 +75,15 @@ const downloadVideo = async (videoUrl, videoName) => {
         document.body.removeChild(loadingMsg);
       }
     }, 200);
-    
+
   } catch (fetchError) {
     // If fetch fails (CORS or other issue), try direct download
     console.warn('Fetch download failed, trying direct download:', fetchError);
-    
+
     if (loadingMsg && loadingMsg.parentNode) {
       loadingMsg.textContent = 'Trying alternative method...';
     }
-    
+
     try {
       const directLink = document.createElement('a');
       directLink.href = videoUrl;
@@ -91,7 +91,7 @@ const downloadVideo = async (videoUrl, videoName) => {
       directLink.style.display = 'none';
       document.body.appendChild(directLink);
       directLink.click();
-      
+
       setTimeout(() => {
         if (directLink.parentNode) {
           document.body.removeChild(directLink);
@@ -105,7 +105,7 @@ const downloadVideo = async (videoUrl, videoName) => {
       if (loadingMsg && loadingMsg.parentNode) {
         document.body.removeChild(loadingMsg);
       }
-      
+
       const fallbackLink = document.createElement('a');
       fallbackLink.href = videoUrl;
       fallbackLink.target = '_blank';
@@ -118,7 +118,7 @@ const downloadVideo = async (videoUrl, videoName) => {
           document.body.removeChild(fallbackLink);
         }
       }, 200);
-      
+
       alert('Download failed. The video will open in a new tab - please right-click and select "Save video as..." to download.');
     }
   }
@@ -174,18 +174,18 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
-    
+
     if (isPlaying) {
       video.pause();
     } else {
-      video.play().catch(() => {});
+      video.play().catch(() => { });
     }
   };
 
   const handleProgressClick = (e) => {
     const video = videoRef.current;
     if (!video || !duration) return;
-    
+
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const percentage = clickX / rect.width;
@@ -195,7 +195,7 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
   const toggleMute = () => {
     const video = videoRef.current;
     if (!video) return;
-    
+
     if (isMuted) {
       setVolume(1);
     } else {
@@ -282,7 +282,7 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
   };
 
   return (
-    <div 
+    <div
       className="relative w-full bg-black rounded-xl overflow-hidden group"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
@@ -294,20 +294,19 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
         preload="metadata"
         onClick={togglePlay}
       />
-      
+
       {/* Controls Overlay */}
-      <div 
-        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${
-          showControls ? 'opacity-100' : 'opacity-0'
-        }`}
+      <div
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'
+          }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Progress Bar */}
-        <div 
+        <div
           className="w-full h-1 bg-white/30 rounded-full mb-3 cursor-pointer"
           onClick={handleProgressClick}
         >
-          <div 
+          <div
             className="h-full bg-[#13008B] rounded-full transition-all"
             style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
           />
@@ -428,7 +427,7 @@ const VideoThumbnail = ({ videoUrl, videoName }) => {
 
   return (
     <div className="relative w-full">
-      <div 
+      <div
         className="relative w-full bg-black rounded-xl overflow-hidden border border-gray-200 shadow-sm cursor-pointer group"
         onClick={() => setIsExpanded(true)}
       >
@@ -447,7 +446,7 @@ const VideoThumbnail = ({ videoUrl, videoName }) => {
           </div>
         </div>
         {/* Download button overlay - appears on hover */}
-        <div 
+        <div
           className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={(e) => {
             e.stopPropagation();
@@ -475,17 +474,17 @@ const Section = ({ title, items }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {items.map((item, i) => {
           const isVideo = item?.type === 'video';
-          
+
           return (
             <div key={item.id || i} className="w-full">
               {isVideo && item?.url ? (
                 <VideoThumbnail videoUrl={item.url} videoName={item.name} />
               ) : item?.thumb || item?.url ? (
-            <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-black">
-                  <img 
-                    src={item.thumb || item.url} 
-                    alt={item.id || `media-${i}`} 
-                    className="w-full h-auto object-contain" 
+                <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-black">
+                  <img
+                    src={item.thumb || item.url}
+                    alt={item.id || `media-${i}`}
+                    className="w-full h-auto object-contain"
                   />
                 </div>
               ) : (
@@ -588,30 +587,30 @@ const MyMedia = () => {
   // Poll webm conversion job status until succeeded
   useEffect(() => {
     if (!webmConversionJobId) return;
-    
+
     let cancelled = false;
     let isPolling = false; // Track if polling is in progress
     const pollInterval = 3000; // 3 seconds
     const maxDuration = 10 * 60 * 1000; // 10 minutes
     const startTime = Date.now();
-    
+
     const poll = async () => {
       // Prevent multiple polling loops
       if (isPolling || cancelled) return;
-      
+
       // Check timeout
       if (Date.now() - startTime > maxDuration) {
         setWebmConversionStatus('failed');
         console.error('WebM conversion job polling timeout');
         return;
       }
-      
+
       isPolling = true;
-      
+
       try {
         const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
         const url = `${apiBase}/v1/videos/webm-conversion-job-status/${encodeURIComponent(webmConversionJobId)}`;
-        
+
         const resp = await fetch(url);
         const text = await resp.text();
         let data;
@@ -620,16 +619,16 @@ const MyMedia = () => {
         } catch (_) {
           data = text;
         }
-        
+
         if (!resp.ok) {
           throw new Error(`Job status check failed: ${resp.status} ${text}`);
         }
-        
+
         const status = data?.status || data?.job_status || 'queued';
-        
+
         if (!cancelled) {
           setWebmConversionStatus(status);
-          
+
           // If succeeded, clear the job ID from localStorage
           if (status === 'succeeded' || status === 'completed') {
             localStorage.removeItem('webm_conversion_job_id');
@@ -640,7 +639,7 @@ const MyMedia = () => {
             isPolling = false;
             return; // Stop polling
           }
-          
+
           // If failed, keep job ID for debugging but stop polling
           if (status === 'failed' || status === 'error') {
             console.error('WebM conversion job failed:', data);
@@ -648,7 +647,7 @@ const MyMedia = () => {
             return; // Stop polling
           }
         }
-        
+
         // Continue polling if not in terminal state
         if (!cancelled && status !== 'succeeded' && status !== 'completed' && status !== 'failed' && status !== 'error') {
           isPolling = false;
@@ -669,7 +668,7 @@ const MyMedia = () => {
         }
       }
     };
-    
+
     poll();
     return () => { cancelled = true; };
   }, [webmConversionJobId]); // Only depend on jobId, not status
@@ -677,30 +676,30 @@ const MyMedia = () => {
   // Poll render video job status until succeeded
   useEffect(() => {
     if (!renderVideoJobId) return;
-    
+
     let cancelled = false;
     let isPolling = false; // Track if polling is in progress
     const pollInterval = 3000; // 3 seconds
     const maxDuration = 10 * 60 * 1000; // 10 minutes
     const startTime = Date.now();
-    
+
     const poll = async () => {
       // Prevent multiple polling loops
       if (isPolling || cancelled) return;
-      
+
       // Check timeout
       if (Date.now() - startTime > maxDuration) {
         setRenderVideoStatus('failed');
         console.error('Render video job polling timeout');
         return;
       }
-      
+
       isPolling = true;
-      
+
       try {
         const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
         const url = `${apiBase}/v1/videos/render-job-status/${encodeURIComponent(renderVideoJobId)}`;
-        
+
         const resp = await fetch(url);
         const text = await resp.text();
         let data;
@@ -709,22 +708,22 @@ const MyMedia = () => {
         } catch (_) {
           data = text;
         }
-        
+
         if (!resp.ok) {
           throw new Error(`Render job status check failed: ${resp.status} ${text}`);
         }
-        
+
         const status = data?.status || data?.job_status || 'queued';
         const progress = data?.progress || data?.progress_percent || 0;
         const phase = data?.phase || data?.message || '';
-        
+
         if (!cancelled) {
           setRenderVideoStatus(status);
-          setRenderVideoProgress({ 
-            percent: typeof progress === 'number' ? progress : 0, 
-            phase: phase || '' 
+          setRenderVideoProgress({
+            percent: typeof progress === 'number' ? progress : 0,
+            phase: phase || ''
           });
-          
+
           // If succeeded, clear the job ID from localStorage
           if (status === 'succeeded' || status === 'completed' || status === 'success') {
             localStorage.removeItem('render_video_job_id');
@@ -735,7 +734,7 @@ const MyMedia = () => {
             isPolling = false;
             return; // Stop polling
           }
-          
+
           // If failed, keep job ID for debugging but stop polling
           if (status === 'failed' || status === 'error') {
             console.error('Render video job failed:', data);
@@ -743,7 +742,7 @@ const MyMedia = () => {
             return; // Stop polling
           }
         }
-        
+
         // Continue polling if not in terminal state
         if (!cancelled && status !== 'succeeded' && status !== 'completed' && status !== 'success' && status !== 'failed' && status !== 'error') {
           isPolling = false;
@@ -764,7 +763,7 @@ const MyMedia = () => {
         }
       }
     };
-    
+
     poll();
     return () => { cancelled = true; };
   }, [renderVideoJobId]); // Only depend on jobId, not status
@@ -782,7 +781,7 @@ const MyMedia = () => {
         let url = videoJob.statusUrl;
         if (!url) {
           const jobType = (() => { try { return localStorage.getItem('current_video_job_type'); } catch (_) { return null; } })();
-          const base = 'https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net';
+          const base = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/';
           if (jobType === 'merge') {
             url = `${base}/v1/jobs/merge/${encodeURIComponent(videoJob.jobId)}`;
           } else {
@@ -850,7 +849,7 @@ const MyMedia = () => {
       };
 
       const body = { session: sessionForBody };
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/merge', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/videos/merge', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const text = await resp.text();
@@ -897,12 +896,12 @@ const MyMedia = () => {
 
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfWeek = (() => { 
-      const d = new Date(startOfDay); 
-      const day = d.getDay(); 
-      const diff = (day + 6) % 7; 
-      d.setDate(d.getDate() - diff); 
-      return d; 
+    const startOfWeek = (() => {
+      const d = new Date(startOfDay);
+      const day = d.getDay();
+      const diff = (day + 6) % 7;
+      d.setDate(d.getDate() - diff);
+      return d;
     })();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfYear = new Date(now.getFullYear(), 0, 1);
@@ -920,10 +919,10 @@ const MyMedia = () => {
   useEffect(() => {
     const fetchMedia = async () => {
       try {
-        setIsLoadingLib(true); 
+        setIsLoadingLib(true);
         setLibError('');
         const user_id = localStorage.getItem('token') || '';
-        
+
         if (!user_id) {
           setLibError('User ID not found. Please sign in again.');
           setIsLoadingLib(false);
@@ -935,22 +934,22 @@ const MyMedia = () => {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' }
         });
-        
+
         const text = await resp.text();
-        let json; 
-        try { 
-          json = JSON.parse(text); 
-        } catch (_) { 
-          json = text; 
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch (_) {
+          json = text;
         }
-        
+
         if (!resp.ok) {
           throw new Error(`final-videos failed: ${resp.status} ${text}`);
         }
 
         // Parse the response structure: { final_videos: [{ name, url }, ...] }
         const videosArray = Array.isArray(json?.final_videos) ? json.final_videos : [];
-        
+
         // Normalize videos to consistent format
         const normalizedVideos = videosArray
           .filter(v => v && v.url && typeof v.url === 'string' && v.url.trim())
@@ -971,8 +970,8 @@ const MyMedia = () => {
       } catch (e) {
         setLibError(e?.message || 'Failed to load media');
         console.error('Error fetching final videos:', e);
-      } finally { 
-        setIsLoadingLib(false); 
+      } finally {
+        setIsLoadingLib(false);
       }
     };
     fetchMedia();
@@ -988,9 +987,9 @@ const MyMedia = () => {
             <div className="flex items-center justify-end mb-4 gap-2">
               {/* Sort buttons */}
               <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 text-gray-700"><SlidersHorizontal className="w-4 h-4" /></div>
-              <button onClick={() => setSortMode('type')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode==='type' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by File Type</button>
-              <button onClick={() => setSortMode('timeline')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode==='timeline' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by Timeline</button>
+                <div className="flex items-center gap-2 text-gray-700"><SlidersHorizontal className="w-4 h-4" /></div>
+                <button onClick={() => setSortMode('type')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode === 'type' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by File Type</button>
+                <button onClick={() => setSortMode('timeline')} className={`px-3 py-1.5 rounded-md text-sm border ${sortMode === 'timeline' ? 'bg-gray-100 border-gray-300' : 'border-gray-200 hover:bg-gray-50'}`}>Sort by Timeline</button>
               </div>
             </div>
 
@@ -1062,7 +1061,7 @@ const MyMedia = () => {
 
             {isLoadingLib && (<div className="mb-4 text-sm text-gray-600">Loading your videos…</div>)}
             {libError && (<div className="mb-4 text-sm text-red-600">{libError}</div>)}
-            
+
             {/* Show message if no videos found */}
             {!isLoadingLib && !libError && data.all.length === 0 && (
               <div className="text-center py-12 text-gray-500">
@@ -1070,35 +1069,35 @@ const MyMedia = () => {
                 <p className="text-sm">No videos available.</p>
               </div>
             )}
-            
+
             {data.today.length > 0 && (
-              <Section 
-                title="Today" 
-                items={data.today} 
+              <Section
+                title="Today"
+                items={data.today}
               />
             )}
             {data.week.length > 0 && (
-              <Section 
-                title="This Week" 
-                items={data.week} 
+              <Section
+                title="This Week"
+                items={data.week}
               />
             )}
             {data.month.length > 0 && (
-              <Section 
-                title="This Month" 
-                items={data.month} 
+              <Section
+                title="This Month"
+                items={data.month}
               />
             )}
             {data.year.length > 0 && (
-              <Section 
-                title="This Year" 
-                items={data.year} 
+              <Section
+                title="This Year"
+                items={data.year}
               />
             )}
             {data.all.length > 0 && (
-              <Section 
-                title="All Videos" 
-                items={data.all} 
+              <Section
+                title="All Videos"
+                items={data.all}
               />
             )}
           </div>

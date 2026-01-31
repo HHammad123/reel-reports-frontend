@@ -363,7 +363,7 @@ const Sidebar = () => {
         navigate('/login');
         return;
       }
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/sessions/new', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userToken })
@@ -610,7 +610,7 @@ const Sidebar = () => {
                                       // Check title for step determination
                                       // User requirement: if title is null -> step 1, if title exists -> step 2
                                       const sessionTitle = sd?.title || sd?.session_title || '';
-                                      
+
                                       // Determine step and subView
                                       let targetStep = 1;
                                       let targetSubView = 'editor';
@@ -619,12 +619,12 @@ const Sidebar = () => {
                                         targetStep = 2;
                                         // Default subview for step 2
                                         targetSubView = 'editor';
-                                        
+
                                         // Optional: keep existing logic for subview refinement if needed, 
                                         // but ensure step is 2 if title exists.
                                         const videos = Array.isArray(sd?.videos) ? sd.videos : [];
                                         const images = Array.isArray(sd?.images) ? sd.images : [];
-                                        
+
                                         if (videos.length > 0) {
                                           targetSubView = 'videos';
                                         } else if (images.length > 0) {

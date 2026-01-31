@@ -100,15 +100,15 @@ const Guidlines = () => {
   // Check if a color is selected by comparing all possible variations
   const isColorSelected = useCallback((color) => {
     if (!color || !selectedColors || selectedColors.size === 0) return false
-    
+
     // Normalize the color we're checking
     const normalized = normalizeColor(color) || color
-    
+
     // Check direct matches
     if (selectedColors.has(color) || selectedColors.has(normalized)) {
       return true
     }
-    
+
     // Check all colors in selectedColors against this color
     for (const selectedColor of selectedColors) {
       const normalizedSelected = normalizeColor(selectedColor) || selectedColor
@@ -116,7 +116,7 @@ const Guidlines = () => {
         return true
       }
     }
-    
+
     return false
   }, [selectedColors, normalizeColor])
 
@@ -217,11 +217,11 @@ const Guidlines = () => {
   // Ensure selected colors that aren't in presetColors are added to customColors
   useEffect(() => {
     if (!selectedColors || selectedColors.size === 0) return
-    
+
     const selectedColorsArray = Array.from(selectedColors)
     const allColors = [...presetColors, ...customColors]
     const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
-    
+
     const missingColors = selectedColorsArray.filter(selectedColor => {
       const normalized = normalizeColor(selectedColor) || selectedColor
       // Check if it's in presetColors
@@ -235,7 +235,7 @@ const Guidlines = () => {
       }
       return true
     })
-    
+
     if (missingColors.length > 0) {
       setCustomColors(prev => {
         const existing = prev.map(c => normalizeColor(c) || c)
@@ -269,7 +269,7 @@ const Guidlines = () => {
       if (!supportsMime('audio/mp4')) return blob
       const el = document.createElement('audio')
       el.src = URL.createObjectURL(blob)
-      await el.play().catch(() => {})
+      await el.play().catch(() => { })
       await new Promise(res => { el.onloadedmetadata = () => res() })
       const stream = el.captureStream ? el.captureStream() : (el.mozCaptureStream ? el.mozCaptureStream() : null)
       if (!stream) return blob
@@ -277,10 +277,10 @@ const Guidlines = () => {
       const chunks = []
       return await new Promise(resolve => {
         rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data) }
-        rec.onstop = () => { try { el.pause() } catch {} ; const out = new Blob(chunks, { type: 'audio/mp4' }); resolve(out.size>0?out:blob) }
+        rec.onstop = () => { try { el.pause() } catch { }; const out = new Blob(chunks, { type: 'audio/mp4' }); resolve(out.size > 0 ? out : blob) }
         rec.start();
-        el.onended = () => { try { rec.stop() } catch {} }
-        setTimeout(() => { if (rec.state === 'recording') { try { rec.stop() } catch {} } }, 15000)
+        el.onended = () => { try { rec.stop() } catch { } }
+        setTimeout(() => { if (rec.state === 'recording') { try { rec.stop() } catch { } } }, 15000)
       })
     } catch { return blob }
   }
@@ -304,11 +304,11 @@ const Guidlines = () => {
   const triggerFileUpload = () => {
     fileInputRef.current?.click()
   }
-  
+
   const triggerAvatarUpload = () => {
     avatarInputRef.current?.click()
   }
-  
+
   const handleAvatarUpload = (event) => {
     const file = event.target.files[0]
     if (file) {
@@ -330,7 +330,7 @@ const Guidlines = () => {
         const file = toMp3File(b, i)
         form.append('voiceovers', file)
       })
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/brand-assets', { method: 'POST', body: form })
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/users/brand-assets', { method: 'POST', body: form })
       if (!resp.ok) throw new Error(`brand-assets upload failed: ${resp.status}`)
       const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`)
       const assets = await getResp.json().catch(() => ({}))
@@ -366,7 +366,7 @@ const Guidlines = () => {
           }
         }
       } catch (_) { /* noop */ }
-      try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch {}
+      try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)) } catch { }
       setPendingVoiceBlobs([])
       setPendingVoiceUrls([])
     } catch (e) {
@@ -405,82 +405,82 @@ const Guidlines = () => {
     }
   }
   const stopRecording = () => {
-    try { if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop() } catch {}
+    try { if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop() } catch { }
   }
 
   // Load brand assets on mount
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) return
-    ;(async () => {
-      try {
-        const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`)
-        const assets = await resp.json().catch(() => ({}))
-        const voices = Array.isArray(assets?.voiceovers)
-          ? assets.voiceovers
-          : (Array.isArray(assets?.voiceover)
-            ? assets.voiceover
-            : (assets?.voices || []))
-        setBrandVoices(voices)
-        const logos = Array.isArray(assets?.brand_identity?.logo)
-          ? assets.brand_identity.logo
-          : (Array.isArray(assets?.logos)
-            ? assets.logos
-            : (Array.isArray(assets?.logo)
-              ? assets.logo
-              : (Array.isArray(assets?.images)
-                ? assets.images.filter(it => typeof it === 'string' && /\.(png|jpe?g|svg|webp)$/i.test(it))
-                : [])))
-        setBrandLogos(logos)
-        // Prefill fonts and colors
+      ; (async () => {
         try {
-          const bi = assets?.brand_identity || {}
-          const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
-          const rawColors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
-          // Normalize colors to ensure they match the format used in the UI
-          const colors = rawColors
-            .map(color => normalizeColor(color))
-            .filter(color => color !== null && color !== undefined)
-          if (fonts.length) {
-            setSelectedFonts(fonts)
-            // Auto-enable Font styles when brand fonts exist
-            setSelectedFont((prev) => (prev === 'yes' ? prev : 'yes'))
-          }
-          if (colors.length) {
-            setSelectedColors(new Set(colors))
-            // Auto-enable Specific color schemes when brand colors exist
-            setSelectedColor((prev) => (prev === 'yes' ? prev : 'yes'))
-            // Add brand colors that aren't in presetColors to customColors so they show in the list
-            const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
-            const colorsToAdd = colors.filter(color => {
-              const normalized = normalizeColor(color) || color
-              return !normalizedPreset.includes(normalized) && !normalizedPreset.includes(color)
-            })
-            if (colorsToAdd.length > 0) {
-              setCustomColors(prev => {
-                const existing = prev.map(c => normalizeColor(c) || c)
-                const newColors = colorsToAdd.filter(c => {
-                  const normalized = normalizeColor(c) || c
-                  return !existing.includes(normalized) && !existing.includes(c)
-                })
-                return [...prev, ...newColors]
-              })
+          const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`)
+          const assets = await resp.json().catch(() => ({}))
+          const voices = Array.isArray(assets?.voiceovers)
+            ? assets.voiceovers
+            : (Array.isArray(assets?.voiceover)
+              ? assets.voiceover
+              : (assets?.voices || []))
+          setBrandVoices(voices)
+          const logos = Array.isArray(assets?.brand_identity?.logo)
+            ? assets.brand_identity.logo
+            : (Array.isArray(assets?.logos)
+              ? assets.logos
+              : (Array.isArray(assets?.logo)
+                ? assets.logo
+                : (Array.isArray(assets?.images)
+                  ? assets.images.filter(it => typeof it === 'string' && /\.(png|jpe?g|svg|webp)$/i.test(it))
+                  : [])))
+          setBrandLogos(logos)
+          // Prefill fonts and colors
+          try {
+            const bi = assets?.brand_identity || {}
+            const fonts = Array.isArray(bi?.fonts) ? bi.fonts : (Array.isArray(assets?.fonts) ? assets.fonts : [])
+            const rawColors = Array.isArray(bi?.colors) ? bi.colors : (Array.isArray(assets?.colors) ? assets.colors : [])
+            // Normalize colors to ensure they match the format used in the UI
+            const colors = rawColors
+              .map(color => normalizeColor(color))
+              .filter(color => color !== null && color !== undefined)
+            if (fonts.length) {
+              setSelectedFonts(fonts)
+              // Auto-enable Font styles when brand fonts exist
+              setSelectedFont((prev) => (prev === 'yes' ? prev : 'yes'))
             }
-          }
-          // Auto-enable Logo inclusion and preselect first logo when brand logos exist
-          if (Array.isArray(logos) && logos.length > 0) {
-            setSelectedLogo((prev) => (prev === 'yes' ? prev : 'yes'))
-            const first = logos[0]
-            const url = typeof first === 'string' ? first : (first?.url || first?.image_url || first?.imageUrl || first?.src || '')
-            if (url) setSelectedLogoUrl(url)
-          }
-        } catch (_) { /* noop */ }
-        try {
-          const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean)
-          localStorage.setItem('brand_voiceover_urls', JSON.stringify(urls))
-        } catch (_) { /* noop */ }
-      } catch {}
-    })()
+            if (colors.length) {
+              setSelectedColors(new Set(colors))
+              // Auto-enable Specific color schemes when brand colors exist
+              setSelectedColor((prev) => (prev === 'yes' ? prev : 'yes'))
+              // Add brand colors that aren't in presetColors to customColors so they show in the list
+              const normalizedPreset = presetColors.map(c => normalizeColor(c) || c)
+              const colorsToAdd = colors.filter(color => {
+                const normalized = normalizeColor(color) || color
+                return !normalizedPreset.includes(normalized) && !normalizedPreset.includes(color)
+              })
+              if (colorsToAdd.length > 0) {
+                setCustomColors(prev => {
+                  const existing = prev.map(c => normalizeColor(c) || c)
+                  const newColors = colorsToAdd.filter(c => {
+                    const normalized = normalizeColor(c) || c
+                    return !existing.includes(normalized) && !existing.includes(c)
+                  })
+                  return [...prev, ...newColors]
+                })
+              }
+            }
+            // Auto-enable Logo inclusion and preselect first logo when brand logos exist
+            if (Array.isArray(logos) && logos.length > 0) {
+              setSelectedLogo((prev) => (prev === 'yes' ? prev : 'yes'))
+              const first = logos[0]
+              const url = typeof first === 'string' ? first : (first?.url || first?.image_url || first?.imageUrl || first?.src || '')
+              if (url) setSelectedLogoUrl(url)
+            }
+          } catch (_) { /* noop */ }
+          try {
+            const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean)
+            localStorage.setItem('brand_voiceover_urls', JSON.stringify(urls))
+          } catch (_) { /* noop */ }
+        } catch { }
+      })()
   }, [])
 
   const handleSelectFont = (font) => {
@@ -553,9 +553,9 @@ const Guidlines = () => {
   }
 
   const [selectedGoal, setSelectedGoal] = useState("Pitch development"); // Default to first option
-  const [selectedVideoType, setSelectedVideoType] = useState("tourism"); 
+  const [selectedVideoType, setSelectedVideoType] = useState("tourism");
   const [otherText, setOtherText] = useState("");
-  const videoType= [
+  const videoType = [
     { id: "tourism", label: "Travel / Tourism" },
     { id: "technology", label: "Software and Technology" },
     { id: "sales", label: "Sales Pitch / Proposal" },
@@ -579,7 +579,7 @@ const Guidlines = () => {
   };
   const handleVideoTypeSelect = (goalId) => {
     setSelectedVideoType(goalId);
-   
+
   };
   const [isOpen, setIsOpen] = useState(false);
   // Top-level section dropdowns
@@ -760,7 +760,7 @@ const Guidlines = () => {
   const [isOpenSummary, setIsOpenSummary] = useState(false);
   const [selectedSummary, setSelectedSummary] = useState("no"); // Default to "No"
   const [descSummary, setDescSummary] = useState("");
-  
+
   // Avatar state variables
   const [selectedAvatar, setSelectedAvatar] = useState("no"); // Default to "No"
   const [selectedAvatarFromLibrary, setSelectedAvatarFromLibrary] = useState(null);
@@ -885,7 +885,7 @@ const Guidlines = () => {
   const uniqueBrandVoiceOptions = useMemo(() => {
     // Filter by selected tone when Audio and Voice is "yes"
     let source = Array.isArray(brandVoices) ? brandVoices : []
-    
+
     // If Audio and Voice is selected as "yes", filter by tone type
     if (selectedVoice2 === 'yes' && selectedTone) {
       source = source.filter(voice => {
@@ -894,7 +894,7 @@ const Guidlines = () => {
         return voiceType.toLowerCase() === selectedTone.toLowerCase()
       })
     }
-    
+
     const seen = new Map()
     return source.reduce((acc, voice, index) => {
       const name = extractBrandVoiceName(voice, index)
@@ -1088,7 +1088,7 @@ const Guidlines = () => {
   useEffect(() => {
     try {
       const state = {
-        selectedVideoType,selectedGoal, otherText, selectedAudience, otherTextaud, selectedTone, otherTexttone,
+        selectedVideoType, selectedGoal, otherText, selectedAudience, otherTextaud, selectedTone, otherTexttone,
         selectedOption, descEmphasize, selectedShareable, descShareable,
         selectedLogo, selectedColor, selectedFonts, selectedColors: Array.from(selectedColors || []), customColors, currentColor,
         selectedFont, selectedGraphicsOption, selectedCTA, descCTA, selectedSummary, descSummary,
@@ -1100,7 +1100,7 @@ const Guidlines = () => {
     } catch (_) { /* noop */ }
   }, [
     dispatch,
-    selectedVideoType,selectedGoal, otherText, selectedAudience, otherTextaud, selectedTone, otherTexttone,
+    selectedVideoType, selectedGoal, otherText, selectedAudience, otherTextaud, selectedTone, otherTexttone,
     selectedOption, descEmphasize, selectedShareable, descShareable,
     selectedLogo, selectedColor, selectedFonts, selectedColors, customColors, currentColor,
     selectedFont, selectedGraphicsOption, selectedCTA, descCTA, selectedSummary, descSummary,
@@ -1111,39 +1111,39 @@ const Guidlines = () => {
 
   return (
     <div className='bg-white h-[100vh] w-full rounded-lg p-[20px] overflow-y-scroll scrollbar-hide'>
-             <div className='flex justify-between items-center'>
-         <div className='flex flex-col justify-start items-start gap-2'>
-           <h2 className='text-[25px]'>Video Guidelines</h2>
-           <p className='text-[15px] text-gray-500'>Fill in all the Mandatory details</p>
-         </div>
-         <button 
-           onClick={() => {
-             if (window.goToChat) {
-               window.goToChat();
-             }
-           }}
-           className='px-6 py-2 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0066] transition-colors'
-         >
-           Back to Chat
-         </button>
-       </div>
+      <div className='flex justify-between items-center'>
+        <div className='flex flex-col justify-start items-start gap-2'>
+          <h2 className='text-[25px]'>Video Guidelines</h2>
+          <p className='text-[15px] text-gray-500'>Fill in all the Mandatory details</p>
+        </div>
+        <button
+          onClick={() => {
+            if (window.goToChat) {
+              window.goToChat();
+            }
+          }}
+          className='px-6 py-2 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0066] transition-colors'
+        >
+          Back to Chat
+        </button>
+      </div>
       {/* purpose */}
       <div>
         <div className='flex flex-col justify-start items-start gap-2'>
-         
+
         </div>
-                 <div
-           onClick={() => handleAccordionToggle('purpose')}
-           className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
-         >
+        <div
+          onClick={() => handleAccordionToggle('purpose')}
+          className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
+        >
           <span className="text-[18px] text-gray-600">Purpose and Audience</span>
           {openPurpose ? <FaAngleUp /> : <FaAngleDown />}
         </div>
         <div
           className={`transition-all duration-500 ease-in-out overflow-hidden ${openPurpose ? "max-h-[2000px] mt-4 opacity-100" : "max-h-0 opacity-0"}`}
         >
-           
-          <div  className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+
+          <div className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <div className="flex justify-between items-center">
               <span className="text-[18px] text-gray-600">Goal of the video</span>
             </div>
@@ -1155,9 +1155,9 @@ const Guidlines = () => {
                       onClick={() => handleSelect(g.id)}
                       className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
               ${selectedGoal === g.id
-                        ? "bg-green-500 border-green-500"
-                        : "bg-white border-gray-400"
-                      }`}
+                          ? "bg-green-500 border-green-500"
+                          : "bg-white border-gray-400"
+                        }`}
                     >
                       {selectedGoal === g.id && (
                         <FaCheck className="text-white text-sm" />
@@ -1183,7 +1183,7 @@ const Guidlines = () => {
               </div>
             </div>
           </div>
-          <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <div className="flex justify-between items-center">
               <span className="text-[18px] text-gray-600">Audience</span>
             </div>
@@ -1196,9 +1196,9 @@ const Guidlines = () => {
                         onClick={() => handleSelectAudience(aud.id)}
                         className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                     ${selectedAudience === aud.id
-                          ? "bg-green-500 border-green-500"
-                          : "bg-white border-gray-400"
-                        }`}
+                            ? "bg-green-500 border-green-500"
+                            : "bg-white border-gray-400"
+                          }`}
                       >
                         {selectedAudience === aud.id && (
                           <FaCheck className="text-white text-sm" />
@@ -1225,7 +1225,7 @@ const Guidlines = () => {
               </div>
             </div>
           </div>
-          <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <div className="flex justify-between items-center">
               <span className="text-[18px] text-gray-600">Tone or Style</span>
             </div>
@@ -1238,9 +1238,9 @@ const Guidlines = () => {
                         onClick={() => handleSelecttone(aud.id)}
                         className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                     ${selectedTone === aud.id
-                          ? "bg-green-500 border-green-500"
-                          : "bg-white border-gray-400"
-                        }`}
+                            ? "bg-green-500 border-green-500"
+                            : "bg-white border-gray-400"
+                          }`}
                       >
                         {selectedTone === aud.id && (
                           <FaCheck className="text-white text-sm" />
@@ -1252,7 +1252,7 @@ const Guidlines = () => {
                       >
                         {aud.label}
                       </label>
-                      
+
                     </div>
                   ))}
                 </div>
@@ -1264,16 +1264,16 @@ const Guidlines = () => {
 
       {/* Content Focus and Emphasis */}
 
-     
+
 
       {/* Style and Visual Preferences */}
 
       <div>
-       
-                 <div
-           onClick={() => handleAccordionToggle('style')}
-           className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
-         >
+
+        <div
+          onClick={() => handleAccordionToggle('style')}
+          className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
+        >
           <span className="text-[18px] text-gray-600">Style and Visual Preferences</span>
           {openStyle ? <FaAngleUp /> : <FaAngleDown />}
         </div>
@@ -1281,7 +1281,7 @@ const Guidlines = () => {
         <div
           className={`transition-all duration-500 ease-in-out ${openStyle ? "max-h-[2000px] mt-4 opacity-100 overflow-visible" : "max-h-0 opacity-0 overflow-hidden"}`}
         >
-          <div  className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">Logo inclusion</span>
             <div className="flex flex-col gap-3">
               {optionsLogo.map((opt) => (
@@ -1309,8 +1309,8 @@ const Guidlines = () => {
               {selectedLogo === 'yes' && (
                 <div className="mt-2 border rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-3">
-                    <button onClick={() => setLogoSelectMode('assets')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode==='assets' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>From Brand Assets</button>
-                    <button onClick={() => setLogoSelectMode('upload')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode==='upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>Upload Image</button>
+                    <button onClick={() => setLogoSelectMode('assets')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode === 'assets' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>From Brand Assets</button>
+                    <button onClick={() => setLogoSelectMode('upload')} className={`px-3 py-1.5 rounded-md text-sm ${logoSelectMode === 'upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>Upload Image</button>
                   </div>
                   {logoSelectMode === 'assets' ? (
                     <div>
@@ -1322,7 +1322,7 @@ const Guidlines = () => {
                             const active = selectedLogoUrl === url;
                             return (
                               <button key={i} onClick={() => setSelectedLogoUrl(url)} className={`border rounded-lg p-2 flex items-center justify-center bg-white hover:bg-gray-50 ${active ? 'border-blue-600 ring-2 ring-blue-200' : 'border-gray-200'}`}>
-                                <img src={url} alt={`Logo ${i+1}`} className="max-h-16 object-contain" />
+                                <img src={url} alt={`Logo ${i + 1}`} className="max-h-16 object-contain" />
                               </button>
                             )
                           })}
@@ -1369,10 +1369,10 @@ const Guidlines = () => {
                               ? finalAssets.logos
                               : (Array.isArray(finalAssets?.logo) ? finalAssets.logo : []));
                           setBrandLogos(finalLogos);
-                          const lastSel = finalLogos && finalLogos.length ? (typeof finalLogos[finalLogos.length-1] === 'string' ? finalLogos[finalLogos.length-1] : (finalLogos[finalLogos.length-1]?.url || '')) : '';
+                          const lastSel = finalLogos && finalLogos.length ? (typeof finalLogos[finalLogos.length - 1] === 'string' ? finalLogos[finalLogos.length - 1] : (finalLogos[finalLogos.length - 1]?.url || '')) : '';
                           if (lastSel) setSelectedLogoUrl(lastSel);
                         } catch (_) { /* noop */ }
-                        finally { setIsLogoUploading(false); e.target.value=''; }
+                        finally { setIsLogoUploading(false); e.target.value = ''; }
                       }} />
                       <button onClick={() => logoFileInputRef.current && logoFileInputRef.current.click()} className={`px-3 py-2 rounded-md text-sm ${isLogoUploading ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'}`} disabled={isLogoUploading}>
                         <span className="inline-flex items-center gap-2">
@@ -1405,9 +1405,9 @@ const Guidlines = () => {
                         onClick={() => handleSelectShareable(opt.id)}
                         className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                     ${selectedShareable === opt.id
-                          ? "bg-green-500 border-green-500"
-                          : "bg-white border-gray-400"
-                        }`}
+                            ? "bg-green-500 border-green-500"
+                            : "bg-white border-gray-400"
+                          }`}
                       >
                         {selectedShareable === opt.id && (
                           <FaCheck className="text-white text-sm" />
@@ -1420,13 +1420,13 @@ const Guidlines = () => {
                         {opt.label}
                       </label>
                     </div>
-                    
+
                   </div>
                 ))}
               </div>
             </div>
           </div>
-          <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">Specific color schemes</span>
             <div className="flex flex-col gap-3">
               {optionsColor.map((opt) => (
@@ -1481,7 +1481,7 @@ const Guidlines = () => {
                           {(() => {
                             // Get all available colors (preset + custom)
                             const allColors = [...presetColors, ...customColors];
-                            
+
                             // Get all selected colors that might not be in the list yet
                             const selectedColorsArray = Array.from(selectedColors || []);
                             const missingSelectedColors = selectedColorsArray.filter(selectedColor => {
@@ -1491,15 +1491,15 @@ const Guidlines = () => {
                                 return normalizedColor === normalized || color === selectedColor;
                               });
                             });
-                            
+
                             // Combine: selected colors first (from allColors + missing), then unselected
                             const selectedInList = allColors.filter(color => isColorSelected(color));
                             const unselectedInList = allColors.filter(color => !isColorSelected(color));
-                            
+
                             // Remove duplicates from missingSelectedColors and selectedInList
                             const seen = new Set();
                             const uniqueSelected = [];
-                            
+
                             // Add missing selected colors first (from brand identity)
                             missingSelectedColors.forEach(color => {
                               const normalized = normalizeColor(color) || color;
@@ -1509,7 +1509,7 @@ const Guidlines = () => {
                                 uniqueSelected.push(color);
                               }
                             });
-                            
+
                             // Then add selected colors from the list
                             selectedInList.forEach(color => {
                               const normalized = normalizeColor(color) || color;
@@ -1519,28 +1519,28 @@ const Guidlines = () => {
                                 uniqueSelected.push(color);
                               }
                             });
-                            
+
                             // Final array: selected first, then unselected
                             const sortedColors = [...uniqueSelected, ...unselectedInList];
-                            
+
                             return sortedColors.map((color) => {
                               const isSelected = isColorSelected(color);
-                            return (
-                              <button
-                                key={color}
-                                onClick={() => toggleColor(color)}
-                                className={`w-8 h-8 rounded-full border-2 ${isSelected
-                                  ? "border-blue-500 ring-2 ring-blue-300"
-                                  : "border-gray-300"
-                                  } flex items-center justify-center transition-all duration-150`}
-                                style={{ backgroundColor: color }}
-                                title={color}
-                              >
-                                {isSelected && (
-                                  <span className="text-white text-xs">✓</span>
-                                )}
-                              </button>
-                            );
+                              return (
+                                <button
+                                  key={color}
+                                  onClick={() => toggleColor(color)}
+                                  className={`w-8 h-8 rounded-full border-2 ${isSelected
+                                    ? "border-blue-500 ring-2 ring-blue-300"
+                                    : "border-gray-300"
+                                    } flex items-center justify-center transition-all duration-150`}
+                                  style={{ backgroundColor: color }}
+                                  title={color}
+                                >
+                                  {isSelected && (
+                                    <span className="text-white text-xs">✓</span>
+                                  )}
+                                </button>
+                              );
                             });
                           })()}
                         </div>
@@ -1567,7 +1567,7 @@ const Guidlines = () => {
               )}
             </div>
           </div>
-          <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">Font styles</span>
             <div className="flex flex-col gap-3">
               {optionsFont.map((opt) => (
@@ -1646,105 +1646,105 @@ const Guidlines = () => {
               )}
             </div>
           </div>
-          
-         
-        
-           
-           {/* Avatar Question */}
-          
+
+
+
+
+          {/* Avatar Question */}
+
         </div>
       </div>
 
       {/* Presenter Options (Avatar/Hybrid) */}
       {isPresenterVisible && (
         <>
-        <div
-          onClick={() => handleAccordionToggle('presenter')}
-          className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
-        >
-          <span className="text-[18px] text-gray-600">Presenter Options</span>
-          {openPresenter ? <FaAngleUp /> : <FaAngleDown />}
-        </div>
-        <div className={`transition-all duration-500 ease-in-out overflow-hidden ${openPresenter ? 'max-h-[2000px] mt-4 opacity-100' : 'max-h-0 opacity-0'}`}>
-        <div className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-1 border border-gray-200 rounded-lg divide-y">
-              {PRESENTER_OPTIONS.map((opt, idx) => {
-                const active = selectedPresenter && selectedPresenter.option === opt.option;
-                return (
-                  <button key={idx} type="button" onClick={() => handlePresenterSelect(opt)} className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}>
-                    <div className="font-medium text-gray-900 text-sm">{opt.option}</div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="md:col-span-2">
-              {!selectedPresenter && (
-                <div className="text-sm text-gray-500">Select a presenter option to preview its sample.</div>
-              )}
-              {selectedPresenter && (
-                <div className="space-y-3">
-                  <div className="text-lg font-semibold text-gray-900">{selectedPresenter.option}</div>
-                  {selectedPresenter.sample_video ? (
-                    <div className="aspect-video w-full bg-black/5 rounded-lg overflow-hidden border">
-                      <video controls className="w-full h-full">
-                        <source src={selectedPresenter.sample_video} type="video/mp4" />
-                      </video>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-600">No sample available.</div>
+          <div
+            onClick={() => handleAccordionToggle('presenter')}
+            className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
+          >
+            <span className="text-[18px] text-gray-600">Presenter Options</span>
+            {openPresenter ? <FaAngleUp /> : <FaAngleDown />}
+          </div>
+          <div className={`transition-all duration-500 ease-in-out overflow-hidden ${openPresenter ? 'max-h-[2000px] mt-4 opacity-100' : 'max-h-0 opacity-0'}`}>
+            <div className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-1 border border-gray-200 rounded-lg divide-y">
+                  {PRESENTER_OPTIONS.map((opt, idx) => {
+                    const active = selectedPresenter && selectedPresenter.option === opt.option;
+                    return (
+                      <button key={idx} type="button" onClick={() => handlePresenterSelect(opt)} className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${active ? 'bg-blue-50' : ''}`}>
+                        <div className="font-medium text-gray-900 text-sm">{opt.option}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="md:col-span-2">
+                  {!selectedPresenter && (
+                    <div className="text-sm text-gray-500">Select a presenter option to preview its sample.</div>
                   )}
-                  {selectedPresenter.sample_video && (
-                    <div>
-                      <a className="text-blue-600 text-sm hover:underline" href={selectedPresenter.sample_video} target="_blank" rel="noreferrer">Open sample in new tab</a>
-                    </div>
-                  )}
-                  {selectedPresenter.option === 'anchor mode' && (
-                    <div className="mt-2 border-t pt-3">
-                      <div className="text-sm font-medium text-gray-800 mb-2">Anchor Settings</div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-gray-600">Size</label>
-                          <input value={anchorSize} onChange={(e)=>setAnchorSize(e.target.value)} placeholder="e.g., small, medium, large or px" className="px-3 py-2 border rounded-lg" />
+                  {selectedPresenter && (
+                    <div className="space-y-3">
+                      <div className="text-lg font-semibold text-gray-900">{selectedPresenter.option}</div>
+                      {selectedPresenter.sample_video ? (
+                        <div className="aspect-video w-full bg-black/5 rounded-lg overflow-hidden border">
+                          <video controls className="w-full h-full">
+                            <source src={selectedPresenter.sample_video} type="video/mp4" />
+                          </video>
                         </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-gray-600">Position</label>
-                          <select value={anchorPosition} onChange={(e)=>setAnchorPosition(e.target.value)} className="px-3 py-2 border rounded-lg">
-                            <option value="topleft">Top Left</option>
-                            <option value="topcenter">Top Center</option>
-                            <option value="topright">Top Right</option>
-                            <option value="bottomcenter">Bottom Center</option>
-                            <option value="bottomleft">Bottom Left</option>
-                            <option value="bottomright">Bottom Right</option>
-                          </select>
+                      ) : (
+                        <div className="text-sm text-gray-600">No sample available.</div>
+                      )}
+                      {selectedPresenter.sample_video && (
+                        <div>
+                          <a className="text-blue-600 text-sm hover:underline" href={selectedPresenter.sample_video} target="_blank" rel="noreferrer">Open sample in new tab</a>
                         </div>
-                      </div>
+                      )}
+                      {selectedPresenter.option === 'anchor mode' && (
+                        <div className="mt-2 border-t pt-3">
+                          <div className="text-sm font-medium text-gray-800 mb-2">Anchor Settings</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs text-gray-600">Size</label>
+                              <input value={anchorSize} onChange={(e) => setAnchorSize(e.target.value)} placeholder="e.g., small, medium, large or px" className="px-3 py-2 border rounded-lg" />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <label className="text-xs text-gray-600">Position</label>
+                              <select value={anchorPosition} onChange={(e) => setAnchorPosition(e.target.value)} className="px-3 py-2 border rounded-lg">
+                                <option value="topleft">Top Left</option>
+                                <option value="topcenter">Top Center</option>
+                                <option value="topright">Top Right</option>
+                                <option value="bottomcenter">Bottom Center</option>
+                                <option value="bottomleft">Bottom Left</option>
+                                <option value="bottomright">Bottom Right</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
-        </div>
         </>
       )}
 
       {/* Technical and Format Constraints */}
 
       <div>
-       
-                 <div
-           onClick={() => handleAccordionToggle('technical')}
-           className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
-         >
+
+        <div
+          onClick={() => handleAccordionToggle('technical')}
+          className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
+        >
           <span className="text-[18px] text-gray-600">Technical and Format Constraints</span>
           {openTechnical ? <FaAngleUp /> : <FaAngleDown />}
         </div>
         <div
           className={`transition-all duration-500 ease-in-out overflow-hidden ${openTechnical ? "max-h-[2000px] mt-4 opacity-100" : "max-h-0 opacity-0"}`}
         >
-          <div  className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">What is the preferred duration of the final video?</span>
             <div className="flex flex-col gap-3">
               {optionsDuration.map((opt) => (
@@ -1771,7 +1771,7 @@ const Guidlines = () => {
               ))}
             </div>
           </div>
-          <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">In which format should the final video be delivered?</span>
             <div className="flex flex-col gap-3">
               {optionsFormat.map((opt) => (
@@ -1807,7 +1807,7 @@ const Guidlines = () => {
               ))}
             </div>
           </div>
-          <div  className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+          <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">What aspect ratio should the video be published in?</span>
             <div className="flex flex-col gap-3">
               {optionsAspect.map((opt) => {
@@ -1872,48 +1872,48 @@ const Guidlines = () => {
       {/* Audio and Effects */}
 
       <div>
-       
-                 <div
-           onClick={() => handleAccordionToggle('audio')}
-           className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
-         >
+
+        <div
+          onClick={() => handleAccordionToggle('audio')}
+          className="w-full cursor-pointer mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between"
+        >
           <span className="text-[18px] text-gray-600">Audio and Effects</span>
           {openAudio ? <FaAngleUp /> : <FaAngleDown />}
         </div>
         <div
           className={`transition-all duration-500 ease-in-out overflow-hidden ${openAudio ? "max-h-[2000px] mt-4 opacity-100" : "max-h-0 opacity-0"}`}
         >
-          
-                     <div className="w-full flex-col mt-0 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
-             <span className="text-[18px] text-gray-600 mb-3">Would you like to add voice narration or voice-over?</span>
-             <div className="flex flex-col gap-3">
-               {optionsVoice.map((opt) => (
-                 <div
-                   key={opt.id}
-                   className="flex items-center gap-3 cursor-pointer"
-                   onClick={() => handleSelectVoice(opt.id)}
-                 >
-                   <button
-                     className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
+
+          <div className="w-full flex-col mt-0 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
+            <span className="text-[18px] text-gray-600 mb-3">Would you like to add voice narration or voice-over?</span>
+            <div className="flex flex-col gap-3">
+              {optionsVoice.map((opt) => (
+                <div
+                  key={opt.id}
+                  className="flex items-center gap-3 cursor-pointer"
+                  onClick={() => handleSelectVoice(opt.id)}
+                >
+                  <button
+                    className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors
                    ${selectedVoice2 === opt.id
-                         ? "bg-green-500 border-green-500"
-                         : "bg-white border-gray-400"
-                       }`}
-                   >
-                     {selectedVoice2 === opt.id && (
-                       <FaCheck className="text-white text-sm" />
-                     )}
-                   </button>
-                   <label>{opt.label}</label>
-                 </div>
-               ))}
-               
-               {/* Voice Selection Options - Show when user selects Yes */}
-               {selectedVoice2 === 'yes' && (
-                 <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                   <h4 className="text-[16px] font-medium text-gray-700 mb-3">Select Your Preferred Voice</h4>
-                   {/* Default voices, circular */}
-                   {/* <div className="mb-4">
+                        ? "bg-green-500 border-green-500"
+                        : "bg-white border-gray-400"
+                      }`}
+                  >
+                    {selectedVoice2 === opt.id && (
+                      <FaCheck className="text-white text-sm" />
+                    )}
+                  </button>
+                  <label>{opt.label}</label>
+                </div>
+              ))}
+
+              {/* Voice Selection Options - Show when user selects Yes */}
+              {selectedVoice2 === 'yes' && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="text-[16px] font-medium text-gray-700 mb-3">Select Your Preferred Voice</h4>
+                  {/* Default voices, circular */}
+                  {/* <div className="mb-4">
                      <p className="text-sm text-gray-600 mb-2">Choose a default voice:</p>
                      <div className="flex flex-wrap gap-4">
                        {voices.map((v) => {
@@ -1926,8 +1926,8 @@ const Guidlines = () => {
                        })}
                      </div>
                    </div> */}
-                   {/* Brand voices, circular + add */}
-                   <div className="mb-2">
+                  {/* Brand voices, circular + add */}
+                  <div className="mb-2">
                     <p className="text-sm text-gray-600 mb-2">Choose from your files:</p>
                     <div className="flex flex-wrap gap-4 items-start">
                       {uniqueBrandVoiceOptions.length > 0 ? (
@@ -1944,16 +1944,14 @@ const Guidlines = () => {
                                   console.log('🎤 Voice Selected - Name:', name);
                                   console.log('🎤 Voice Selected - Full Object:', originalVoice);
                                 }}
-                                className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${
-                                  active
+                                className={`w-20 h-20 rounded-full flex items-center justify-center border transition-all ${active
                                     ? 'border-blue-600 ring-2 ring-blue-300 bg-blue-50'
                                     : 'border-gray-300 bg-white hover:bg-gray-50'
-                                }`}
+                                  }`}
                                 title={name}
                               >
-                                <span className={`text-xs font-medium px-2 text-center truncate max-w-full ${
-                                  active ? 'text-blue-700' : 'text-gray-600'
-                                }`}>
+                                <span className={`text-xs font-medium px-2 text-center truncate max-w-full ${active ? 'text-blue-700' : 'text-gray-600'
+                                  }`}>
                                   {name.length > 10 ? name.substring(0, 8) + '...' : name}
                                 </span>
                               </button>
@@ -1965,49 +1963,48 @@ const Guidlines = () => {
                         <span className="text-xs text-gray-500">No saved voices found for {selectedTone} tone.</span>
                       )}
                       <div className="flex flex-col items-center gap-1">
-                         <button onClick={() => setIsVoiceModalOpen(true)} className="w-20 h-20 rounded-full flex items-center justify-center border border-dashed border-gray-400 text-gray-500 hover:bg-gray-50" title="Add voice">
-                           <FaPlus className="w-6 h-6" />
-                         </button>
-                         <span className="text-xs text-gray-600">Add</span>
-                       </div>
-                     </div>
-                   </div>
-                  
-                     {/* Voice Description Input */}
-                     
-                     {/* Pending voice previews + Save */}
-                     {(pendingVoiceUrls && pendingVoiceUrls.length > 0) && (
-                       <div className="mt-3">
-                         <p className="text-sm text-gray-600 mb-1">Pending voice-overs (not saved):</p>
-                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                           {pendingVoiceUrls.map((u, i) => (
-                             <div key={i} className="p-2 border rounded-lg flex items-center gap-3">
-                               <audio src={u} controls className="flex-1" />
-                             </div>
-                           ))}
-                         </div>
-                         <button
-                           onClick={() => uploadBrandVoicesLegacy(pendingVoiceBlobs)}
-                           disabled={isVoiceUploading || pendingVoiceBlobs.length === 0}
-                           className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium ${
-                             (isVoiceUploading || pendingVoiceBlobs.length === 0) ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'
-                           }`}
-                        >
-                          <span className="inline-flex items-center gap-2">
-                            {isVoiceUploading && (
-                              <span className="inline-block w-4 h-4 border-2 border-white/70 border-t-white rounded-full animate-spin" />
-                            )}
-                            {isVoiceUploading ? 'Saving…' : 'Save to Brand Assets'}
-                          </span>
+                        <button onClick={() => setIsVoiceModalOpen(true)} className="w-20 h-20 rounded-full flex items-center justify-center border border-dashed border-gray-400 text-gray-500 hover:bg-gray-50" title="Add voice">
+                          <FaPlus className="w-6 h-6" />
                         </button>
-                       </div>
-                     )}
+                        <span className="text-xs text-gray-600">Add</span>
+                      </div>
+                    </div>
                   </div>
-            
+
+                  {/* Voice Description Input */}
+
+                  {/* Pending voice previews + Save */}
+                  {(pendingVoiceUrls && pendingVoiceUrls.length > 0) && (
+                    <div className="mt-3">
+                      <p className="text-sm text-gray-600 mb-1">Pending voice-overs (not saved):</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {pendingVoiceUrls.map((u, i) => (
+                          <div key={i} className="p-2 border rounded-lg flex items-center gap-3">
+                            <audio src={u} controls className="flex-1" />
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => uploadBrandVoicesLegacy(pendingVoiceBlobs)}
+                        disabled={isVoiceUploading || pendingVoiceBlobs.length === 0}
+                        className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium ${(isVoiceUploading || pendingVoiceBlobs.length === 0) ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'
+                          }`}
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          {isVoiceUploading && (
+                            <span className="inline-block w-4 h-4 border-2 border-white/70 border-t-white rounded-full animate-spin" />
+                          )}
+                          {isVoiceUploading ? 'Saving…' : 'Save to Brand Assets'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
               )}
-             </div>
-           </div>
-                     
+            </div>
+          </div>
+
           {/* <div className="w-full flex-col mt-4 bg-white border border-gray-200 rounded-xl px-4 py-3 flex">
             <span className="text-[18px] text-gray-600 mb-3">Would you like to add any special features?</span>
             <div className="flex flex-col gap-3">
@@ -2037,13 +2034,13 @@ const Guidlines = () => {
       </div>
 
       {/* Styles and Colors (commented out per request) */}
-    
+
 
 
       {/* Voice Selection Section */}
-     
 
-     
+
+
 
       {/* Smooth Transition Wrapper */}
       <div
@@ -2054,7 +2051,7 @@ const Guidlines = () => {
           <h3 className="text-[18px] font-medium text-gray-800 mb-4">Choose a Voice</h3>
 
           <div className="flex items-center gap-4 mb-6">
-            
+
             {voices.map((voice) => (
               <button
                 key={voice.id}
@@ -2075,26 +2072,26 @@ const Guidlines = () => {
               </div>
             </button>
 
-            
-                         <input
-               ref={fileInputRef}
-               type="file"
-               accept="audio/*,.mp3,.wav,.m4a,.aac"
-               onChange={handleVoiceUpload}
-               className="hidden"
-             />
-             
-             {/* Hidden avatar file input */}
-             <input
-               ref={avatarInputRef}
-               type="file"
-               accept="image/*,.jpg,.jpeg,.png,.svg"
-               onChange={handleAvatarUpload}
-               className="hidden"
-             />
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,.mp3,.wav,.m4a,.aac"
+              onChange={handleVoiceUpload}
+              className="hidden"
+            />
+
+            {/* Hidden avatar file input */}
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*,.jpg,.jpeg,.png,.svg"
+              onChange={handleAvatarUpload}
+              className="hidden"
+            />
           </div>
 
-     
+
           {selectedVoice && (
             <div className="bg-gray-50 rounded-lg p-4">
               <p className="text-sm text-gray-600 mb-2">Selected Voice:</p>
@@ -2111,9 +2108,9 @@ const Guidlines = () => {
         </div>
       </div>
 
-       {/* Next Step Button */}
-       <div className="w-full mt-8 flex justify-center">
-        <button 
+      {/* Next Step Button */}
+      <div className="w-full mt-8 flex justify-center">
+        <button
           onClick={() => {
             try {
               // Resolve selected voice URL only if user explicitly selected a voice
@@ -2161,41 +2158,41 @@ const Guidlines = () => {
                     desc: descShareable
                   }
                 ],
-                 style_and_visual_pref: {
-                   logo_inclusion: selectedLogo === 'yes'
-                     ? [{ answer: 'Yes', imageLink: (selectedLogoUrl || '') }]
-                     : (selectedLogo === 'no' ? [{ answer: 'No', imageLink: '' }] : []),
-                   color_pallete: selectedColor === 'yes' ? Array.from(selectedColors) : [],
-                   font_style: selectedFont === 'yes' ? selectedFonts : [],
-                   images: [
-                     {
-                       question: 'Do you want to include specific images, icons, or graphics?',
-                       option: (optionsGraphics.find(o => o.id === selectedGraphicsOption)?.label || ''),
-                       guidelines: []
-                     }
-                   ],
-                   call_to_action: selectedCTA ? [{ question: 'Would you like to include a call-to-action or contact info?', answer: (optionsCTA.find(o => o.id === selectedCTA)?.label || ''), desc: descCTA }] : [],
-                   summary_scene: selectedSummary ? [{ question: 'Would you like to have a summary scene with key highlights?', answer: (optionsSummary.find(o => o.id === selectedSummary)?.label || ''), desc: descSummary }] : [],
-                   avatar: selectedAvatar === 'yes' ? {
-                     question: 'Do you want an avatar?',
-                     answer: 'Yes',
-                     selected_avatar: selectedAvatarFromLibrary ? [
-                       'Business Professional', 'Creative Designer', 'Tech Expert', 'Friendly Host',
-                       'Academic Speaker', 'Industry Leader', 'Youth Influencer', 'Cultural Representative'
-                     ][parseInt(selectedAvatarFromLibrary.replace('avatar', '')) - 1] || '' : '',
-                     custom_avatar: uploadedAvatar ? 'Custom avatar uploaded' : '',
-                     description: descAvatar
-                   } : {
-                     question: 'Do you want an avatar?',
-                     answer: 'No'
-                   }
+                style_and_visual_pref: {
+                  logo_inclusion: selectedLogo === 'yes'
+                    ? [{ answer: 'Yes', imageLink: (selectedLogoUrl || '') }]
+                    : (selectedLogo === 'no' ? [{ answer: 'No', imageLink: '' }] : []),
+                  color_pallete: selectedColor === 'yes' ? Array.from(selectedColors) : [],
+                  font_style: selectedFont === 'yes' ? selectedFonts : [],
+                  images: [
+                    {
+                      question: 'Do you want to include specific images, icons, or graphics?',
+                      option: (optionsGraphics.find(o => o.id === selectedGraphicsOption)?.label || ''),
+                      guidelines: []
+                    }
+                  ],
+                  call_to_action: selectedCTA ? [{ question: 'Would you like to include a call-to-action or contact info?', answer: (optionsCTA.find(o => o.id === selectedCTA)?.label || ''), desc: descCTA }] : [],
+                  summary_scene: selectedSummary ? [{ question: 'Would you like to have a summary scene with key highlights?', answer: (optionsSummary.find(o => o.id === selectedSummary)?.label || ''), desc: descSummary }] : [],
+                  avatar: selectedAvatar === 'yes' ? {
+                    question: 'Do you want an avatar?',
+                    answer: 'Yes',
+                    selected_avatar: selectedAvatarFromLibrary ? [
+                      'Business Professional', 'Creative Designer', 'Tech Expert', 'Friendly Host',
+                      'Academic Speaker', 'Industry Leader', 'Youth Influencer', 'Cultural Representative'
+                    ][parseInt(selectedAvatarFromLibrary.replace('avatar', '')) - 1] || '' : '',
+                    custom_avatar: uploadedAvatar ? 'Custom avatar uploaded' : '',
+                    description: descAvatar
+                  } : {
+                    question: 'Do you want an avatar?',
+                    answer: 'No'
+                  }
                 },
-               technical_and_formal_constraints: {
+                technical_and_formal_constraints: {
                   video_length: selectedDuration || '',
                   video_format: selectedFormat === 'other' ? otherFormatText : (selectedFormat || ''),
                   aspect_ratio: aspectValue
                 },
-                                 audio_and_effects: [
+                audio_and_effects: [
                   {
                     question: 'Do you have preferred music or sound effects?',
                     answer: (optionsMusic.find(o => o.id === selectedMusic)?.label || ''),
@@ -2252,7 +2249,7 @@ const Guidlines = () => {
                 setPendingVoiceUrls([]);
               }} className="text-gray-500 hover:text-gray-700">✕</button>
             </div>
-            
+
             {/* Name Input */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -2266,16 +2263,16 @@ const Guidlines = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            
+
             {/* Tabs */}
             <div className="flex items-center gap-2 mb-4">
               <button
                 onClick={() => setVoiceModalTab('record')}
-                className={`${voiceModalTab==='record' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
+                className={`${voiceModalTab === 'record' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
               >Record</button>
               <button
                 onClick={() => setVoiceModalTab('upload')}
-                className={`${voiceModalTab==='upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
+                className={`${voiceModalTab === 'upload' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'} px-3 py-1.5 rounded-md text-sm`}
               >Upload</button>
             </div>
 
@@ -2316,14 +2313,14 @@ const Guidlines = () => {
 
                   {/* Simple animated level bars for visual feedback */}
                   <div className="flex items-end justify-center gap-1 h-8">
-                    {[0,1,2,3,4].map((i) => (
-                      <span key={i} className={`w-1.5 bg-green-500 rounded-sm animate-pulse`} style={{height: `${6 + i*6}px`, animationDelay: `${i*120}ms`}} />
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <span key={i} className={`w-1.5 bg-green-500 rounded-sm animate-pulse`} style={{ height: `${6 + i * 6}px`, animationDelay: `${i * 120}ms` }} />
                     ))}
                   </div>
 
                   {pendingVoiceUrls && pendingVoiceUrls.length > 0 && (
                     <div className="mt-2">
-                      <audio ref={audioPreviewRef} src={pendingVoiceUrls[pendingVoiceUrls.length-1]} controls className="w-full" />
+                      <audio ref={audioPreviewRef} src={pendingVoiceUrls[pendingVoiceUrls.length - 1]} controls className="w-full" />
                       <div className="mt-2 flex items-center gap-2">
                         <button onClick={() => { setPendingVoiceBlobs([]); setPendingVoiceUrls([]); }} className="px-3 py-1.5 rounded-md text-sm bg-gray-100 hover:bg-gray-200 text-gray-800">Re-record</button>
                       </div>
@@ -2357,28 +2354,28 @@ const Guidlines = () => {
               </div>
             )}
             <div className="mt-4 flex items-center justify-end gap-2">
-                <button onClick={() => {
-                  setIsVoiceModalOpen(false);
-                  setVoiceName('');
-                  setVoiceFilesForUpload([]);
-                  setPendingVoiceBlobs([]);
-                  setPendingVoiceUrls([]);
-                }} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
+              <button onClick={() => {
+                setIsVoiceModalOpen(false);
+                setVoiceName('');
+                setVoiceFilesForUpload([]);
+                setPendingVoiceBlobs([]);
+                setPendingVoiceUrls([]);
+              }} className="px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200" disabled={isSavingBrandVoices}>Cancel</button>
               <button
                 onClick={async () => {
                   try {
                     setVoiceSaveMsg('');
                     setIsSavingBrandVoices(true);
-                    
+
                     // Validate name
                     if (!voiceName || !voiceName.trim()) {
                       setVoiceSaveMsg('Please enter a voice name.');
                       return;
                     }
-                    
+
                     // Get the file to upload
                     let fileToUpload = null;
-                    
+
                     if (voiceModalTab === 'record') {
                       // Use recorded voice
                       if (!pendingVoiceBlobs || pendingVoiceBlobs.length === 0) {
@@ -2395,36 +2392,36 @@ const Guidlines = () => {
                       }
                       fileToUpload = voiceFilesForUpload[0];
                     }
-                    
+
                     // Get the tone type for the API (professional, casual, humorous, storytelling)
                     // Use selectedTone, defaulting to 'professional' if not set or if 'other'
-                    const toneType = (selectedTone && selectedTone !== 'other') 
-                      ? selectedTone.toLowerCase() 
+                    const toneType = (selectedTone && selectedTone !== 'other')
+                      ? selectedTone.toLowerCase()
                       : 'professional';
-                    
+
                     // Upload to the new API endpoint
                     const form = new FormData();
                     form.append('user_id', token);
                     form.append('name', voiceName.trim());
                     form.append('type', toneType); // Use tone (professional, casual, humorous, storytelling)
                     form.append('file', fileToUpload);
-                    
+
                     const uploadResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-voiceover', {
                       method: 'POST',
                       body: form
                     });
-                    
+
                     if (!uploadResp.ok) {
                       const errorText = await uploadResp.text().catch(() => '');
                       throw new Error(`Upload failed: ${uploadResp.status} ${errorText}`);
                     }
-                    
+
                     // Call get brand assets API to refresh the list (using same format as initial load)
                     const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(token)}`);
                     if (!getResp.ok) {
                       throw new Error(`Failed to fetch brand assets: ${getResp.status}`);
                     }
-                    
+
                     const assets = await getResp.json().catch(() => ({}));
                     // Parse voiceovers using the same logic as initial load
                     const voices = Array.isArray(assets?.voiceovers)
@@ -2432,28 +2429,28 @@ const Guidlines = () => {
                       : (Array.isArray(assets?.voiceover)
                         ? assets.voiceover
                         : (assets?.voices || []));
-                    
+
                     // Update brand voices state - this will trigger uniqueBrandVoiceOptions to recalculate
                     // and the UI will automatically show the updated voiceover list
                     setBrandVoices(voices);
-                    
+
                     // Update localStorage to match initial load behavior
                     try {
                       const urls = voices.map(v => (typeof v === 'string' ? v : (v?.url || ''))).filter(Boolean);
                       localStorage.setItem('brand_voiceover_urls', JSON.stringify(urls));
                     } catch (_) { /* noop */ }
-                    
+
                     // The uniqueBrandVoiceOptions useMemo will automatically recalculate when brandVoices changes
                     // This ensures the newly uploaded voiceover appears in the list immediately
-                    
+
                     // Reset form
                     setVoiceName('');
                     setVoiceFilesForUpload([]);
-                    try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) {}
+                    try { (pendingVoiceUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) { }
                     setPendingVoiceUrls([]);
                     setPendingVoiceBlobs([]);
                     setVoiceSaveMsg('Voice uploaded successfully!');
-                    
+
                     // Close modal after a brief delay to show success message
                     // The voiceover list will automatically update and show the new voiceover
                     setTimeout(() => {

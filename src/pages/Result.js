@@ -33,7 +33,7 @@ const Result = () => {
         setIsLoading(true); setError('');
         const token = localStorage.getItem('token') || '';
         if (videoId) {
-          const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/users/videos/get', {
+          const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/users/videos/get', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, video_id: videoId })
           });
           const text = await resp.text();
@@ -66,11 +66,11 @@ const Result = () => {
   }, [scenes]);
 
   const transitionOptions = [
-    'fade','fadeblack','fadewhite',
-    'slideleft','slideright','slideup','slidedown',
-    'circleopen','circleclose',
-    'wipeleft','wiperight','wipeup','wipedown',
-    'pixelize','dissolve'
+    'fade', 'fadeblack', 'fadewhite',
+    'slideleft', 'slideright', 'slideup', 'slidedown',
+    'circleopen', 'circleclose',
+    'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+    'pixelize', 'dissolve'
   ];
 
   const handleSaveTransitions = async () => {
@@ -111,7 +111,7 @@ const Result = () => {
       }
 
       const body = { session: sessionForBody, transitions, output_filename: 'final_merged_video.mp4' };
-      const resp = await fetch('https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net/v1/videos/remerge', {
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/videos/remerge', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       const text = await resp.text();
@@ -146,12 +146,12 @@ const Result = () => {
       setError(e?.message || 'Failed to submit transitions');
     }
   };
-  
+
   return (
     <div className='flex h-screen bg-[#E5E2FF]'>
-      <Sidebar/>
+      <Sidebar />
       <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
-        <Topbar/>
+        <Topbar />
         <div className='h-[85vh] my-2 overflow-y-auto scrollbar-hide space-y-3 pr-1'>
           {isLoading && (<div className='p-4 text-gray-600'>Loading video…</div>)}
           {error && (<div className='p-4 text-red-600'>{error}</div>)}
@@ -160,7 +160,7 @@ const Result = () => {
             <div className='relative'>
               <div className='flex items-center justify-between px-2'>
                 <h3 className='text-[18px] font-semibold text-gray-900'>Scene by Scene</h3>
-                <button onClick={()=>setShowTransModal(true)} className='px-3 py-1.5 text-sm rounded-lg bg-[#13008B] text-white hover:bg-blue-800'>Edit Transitions</button>
+                <button onClick={() => setShowTransModal(true)} className='px-3 py-1.5 text-sm rounded-lg bg-[#13008B] text-white hover:bg-blue-800'>Edit Transitions</button>
               </div>
               <Scencearea scenes={scenes} />
             </div>
@@ -171,7 +171,7 @@ const Result = () => {
             <div className='bg-white w-[95%] max-w-5xl rounded-lg shadow-xl p-5'>
               <div className='flex items-center justify-between mb-4'>
                 <h3 className='text-xl font-semibold text-gray-900'>Choose your transition:</h3>
-                <button onClick={()=>setShowTransModal(false)} className='text-white w-8 h-8 hover:text-[#13008B] hover:bg-[#e4e0ff] transition-all duration-300 bg-[#13008B] rounded-full'>✕</button>
+                <button onClick={() => setShowTransModal(false)} className='text-white w-8 h-8 hover:text-[#13008B] hover:bg-[#e4e0ff] transition-all duration-300 bg-[#13008B] rounded-full'>✕</button>
               </div>
               <div className='space-y-5 max-h-[65vh] overflow-y-auto pr-1'>
                 {Array.isArray(scenes) && scenes.length > 1 ? (
@@ -200,9 +200,9 @@ const Result = () => {
                           <label className='block text-sm font-medium text-gray-700 mb-1'>Select Transition</label>
                           <select
                             value={row.type}
-                            onChange={(e)=>{
+                            onChange={(e) => {
                               const val = e.target.value; setTransRows(prev => {
-                                const next = [...(prev||[])]; next[i] = { ...(next[i]||{ duration: '1.0' }), type: val }; return next;
+                                const next = [...(prev || [])]; next[i] = { ...(next[i] || { duration: '1.0' }), type: val }; return next;
                               });
                             }}
                             className='w-full border rounded px-3 py-2'
@@ -212,9 +212,9 @@ const Result = () => {
                           <label className='block text-sm font-medium text-gray-700 mt-3 mb-1'>Duration (s)</label>
                           <input
                             value={row.duration}
-                            onChange={(e)=>{
+                            onChange={(e) => {
                               const val = e.target.value; setTransRows(prev => {
-                                const next = [...(prev||[])]; next[i] = { ...(next[i]||{ type: 'fade' }), duration: val }; return next;
+                                const next = [...(prev || [])]; next[i] = { ...(next[i] || { type: 'fade' }), duration: val }; return next;
                               });
                             }}
                             className='w-full border rounded px-3 py-2'
@@ -240,7 +240,7 @@ const Result = () => {
                 )}
               </div>
               <div className='flex items-center justify-end gap-2 mt-5'>
-                <button onClick={()=>setShowTransModal(false)} className='px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200'>Cancel</button>
+                <button onClick={() => setShowTransModal(false)} className='px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200'>Cancel</button>
                 <button onClick={handleSaveTransitions} className='px-4 py-2 rounded-lg text-sm font-medium bg-[#13008B] text-white hover:bg-blue-800'>Save</button>
               </div>
             </div>

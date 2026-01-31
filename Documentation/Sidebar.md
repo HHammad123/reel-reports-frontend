@@ -118,7 +118,7 @@ The `Sidebar` component is the main navigation component for the Reel Reports fr
 
 2. **Reel Videos Test Service:**
    ```
-   https://reelvideostest-gzdwbtagdraygcbh.canadacentral-01.azurewebsites.net
+   https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/
    ```
 
 ### API Endpoints
