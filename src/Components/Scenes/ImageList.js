@@ -9181,6 +9181,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         )}
 
                         <div className="mt-4 border border-[#D8DFFF] rounded-lg p-3 bg-blue-50">
+                          {(() => {
+                            const narrationWordCount = computeWordCount(selected?.narration || '');
+                            const isNarrationTooLong = narrationWordCount > 13;
+                            if (!isNarrationTooLong) return null;
+                            return (
+                              <div className="mb-2 text-xs text-red-600">
+                                Reduce words (max 13). Current: {narrationWordCount}.
+                              </div>
+                            );
+                          })()}
                           <div className="flex items-center justify-between mb-1">
                             <label className="text-xs font-medium text-gray-600">Narration</label>
                             {editingField === 'narration' ? (
@@ -9225,7 +9235,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           {editingField === 'narration' ? (
                             (() => {
                               const wordCount = computeWordCount(editedNarration);
-                              const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                              const isOptimalWordCount = wordCount >= 12 && wordCount <= 13;
                               return (
                                 <>
                                   <textarea
@@ -9236,7 +9246,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                   />
                                   <div className="mt-2 flex items-center justify-between">
                                     <p className="text-xs text-gray-500 italic">
-                                      Keep 18-20 words for a perfect 10 second audio
+                                      Keep 12-13 words for a short narration
                                     </p>
                                     <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : ''}`}>
                                       {wordCount} {wordCount === 1 ? 'word' : 'words'}
@@ -11614,6 +11624,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               )}
               {rows.map((r, i) => {
                 const modelUpper = String(r?.model || '').toUpperCase();
+                const narrationWordCount = computeWordCount(r?.narration || '');
+                const isNarrationTooLong = narrationWordCount > 13;
                 let orderedSceneImages = getSceneImages(r);
 
                 // Fallback: if no generated images are available for VEO3/ANCHOR, use avatar image only
@@ -11730,6 +11742,11 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     <div className="mt-2 text-sm font-semibold">Scene {r.scene_number} • {r.scene_title || 'Untitled'}</div>
                     {r?.description ? (
                       <div className="mt-1 text-xs text-gray-600 line-clamp-2">{r.description}</div>
+                    ) : null}
+                    {isNarrationTooLong ? (
+                      <div className="mt-1 text-xs text-red-600">
+                        Narration too long ({narrationWordCount} words). Keep it to 12–13 words.
+                      </div>
                     ) : null}
                   </div>
                 );

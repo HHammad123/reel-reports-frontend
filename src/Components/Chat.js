@@ -1650,6 +1650,17 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       }))
     });
 
+    const normalizePresetLabel = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const extractActionFromDescription = (description) => {
+      if (!description || typeof description !== 'string') return '';
+      const sections = parseDescription(description);
+      const actionSection = sections.find(
+        (section) => section.type === 'section' && typeof section.title === 'string' &&
+          section.title.trim().toLowerCase() === 'action'
+      );
+      return actionSection?.content || '';
+    };
+
     let resolvedValue = '';
 
     // For ANCHOR model: Compare presenter_options.preset_id with anchor_id from preset list
@@ -1898,6 +1909,20 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       resolvedValue = String(list[0].preset_id || list[0].option || '');
     }
 
+    const actionText = extractActionFromDescription(scene?.description ?? scene?.desc ?? scene?.scene_description ?? '');
+    if (actionText) {
+      const matchedByAction = list.find(
+        (opt) => normalizePresetLabel(opt?.option) === normalizePresetLabel(actionText)
+      );
+      if (matchedByAction) {
+        resolvedValue = matchedByAction.preset_id != null
+          ? String(matchedByAction.preset_id)
+          : String(matchedByAction.option || '');
+      } else {
+        resolvedValue = '';
+      }
+    }
+
     const normalizedResolved = resolvedValue ? String(resolvedValue) : '';
 
     console.log(`[Scene Settings] ${modelUpper} - Final resolved value:`, {
@@ -2002,6 +2027,10 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       setPresenterPresetOriginal(savedIdString);
       setPresenterPresetDirty(false);
       setSelectedPresenterPreset(savedIdString);
+      try {
+        const focusSceneNumber = scene?.scene_number ?? (currentSceneIndex + 1);
+        await refreshScriptFromSessionData(focusSceneNumber);
+      } catch (_) { /* noop */ }
     } catch (e) {
       console.error('scripts/update-preset failed:', e);
       alert('Failed to update presenter preset. Please try again.');
@@ -2976,12 +3005,66 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         }
       });
 
-      // If any VEO3 scenes are missing avatar_urls selections, show popup with scene numbers and stop
+      // If any VEO3 scenes are missing avatar_urls selections, auto-assign first avatar if available
       if (missingScenes.length > 0) {
-        setIsGeneratingImages(false);
-        setMissingAvatarScenes(missingScenes);
-        setShowMissingAvatarPopup(true);
-        return; // Stop execution
+        const firstPresetAvatar = Array.isArray(presetAvatars) && presetAvatars.length > 0
+          ? String(presetAvatars[0]).trim()
+          : null;
+        const firstBrandAvatar = Array.isArray(brandAssetsAvatars) && brandAssetsAvatars.length > 0
+          ? (brandAssetsAvatars[0] && typeof brandAssetsAvatars[0] === 'object' && brandAssetsAvatars[0].url
+            ? String(brandAssetsAvatars[0].url).trim()
+            : String(brandAssetsAvatars[0]).trim())
+          : null;
+        const firstAvailableAvatar = firstPresetAvatar || firstBrandAvatar;
+
+        if (firstAvailableAvatar) {
+          // Save default avatar for missing scenes
+          for (const sceneNumber of missingScenes) {
+            const sceneIdx = Array.isArray(scriptRows)
+              ? scriptRows.findIndex(r => (r?.scene_number ?? 0) === sceneNumber)
+              : -1;
+            if (sceneIdx >= 0) {
+              try {
+                await updateSceneGenImageFlag(sceneIdx, { avatarUrl: firstAvailableAvatar });
+              } catch (_) { /* noop */ }
+            }
+          }
+        }
+
+        // Re-fetch session data to re-validate after auto-assign
+        const refreshResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sessionReqBody)
+        });
+        const refreshText = await refreshResp.text();
+        let refreshed; try { refreshed = JSON.parse(refreshText); } catch (_) { refreshed = refreshText; }
+        if (!refreshResp.ok) throw new Error(`user-session/data failed: ${refreshResp.status} ${refreshText}`);
+        const sd2 = refreshed?.session_data || refreshed?.session || {};
+        const scripts2 = Array.isArray(sd2.scripts) && sd2.scripts.length > 0 ? sd2.scripts : [];
+        const currentScript2 = scripts2[0] || null;
+        const airesponse2 = Array.isArray(currentScript2?.airesponse) ? currentScript2.airesponse : [];
+        const stillMissing = [];
+        airesponse2.forEach((scene, index) => {
+          if (!scene || typeof scene !== 'object') return;
+          const model = String(scene?.model || scene?.mode || '').toUpperCase();
+          const isVEO3 = (model === 'VEO3' || model === 'ANCHOR');
+          if (isVEO3) {
+            const sceneNumber = scene?.scene_number || scene?.scene_no || scene?.sceneNo || scene?.scene || (index + 1);
+            const avatarUrls = Array.isArray(scene?.avatar_urls) ? scene.avatar_urls : [];
+            const hasAvatarUrls = avatarUrls.length > 0 && avatarUrls.some(url => {
+              return typeof url === 'string' && url.trim().length > 0;
+            });
+            if (!hasAvatarUrls) {
+              stillMissing.push(sceneNumber);
+            }
+          }
+        });
+
+        if (stillMissing.length > 0) {
+          setIsGeneratingImages(false);
+          setMissingAvatarScenes(stillMissing);
+          setShowMissingAvatarPopup(true);
+          return; // Stop execution
+        }
       }
 
       // 3) Call /v1/generate-images-queue API (POST) with user_id and session_id
@@ -3801,31 +3884,21 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       const m = String(scene?.model || scene?.mode || '').toUpperCase();
       const isAvatarish = (m === 'VEO3' || m === 'ANCHOR');
 
-      // Only auto-select if:
-      // 1. Scene is avatar-based
-      // 2. No avatar is currently selected
-      // 3. Scene doesn't have an avatar saved
+      // Auto-select the first available avatar if none is selected
       if (isAvatarish && !selectedAvatar) {
-        const hasSceneAvatar = (Array.isArray(scene?.avatar_urls) && scene.avatar_urls.length > 0) ||
-          (typeof scene?.avatar === 'string' && scene.avatar.trim());
+        const firstPresetAvatar = Array.isArray(presetAvatars) && presetAvatars.length > 0
+          ? String(presetAvatars[0]).trim()
+          : null;
+        const firstBrandAvatar = Array.isArray(brandAssetsAvatars) && brandAssetsAvatars.length > 0
+          ? (brandAssetsAvatars[0] && typeof brandAssetsAvatars[0] === 'object' && brandAssetsAvatars[0].url
+            ? String(brandAssetsAvatars[0].url).trim()
+            : String(brandAssetsAvatars[0]).trim())
+          : null;
 
-        if (!hasSceneAvatar) {
-          // Get the first available avatar from preset or brand assets
-          const firstPresetAvatar = Array.isArray(presetAvatars) && presetAvatars.length > 0
-            ? String(presetAvatars[0]).trim()
-            : null;
-          const firstBrandAvatar = Array.isArray(brandAssetsAvatars) && brandAssetsAvatars.length > 0
-            ? (brandAssetsAvatars[0] && typeof brandAssetsAvatars[0] === 'object' && brandAssetsAvatars[0].url
-              ? String(brandAssetsAvatars[0].url).trim()
-              : String(brandAssetsAvatars[0]).trim())
-            : null;
+        const firstAvailableAvatar = firstPresetAvatar || firstBrandAvatar;
 
-          // Prefer preset avatar, fallback to brand asset avatar
-          const firstAvailableAvatar = firstPresetAvatar || firstBrandAvatar;
-
-          if (firstAvailableAvatar) {
-            setSelectedAvatar(firstAvailableAvatar);
-          }
+        if (firstAvailableAvatar) {
+          setSelectedAvatar(firstAvailableAvatar);
         }
       }
     }
@@ -6432,6 +6505,101 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // This case is handled by the caller
       return;
     }
+  };
+
+  const refreshScriptFromSessionData = async (sceneNumberToFocus = null) => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const userId = localStorage.getItem('token');
+      if (!sessionId || !userId) return;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, session_id: sessionId })
+      });
+      const sessionText = await sessionResp.text();
+      let sessionData;
+      try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+      if (!sessionResp.ok || !sessionData || typeof sessionData !== 'object') return;
+
+      const sessionDataObj = sessionData?.session_data || sessionData?.session || {};
+      const scripts = Array.isArray(sessionDataObj?.scripts) && sessionDataObj.scripts.length > 0
+        ? sessionDataObj.scripts
+        : [];
+
+      let scriptData = null;
+      if (sessionDataObj?.reordered_script) {
+        const reordered = sessionDataObj.reordered_script;
+        if (Array.isArray(reordered?.airesponse)) scriptData = reordered.airesponse;
+        else if (Array.isArray(reordered)) scriptData = reordered;
+        else if (reordered && typeof reordered === 'object') scriptData = reordered;
+      }
+      if (!scriptData && sessionDataObj?.changed_script) {
+        const changed = sessionDataObj.changed_script;
+        if (Array.isArray(changed?.airesponse)) scriptData = changed.airesponse;
+        else if (Array.isArray(changed)) scriptData = changed;
+        else if (changed && typeof changed === 'object') scriptData = changed;
+      }
+      if (!scriptData && scripts.length > 0) {
+        for (let i = 0; i < Math.min(scripts.length, 3); i++) {
+          const currentScript = scripts[i];
+          if (currentScript?.reordered_script) {
+            const reordered = currentScript.reordered_script;
+            if (Array.isArray(reordered?.airesponse)) { scriptData = reordered.airesponse; break; }
+            if (Array.isArray(reordered)) { scriptData = reordered; break; }
+            if (reordered && typeof reordered === 'object') { scriptData = reordered; break; }
+          }
+          if (currentScript?.changed_script) {
+            const changed = currentScript.changed_script;
+            if (Array.isArray(changed?.airesponse)) { scriptData = changed.airesponse; break; }
+            if (Array.isArray(changed)) { scriptData = changed; break; }
+            if (changed && typeof changed === 'object') { scriptData = changed; break; }
+          }
+          if (Array.isArray(currentScript?.airesponse)) { scriptData = currentScript.airesponse; break; }
+          if (Array.isArray(currentScript)) { scriptData = currentScript; break; }
+          if (currentScript && typeof currentScript === 'object') {
+            if (Array.isArray(currentScript?.rows)) { scriptData = currentScript; break; }
+            if (Array.isArray(currentScript?.script)) { scriptData = currentScript.script; break; }
+            if (Object.keys(currentScript).length > 0) { scriptData = currentScript; break; }
+          }
+        }
+      }
+      if (!scriptData && Array.isArray(sessionDataObj?.airesponse)) {
+        scriptData = sessionDataObj.airesponse;
+      }
+      if (!scriptData && Array.isArray(sessionData?.airesponse)) {
+        scriptData = sessionData.airesponse;
+      }
+
+      if (!scriptData) return;
+
+      let normalizedScript = scriptData;
+      if (scriptData && typeof scriptData === 'object' && !Array.isArray(scriptData)) {
+        if (Array.isArray(scriptData.airesponse) && scriptData.airesponse.length > 0) {
+          normalizedScript = scriptData.airesponse;
+        } else if (Array.isArray(scriptData.script) && scriptData.script.length > 0) {
+          normalizedScript = scriptData.script;
+        } else if (Array.isArray(scriptData.rows) && scriptData.rows.length > 0) {
+          normalizedScript = scriptData;
+        }
+      }
+
+      const normalized = normalizeScriptToRows(normalizedScript);
+      const updatedRows = Array.isArray(normalized?.rows) ? normalized.rows : [];
+      setScriptRows(updatedRows);
+
+      if (sceneNumberToFocus) {
+        const idx = updatedRows.findIndex(r => r?.scene_number === sceneNumberToFocus);
+        if (idx >= 0) setCurrentSceneIndex(idx);
+      }
+
+      try {
+        const container = { script: Array.isArray(normalizedScript) ? normalizedScript : updatedRows };
+        localStorage.setItem(scopedKey('updated_script_structure'), JSON.stringify(container));
+        localStorage.setItem(scopedKey('original_script_hash'), JSON.stringify(container));
+      } catch (_) { /* noop */ }
+    } catch (_) { /* noop */ }
   };
 
   // Function to handle scene updates
@@ -13223,21 +13391,6 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                     </div>
                                   );
                                 })}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const scene = Array.isArray(scriptRows) && scriptRows[currentSceneIndex] ? scriptRows[currentSceneIndex] : null;
-                                    const sceneDescription = scene?.description || scene?.scene_title || '';
-                                    setCustomDescDescription(sceneDescription);
-                                    setCustomDescTextarea('');
-                                    setShowCustomDescModal(true);
-                                  }}
-                                  className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-white hover:border-[#13008B] hover:bg-gray-50 transition-colors h-full"
-                                  title="Custom Description"
-                                >
-                                  <Upload className="w-8 h-8 text-gray-400 mb-1" />
-                                  <span className="text-2xl font-semibold text-gray-400">+</span>
-                                </button>
                               </div>
                             )}
                           </div>
