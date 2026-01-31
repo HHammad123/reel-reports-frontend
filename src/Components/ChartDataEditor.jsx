@@ -122,7 +122,8 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
         // Ensure data structure matches the chart type
         if (processedData && processedData.series && chartType) {
-          const isPieDonut = chartType === 'pie' || chartType === 'donut';
+          const type = String(chartType || '').toLowerCase();
+          const isPieDonut = type === 'pie' || type === 'donut';
           const series = processedData.series || {};
 
           // Check current structure
@@ -270,8 +271,9 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 
     // Sync changes with formatting.series_info
     if (newData.formatting && newData.formatting.series_info) {
+      const type = String(chartType || '').toLowerCase();
       // For pie/donut charts, sync label changes with formatting.series_info
-      if ((chartType === 'pie' || chartType === 'donut') && path[0] === 'series' && path[1] === 'labels') {
+      if ((type === 'pie' || type === 'donut') && path[0] === 'series' && path[1] === 'labels') {
         const labelIndex = parseInt(path[2], 10);
         if (!isNaN(labelIndex) && newData.formatting.series_info[labelIndex]) {
           newData.formatting.series_info[labelIndex].name = value;
@@ -298,15 +300,16 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     if (!localChartData) return;
 
     const newData = JSON.parse(JSON.stringify(localChartData));
+    const type = String(chartType || '').toLowerCase();
 
-    if (chartType === 'pie' || chartType === 'donut') {
+    if (type === 'pie' || type === 'donut') {
       const newLabel = 'New Category';
       newData.series.labels.push(newLabel);
       newData.series.data[0].values.push(0);
       if (newData.formatting && newData.formatting.series_info) {
         newData.formatting.series_info.push({ name: newLabel, color: '#000000' });
       }
-    } else if (chartType.includes('waterfall')) {
+    } else if (type.includes('waterfall')) {
       newData.series.x.push('New Item');
       newData.series.data.forEach(series => {
         series.y.push(0);
@@ -328,15 +331,16 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     if (!localChartData) return;
 
     const newData = JSON.parse(JSON.stringify(localChartData));
+    const type = String(chartType || '').toLowerCase();
 
-    if (chartType === 'pie' || chartType === 'donut') {
+    if (type === 'pie' || type === 'donut') {
       const newLabel = 'New Category';
       newData.series.labels.splice(rowIndex, 0, newLabel);
       newData.series.data[0].values.splice(rowIndex, 0, 0);
       if (newData.formatting && newData.formatting.series_info) {
         newData.formatting.series_info.splice(rowIndex, 0, { name: newLabel, color: '#000000' });
       }
-    } else if (chartType.includes('waterfall')) {
+    } else if (type.includes('waterfall')) {
       newData.series.x.splice(rowIndex, 0, 'New Item');
       newData.series.data.forEach(series => {
         series.y.splice(rowIndex, 0, 0);
@@ -358,8 +362,9 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
     if (!localChartData) return;
 
     const newData = JSON.parse(JSON.stringify(localChartData));
+    const type = String(chartType || '').toLowerCase();
 
-    if (chartType === 'pie' || chartType === 'donut') {
+    if (type === 'pie' || type === 'donut') {
       if (newData.series.labels.length <= 1) {
         alert('Cannot remove the last row');
         return;
@@ -369,7 +374,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       if (newData.formatting && newData.formatting.series_info) {
         newData.formatting.series_info.splice(rowIndex, 1);
       }
-    } else if (chartType.includes('waterfall')) {
+    } else if (type.includes('waterfall')) {
       if (newData.series.x.length <= 1) {
         alert('Cannot remove the last row');
         return;
@@ -439,7 +444,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       return;
     }
 
-    if (chartType === 'pie' || chartType === 'donut') {
+    if (type === 'pie' || type === 'donut') {
       alert('Cannot add series to pie/donut charts');
       return;
     }
@@ -453,7 +458,7 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
       y: new Array(newData.series.x.length).fill(0)
     };
 
-    if (chartType.includes('waterfall_stacked')) {
+    if (type.includes('waterfall_stacked')) {
       newSeries.measure = newData.series.data[0].measure.slice();
     }
 

@@ -1438,7 +1438,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
 };
 
 const getSampleChartData = (type) => {
-  const t = type?.toLowerCase() || 'bar';
+  const t = String(type || '').toLowerCase();
 
   if (t === 'pie' || t === 'donut') {
     return {
@@ -1449,14 +1449,38 @@ const getSampleChartData = (type) => {
     };
   }
 
-  if (t === 'waterfall') {
+  if (t === 'waterfall' || t === 'waterfall_bar' || t === 'waterfall_column') {
     return {
       series: {
-        x: ['Sales', 'Consulting', 'Net Revenue', 'Purchases', 'Other Expenses', 'Profit Before Tax'],
+        x: ['Start', 'Income', 'Expense', 'Tax', 'Net Profit'],
         data: [{
-          name: 'Financials',
-          y: [60, 80, 0, -40, -20, 0],
-          measure: ['absolute', 'relative', 'total', 'relative', 'relative', 'total']
+          name: 'Cash Flow',
+          y: [100, 50, -30, -20, 100],
+          measure: ['absolute', 'relative', 'relative', 'relative', 'total']
+        }]
+      }
+    };
+  }
+
+  if (t === 'funnel') {
+    return {
+      series: {
+        x: ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4'],
+        data: [{
+          name: 'Conversion',
+          y: [1000, 800, 400, 100]
+        }]
+      }
+    };
+  }
+
+  if (t === 'gauge') {
+    return {
+      series: {
+        x: ['Score'],
+        data: [{
+          name: 'Performance',
+          y: [75]
         }]
       }
     };
@@ -1471,13 +1495,26 @@ const getSampleChartData = (type) => {
     };
   }
 
+  if (t === 'radar') {
+    return {
+      series: {
+        x: ['Metric A', 'Metric B', 'Metric C', 'Metric D', 'Metric E'],
+        data: [{
+          name: 'Series 1',
+          y: [80, 90, 70, 85, 60]
+        }]
+      }
+    };
+  }
+
+  // Default (Bar, Line, Area, etc.)
   return {
     series: {
       x: ['Q1', 'Q2', 'Q3', 'Q4'],
-      data: [{
-        name: 'Series 1',
-        y: [100, 150, 120, 180]
-      }]
+      data: [
+        { name: 'Series 1', y: [100, 150, 120, 180] },
+        { name: 'Series 2', y: [80, 120, 100, 140] }
+      ]
     }
   };
 };
@@ -1933,33 +1970,37 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                 <select
                   value={localScript.chart_type || 'Bar'}
-                  onChange={(e) => updateField('chart_type', e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLocalScript(prev => ({ ...prev, chart_type: val, chart_data: getSampleChartData(val) }));
+                  }}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 >
-                  {['Bar', 'Line', 'Pie', 'Donut', 'Waterfall', 'Funnel', 'Gauge', 'Scatter', 'Area', 'Radar'].map(t => (
+                  {['Select', 'Clustered Bar', 'Clustered Column', 'Line', 'Pie', 'Stacked Bar', 'Stacked Column', 'Waterfall Bar', 'Waterfall Column', 'Donut'].map(t => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
               </div>
               <div className="col-span-full">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Chart Data</label>
-                <div className="flex items-center gap-4">
-                  <div className="text-sm text-gray-500 italic">
-                    {localScript.chart_data ? 'Data configured' : 'No data configured'}
-                  </div>
+                {!localScript.chart_data ? (
                   <button
                     onClick={() => {
-                      // Initialize with sample data if empty
-                      if (!localScript.chart_data) {
-                        updateField('chart_data', getSampleChartData(localScript.chart_type));
-                      }
-                      setShowChartEditor(true);
+                      updateField('chart_data', getSampleChartData(localScript.chart_type));
                     }}
                     className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 text-sm font-medium"
                   >
-                    Edit Chart Data
+                    Initialize Chart Data
                   </button>
-                </div>
+                ) : (
+                  <div className=" rounded-lg overflow-hidden">
+                    <ChartDataEditor
+                      chartType={localScript.chart_type || 'Bar'}
+                      chartData={localScript.chart_data}
+                      onDataChange={(newData) => updateField('chart_data', newData)}
+                      onSave={(newData) => updateField('chart_data', newData)}
+                    />
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -2085,27 +2126,7 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
         </div>
       )}
 
-      {/* Chart Editor Modal */}
-      {showChartEditor && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
-          <div className="bg-white w-[95%] max-w-6xl max-h-[90vh] rounded-xl flex flex-col shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="font-bold text-lg">Chart Data Editor</h3>
-              <button onClick={() => setShowChartEditor(false)}><X /></button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <ChartDataEditor
-                chartType={localScript.chart_type || 'Bar'}
-                chartData={localScript.chart_data || null}
-                onSave={(newData) => {
-                  updateField('chart_data', newData);
-                  setShowChartEditor(false);
-                }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 };

@@ -235,11 +235,16 @@ export const SoundLayerContent = ({ overlay, baseUrl, }) => {
     // For Scene 1, we still want to render immediately so Remotion can start loading
     // The isAudioReady check was preventing Html5Audio from ever rendering, which blocked loading
     
+    // CRITICAL FIX: Mute Remotion's audio element for Scene 1 to prevent echo
+    // EditorProvider handles playing the preloaded audio element for Scene 1
+    // We keep Html5Audio rendering so Remotion tracks time, but we silence it
+    
     // Render Html5Audio - Remotion will handle loading and playback sync
     // The AudioPreloader helps with initial buffering, but Html5Audio needs to render to load
     return (_jsx(Html5Audio, { 
         src: audioSrc, 
         trimBefore: finalTrimBefore,  // Force 0 for Scene 1 audio to start from beginning
-        volume: finalVolume
+        volume: startsAtFrameZero ? 0 : finalVolume, // Mute if Scene 1 to prevent echo
+        muted: startsAtFrameZero // Explicitly mute for Scene 1
     }));
 };
