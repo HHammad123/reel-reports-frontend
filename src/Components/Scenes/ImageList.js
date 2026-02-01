@@ -2844,6 +2844,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         setIsLoading(true);
         setIsPolling(true);
 
+        let pollDelay = 3000;
+
         const poll = async () => {
           try {
             const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${encodeURIComponent(id)}`);
@@ -2851,6 +2853,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             let data; try { data = JSON.parse(text); } catch (_) { data = text; }
             if (!resp.ok) throw new Error(`job-status failed: ${resp.status} ${text}`);
             const status = String(data?.status || data?.job_status || '').toLowerCase();
+            if (status === 'failed' || status === 'error') {
+              throw new Error('Image generation failed');
+            }
             if (status === 'succeeded' || status === 'success' || status === 'completed') {
               try { localStorage.removeItem('images_generate_pending'); } catch (_) { }
               // Reload session images now that job is done
@@ -3083,7 +3088,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               // Job still in progress, keep polling and loader visible
               setIsLoading(true);
               setIsPolling(true);
-              timeoutId = setTimeout(poll, 3000);
+              pollDelay = Math.min(pollDelay * 1.5, 30000);
+              timeoutId = setTimeout(poll, pollDelay);
             }
           } catch (e) {
             if (!cancelled) {
@@ -6880,17 +6886,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       )}
 
       {isLoading && isPolling && (
-        <>
-          <div className="absolute inset-0 z-30 bg-white" />
-          <Loader
-            fullScreen
-            zIndex="z-40"
-            overlayBg="bg-black/40 backdrop-blur-sm"
-            title="Generating Storyboard"
-            description="This may take a few moments. Please keep this tab open while we finish."
-            progress={generatingStoryboardProgress > 0 ? generatingStoryboardProgress : null}
-          />
-        </>
+        <div className="absolute inset-0 z-[80] flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
+          <img src={loadingGif} alt="Generating Storyboard..." className="w-32 h-32 mb-6" />
+          <h3 className="text-2xl font-bold text-[#13008B] mb-3">Generating Storyboard</h3>
+          <p className="text-gray-600 text-lg">This may take a few moments. Please keep this tab open while we finish.</p>
+          {generatingStoryboardProgress > 0 && (
+            <div className="mt-6 w-80 bg-gray-200 rounded-full h-3">
+              <div
+                className="bg-[#13008B] h-3 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${generatingStoryboardProgress}%` }}
+              />
+            </div>
+          )}
+        </div>
       )}
 
       <div className="p-4 space-y-4 overflow-y-auto overflow-x-hidden">

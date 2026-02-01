@@ -12,6 +12,7 @@ import ChartDataEditor from '../ChartDataEditor';
 import Loader from '../Loader';
 import { useProgressLoader } from '../../hooks/useProgressLoader';
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
+import loadingGif from '../../asset/loadingv2.gif';
 
 // Helper to preserve ALL fields from session_data including nested structures
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
@@ -1535,8 +1536,87 @@ const Accordion = ({ title, children, defaultOpen = false }) => {
   );
 };
 
-const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuration, sessionData, user, onRefreshSession }) => {
+const SceneScriptModal = ({
+  isOpen, onClose, scriptContent, onSave, videoDuration, sessionData, user, onRefreshSession,
+  imagesJobId, setImagesJobId,
+  hasVideosAvailable, setSubView,
+  sendUserSessionData, handleGenerateVideosFromImages,
+  setShowStoryboardModal, isGeneratingStoryboard, setIsGeneratingStoryboard
+}) => {
   const [localScript, setLocalScript] = useState({});
+  const colorInputRef = useRef(null);
+  const [currentColor, setCurrentColor] = useState('#000000');
+
+  const presetColors = [
+    '#000000', '#333333', '#666666', '#999999', '#CCCCCC', '#E5E5E5', '#F2F2F2', '#FFFFFF',
+    '#FF0000', '#FF7F00', '#FFFF00', '#7FFF00', '#00FF00', '#00FF7F', '#00FFFF', '#007FFF',
+    '#0000FF', '#7F00FF', '#FF00FF', '#FF007F', '#FFC0CB', '#FFA500', '#FFD700', '#DA70D6',
+    '#F08080', '#DC143C', '#8B0000', '#A52A2A', '#800000', '#B8860B', '#8B4513', '#D2691E',
+    '#006400', '#228B22', '#2E8B57', '#3CB371', '#20B2AA', '#008B8B', '#4682B4', '#1E90FF',
+    '#4169E1', '#00008B', '#4B0082', '#483D8B', '#6A5ACD', '#8A2BE2', '#9400D3', '#C71585',
+    '#708090', '#778899', '#B0C4DE', '#ADD8E6', '#87CEEB', '#87CEFA', '#B0E0E6', '#AFEEEE'
+  ];
+
+  const normalizeColor = (color) => {
+    if (!color) return null;
+    if (typeof color === 'object' && color !== null) {
+      const colorValue = color.color || color.value || color.hex || color.code || color;
+      if (typeof colorValue === 'string') color = colorValue;
+      else return null;
+    }
+    if (typeof color !== 'string') return null;
+    const trimmed = color.trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed;
+    if (/^#[0-9a-f]{3}$/i.test(trimmed)) return '#' + trimmed.slice(1).split('').map(c => c + c).join('');
+    if (/^[0-9a-f]{6}$/i.test(trimmed)) return '#' + trimmed;
+    if (/^[0-9a-f]{3}$/i.test(trimmed)) return '#' + trimmed.split('').map(c => c + c).join('');
+    return trimmed;
+  };
+
+  const isColorSelected = (color) => {
+    const selectedColors = localScript.colors || [];
+    if (!color || selectedColors.length === 0) return false;
+    const normalized = normalizeColor(color) || color;
+    return selectedColors.some(sc => {
+      const normalizedSc = normalizeColor(sc) || sc;
+      return normalizedSc === normalized || sc === color;
+    });
+  };
+
+  const toggleColor = (color) => {
+    const selectedColors = localScript.colors || [];
+    let newColors;
+    if (isColorSelected(color)) {
+      const normalized = normalizeColor(color) || color;
+      newColors = selectedColors.filter(sc => {
+        const normalizedSc = normalizeColor(sc) || sc;
+        return normalizedSc !== normalized && sc !== color;
+      });
+    } else {
+      newColors = [...selectedColors, color];
+    }
+    updateField('colors', newColors);
+    autoSaveScript({ ...localScript, colors: newColors });
+  };
+
+  const handlePickCustomColor = (e) => {
+    const color = e.target.value;
+    if (color && !isColorSelected(color)) {
+      toggleColor(color);
+    }
+  };
+
+  const addCurrentColor = () => {
+    if (currentColor && !isColorSelected(currentColor)) {
+      toggleColor(currentColor);
+    }
+  };
+
+  const openColorPicker = () => {
+    colorInputRef.current?.click();
+  };
+  // const [showStoryboardModal, setShowStoryboardModal] = useState(false);
+  // const [isGeneratingStoryboard, setIsGeneratingStoryboard] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [assetsData, setAssetsData] = useState({ templates: [], logos: [], icons: [], uploaded_images: [], documents_images: [] });
   const [generatedImagesData, setGeneratedImagesData] = useState({ generated_images: {}, generated_videos: {} });
@@ -1568,8 +1648,27 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
       console.log('Auto-saving script...', currentScript);
 
       // 2. Construct current_script
-      // Fetch the latest script from session data (without versioning, assuming first one)
-      const latestScript = (freshSession.scripts && freshSession.scripts.length > 0) ? freshSession.scripts[0] : {};
+      // Fetch the latest script from session data
+      // If 'script' (singular) is present, use it (latest object without version)
+      let latestScript = {};
+      if (freshSession.script) {
+        try {
+          latestScript = typeof freshSession.script === 'string'
+            ? JSON.parse(freshSession.script)
+            : freshSession.script;
+
+          // Ensure it's an object and not an array
+          if (Array.isArray(latestScript)) latestScript = {};
+          else if (typeof latestScript !== 'object') latestScript = {};
+        } catch (_) {
+          latestScript = {};
+        }
+      }
+
+      // Fallback to scripts array if script(singular) was invalid or empty
+      if ((!latestScript || Object.keys(latestScript).length === 0) && freshSession.scripts && freshSession.scripts.length > 0) {
+        latestScript = freshSession.scripts[0];
+      }
 
       let aiResponse = latestScript.airesponse || latestScript.aiResponse || [];
       // Ensure aiResponse is an array
@@ -1700,6 +1799,81 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
   const handleSave = () => {
     if (onSave) onSave(localScript);
     onClose();
+  };
+
+  const handleGenerateStoryboard = async () => {
+    try {
+      // 1. Auto Save
+      await autoSaveScript(localScript);
+
+      // 2. Prepare payload
+      const token = localStorage.getItem('token');
+      const sessionId = sessionData?.session_id || localStorage.getItem('session_id');
+      const userId = user?.id || user?.user_id || token;
+
+      if (!userId || !sessionId) {
+        console.error('Missing user_id or session_id');
+        toast.error('Missing user or session info');
+        return;
+      }
+
+      const sceneNumber = localScript.scene_number;
+      if (sceneNumber === undefined || sceneNumber === null) {
+        toast.error('Missing scene number');
+        return;
+      }
+
+      const payload = {
+        user_id: userId,
+        session_id: sessionId,
+        scene_numbers: [sceneNumber]
+      };
+
+      setIsGeneratingStoryboard(true);
+
+      // 3. Call API
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error('Generate images queue failed', errText);
+        toast.error('Failed to start image generation');
+        setIsGeneratingStoryboard(false);
+        return;
+      }
+
+      const data = await response.json();
+      const jobId = data.job_id || data.jobId;
+
+      if (!jobId) {
+        console.error('No job_id in response', data);
+        toast.error('No job ID received');
+        setIsGeneratingStoryboard(false);
+        return;
+      }
+
+      // Set job ID and open modal to let ImageList handle polling
+      setImagesJobId(jobId);
+      try {
+        localStorage.setItem('current_images_job_id', jobId);
+        localStorage.setItem('images_generate_pending', 'true');
+      } catch (_) {
+        // Ignore localStorage errors
+      }
+      setIsGeneratingStoryboard(false);
+      setShowStoryboardModal(true);
+
+    } catch (error) {
+      console.error('Error generating storyboard:', error);
+      toast.error('Error generating storyboard');
+      setIsGeneratingStoryboard(false);
+    }
   };
 
   const updateField = (key, value) => {
@@ -1871,15 +2045,14 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh] m-auto">
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <div>
             <h3 className="text-lg font-bold text-gray-900">Script Editor</h3>
             <div className="flex gap-4 mt-1 text-xs text-gray-500 font-medium">
               <span className="bg-gray-100 px-2 py-0.5 rounded">Scene {localScript.scene_number || '#'}</span>
               <span className="bg-gray-100 px-2 py-0.5 rounded">{localScript.model || 'Unknown Type'}</span>
-              <span className="bg-gray-100 px-2 py-0.5 rounded">{videoDuration || '60'}s</span>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
@@ -1978,14 +2151,6 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
                   ))}
                 </div>
               </Accordion>
-
-              <Accordion title="Animation Description" defaultOpen={true}>
-                {renderNestedFields('animation_desc', animationDescFields)}
-              </Accordion>
-
-              <Accordion title="Background Frame" defaultOpen={true}>
-                {renderNestedFields('background_frame', backgroundFrameFields)}
-              </Accordion>
             </div>
           )}
 
@@ -1999,23 +2164,12 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
               </div>
               <div className="col-span-full">
                 <Accordion title="Closing Frame" defaultOpen={true}>
-                  <textarea
-                    value={localScript.closing_frame || ''}
-                    onChange={(e) => updateField('closing_frame', e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-lg"
-                    placeholder="Description for closing frame"
-                    rows={3}
-                  />
+                  {renderNestedFields('closing_frame', backgroundFrameFields)}
                 </Accordion>
               </div>
               <div className="col-span-full">
                 <Accordion title="Animation Description" defaultOpen={true}>
                   {renderNestedFields('animation_desc', animationDescFields)}
-                </Accordion>
-              </div>
-              <div className="col-span-full">
-                <Accordion title="Background Frame" defaultOpen={true}>
-                  {renderNestedFields('background_frame', backgroundFrameFields)}
                 </Accordion>
               </div>
               <div className="col-span-full">
@@ -2074,32 +2228,82 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
               </div>
               <div className="col-span-full">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Colors</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {(localScript.colors || []).map((color, idx) => (
-                    <div key={idx} className="flex items-center gap-1 bg-gray-100 rounded-full px-2 py-1">
-                      <div className="w-4 h-4 rounded-full border border-gray-300" style={{ backgroundColor: color }}></div>
-                      <span className="text-xs uppercase">{color}</span>
-                      <button onClick={() => {
-                        const newColors = [...(localScript.colors || [])];
-                        newColors.splice(idx, 1);
-                        updateField('colors', newColors);
-                      }} className="text-gray-400 hover:text-red-500 ml-1">&times;</button>
+                <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                    <div className="flex flex-col gap-3">
+                      <HexColorPicker color={currentColor} onChange={setCurrentColor} />
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="h-8 w-8 rounded-full border"
+                          style={{ backgroundColor: currentColor }}
+                        />
+                        <input
+                          value={currentColor}
+                          onChange={(e) => setCurrentColor(e.target.value)}
+                          className="px-3 py-2 border rounded-lg w-40"
+                        />
+                        <button
+                          type="button"
+                          onClick={addCurrentColor}
+                          className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-[#0f0066] transition-colors"
+                        >
+                          Add Color
+                        </button>
+                      </div>
                     </div>
-                  ))}
+                    <div>
+                      <div className="w-full border border-gray-200 rounded-xl p-4 mb-4">
+                        <div className="grid grid-cols-8 gap-2">
+                          {(() => {
+                            const allColors = [...presetColors];
+                            const selectedColorsArray = Array.from(localScript.colors || []);
+
+                            const missingSelectedColors = selectedColorsArray.filter(selectedColor => {
+                              const normalized = normalizeColor(selectedColor) || selectedColor;
+                              return !presetColors.some(color => {
+                                const normalizedColor = normalizeColor(color) || color;
+                                return normalizedColor === normalized || color === selectedColor;
+                              });
+                            });
+
+                            const uniqueSelected = [];
+                            const seen = new Set();
+                            missingSelectedColors.forEach(color => {
+                              const normalized = normalizeColor(color) || color;
+                              if (!seen.has(normalized) && !seen.has(color)) {
+                                seen.add(normalized);
+                                seen.add(color);
+                                uniqueSelected.push(color);
+                              }
+                            });
+
+                            const finalColors = [...uniqueSelected, ...presetColors];
+
+                            return finalColors.map((color) => {
+                              const isSelected = isColorSelected(color);
+                              return (
+                                <button
+                                  key={color}
+                                  onClick={() => toggleColor(color)}
+                                  className={`w-8 h-8 rounded-full border-2 ${isSelected
+                                    ? "border-blue-500 ring-2 ring-blue-300"
+                                    : "border-gray-300"
+                                    } flex items-center justify-center transition-all duration-150`}
+                                  style={{ backgroundColor: color }}
+                                  title={color}
+                                >
+                                  {isSelected && (
+                                    <span className="text-white text-xs">✓</span>
+                                  )}
+                                </button>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <HexColorPicker
-                  color={localScript.tempColor || '#000000'}
-                  onChange={(c) => updateField('tempColor', c)}
-                />
-                <button
-                  onClick={() => {
-                    const c = localScript.tempColor || '#000000';
-                    updateField('colors', [...(localScript.colors || []), c]);
-                  }}
-                  className="mt-2 px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
-                >
-                  Add Color
-                </button>
               </div>
             </>
           )}
@@ -2220,11 +2424,11 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
         </div>
 
         <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium">
-            Close
+          <button onClick={handleGenerateStoryboard} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
+            Generate Storyboard
           </button>
           <button onClick={handleSave} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
-            Confirm & Add
+            Save
           </button>
         </div>
       </div>
@@ -2338,8 +2542,6 @@ const SceneScriptModal = ({ isOpen, onClose, scriptContent, onSave, videoDuratio
           </div>
         </div>
       )}
-
-
     </div>
   );
 };
@@ -2613,9 +2815,61 @@ const BuildReelWizard = () => {
   const [isRestoringSession, setIsRestoringSession] = useState(false);
   // Scene Script Modal State
   const [showSceneScriptModal, setShowSceneScriptModal] = useState(false);
+  // Storyboard Modal State
+  const [showStoryboardModal, setShowStoryboardModal] = useState(false);
+  const [isGeneratingStoryboard, setIsGeneratingStoryboard] = useState(false);
+  const [isVideoGenerating, setIsVideoGenerating] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
+
   const [currentScriptContent, setCurrentScriptContent] = useState('');
   const [sessionDataState, setSessionDataState] = useState(null);
   const [userState, setUserState] = useState(null);
+
+  // Poll video generation status
+  useEffect(() => {
+    let intervalId;
+
+    if (isVideoGenerating && videosJobId) {
+      const pollVideoStatus = async () => {
+        try {
+          const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/video-job-status/${videosJobId}`);
+          if (!resp.ok) {
+            console.warn('Video status check failed:', resp.status);
+            return;
+          }
+
+          const data = await resp.json();
+          console.log('[BuildReel] Video job status:', data);
+
+          // Update progress if available
+          if (data.progress !== undefined) {
+            setVideoProgress(data.progress);
+          }
+
+          if (data.status === 'completed' || data.status === 'succeeded') {
+            setIsVideoGenerating(false);
+            setVideoProgress(100);
+            // Refresh session to get the new videos
+            await sendUserSessionData();
+            toast.success('Video generation completed!');
+          } else if (data.status === 'failed') {
+            setIsVideoGenerating(false);
+            toast.error('Video generation failed');
+          }
+
+        } catch (e) {
+          console.error('Error polling video status:', e);
+        }
+      };
+
+      // Poll every 3 seconds
+      intervalId = setInterval(pollVideoStatus, 3000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isVideoGenerating, videosJobId]);
 
   const handleChange = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -2830,6 +3084,22 @@ const BuildReelWizard = () => {
         const sessionImages = Array.isArray(sd?.images) ? sd.images : [];
         setHasImages(sessionImages.length > 0);
 
+        // Check if session has videos
+        const sessionVideos = Array.isArray(sd?.videos) ? sd.videos : [];
+        setHasVideosAvailable(sessionVideos.length > 0);
+
+        // Conditional Modal Logic:
+        // 1. If images exist AND (videos are empty/null) -> Open ImageList Modal
+        // 2. If videos exist -> Go to Step 2 (already handled by title check above, but ensure modal is closed)
+        if (sessionImages.length > 0 && sessionVideos.length === 0) {
+          setShowStoryboardModal(true);
+        } else if (sessionVideos.length > 0) {
+          setShowStoryboardModal(false);
+          // Ensure we are on step 2
+          setStep(2);
+          try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
+        }
+
         // Extract scripts/airesponse from session data
         // scripts[0] is the latest/current version
         const scripts = Array.isArray(sd?.scripts) ? sd.scripts : [];
@@ -2849,8 +3119,8 @@ const BuildReelWizard = () => {
           }
         }
 
-        // Auto-open Scene Script Modal if scenes exist (per user request)
-        if (airesponse.length > 0) {
+        // Auto-open Scene Script Modal if scenes exist BUT no images/videos yet (i.e. just script generated)
+        if (airesponse.length > 0 && sessionImages.length === 0 && sessionVideos.length === 0) {
           const latestScene = airesponse[0]; // Open the first scene of the latest script
           setCurrentScriptContent(latestScene);
           setShowSceneScriptModal(true);
@@ -3275,6 +3545,7 @@ const BuildReelWizard = () => {
       const sessionId = localStorage.getItem('session_id');
       const token = localStorage.getItem('token');
       if (!sessionId || !token) { alert('Login expired'); return; }
+
       const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
       });
@@ -3282,22 +3553,33 @@ const BuildReelWizard = () => {
       let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
       if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
       const sd = sessData?.session_data || {};
-      // Preserve ALL fields from session_data, including nested structures
-      const sessionForBody = sanitizeSessionSnapshot(sd, sessionId, token);
-      const body = { session: sessionForBody };
-      const genResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/generate-from-session', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+
+      // Extract aspect ratio
+      const aspectRatio = extractAspectRatioFromSessionPayload(sd) || '16:9';
+
+      const payload = {
+        session_id: sessionId,
+        user_id: token,
+        aspect_ratio: aspectRatio,
+        subtitles: false,
+        scenes: [],
+        scene_numbers: [0]
+      };
+
+      const genResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       const genText = await genResp.text();
       let genData; try { genData = JSON.parse(genText); } catch (_) { genData = genText; }
-      if (!genResp.ok) throw new Error(`videos/generate-from-session failed: ${genResp.status} ${genText}`);
+      if (!genResp.ok) throw new Error(`generate-videos-queue failed: ${genResp.status} ${genText}`);
+
       const jobId = genData?.job_id || genData?.jobId || genData?.id;
       if (jobId) {
-        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { }
         setVideosJobId(jobId);
+        setIsVideoGenerating(true);
+        setSubView('videos');
       }
-      setShowVideoPopup(true);
-      setTimeout(() => { setShowVideoPopup(false); setSubView('videos'); }, 5000);
+
     } catch (e) {
       alert(e?.message || 'Failed to start video generation');
     }
@@ -3719,6 +4001,41 @@ const BuildReelWizard = () => {
         />
       )}
 
+      {/* Image List Modal (Popup) */}
+      {showStoryboardModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white w-[90%] h-[90%] rounded-xl shadow-2xl overflow-hidden relative flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-bold">Storyboard Images</h3>
+              <button
+                onClick={() => setShowStoryboardModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden relative">
+              <ImageList
+                jobId={imagesJobId}
+                hasVideos={hasVideosAvailable}
+                onGoToVideos={() => {
+                  setShowStoryboardModal(false);
+                  setSubView('videos');
+                }}
+                onClose={async () => {
+                  await sendUserSessionData();
+                  setShowStoryboardModal(false);
+                }}
+                onGenerateVideos={async () => {
+                  await handleGenerateVideosFromImages();
+                  setShowStoryboardModal(false);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Scene Script Modal */}
       <SceneScriptModal
         isOpen={showSceneScriptModal}
@@ -3728,6 +4045,16 @@ const BuildReelWizard = () => {
         sessionData={sessionDataState}
         user={userState}
         onRefreshSession={handleRefreshSession}
+        // New props
+        imagesJobId={imagesJobId}
+        setImagesJobId={setImagesJobId}
+        hasVideosAvailable={hasVideosAvailable}
+        setSubView={setSubView}
+        sendUserSessionData={sendUserSessionData}
+        handleGenerateVideosFromImages={handleGenerateVideosFromImages}
+        setShowStoryboardModal={setShowStoryboardModal}
+        isGeneratingStoryboard={isGeneratingStoryboard}
+        setIsGeneratingStoryboard={setIsGeneratingStoryboard}
       />
 
       {/* Confirm Delete Scene Popup */}
@@ -3756,6 +4083,23 @@ const BuildReelWizard = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Video Generation Loader */}
+      {isVideoGenerating && (
+        <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
+          <img src={loadingGif} alt="Generating Video..." className="w-32 h-32 mb-6" />
+          <h3 className="text-2xl font-bold text-[#13008B] mb-3">Generating Video</h3>
+          <p className="text-gray-600 text-lg">This may take a few moments. Please keep this tab open while we finish.</p>
+          {videoProgress > 0 && (
+            <div className="mt-6 w-80 bg-gray-200 rounded-full h-3">
+              <div
+                className="bg-[#13008B] h-3 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${videoProgress}%` }}
+              />
+            </div>
+          )}
         </div>
       )}
 
