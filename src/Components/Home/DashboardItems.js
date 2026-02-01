@@ -4,6 +4,7 @@ import { FaChevronLeft, FaChevronRight, FaImages, FaPlay, FaPlayCircle, FaRegEdi
 import { useNavigate } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 import { selectToken, selectUser } from '../../redux/slices/userSlice'
+import Loader from '../Loader'
 
 const DashboardItems = () => {
 	const navigate = useNavigate();
@@ -157,20 +158,24 @@ const DashboardItems = () => {
 			try {
 				setIsLoadingRecent(true); setRecentError('');
 				const user_id = token || localStorage.getItem('token') || '';
-				const session_id = localStorage.getItem('session_id') || '';
-				const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net//v1/users/videos', {
-					method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id, session_id })
+				if (!user_id) {
+					setIsLoadingRecent(false);
+					return;
+				}
+				// const session_id = localStorage.getItem('session_id') || '';
+				const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/user/${user_id}/final-videos`, {
+					method: 'GET', headers: { 'Content-Type': 'application/json' }
 				});
 				const text = await resp.text();
 				let json; try { json = JSON.parse(text); } catch (_) { json = text; }
-				if (!resp.ok) throw new Error(`users/videos failed: ${resp.status} ${text}`);
-				const content = json?.content || json || {};
-				const videos = Array.isArray(content?.videos) ? content.videos : (Array.isArray(json?.videos) ? json.videos : []);
+				if (!resp.ok) throw new Error(`users/final-videos failed: ${resp.status} ${text}`);
+
+				const videos = Array.isArray(json?.final_videos) ? json.final_videos : [];
 				const normalized = videos.map(v => ({
-					id: v?.id || v?.video_id || v?.job_id || Math.random().toString(36).slice(2),
-					url: v?.final_video_url || v?.result_url || '',
-					created_at: v?.created_at || v?.updated_at || new Date().toISOString(),
-					title: v?.title || v?.name || 'Video'
+					id: v?.name || Math.random().toString(36).slice(2),
+					url: v?.url || '',
+					created_at: v?.updated_at || new Date().toISOString(),
+					title: v?.name || 'Video'
 				}));
 				normalized.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 				setRecentVideos(normalized);
@@ -226,8 +231,8 @@ const DashboardItems = () => {
 							<div
 								key={card.id}
 								className={`w-48 h-48 bg-gray-100 rounded-lg shadow-sm flex flex-col items-center justify-center transition ${card.disabled
-										? 'opacity-60 cursor-not-allowed'
-										: 'hover:shadow-md cursor-pointer'
+									? 'opacity-60 cursor-not-allowed'
+									: 'hover:shadow-md cursor-pointer'
 									}`}
 								onClick={() => {
 									if (card.disabled) return;
@@ -237,8 +242,8 @@ const DashboardItems = () => {
 							>
 								{card.icon}
 								<p className={`mt-4 font-semibold text-center text-lg ${card.disabled
-										? 'text-gray-500'
-										: 'text-[#13008B]'
+									? 'text-gray-500'
+									: 'text-[#13008B]'
 									}`}>
 									{card.label}
 								</p>
@@ -249,15 +254,15 @@ const DashboardItems = () => {
 				<div className='flex flex-col mt-5 justify-start items-start'>
 					<h3 className='text-[20px] font-semibold'>Recently Created:</h3>
 
-					{isLoadingRecent && (<div className="mt-2 text-sm text-gray-600">Loading…</div>)}
+					{isLoadingRecent && (<div className="flex w-full justify-center items-center"><Loader title='Fetching recent videos..' /></div>)}
 					{recentError && (<div className="mt-2 text-sm text-red-600">{recentError}</div>)}
 					<div className="flex gap-6 mt-2 w-[70vw] overflow-x-auto flex-nowrap scrollbar-hide">
 						{recentVideos.map((vid) => (
-							<div key={vid.id} className="min-w-[220px] rounded-lg shadow-sm hover:shadow-md cursor-pointer transition relative bg-black">
+							<div key={vid.id} className="min-w-[400px] rounded-lg shadow-sm hover:shadow-md cursor-pointer transition relative bg-black">
 								{vid.url ? (
-									<video src={vid.url} className="w-full h-40 object-cover rounded-lg" controls muted />
+									<video src={vid.url} className="w-full h-[200px] object-cover rounded-lg" controls muted />
 								) : (
-									<img src={bg} alt={vid.title} className="w-full h-40 object-cover rounded-lg opacity-70" />
+									<img src={bg} alt={vid.title} className="w-full h-[200px] object-cover rounded-lg opacity-70" />
 								)}
 								<div className='bg-white/70 absolute top-2 left-2 px-2 py-0.5 rounded text-xs text-gray-700'>
 									{new Date(vid.created_at).toLocaleDateString()}
