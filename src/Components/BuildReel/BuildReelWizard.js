@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { FaPlus, FaAngleRight, FaEyeDropper, FaAngleUp, FaAngleDown, FaCheck, FaMicrophone, FaDesktop, FaMobileAlt, FaChartPie, FaUserTie, FaCoins } from 'react-icons/fa';
-import { ChevronLeft, ChevronRight, Image, MoreHorizontal, Paperclip, RefreshCcw, Trash2, X, Edit, MoreVertical, ChevronUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Image, MoreHorizontal, Paperclip, RefreshCcw, Trash2, X, Edit, MoreVertical, ChevronUp, Upload } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { ChevronDown, Sparkles } from 'lucide-react';
 import useBrandAssets from '../../hooks/useBrandAssets';
@@ -723,6 +723,7 @@ const StepOne = ({ values, onChange, onNext, onSetUserQuery, onCreateScenes }) =
   // Brand voices + recording
   const { getBrandAssetsByUserId, uploadBrandAssets, uploadBrandFiles, updateBrandAssets } = useBrandAssets();
   const [brandVoices, setBrandVoices] = useState([]); // Store full voice objects, not just URLs
+
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
@@ -1539,13 +1540,110 @@ const Accordion = ({ title, children, defaultOpen = false }) => {
 const SceneScriptModal = ({
   isOpen, onClose, scriptContent, onSave, videoDuration, sessionData, user, onRefreshSession,
   imagesJobId, setImagesJobId,
-  hasVideosAvailable, setSubView,
+  hasVideosAvailable, setSubView, hasImages,
   sendUserSessionData, handleGenerateVideosFromImages,
   setShowStoryboardModal, isGeneratingStoryboard, setIsGeneratingStoryboard
 }) => {
   const [localScript, setLocalScript] = useState({});
   const colorInputRef = useRef(null);
   const [currentColor, setCurrentColor] = useState('#000000');
+  const [brandAssetsAvatars, setBrandAssetsAvatars] = useState([]);
+  const [isLoadingAvatars, setIsLoadingAvatars] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
+  const [narrationError, setNarrationError] = useState('');
+
+  // Avatar upload state
+  const [showAvatarUploadPopup, setShowAvatarUploadPopup] = useState(false);
+  const [avatarName, setAvatarName] = useState('');
+  const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
+  const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
+  const avatarUploadFileInputRef = useRef(null);
+
+  const presetAvatars = useMemo(
+    () => [
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png'
+    ],
+    []
+  );
+
+  const presetAvatarNames = useMemo(
+    () => ({
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/1.png': 'Noor',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/2.png': 'Manal',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/3.png': 'Natasha',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/4.png': 'Dawood',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/5.png': 'Rajveer',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/6.png': 'Nada',
+      'https://brandassetmain2.blob.core.windows.net/defaulttemplates/default_avatars/7.png': 'Samir'
+    }),
+    []
+  );
+
+  useEffect(() => {
+    const loadAvatars = async () => {
+      const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
+      if (!token) return;
+
+      setIsLoadingAvatars(true);
+      try {
+        // Check cache first
+        const cacheKey = 'brand_assets_avatars_cache';
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) {
+              setBrandAssetsAvatars(parsed);
+            }
+          } catch (_) { }
+        }
+
+        const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${token}`);
+        if (response.ok) {
+          const data = await response.json();
+          const rawAvatars = data.avatars || [];
+          let normalized = [];
+
+          if (Array.isArray(rawAvatars)) {
+            // Direct array of avatars
+            normalized = rawAvatars.map(a => {
+              if (typeof a === 'string') return { name: 'Avatar', url: a };
+              return { name: a.name || 'Avatar', url: a.url || a.link || '' };
+            }).filter(a => a.url);
+          } else if (typeof rawAvatars === 'object') {
+            // Nested object with profiles (e.g. avatars.prof_...)
+            Object.values(rawAvatars).forEach((profileAvatars) => {
+              if (Array.isArray(profileAvatars)) {
+                profileAvatars.forEach((avatar) => {
+                  if (avatar && typeof avatar === 'object' && avatar.url) {
+                    normalized.push({
+                      name: avatar.name || '',
+                      url: String(avatar.url).trim()
+                    });
+                  }
+                });
+              }
+            });
+          }
+
+          setBrandAssetsAvatars(normalized);
+          localStorage.setItem(cacheKey, JSON.stringify(normalized));
+        }
+      } catch (err) {
+        console.error('Failed to load avatars:', err);
+      } finally {
+        setIsLoadingAvatars(false);
+      }
+    };
+    loadAvatars();
+  }, []);
 
   const presetColors = [
     '#000000', '#333333', '#666666', '#999999', '#CCCCCC', '#E5E5E5', '#F2F2F2', '#FFFFFF',
@@ -1625,6 +1723,7 @@ const SceneScriptModal = ({
   const [showChartEditor, setShowChartEditor] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
   const [newTextLine, setNewTextLine] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const autoSaveScript = async (currentScript) => {
     try {
@@ -1648,61 +1747,31 @@ const SceneScriptModal = ({
       console.log('Auto-saving script...', currentScript);
 
       // 2. Construct current_script
-      // Fetch the latest script from session data
-      // If 'script' (singular) is present, use it (latest object without version)
-      let latestScript = {};
-      if (freshSession.script) {
-        try {
-          latestScript = typeof freshSession.script === 'string'
-            ? JSON.parse(freshSession.script)
-            : freshSession.script;
-
-          // Ensure it's an object and not an array
-          if (Array.isArray(latestScript)) latestScript = {};
-          else if (typeof latestScript !== 'object') latestScript = {};
-        } catch (_) {
-          latestScript = {};
-        }
-      }
-
-      // Fallback to scripts array if script(singular) was invalid or empty
-      if ((!latestScript || Object.keys(latestScript).length === 0) && freshSession.scripts && freshSession.scripts.length > 0) {
-        latestScript = freshSession.scripts[0];
-      }
-
-      let aiResponse = latestScript.airesponse || latestScript.aiResponse || [];
-      // Ensure aiResponse is an array
-      if (!Array.isArray(aiResponse)) aiResponse = [];
-
-      // Update the specific scene in aiResponse with current localScript values
-      const updatedAiResponse = aiResponse.map(scene => {
-        if (String(scene.scene_number) === String(currentScript.scene_number)) {
-          return { ...scene, ...currentScript };
-        }
-        return scene;
-      });
-
-      let userQuery = latestScript.userquery || latestScript.userQuery || [];
+      // Fetch userQuery from session (as requested)
+      let userQuery = freshSession.userQuery || freshSession.userquery || freshSession.user_query || [];
       if (!Array.isArray(userQuery)) {
         if (userQuery && typeof userQuery === 'object') userQuery = [userQuery];
         else userQuery = [];
       }
 
-      // If userQuery is empty, try to fetch from session root if it exists there
-      if (userQuery.length === 0) {
-        let rootQuery = freshSession.userQuery || freshSession.userquery || freshSession.user_query;
-        if (rootQuery) {
-          if (Array.isArray(rootQuery)) userQuery = rootQuery;
-          else userQuery = [rootQuery];
-        }
+      // Fallback: Check script in session for userQuery if root is empty
+      if (userQuery.length === 0 && freshSession.script) {
+        try {
+          const scriptObj = typeof freshSession.script === 'string'
+            ? JSON.parse(freshSession.script)
+            : freshSession.script;
+          const uq = scriptObj.userquery || scriptObj.userQuery;
+          if (uq) {
+            if (Array.isArray(uq)) userQuery = uq;
+            else if (typeof uq === 'object') userQuery = [uq];
+          }
+        } catch (_) { }
       }
 
-      // If still empty, use fallback structure or current script aspect ratio
+      // If still empty, use fallback structure
       if (userQuery.length === 0) {
-        // Default structure based on user request
         const rawAspect = currentScript.aspect_ratio || '16:9';
         const formattedAspect = rawAspect.replace(':', '_');
-
         userQuery = [{
           guidelines: {
             technical_and_formal_constraints: {
@@ -1711,6 +1780,114 @@ const SceneScriptModal = ({
           }
         }];
       }
+
+      // Construct the scene object from currentScript (ignore session aiResponse)
+      let formattedScene = {};
+      const modelUpper = String(currentScript.model || '').toUpperCase();
+
+      if (modelUpper === 'VEO3') {
+        const veo3Template = {
+          user: currentScript.user || "",
+          style: currentScript.styleCard || "",
+          action: currentScript.action || "",
+          camera: currentScript.cameraCard || "",
+          system: currentScript.system || "",
+          subject: currentScript.subject || "",
+          ambiance: currentScript.ambiance || "",
+          background: currentScript.background || "",
+          composition: currentScript.composition || "",
+          focus_and_lens: currentScript.focus_and_lens || ""
+        };
+        const presOptions = currentScript.presenter_options || {};
+
+        formattedScene = {
+          desc: currentScript.desc || currentScript.description || "",
+          mode: "presenter",
+          model: "VEO3",
+          colors: currentScript.colors || [],
+          duration: currentScript.duration || 8,
+          timeline: currentScript.timeline || "",
+          font_size: currentScript.font_size || 24,
+          gen_image: currentScript.gen_image !== false,
+          narration: currentScript.narration || "",
+          folderLink: currentScript.folderLink || "",
+          font_style: currentScript.font_style || "Montserrat",
+          word_count: currentScript.word_count || 0,
+          avatar_urls: currentScript.avatar_urls || [],
+          scene_title: currentScript.scene_title || "",
+          scene_number: Number(currentScript.scene_number) || 1,
+          regenerate_desc: false,
+          background_image: currentScript.background_image || [],
+          presenter_options: {
+            environment: presOptions.environment || "professional",
+            delivery_style: presOptions.delivery_style || "conversational",
+            camera_movement: presOptions.camera_movement || "subtle"
+          },
+          text_to_be_included: currentScript.text_to_be_included || [],
+          veo3_prompt_template: veo3Template
+        };
+      } else if (modelUpper === 'PLOTLY') {
+        const chartData = currentScript.chart_data || {};
+        const animDesc = currentScript.animation_desc || {};
+        const bgFrame = currentScript.background_frame || {};
+
+        formattedScene = {
+          desc: currentScript.desc || currentScript.description || "",
+          model: "PLOTLY",
+          colors: currentScript.colors || [],
+          duration: currentScript.duration || 10,
+          timeline: currentScript.timeline || "",
+          font_size: currentScript.font_size || 20,
+          gen_image: currentScript.gen_image !== false,
+          narration: currentScript.narration || "",
+          chart_data: {
+            series: {
+              x: chartData.series?.x || [],
+              data: chartData.series?.data || []
+            },
+            formatting: {
+              font_size: chartData.formatting?.font_size || 20,
+              font_style: chartData.formatting?.font_style || "Inter",
+              series_info: chartData.formatting?.series_info || []
+            }
+          },
+          chart_type: currentScript.chart_type || "clustered_bar",
+          folderLink: currentScript.folderLink || "",
+          font_style: currentScript.font_style || "Inter",
+          word_count: currentScript.word_count || 0,
+          avatar_urls: currentScript.avatar_urls || [],
+          chart_title: currentScript.chart_title || "",
+          scene_title: currentScript.scene_title || "",
+          scene_number: Number(currentScript.scene_number) || 1,
+          animation_desc: {
+            lighting: animDesc.lighting || "",
+            style_mood: animDesc.style_mood || "",
+            transition_type: animDesc.transition_type || "",
+            scene_description: animDesc.scene_description || "",
+            subject_description: animDesc.subject_description || "",
+            action_specification: animDesc.action_specification || "",
+            content_modification: animDesc.content_modification || "",
+            camera_specifications: animDesc.camera_specifications || "",
+            geometric_preservation: animDesc.geometric_preservation || ""
+          },
+          background_frame: {
+            style: bgFrame.style || "",
+            action: bgFrame.action || "",
+            setting: bgFrame.setting || "",
+            subject: bgFrame.subject || "",
+            composition: bgFrame.composition || "",
+            final_prompt: bgFrame.final_prompt || "",
+            factual_details: bgFrame.factual_details || "",
+            camera_lens_shadow_lighting: bgFrame.camera_lens_shadow_lighting || ""
+          },
+          background_image: currentScript.background_image || [],
+          text_to_be_included: currentScript.text_to_be_included || []
+        };
+      } else {
+        formattedScene = { ...currentScript };
+      }
+
+      const updatedAiResponse = [formattedScene];
 
       const body = {
         user: freshUser,
@@ -1796,13 +1973,19 @@ const SceneScriptModal = ({
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setIsSaving(true);
+    // Save to backend using create-from-scratch API (action: save)
+    await autoSaveScript(localScript);
     if (onSave) onSave(localScript);
-    onClose();
+    setIsSaving(false);
+    // Don't close to keep editing
+    // onClose(); 
   };
 
   const handleGenerateStoryboard = async () => {
     try {
+      setIsGeneratingStoryboard(true);
       // 1. Auto Save
       await autoSaveScript(localScript);
 
@@ -1828,8 +2011,6 @@ const SceneScriptModal = ({
         session_id: sessionId,
         scene_numbers: [sceneNumber]
       };
-
-      setIsGeneratingStoryboard(true);
 
       // 3. Call API
       const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-images-queue', {
@@ -1868,6 +2049,9 @@ const SceneScriptModal = ({
       }
       setIsGeneratingStoryboard(false);
       setShowStoryboardModal(true);
+      if (typeof onClose === 'function') {
+        onClose();
+      }
 
     } catch (error) {
       console.error('Error generating storyboard:', error);
@@ -2046,7 +2230,14 @@ const SceneScriptModal = ({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh] m-auto">
+      {/* Saving Loader */}
+      {isSaving && (
+        <div className="absolute inset-0 z-[101] flex items-center justify-center bg-white/50 backdrop-blur-[1px] rounded-xl">
+          <Loader title="Saving Script..." />
+        </div>
+      )}
+
+      <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh] m-auto relative">
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <div>
             <h3 className="text-lg font-bold text-gray-900">Script Editor</h3>
@@ -2076,10 +2267,28 @@ const SceneScriptModal = ({
               <label className="block text-sm font-medium text-gray-700 mb-1">Narration</label>
               <textarea
                 value={localScript.narration || ''}
-                onChange={(e) => updateField('narration', e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const words = val.trim().split(/\s+/).filter(Boolean);
+                  const wordCount = words.length;
+                  const oldVal = localScript.narration || '';
+                  const oldWordCount = oldVal.trim().split(/\s+/).filter(Boolean).length;
+
+                  if (wordCount > 13) {
+                    setNarrationError('Narration cannot exceed 13 words.');
+                    // Allow deletion or if word count hasn't increased (e.g. extending a word)
+                    if (val.length < oldVal.length || wordCount <= oldWordCount) {
+                      updateField('narration', val);
+                    }
+                  } else {
+                    setNarrationError('');
+                    updateField('narration', val);
+                  }
+                }}
                 rows={3}
-                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${narrationError ? 'border-red-500' : 'border-gray-300'}`}
               />
+              {narrationError && <p className="text-xs text-red-500 mt-1">{narrationError}</p>}
             </div>
 
             {/* Gen Image Checkbox */}
@@ -2151,6 +2360,270 @@ const SceneScriptModal = ({
                   ))}
                 </div>
               </Accordion>
+
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mt-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-sm font-bold text-gray-900">Select an Avatar</h4>
+                </div>
+                {isLoadingAvatars ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="w-8 h-8 border-4 border-[#13008B] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+                    {(() => {
+                      const allAvatars = [];
+                      const seenUrls = new Set();
+                      const addIfNotSeen = (item) => {
+                        let normalized = null;
+                        if (typeof item === 'string') {
+                          const url = item;
+                          const name = presetAvatarNames[url] || 'Avatar';
+                          normalized = { name, url };
+                        } else if (item && item.url) {
+                          normalized = item;
+                        }
+
+                        if (normalized && normalized.url && !seenUrls.has(normalized.url)) {
+                          seenUrls.add(normalized.url);
+                          allAvatars.push(normalized);
+                        }
+                      };
+                      presetAvatars.forEach(addIfNotSeen);
+                      brandAssetsAvatars.forEach(addIfNotSeen);
+
+                      const elements = allAvatars.map((avatarObj, index) => {
+                        const avatarUrl = avatarObj.url;
+                        const avatarName = avatarObj.name || `Avatar ${index + 1}`;
+                        const currentAvatar = localScript.avatar || (Array.isArray(localScript.avatar_urls) && localScript.avatar_urls.length > 0 ? localScript.avatar_urls[0] : '') || '';
+                        const isSelected = currentAvatar === avatarUrl;
+
+                        return (
+                          <div key={index} className="flex flex-col items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateField('avatar', avatarUrl);
+                                updateField('avatar_urls', [avatarUrl]);
+                                setSelectedAvatar(avatarUrl);
+                              }}
+                              className={`w-20 h-20 rounded-lg border-2 overflow-hidden transition-colors ${isSelected ? 'border-green-500 ring-2 ring-green-300' : 'border-gray-300 hover:border-[#13008B]'
+                                }`}
+                              title={avatarName}
+                            >
+                              <img src={avatarUrl} alt={avatarName} className="w-full h-full object-cover" />
+                            </button>
+                            <span className="text-xs text-gray-600 text-center max-w-[80px] truncate" title={avatarName}>
+                              {avatarName}
+                            </span>
+                          </div>
+                        );
+                      });
+
+                      return (
+                        <>
+                          {elements}
+                          <div className="flex flex-col items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowAvatarUploadPopup(true)}
+                              className="w-20 h-20 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-[#13008B] transition-colors flex-col gap-1 group"
+                              title="Upload Avatar"
+                            >
+                              <Upload className="w-6 h-6 text-gray-400 group-hover:text-[#13008B]" />
+                              <span className="text-[10px] text-gray-500 group-hover:text-[#13008B]">Upload</span>
+                            </button>
+                            <span className="text-xs text-gray-400">Add New</span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Upload Avatar Popup */}
+                {showAvatarUploadPopup && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={(e) => {
+                    if (e.target === e.currentTarget) {
+                      setShowAvatarUploadPopup(false);
+                      setAvatarUploadFiles([]);
+                      setAvatarName('');
+                    }
+                  }}>
+                    <div className="bg-white w-[90%] max-w-md rounded-lg shadow-xl flex flex-col max-h-[90vh]">
+                      <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                        <h3 className="text-lg font-semibold text-[#13008B]">Upload Avatar</h3>
+                        <button
+                          onClick={() => {
+                            setShowAvatarUploadPopup(false);
+                            setAvatarUploadFiles([]);
+                            setAvatarName('');
+                          }}
+                          className="p-1 hover:bg-gray-100 rounded-full"
+                        >
+                          <X className="w-5 h-5 text-gray-500" />
+                        </button>
+                      </div>
+
+                      <div className="p-6 overflow-y-auto">
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Avatar Name <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={avatarName}
+                            onChange={(e) => setAvatarName(e.target.value)}
+                            placeholder="Enter avatar name"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                          />
+                        </div>
+
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Avatar Image <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            ref={avatarUploadFileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const files = Array.from(e.target.files || []);
+                              if (files.length > 0) setAvatarUploadFiles([files[0]]);
+                              if (avatarUploadFileInputRef.current) avatarUploadFileInputRef.current.value = '';
+                            }}
+                          />
+
+                          {avatarUploadFiles.length > 0 ? (
+                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                              <div className="flex items-center gap-3 overflow-hidden">
+                                <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center flex-shrink-0">
+                                  <Image className="w-6 h-6 text-gray-400" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{avatarUploadFiles[0].name}</p>
+                                  <p className="text-xs text-gray-500">{(avatarUploadFiles[0].size / 1024).toFixed(0)} KB</p>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => setAvatarUploadFiles([])}
+                                className="p-1 text-gray-400 hover:text-red-500"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => avatarUploadFileInputRef.current?.click()}
+                              className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-[#13008B] hover:bg-gray-50 transition-colors"
+                            >
+                              <Upload className="w-8 h-8 text-gray-400 mb-2" />
+                              <span className="text-sm text-gray-600">Click to upload image</span>
+                              <span className="text-xs text-gray-400 mt-1">JPG, PNG, WEBP</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowAvatarUploadPopup(false);
+                              setAvatarUploadFiles([]);
+                              setAvatarName('');
+                            }}
+                            className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+                            disabled={isUploadingAvatarFiles}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!avatarName.trim() || avatarUploadFiles.length === 0) {
+                                toast.error('Please provide a name and select a file');
+                                return;
+                              }
+
+                              const token = localStorage.getItem('token');
+                              if (!token) return;
+
+                              setIsUploadingAvatarFiles(true);
+                              try {
+                                const form = new FormData();
+                                form.append('user_id', token);
+                                form.append('name', avatarName.trim());
+                                form.append('file', avatarUploadFiles[0]);
+
+                                const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/upload-avatar', {
+                                  method: 'POST',
+                                  body: form
+                                });
+
+                                if (!resp.ok) throw new Error('Upload failed');
+
+                                // Refresh avatars
+                                const getResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${token}`);
+                                if (getResp.ok) {
+                                  const data = await getResp.json();
+                                  const rawAvatars = data.avatars || [];
+                                  let normalized = [];
+
+                                  if (Array.isArray(rawAvatars)) {
+                                    normalized = rawAvatars.map(a => {
+                                      if (typeof a === 'string') return { name: 'Avatar', url: a };
+                                      return { name: a.name || 'Avatar', url: a.url || a.link || '' };
+                                    }).filter(a => a.url);
+                                  } else if (typeof rawAvatars === 'object') {
+                                    Object.values(rawAvatars).forEach((profileAvatars) => {
+                                      if (Array.isArray(profileAvatars)) {
+                                        profileAvatars.forEach((avatar) => {
+                                          if (avatar && typeof avatar === 'object' && avatar.url) {
+                                            normalized.push({
+                                              name: avatar.name || '',
+                                              url: String(avatar.url).trim()
+                                            });
+                                          }
+                                        });
+                                      }
+                                    });
+                                  }
+
+                                  setBrandAssetsAvatars(normalized);
+                                  localStorage.setItem('brand_assets_avatars_cache', JSON.stringify(normalized));
+                                }
+
+                                toast.success('Avatar uploaded successfully');
+                                setShowAvatarUploadPopup(false);
+                                setAvatarUploadFiles([]);
+                                setAvatarName('');
+                              } catch (err) {
+                                console.error(err);
+                                toast.error('Failed to upload avatar');
+                              } finally {
+                                setIsUploadingAvatarFiles(false);
+                              }
+                            }}
+                            className="px-4 py-2 text-sm bg-[#13008B] text-white rounded-lg hover:bg-blue-800 flex items-center gap-2"
+                            disabled={isUploadingAvatarFiles}
+                          >
+                            {isUploadingAvatarFiles ? (
+                              <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Uploading...</span>
+                              </>
+                            ) : (
+                              'Upload'
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -2424,6 +2897,14 @@ const SceneScriptModal = ({
         </div>
 
         <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
+          {hasImages && (
+            <button
+              onClick={() => setShowStoryboardModal(true)}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+            >
+              Go to Storyboard
+            </button>
+          )}
           <button onClick={handleGenerateStoryboard} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
             Generate Storyboard
           </button>
@@ -2849,6 +3330,8 @@ const BuildReelWizard = () => {
           if (data.status === 'completed' || data.status === 'succeeded') {
             setIsVideoGenerating(false);
             setVideoProgress(100);
+            setShowStoryboardModal(false); // Close image list modal
+            setStep(2); // Go to step 2
             // Refresh session to get the new videos
             await sendUserSessionData();
             toast.success('Video generation completed!');
@@ -3382,8 +3865,8 @@ const BuildReelWizard = () => {
           validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration is required`);
         } else {
           const narrationWordCount = computeWordCount(narration);
-          if (narrationWordCount > 20) {
-            validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration exceed the video duration. Maximum allowed is 20 words.`);
+          if (narrationWordCount > 13) {
+            validationErrors.push(`${sceneTitle} (Scene ${sceneNum}): Narration exceed the video duration. Maximum allowed is 13 words.`);
           }
         }
 
@@ -4014,7 +4497,7 @@ const BuildReelWizard = () => {
                 <X size={20} />
               </button>
             </div>
-            <div className="flex-1 overflow-hidden relative">
+            <div className="flex-1 overflow-y-auto relative">
               <ImageList
                 jobId={imagesJobId}
                 hasVideos={hasVideosAvailable}
@@ -4028,7 +4511,7 @@ const BuildReelWizard = () => {
                 }}
                 onGenerateVideos={async () => {
                   await handleGenerateVideosFromImages();
-                  setShowStoryboardModal(false);
+                  // setShowStoryboardModal(false); // Keep open for loader
                 }}
               />
             </div>
@@ -4049,6 +4532,7 @@ const BuildReelWizard = () => {
         imagesJobId={imagesJobId}
         setImagesJobId={setImagesJobId}
         hasVideosAvailable={hasVideosAvailable}
+        hasImages={hasImages}
         setSubView={setSubView}
         sendUserSessionData={sendUserSessionData}
         handleGenerateVideosFromImages={handleGenerateVideosFromImages}
@@ -4086,20 +4570,28 @@ const BuildReelWizard = () => {
         </div>
       )}
 
-      {/* Video Generation Loader */}
-      {isVideoGenerating && (
-        <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
-          <img src={loadingGif} alt="Generating Video..." className="w-32 h-32 mb-6" />
-          <h3 className="text-2xl font-bold text-[#13008B] mb-3">Generating Video</h3>
-          <p className="text-gray-600 text-lg">This may take a few moments. Please keep this tab open while we finish.</p>
-          {videoProgress > 0 && (
-            <div className="mt-6 w-80 bg-gray-200 rounded-full h-3">
-              <div
-                className="bg-[#13008B] h-3 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${videoProgress}%` }}
-              />
-            </div>
-          )}
+      {/* Universal Loader (Video or Storyboard) */}
+      {(isVideoGenerating || isGeneratingStoryboard) && (
+        <div className="fixed inset-0 z-[999] flex flex-col items-center justify-center bg-white/40 backdrop-blur-sm">
+          <div className='bg-white flex flex-col items-center justify-center'>
+            <img src={loadingGif} alt="Loading..." className="w-32 h-32 mb-6" />
+            <h3 className="text-2xl font-bold text-[#13008B] mb-3">
+              {isVideoGenerating ? 'Generating Video' : 'Generating Storyboard'}
+            </h3>
+            <p className="text-gray-600 text-lg">
+              {isVideoGenerating
+                ? 'This may take a few moments. Please keep this tab open while we finish.'
+                : 'Creating your storyboard...'}
+            </p>
+            {isVideoGenerating && videoProgress > 0 && (
+              <div className="mt-6 w-80 bg-gray-200 rounded-full h-3">
+                <div
+                  className="bg-[#13008B] h-3 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${videoProgress}%` }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -10621,7 +10621,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                       : null;
                                   const descriptionText = scene?.description || '';
                                   const wordCount = computeWordCount(nextNarration || descriptionText);
-                                  if (wordCount > 20) {
+                                  if (wordCount > 13) {
                                     setShowNarrationLimitPopup(true);
                                     return;
                                   }
@@ -10651,28 +10651,34 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
 
                               if (isEditingScene) {
                                 const wordCount = (sceneNarration || '').trim().split(/\s+/).filter(word => word.length > 0).length;
-                                const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                                const isOverLimit = wordCount > 13;
                                 return (
                                   <>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">Narration</label>
                                     <textarea
                                       value={sceneNarration}
-                                      onChange={(e) => handleSceneUpdate(currentSceneIndex, 'narration', e.target.value)}
-                                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${isOptimalWordCount
-                                        ? 'border-green-500 bg-green-50'
-                                        : 'border-red-300 bg-red-50'
-                                        }`}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        const words = (val || '').trim().split(/\s+/).filter(w => w.length > 0);
+                                        const newCount = words.length;
+                                        const oldVal = sceneNarration || '';
+                                        const oldCount = (oldVal || '').trim().split(/\s+/).filter(w => w.length > 0).length;
+                                        if (newCount > 13) {
+                                          setShowNarrationLimitPopup(true);
+                                          if (val.length < oldVal.length || newCount <= oldCount) {
+                                            handleSceneUpdate(currentSceneIndex, 'narration', val);
+                                          }
+                                        } else {
+                                          handleSceneUpdate(currentSceneIndex, 'narration', val);
+                                        }
+                                      }}
+                                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${isOverLimit ? 'border-red-300 bg-red-50' : 'border-gray-300 bg-white'}`}
                                       rows={3}
                                       placeholder="Enter narration text"
                                     />
                                     <div className="mt-2 flex items-center justify-between">
-                                      <p className="text-xs text-gray-500 italic">
-                                        Keep 18-20 words for a perfect 10 second audio
-                                      </p>
-                                      <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'
-                                        }`}>
-                                        {wordCount} / 20 words
-                                      </p>
+                                      <p className="text-xs text-gray-500 italic">Maximum 13 words</p>
+                                      <p className={`text-xs font-medium ${isOverLimit ? 'text-red-600' : 'text-gray-600'}`}>{wordCount} / 13 words</p>
                                     </div>
                                   </>
                                 );
@@ -10735,32 +10741,36 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                   {(() => {
                                     const currentNarrationText = isInlineEditingNarration ? pendingNarration : sceneNarration;
                                     const wordCount = (currentNarrationText || '').trim().split(/\s+/).filter(word => word.length > 0).length;
-                                    const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                                    const isOverLimit = wordCount > 13;
                                     return (
                                       <>
                                         <textarea
                                           value={currentNarrationText}
-                                          onChange={(e) => setPendingNarration(e.target.value)}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            const words = (val || '').trim().split(/\s+/).filter(w => w.length > 0);
+                                            const newCount = words.length;
+                                            const oldVal = currentNarrationText || '';
+                                            const oldCount = (oldVal || '').trim().split(/\s+/).filter(w => w.length > 0).length;
+                                            if (newCount > 13) {
+                                              setShowNarrationLimitPopup(true);
+                                              if (val.length < oldVal.length || newCount <= oldCount) {
+                                                setPendingNarration(val);
+                                              }
+                                            } else {
+                                              setPendingNarration(val);
+                                            }
+                                          }}
                                           onDoubleClick={startInlineEditingNarration}
                                           readOnly={!isInlineEditingNarration || isSavingNarration}
-                                          className={`w-full px-3 py-2 rounded-lg border ${isInlineEditingNarration
-                                            ? isOptimalWordCount
-                                              ? 'border-green-500 bg-green-50 focus:ring-2 focus:ring-green-500'
-                                              : 'border-red-300 bg-red-50 focus:ring-2 focus:ring-red-500'
-                                            : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '
-                                            } ${isSavingNarration ? 'opacity-60' : ''}`}
+                                          className={`w-full px-3 py-2 rounded-lg border ${isInlineEditingNarration ? (isOverLimit ? 'border-red-300 bg-red-50 focus:ring-2 focus:ring-red-500' : 'border-gray-300 bg-white focus:ring-2 focus:ring-[#13008B]') : 'border-gray-200 bg-white text-gray-600 font-normal cursor-pointer '} ${isSavingNarration ? 'opacity-60' : ''}`}
                                           rows={3}
                                           placeholder="Double-click to edit narration"
                                         />
                                         {isInlineEditingNarration && (
                                           <div className="mt-2 flex items-center justify-between">
-                                            <p className="text-xs text-gray-500 italic">
-                                              Keep 18-20 words for a perfect 10 second audio
-                                            </p>
-                                            <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'
-                                              }`}>
-                                              {wordCount} / 20 words
-                                            </p>
+                                            <p className="text-xs text-gray-500 italic">Maximum 13 words</p>
+                                            <p className={`text-xs font-medium ${isOverLimit ? 'text-red-600' : 'text-gray-600'}`}>{wordCount} / 13 words</p>
                                           </div>
                                         )}
                                       </>
@@ -15566,7 +15576,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
               </button>
             </div>
             <p className="text-sm text-gray-700">
-              Narration exceed the video duration. Maximum allowed is 20 words.
+              Narration cannot exceed 13 words.
             </p>
           </div>
         </div>

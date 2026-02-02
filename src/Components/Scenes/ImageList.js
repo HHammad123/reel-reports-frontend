@@ -6848,7 +6848,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               Go to Videos
             </button>
           )}
-          {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back to Chat</button>)}
+          {onClose && (<button onClick={onClose} className="px-3 py-1.5 rounded-lg border text-sm">Back to Script</button>)}
         </div>
       </div>
 
