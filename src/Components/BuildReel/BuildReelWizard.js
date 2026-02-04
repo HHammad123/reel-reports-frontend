@@ -1542,7 +1542,8 @@ const SceneScriptModal = ({
   imagesJobId, setImagesJobId,
   hasVideosAvailable, setSubView, hasImages,
   sendUserSessionData, handleGenerateVideosFromImages,
-  setShowStoryboardModal, isGeneratingStoryboard, setIsGeneratingStoryboard
+  setShowStoryboardModal, isGeneratingStoryboard, setIsGeneratingStoryboard,
+  activeSceneIndex // Received from parent
 }) => {
   const [localScript, setLocalScript] = useState({});
   const colorInputRef = useRef(null);
@@ -1559,6 +1560,17 @@ const SceneScriptModal = ({
   const [avatarUploadFiles, setAvatarUploadFiles] = useState([]);
   const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
   const avatarUploadFileInputRef = useRef(null);
+
+  const isLatestScene = useMemo(() => {
+    if (!sessionData) return true;
+    const sData = sessionData.session_data || sessionData.session || sessionData || {};
+    const scripts = Array.isArray(sData.scripts) ? sData.scripts : [];
+    if (scripts.length === 0) return true;
+    const airesponse = scripts[0].airesponse || [];
+    if (airesponse.length === 0) return true;
+    if (activeSceneIndex === undefined || activeSceneIndex === null) return true;
+    return activeSceneIndex === airesponse.length - 1;
+  }, [sessionData, activeSceneIndex]);
 
   const presetAvatars = useMemo(
     () => [
@@ -1726,6 +1738,10 @@ const SceneScriptModal = ({
   const [isSaving, setIsSaving] = useState(false);
 
   const autoSaveScript = async (currentScript) => {
+    if (!isLatestScene) {
+      console.log('Auto-save skipped: Not the latest scene');
+      return;
+    }
     try {
       let freshSession = sessionData;
       let freshUser = user;
@@ -1887,13 +1903,43 @@ const SceneScriptModal = ({
         formattedScene = { ...currentScript };
       }
 
-      const updatedAiResponse = [formattedScene];
+      // Fetch scripts from session to use latest object (index 0) and potentially previous scene (index 1)
+      const sData = freshSession.session_data || freshSession.session || freshSession || {};
+      const scripts = Array.isArray(sData.scripts) ? sData.scripts : (Array.isArray(freshSession.scripts) ? freshSession.scripts : []);
+
+      let currentScriptBase = {};
+      if (scripts.length > 0) {
+        currentScriptBase = { ...scripts[0] };
+        delete currentScriptBase.version;
+      }
+
+      // Logic matches createFromScratch: include preceding scenes from scripts[0].airesponse + current scene
+      const updatedAiResponse = [];
+
+      // 1. Check scripts[0] (latest script) for preceding scenes
+      if (scripts.length > 0 && scripts[0].airesponse && Array.isArray(scripts[0].airesponse)) {
+        const existingScenes = scripts[0].airesponse;
+        // Include scenes up to the active index
+        if (existingScenes.length > 0 && activeSceneIndex > 0) {
+          const preceding = existingScenes.slice(0, activeSceneIndex);
+          updatedAiResponse.push(...preceding);
+        }
+      }
+
+      // 2. Add current formatted scene
+      updatedAiResponse.push(formattedScene);
+
+      // Prioritize userquery from current script base (scripts[0]), fallback to calculated userQuery
+      const finalUserQuery = (currentScriptBase.userquery || currentScriptBase.userQuery)
+        ? (currentScriptBase.userquery || currentScriptBase.userQuery)
+        : userQuery;
 
       const body = {
         user: freshUser,
         session_id: freshSession.session_id || (typeof window !== 'undefined' ? localStorage.getItem('session_id') : ''),
         current_script: {
-          userquery: userQuery,
+          ...currentScriptBase,
+          userquery: finalUserQuery,
           airesponse: updatedAiResponse
         },
         action: 'save',
@@ -2815,14 +2861,6 @@ const SceneScriptModal = ({
               <div className="col-span-full">
                 <Accordion title="Background Frame" defaultOpen={true}>
                   {renderNestedFields('background_frame', backgroundFrameFields)}
-                  <div className="mt-2">
-                    <button
-                      onClick={() => setShowAssetsModal(true)}
-                      className="px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center gap-2 text-sm"
-                    >
-                      <Paperclip size={16} /> Select Reference Image
-                    </button>
-                  </div>
                 </Accordion>
               </div>
               <div className="col-span-full">
@@ -2925,7 +2963,7 @@ const SceneScriptModal = ({
         </div>
 
         <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
-          {hasImages && (
+          {hasImages && isLatestScene && (
             <button
               onClick={() => {
                 onClose(); // Close the current modal
@@ -2936,12 +2974,16 @@ const SceneScriptModal = ({
               Go to Storyboard
             </button>
           )}
-          <button onClick={handleGenerateStoryboard} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
-            Generate Storyboard
-          </button>
-          <button onClick={handleSave} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
-            Save
-          </button>
+          {isLatestScene && (
+            <>
+              <button onClick={handleGenerateStoryboard} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
+                Generate Storyboard
+              </button>
+              <button onClick={handleSave} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
+                Save
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -3122,7 +3164,24 @@ const AddSceneDropdown = ({ onAdd, hasScripts }) => {
   );
 };
 
-const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, hasImages = false, onGoToStoryboard, addScene, onEditScene, onDeleteScene, activeIndex: propActiveIndex, onActiveIndexChange, videosJobId, onGenerateVideo, isVideoGenerating = false }) => {
+const StepTwo = ({
+  values,
+  onBack,
+  onSave,
+  onGenerate,
+  isGenerating = false,
+  hasImages = false,
+  onGoToStoryboard,
+  addScene,
+  onEditScene,
+  onDeleteScene,
+  activeIndex: propActiveIndex,
+  onActiveIndexChange,
+  videosJobId,
+  onGenerateVideo,
+  isVideoGenerating = false,
+  onJobPhaseDone
+}) => {
   const [internalActiveIndex, setInternalActiveIndex] = useState(0);
 
   // Use prop if available, otherwise internal state
@@ -3237,7 +3296,7 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
         </div>
       )}
 
-      <VideosList jobId={videosJobId || ''} />
+      <VideosList jobId={videosJobId || ''} onJobPhaseDone={onJobPhaseDone} />
 
       {/* Scene Menu - Fixed Position to avoid overflow clipping */}
       {isSceneMenuOpen && (
@@ -4143,8 +4202,9 @@ const BuildReelWizard = () => {
           });
         }
 
-        // Fetch full user object from session user_data for storyboard save
+        // Fetch full user object and scripts from session for storyboard save
         let userForBody = {};
+        let sessionScripts = [];
         try {
           const tokenForUser = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
           if (sessionId && tokenForUser) {
@@ -4158,16 +4218,32 @@ const BuildReelWizard = () => {
             if (sessResp.ok) {
               const sdForUser = sessJson?.session_data || sessJson?.session || {};
               userForBody = sessJson?.user_data || sdForUser?.user_data || sdForUser?.user || {};
+              sessionScripts = Array.isArray(sdForUser.scripts) ? sdForUser.scripts : [];
             }
           }
         } catch (_) { /* noop */ }
 
-        // Filter scenes to only include allowed fields (same as saveScenesToServer)
-        const airesponse = Array.isArray(script) ? script.map((scene, index) => filterSceneForAPI(scene, index)) : [];
+        // Construct airesponse based on session history + current scene
+        const updatedAiResponse = [];
+
+        // 1. Check scripts[0] (latest script) for preceding scenes
+        if (sessionScripts.length > 0 && sessionScripts[0].airesponse && Array.isArray(sessionScripts[0].airesponse)) {
+          const existingScenes = sessionScripts[0].airesponse;
+          if (existingScenes.length > 0 && activeSceneIndex > 0) {
+            const preceding = existingScenes.slice(0, activeSceneIndex);
+            updatedAiResponse.push(...preceding);
+          }
+        }
+
+        // 2. Add current scene from UI state
+        if (script && script[activeSceneIndex]) {
+          updatedAiResponse.push(filterSceneForAPI(script[activeSceneIndex], activeSceneIndex));
+        }
+
         const body = {
           user: userForBody,
           session_id: sessionId,
-          current_script: { userquery: uq, airesponse },
+          current_script: { userquery: uq, airesponse: updatedAiResponse },
           action: 'save'
         };
         console.log('[BuildReel] create-from-scratch(save) request:', body);
@@ -4285,6 +4361,14 @@ const BuildReelWizard = () => {
       if (jobId) {
         setVideosJobId(jobId);
         setIsVideoGenerating(true);
+
+        // Navigate to Step 2 (Editor) immediately
+        setStep(2);
+        setSubView('editor');
+        try {
+          localStorage.setItem('buildreel_current_step', '2');
+          localStorage.setItem('buildreel_subview', 'editor');
+        } catch (_) { }
       }
 
     } catch (e) {
@@ -4388,21 +4472,15 @@ const BuildReelWizard = () => {
         }
 
 
-        // Aggregate airesponse from ALL scripts in the session data
-        // This ensures that if there are multiple script objects, we capture all scenes
+        // Aggregate airesponse from the LATEST script in the session data (index 0)
+        // User Request: "script object should be come from the latest version in the session_data.scripts[0]"
         let existingAiResponse = [];
-        if (existingScripts && existingScripts.length > 0) {
-          existingScripts.forEach(script => {
-            if (script && Array.isArray(script.airesponse)) {
-              existingAiResponse = [...existingAiResponse, ...script.airesponse];
-            }
-          });
-        }
 
-        // Only keep the latest scene if available (User Request: "please send only latest version script object")
-        if (existingAiResponse.length > 0) {
-          const latest = existingAiResponse[existingAiResponse.length - 1];
-          existingAiResponse = [latest];
+        if (existingScripts.length > 0) {
+          const latestScript = existingScripts[0];
+          if (latestScript && Array.isArray(latestScript.airesponse)) {
+            existingAiResponse = latestScript.airesponse;
+          }
         }
 
         // Format Aspect Ratio (e.g., "16:9" -> "16_9")
@@ -4541,10 +4619,9 @@ const BuildReelWizard = () => {
         const currentScriptObj = { ...scripts[0] };
         delete currentScriptObj.version;
 
-        // Filter airesponse to only include the latest scene
-        if (currentScriptObj.airesponse && Array.isArray(currentScriptObj.airesponse) && currentScriptObj.airesponse.length > 0) {
-          const latestScene = currentScriptObj.airesponse[currentScriptObj.airesponse.length - 1];
-          currentScriptObj.airesponse = [latestScene];
+        // Use all objects from scripts[0].airesponse as is
+        if (scripts[0].airesponse && Array.isArray(scripts[0].airesponse)) {
+          currentScriptObj.airesponse = scripts[0].airesponse;
         }
 
         // Construct payload using scripts[0] as current_script
@@ -4772,6 +4849,12 @@ const BuildReelWizard = () => {
               videosJobId={videosJobId}
               onGenerateVideo={handleGenerateVideosFromImages}
               isVideoGenerating={isVideoGenerating}
+              onJobPhaseDone={() => {
+                setStep(2);
+                setSubView('editor');
+                try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
+                try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
+              }}
             />
           )}
           {subView === 'images' && (
@@ -4802,6 +4885,12 @@ const BuildReelWizard = () => {
                 sessionId={localStorage.getItem('session_id')}
                 token={localStorage.getItem('token')}
                 onClose={async () => { await sendUserSessionData(); setSubView('editor'); try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { } }}
+                onJobPhaseDone={() => {
+                  setStep(2);
+                  setSubView('editor');
+                  try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
+                  try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
+                }}
               />
             </div>
           )}
@@ -4924,6 +5013,7 @@ const BuildReelWizard = () => {
         setShowStoryboardModal={setShowStoryboardModal}
         isGeneratingStoryboard={isGeneratingStoryboard}
         setIsGeneratingStoryboard={setIsGeneratingStoryboard}
+        activeSceneIndex={activeSceneIndex}
       />
 
       {/* Confirm Delete Scene Popup */}

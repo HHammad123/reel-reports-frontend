@@ -58,7 +58,7 @@ const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
 const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
 
-const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
+const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1487,6 +1487,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
               responseStatus === 'succeeded' ||
               responseStatus === 'completed'
             );
+
+            if (isJobComplete && onJobPhaseDone) {
+              onJobPhaseDone();
+            }
 
             // Check if status is "succeeded" or "failed" - only then stop polling
             // Also check if progress indicates completion
