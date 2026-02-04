@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { FaPlus, FaAngleRight, FaEyeDropper, FaAngleUp, FaAngleDown, FaCheck, FaMicrophone, FaDesktop, FaMobileAlt, FaChartPie, FaUserTie, FaCoins } from 'react-icons/fa';
-import { ChevronLeft, ChevronRight, Image, MoreHorizontal, Paperclip, RefreshCcw, Trash2, X, Edit, MoreVertical, ChevronUp, Upload } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Image, MoreHorizontal, Paperclip, RefreshCcw, Trash2, X, Edit, MoreVertical, ChevronUp, Upload, Video } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { ChevronDown, Sparkles } from 'lucide-react';
 import useBrandAssets from '../../hooks/useBrandAssets';
@@ -2039,14 +2039,42 @@ const SceneScriptModal = ({
         return;
       }
 
-      // Set job ID and open modal to let ImageList handle polling
-      setImagesJobId(jobId);
-      try {
-        localStorage.setItem('current_images_job_id', jobId);
-        localStorage.setItem('images_generate_pending', 'true');
-      } catch (_) {
-        // Ignore localStorage errors
+      // Poll for job completion
+      let isJobComplete = false;
+      const maxRetries = 60; // 3 minutes approx (assuming 3s interval)
+      let retries = 0;
+
+      while (!isJobComplete && retries < maxRetries) {
+        try {
+          const statusResp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/job-status/${jobId}`);
+          if (statusResp.ok) {
+            const statusData = await statusResp.json();
+            const status = String(statusData.status || '').toLowerCase();
+
+            if (status === 'completed' || status === 'success' || status === 'succeeded') {
+              isJobComplete = true;
+              break;
+            } else if (status === 'failed' || status === 'error') {
+              throw new Error(statusData.error || 'Job failed');
+            }
+          }
+        } catch (e) {
+          console.warn('Polling error:', e);
+          // Continue polling on transient errors
+        }
+
+        if (!isJobComplete) {
+          retries++;
+          await new Promise(r => setTimeout(r, 3000));
+        }
       }
+
+      if (!isJobComplete) {
+        throw new Error('Image generation timed out');
+      }
+
+      // Set job ID and open modal (images are already generated)
+      setImagesJobId(jobId);
       setIsGeneratingStoryboard(false);
       setShowStoryboardModal(true);
       if (typeof onClose === 'function') {
@@ -2899,7 +2927,10 @@ const SceneScriptModal = ({
         <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
           {hasImages && (
             <button
-              onClick={() => setShowStoryboardModal(true)}
+              onClick={() => {
+                onClose(); // Close the current modal
+                setShowStoryboardModal(true); // Open the storyboard modal
+              }}
               className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
             >
               Go to Storyboard
@@ -3091,8 +3122,17 @@ const AddSceneDropdown = ({ onAdd, hasScripts }) => {
   );
 };
 
-const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, hasImages = false, onGoToStoryboard, addScene, onEditScene, onDeleteScene }) => {
-  const [activeIndex, setActiveIndex] = useState(0);
+const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, hasImages = false, onGoToStoryboard, addScene, onEditScene, onDeleteScene, activeIndex: propActiveIndex, onActiveIndexChange, videosJobId, onGenerateVideo, isVideoGenerating = false }) => {
+  const [internalActiveIndex, setInternalActiveIndex] = useState(0);
+
+  // Use prop if available, otherwise internal state
+  const activeIndex = propActiveIndex !== undefined ? propActiveIndex : internalActiveIndex;
+
+  const setActiveIndex = (idx) => {
+    setInternalActiveIndex(idx);
+    if (onActiveIndexChange) onActiveIndexChange(idx);
+  };
+
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -3132,6 +3172,8 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
       <div className='flex items-center justify-between mb-6'>
         <h2 className='text-[24px] font-semibold'>Add Your Scenes</h2>
         <div className="flex items-center gap-2 relative" ref={dropdownRef}>
+          {/* Generate Video Button */}
+
           {/* Add Scene button - top right */}
           <button
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -3164,15 +3206,14 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
                   setActiveIndex(idx);
                   setIsSceneMenuOpen(false);
                 }}
-                className={`relative flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors whitespace-nowrap min-w-[100px] cursor-pointer ${isActive
-                  ? 'bg-[#13008B] text-white shadow-md'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                className={`relative flex flex-col items-start gap-1 p-3 rounded-xl border transition-all min-w-[140px] cursor-pointer ${isActive
+                  ? 'bg-blue-50 border-[#13008B] shadow-sm'
+                  : 'bg-white border-gray-200 hover:border-gray-300'
                   }`}
               >
-                <span>Scene {scene.scene_number || idx + 1}</span>
-
-                {isActive && (
-                  <div className="relative flex items-center">
+                <div className="flex items-center justify-between w-full">
+                  <span className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-[#13008B]' : 'text-gray-500'}`}>Scene {scene.scene_number || idx + 1}</span>
+                  {isActive && (
                     <button
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
@@ -3181,19 +3222,22 @@ const StepTwo = ({ values, onBack, onSave, onGenerate, isGenerating = false, has
                         setMenuPosition({ top: rect.bottom + 5, left: rect.left });
                         setIsSceneMenuOpen(!isSceneMenuOpen);
                       }}
-                      className="p-0.5 hover:bg-white/20 rounded-full transition-colors"
+                      className="p-1 hover:bg-black/5 rounded-full transition-colors text-gray-500"
                     >
-                      <MoreVertical size={16} />
+                      <MoreVertical size={14} />
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
+                <div className={`text-sm font-medium truncate w-full ${isActive ? 'text-gray-900' : 'text-gray-600'}`}>
+                  {scene.scene_title || 'Untitled Scene'}
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      <VideosList jobId={typeof window !== 'undefined' ? localStorage.getItem('current_video_job_id') : ''} />
+      <VideosList jobId={videosJobId || ''} />
 
       {/* Scene Menu - Fixed Position to avoid overflow clipping */}
       {isSceneMenuOpen && (
@@ -3288,7 +3332,7 @@ const BuildReelWizard = () => {
   const [sceneToDeleteConfirm, setSceneToDeleteConfirm] = useState(null);
   const [isDeletingScene, setIsDeletingScene] = useState(false);
   const [imagesJobId, setImagesJobId] = useState('');
-  const [videosJobId, setVideosJobId] = useState('');
+  const [videosJobId, setVideosJobId] = useState(''); // Removed localStorage fetch as per request
   const [hasVideosAvailable, setHasVideosAvailable] = useState(false);
   const [showVideoPopup, setShowVideoPopup] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
@@ -3305,6 +3349,28 @@ const BuildReelWizard = () => {
   const [currentScriptContent, setCurrentScriptContent] = useState('');
   const [sessionDataState, setSessionDataState] = useState(null);
   const [userState, setUserState] = useState(null);
+
+  // Active Scene Index State (persisted)
+  const [activeSceneIndex, setActiveSceneIndex] = useState(() => {
+    try {
+      const stored = localStorage.getItem('buildreel_active_scene_index');
+      return stored ? parseInt(stored, 10) : 0;
+    } catch (_) { return 0; }
+  });
+
+  // Persist activeSceneIndex
+  useEffect(() => {
+    localStorage.setItem('buildreel_active_scene_index', String(activeSceneIndex));
+  }, [activeSceneIndex]);
+
+  // Persist Modal State
+  useEffect(() => {
+    const state = {
+      script: showSceneScriptModal,
+      storyboard: showStoryboardModal
+    };
+    localStorage.setItem('buildreel_modal_state', JSON.stringify(state));
+  }, [showSceneScriptModal, showStoryboardModal]);
 
   // Poll video generation status
   useEffect(() => {
@@ -3332,8 +3398,37 @@ const BuildReelWizard = () => {
             setVideoProgress(100);
             setShowStoryboardModal(false); // Close image list modal
             setStep(2); // Go to step 2
+            setSubView('editor'); // Ensure we are on the editor view where VideosList is embedded
             // Refresh session to get the new videos
-            await sendUserSessionData();
+            const newData = await sendUserSessionData();
+
+            // Open latest scene modal as requested by user
+            if (newData?.session_data?.airesponse?.length > 0) {
+              const scenes = newData.session_data.airesponse;
+              const latestIndex = scenes.length - 1;
+              setActiveSceneIndex(latestIndex);
+              let latestScene = scenes[latestIndex];
+              // Flatten VEO3 prompt template if present
+              if (latestScene && (latestScene.model === 'VEO3' || latestScene.model === 'ANCHOR') && latestScene.veo3_prompt_template) {
+                const template = latestScene.veo3_prompt_template;
+                latestScene = {
+                  ...latestScene,
+                  user: template.user || latestScene.user || '',
+                  system: template.system || latestScene.system || '',
+                  styleCard: template.style || latestScene.styleCard || '',
+                  cameraCard: template.camera || latestScene.cameraCard || '',
+                  subject: template.subject || latestScene.subject || '',
+                  action: template.action || latestScene.action || '',
+                  ambiance: template.ambiance || latestScene.ambiance || '',
+                  background: template.background || latestScene.background || '',
+                  composition: template.composition || latestScene.composition || '',
+                  focus_and_lens: template.focus_and_lens || latestScene.focus_and_lens || ''
+                };
+              }
+              setCurrentScriptContent(latestScene);
+              setShowSceneScriptModal(true);
+            }
+
             toast.success('Video generation completed!');
           } else if (data.status === 'failed') {
             setIsVideoGenerating(false);
@@ -3376,8 +3471,72 @@ const BuildReelWizard = () => {
     return null;
   };
 
-  const handleEditScene = (scene) => {
-    setCurrentScriptContent(scene);
+  const handleEditScene = async (scene) => {
+    try {
+      const sessionId = localStorage.getItem('session_id');
+      const token = localStorage.getItem('token');
+
+      if (sessionId && token) {
+        const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: token, session_id: sessionId })
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          const sData = data.session_data || data.session;
+
+          // Update local state
+          setSessionDataState(sData);
+          if (sData && sData.scripts) {
+            setForm(f => ({ ...f, scripts: sData.scripts }));
+
+            // Find the updated scene using the current active index
+            // Assuming StepTwo uses scripts[0].airesponse
+            const latestScript = sData.scripts.length > 0 ? sData.scripts[0] : null;
+            const scenes = latestScript && latestScript.airesponse ? latestScript.airesponse : [];
+
+            if (scenes.length > 0) {
+              // Ensure index is valid
+              const targetIndex = (activeSceneIndex >= 0 && activeSceneIndex < scenes.length) ? activeSceneIndex : 0;
+              let sceneData = scenes[targetIndex];
+
+              // Check if we need to flatten VEO3 prompt template
+              if (sceneData && (sceneData.model === 'VEO3' || sceneData.model === 'ANCHOR') && sceneData.veo3_prompt_template) {
+                const template = sceneData.veo3_prompt_template;
+                sceneData = {
+                  ...sceneData,
+                  user: template.user || sceneData.user || '',
+                  system: template.system || sceneData.system || '',
+                  styleCard: template.style || sceneData.styleCard || '',
+                  cameraCard: template.camera || sceneData.cameraCard || '',
+                  subject: template.subject || sceneData.subject || '',
+                  action: template.action || sceneData.action || '',
+                  ambiance: template.ambiance || sceneData.ambiance || '',
+                  background: template.background || sceneData.background || '',
+                  composition: template.composition || sceneData.composition || '',
+                  focus_and_lens: template.focus_and_lens || sceneData.focus_and_lens || ''
+                };
+              }
+
+              setCurrentScriptContent(sceneData);
+            } else {
+              setCurrentScriptContent(scene);
+            }
+          } else {
+            setCurrentScriptContent(scene);
+          }
+        } else {
+          setCurrentScriptContent(scene);
+        }
+      } else {
+        setCurrentScriptContent(scene);
+      }
+    } catch (e) {
+      console.error("Error fetching session data for edit scene:", e);
+      setCurrentScriptContent(scene);
+    }
     setShowSceneScriptModal(true);
   };
 
@@ -3553,6 +3712,8 @@ const BuildReelWizard = () => {
         // If title is null/empty -> Step 1
         if (sessionTitle && sessionTitle.trim()) {
           setStep(2);
+          setSubView('editor');
+          try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
           try {
             localStorage.setItem('buildreel_current_step', '2');
           } catch (_) { }
@@ -3580,6 +3741,8 @@ const BuildReelWizard = () => {
           setShowStoryboardModal(false);
           // Ensure we are on step 2
           setStep(2);
+          setSubView('editor');
+          try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
           try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
         }
 
@@ -3603,8 +3766,29 @@ const BuildReelWizard = () => {
         }
 
         // Auto-open Scene Script Modal if scenes exist BUT no images/videos yet (i.e. just script generated)
-        if (airesponse.length > 0 && sessionImages.length === 0 && sessionVideos.length === 0) {
-          const latestScene = airesponse[0]; // Open the first scene of the latest script
+        // OR if video exists (user wants script modal open when video is present)
+        // BUT if images exist and no video, do NOT open script modal (user wants storyboard modal only)
+        if (airesponse.length > 0 && (sessionImages.length === 0 || sessionVideos.length > 0)) {
+          let latestScene = airesponse[0]; // Open the first scene of the latest script
+
+          // Flatten VEO3 prompt template if present
+          if (latestScene && (latestScene.model === 'VEO3' || latestScene.model === 'ANCHOR') && latestScene.veo3_prompt_template) {
+            const template = latestScene.veo3_prompt_template;
+            latestScene = {
+              ...latestScene,
+              user: template.user || latestScene.user || '',
+              system: template.system || latestScene.system || '',
+              styleCard: template.style || latestScene.styleCard || '',
+              cameraCard: template.camera || latestScene.cameraCard || '',
+              subject: template.subject || latestScene.subject || '',
+              action: template.action || latestScene.action || '',
+              ambiance: template.ambiance || latestScene.ambiance || '',
+              background: template.background || latestScene.background || '',
+              composition: template.composition || latestScene.composition || '',
+              focus_and_lens: template.focus_and_lens || latestScene.focus_and_lens || ''
+            };
+          }
+
           setCurrentScriptContent(latestScene);
           setShowSceneScriptModal(true);
         }
@@ -3773,13 +3957,55 @@ const BuildReelWizard = () => {
           });
         }
 
+        // Restore modal state from localStorage
+        try {
+          const modalStateRaw = localStorage.getItem('buildreel_modal_state');
+          if (modalStateRaw) {
+            const modalState = JSON.parse(modalStateRaw);
+            // Only restore if we have valid scenes AND (no images exist OR video exists)
+            // User request: "if the images are there dont open the script editor modal if the images are not there then open the script modal and the video is there then opne script modal"
+            if (airesponse.length > 0 && (sessionImages.length === 0 || sessionVideos.length > 0)) {
+              // ALWAYS open the latest scene on reload, as per user request
+              // "when user reload the page the script modal of the latest scene should be directly open"
+              const latestIndex = airesponse.length - 1;
+              setActiveSceneIndex(latestIndex);
+
+              let sceneToOpen = airesponse[latestIndex];
+              if (sceneToOpen) {
+                // Flatten VEO3 prompt template if present
+                if (sceneToOpen && (sceneToOpen.model === 'VEO3' || sceneToOpen.model === 'ANCHOR') && sceneToOpen.veo3_prompt_template) {
+                  const template = sceneToOpen.veo3_prompt_template;
+                  sceneToOpen = {
+                    ...sceneToOpen,
+                    user: template.user || sceneToOpen.user || '',
+                    system: template.system || sceneToOpen.system || '',
+                    styleCard: template.style || sceneToOpen.styleCard || '',
+                    cameraCard: template.camera || sceneToOpen.cameraCard || '',
+                    subject: template.subject || sceneToOpen.subject || '',
+                    action: template.action || sceneToOpen.action || '',
+                    ambiance: template.ambiance || sceneToOpen.ambiance || '',
+                    background: template.background || sceneToOpen.background || '',
+                    composition: template.composition || sceneToOpen.composition || '',
+                    focus_and_lens: template.focus_and_lens || sceneToOpen.focus_and_lens || ''
+                  };
+                }
+
+                setCurrentScriptContent(sceneToOpen);
+                setShowSceneScriptModal(true);
+              }
+            }
+
+            if (modalState.storyboard) {
+              setShowStoryboardModal(true);
+            }
+          }
+        } catch (e) {
+          console.error('[BuildReel] Error restoring modal state:', e);
+        }
+
         // Restore job IDs if available
         try {
-          const storedImagesJobId = localStorage.getItem('current_images_job_id');
-          if (storedImagesJobId) setImagesJobId(storedImagesJobId);
-
-          const storedVideosJobId = localStorage.getItem('current_video_job_id');
-          if (storedVideosJobId) setVideosJobId(storedVideosJobId);
+          // localStorage fetch for images job id removed
 
           const vids = Array.isArray(sd?.videos) ? sd.videos : [];
           setHasVideosAvailable(vids.length > 0);
@@ -3980,8 +4206,7 @@ const BuildReelWizard = () => {
           throw new Error('No job ID received from generate-images-queue');
         }
 
-        try { localStorage.setItem('current_images_job_id', jobId); } catch (_) { /* noop */ }
-        try { localStorage.setItem('images_generate_pending', 'true'); localStorage.setItem('images_generate_started_at', String(Date.now())); } catch (_) { }
+        // localStorage storage removed
         setImagesJobId(jobId);
       } finally {
         setIsGeneratingImagesQueue(false);
@@ -4060,7 +4285,6 @@ const BuildReelWizard = () => {
       if (jobId) {
         setVideosJobId(jobId);
         setIsVideoGenerating(true);
-        setSubView('videos');
       }
 
     } catch (e) {
@@ -4096,15 +4320,17 @@ const BuildReelWizard = () => {
       const statusUrl = data?.status_url || null;
       const status = data?.status || 'queued';
       if (jobId) {
-        try { localStorage.setItem('current_video_job_id', jobId); } catch (_) { /* noop */ }
-        try { if (statusUrl) localStorage.setItem('current_video_job_status_url', statusUrl); } catch (_) { /* noop */ }
-        try { localStorage.setItem('current_video_job_type', 'merge'); } catch (_) { /* noop */ }
-        try { localStorage.setItem('job_status', status); } catch (_) { /* legacy */ }
+        setVideosJobId(jobId);
       }
       setTimeout(() => {
         setShowVideoPopup(false);
         setIsMerging(false);
-        try { window.location && (window.location.href = '/media'); } catch (_) { /* noop */ }
+        setStep(2);
+        setSubView('editor');
+        try {
+          localStorage.setItem('buildreel_current_step', '2');
+          localStorage.setItem('buildreel_subview', 'editor');
+        } catch (_) { }
       }, 5000);
     } catch (e) {
       setIsMerging(false);
@@ -4148,6 +4374,37 @@ const BuildReelWizard = () => {
         // Use user_data if available, otherwise fallback to user
         const userObj = sessData?.user_data || {};
 
+        // Extract existing scripts from session data to include in the new request
+        const sessionDataObj = sessData?.session_data || sessData?.session || {};
+        const existingScripts = Array.isArray(sessionDataObj.scripts) ? sessionDataObj.scripts : [];
+
+        // Console log the latest object of the script from user session data
+        if (existingScripts.length > 0) {
+          const latestScriptObj = existingScripts[existingScripts.length - 1];
+          console.log('[BuildReel] Latest script object from session data:', latestScriptObj);
+          if (latestScriptObj.airesponse && Array.isArray(latestScriptObj.airesponse) && latestScriptObj.airesponse.length > 0) {
+            console.log('[BuildReel] Latest scene from session data:', latestScriptObj.airesponse[latestScriptObj.airesponse.length - 1]);
+          }
+        }
+
+
+        // Aggregate airesponse from ALL scripts in the session data
+        // This ensures that if there are multiple script objects, we capture all scenes
+        let existingAiResponse = [];
+        if (existingScripts && existingScripts.length > 0) {
+          existingScripts.forEach(script => {
+            if (script && Array.isArray(script.airesponse)) {
+              existingAiResponse = [...existingAiResponse, ...script.airesponse];
+            }
+          });
+        }
+
+        // Only keep the latest scene if available (User Request: "please send only latest version script object")
+        if (existingAiResponse.length > 0) {
+          const latest = existingAiResponse[existingAiResponse.length - 1];
+          existingAiResponse = [latest];
+        }
+
         // Format Aspect Ratio (e.g., "16:9" -> "16_9")
         const formattedAspectRatio = options.aspectRatio ? options.aspectRatio.replace(':', '_') : '16_9';
 
@@ -4180,7 +4437,7 @@ const BuildReelWizard = () => {
                 }
               }
             ],
-            airesponse: []
+            airesponse: existingAiResponse
           },
           action: "add",
           model_type: modelType
@@ -4214,8 +4471,29 @@ const BuildReelWizard = () => {
           const currentScript = scripts[0] || {};
           const airesponse = Array.isArray(currentScript.airesponse) ? currentScript.airesponse : [];
           if (airesponse.length > 0) {
-            // Use the first scene from the latest script, similar to restore logic
-            const latestScene = airesponse[0];
+            // Use the last scene (newly added)
+            const newIndex = airesponse.length - 1;
+            setActiveSceneIndex(newIndex);
+            let latestScene = airesponse[newIndex];
+
+            // Flatten VEO3 prompt template if present
+            if (latestScene && (latestScene.model === 'VEO3' || latestScene.model === 'ANCHOR') && latestScene.veo3_prompt_template) {
+              const template = latestScene.veo3_prompt_template;
+              latestScene = {
+                ...latestScene,
+                user: template.user || latestScene.user || '',
+                system: template.system || latestScene.system || '',
+                styleCard: template.style || latestScene.styleCard || '',
+                cameraCard: template.camera || latestScene.cameraCard || '',
+                subject: template.subject || latestScene.subject || '',
+                action: template.action || latestScene.action || '',
+                ambiance: template.ambiance || latestScene.ambiance || '',
+                background: template.background || latestScene.background || '',
+                composition: template.composition || latestScene.composition || '',
+                focus_and_lens: template.focus_and_lens || latestScene.focus_and_lens || ''
+              };
+            }
+
             setCurrentScriptContent(latestScene);
             setShowSceneScriptModal(true);
           } else {
@@ -4242,6 +4520,93 @@ const BuildReelWizard = () => {
 
       if (!sessionId || !token) {
         throw new Error('Missing session_id or token');
+      }
+
+      // Check for existing scripts/first scene
+      const currentSessionData = await fetchSessionData(token, sessionId);
+      const sData = currentSessionData?.session_data || currentSessionData?.session || {};
+      const scripts = Array.isArray(sData?.scripts) ? sData.scripts : [];
+
+      // If scripts[0] exists and has a first scene, use it as template
+      if (scripts.length > 0 && scripts[0].airesponse && scripts[0].airesponse.length > 0) {
+        const firstScene = scripts[0].airesponse[0];
+        const userObj = currentSessionData?.user_data || currentSessionData?.user || {};
+
+        // Derive model type from the first scene
+        let mType = 'SORA';
+        if (firstScene.model === 'VEO3' || firstScene.model === 'ANCHOR') mType = 'VEO3';
+        else if (firstScene.model === 'PLOTLY') mType = 'PLOTLY';
+
+        // Prepare current_script from scripts[0] (remove version as requested)
+        const currentScriptObj = { ...scripts[0] };
+        delete currentScriptObj.version;
+
+        // Filter airesponse to only include the latest scene
+        if (currentScriptObj.airesponse && Array.isArray(currentScriptObj.airesponse) && currentScriptObj.airesponse.length > 0) {
+          const latestScene = currentScriptObj.airesponse[currentScriptObj.airesponse.length - 1];
+          currentScriptObj.airesponse = [latestScene];
+        }
+
+        // Construct payload using scripts[0] as current_script
+        const payload = {
+          user: userObj,
+          session_id: sessionId,
+          current_script: currentScriptObj,
+          action: 'add',
+          model_type: mType
+        };
+
+        console.log('[BuildReel] Calling Scene Creation API (Add Scene) with payload:', payload);
+        const sceneResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/create-from-scratch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!sceneResp.ok) {
+          const errText = await sceneResp.text();
+          throw new Error(`Scene creation failed: ${errText}`);
+        }
+
+        const sceneData = await sceneResp.json();
+        console.log('[BuildReel] Scene Creation Response:', sceneData);
+
+        // Refresh session and update state
+        const updated = await fetchSessionData(token, sessionId);
+        if (updated) {
+          const newSd = updated.session_data || updated.session || {};
+          const newScripts = Array.isArray(newSd.scripts) ? newSd.scripts : [];
+          setForm(f => ({ ...f, scripts: newScripts }));
+
+          if (newScripts.length > 0 && newScripts[0].airesponse && newScripts[0].airesponse.length > 0) {
+            const lastIdx = newScripts[0].airesponse.length - 1;
+            setActiveSceneIndex(lastIdx);
+            let latest = newScripts[0].airesponse[lastIdx];
+
+            // Flatten VEO3 prompt template if needed
+            if (latest && (latest.model === 'VEO3' || latest.model === 'ANCHOR') && latest.veo3_prompt_template) {
+              const template = latest.veo3_prompt_template;
+              latest = {
+                ...latest,
+                user: template.user || latest.user || '',
+                system: template.system || latest.system || '',
+                styleCard: template.style || latest.styleCard || '',
+                cameraCard: template.camera || latest.cameraCard || '',
+                subject: template.subject || latest.subject || '',
+                action: template.action || latest.action || '',
+                ambiance: template.ambiance || latest.ambiance || '',
+                background: template.background || latest.background || '',
+                composition: template.composition || latest.composition || '',
+                focus_and_lens: template.focus_and_lens || latest.focus_and_lens || ''
+              };
+            }
+            setCurrentScriptContent(latest);
+            setShowSceneScriptModal(true);
+          }
+        }
+
+        setIsCreatingScenes(false);
+        return;
       }
 
       // Step 3: Call video-type/update API
@@ -4313,6 +4678,10 @@ const BuildReelWizard = () => {
       }
 
       setStep(2);
+      setSubView('editor');
+      try {
+        localStorage.setItem('buildreel_subview', 'editor');
+      } catch (_) { }
       // Persist step change
       try {
         localStorage.setItem('buildreel_current_step', '2');
@@ -4334,6 +4703,8 @@ const BuildReelWizard = () => {
           onSetUserQuery={(uq) => setForm((f) => ({ ...f, ...uq }))}
           onNext={async () => {
             setStep(2);
+            setSubView('editor');
+            try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
             try {
               localStorage.setItem('buildreel_current_step', '2');
             } catch (_) {
@@ -4396,6 +4767,11 @@ const BuildReelWizard = () => {
               addScene={createFromScratch}
               onEditScene={handleEditScene}
               onDeleteScene={handleDeleteScene}
+              activeIndex={activeSceneIndex}
+              onActiveIndexChange={setActiveSceneIndex}
+              videosJobId={videosJobId}
+              onGenerateVideo={handleGenerateVideosFromImages}
+              isVideoGenerating={isVideoGenerating}
             />
           )}
           {subView === 'images' && (
@@ -4403,7 +4779,10 @@ const BuildReelWizard = () => {
               <ImageList
                 jobId={imagesJobId}
                 hasVideos={hasVideosAvailable}
-                onGoToVideos={() => setSubView('videos')}
+                onGoToVideos={(jobId) => {
+                  if (jobId) setVideosJobId(jobId);
+                  setSubView('videos');
+                }}
                 onClose={async () => { await sendUserSessionData(); setSubView('editor'); }}
                 onGenerateVideos={async () => { await handleGenerateVideosFromImages(); }}
               />
@@ -4418,7 +4797,12 @@ const BuildReelWizard = () => {
                   <button onClick={handleGenerateFinalMerge} className='px-3 py-1.5 rounded-lg bg-[#13008B] text-white text-sm hover:bg-blue-800'>Generate Video</button>
                 </div>
               </div>
-              <VideosList jobId={videosJobId} onClose={async () => { await sendUserSessionData(); setSubView('images'); }} />
+              <VideosList
+                jobId={videosJobId}
+                sessionId={localStorage.getItem('session_id')}
+                token={localStorage.getItem('token')}
+                onClose={async () => { await sendUserSessionData(); setSubView('editor'); try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { } }}
+              />
             </div>
           )}
         </>
@@ -4501,7 +4885,8 @@ const BuildReelWizard = () => {
               <ImageList
                 jobId={imagesJobId}
                 hasVideos={hasVideosAvailable}
-                onGoToVideos={() => {
+                onGoToVideos={(jobId) => {
+                  if (jobId) setVideosJobId(jobId);
                   setShowStoryboardModal(false);
                   setSubView('videos');
                 }}

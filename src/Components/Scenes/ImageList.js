@@ -1095,10 +1095,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const startVideoRedirectFlow = React.useCallback(
     (jobId) => {
       if (!jobId) return;
-      try {
-        localStorage.setItem('current_video_job_id', jobId);
-      } catch (err) {
-      }
+      // localStorage storage removed as requested
       setPendingVideoJobId(jobId);
       setVideoRedirectCountdown(5);
       setShowVideoRedirectPopup(true);
@@ -2822,9 +2819,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
             }
           }
         }
-        // If we have a jobId and either no session images yet or we expect generation, poll job API until done
-        const pendingFlag = localStorage.getItem('images_generate_pending') === 'true';
-        const shouldPollJob = !!(jobId || localStorage.getItem('current_images_job_id')) && pendingFlag;
+        // If we have a jobId, poll job API until done
+        const shouldPollJob = !!jobId;
 
         // If no job to poll, stop here
         if (!shouldPollJob) {
@@ -2833,7 +2829,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
           return;
         }
 
-        const id = jobId || localStorage.getItem('current_images_job_id');
+        const id = jobId;
         if (!id) {
           setIsLoading(false);
           setIsPolling(false);
@@ -2857,7 +2853,6 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               throw new Error('Image generation failed');
             }
             if (status === 'succeeded' || status === 'success' || status === 'completed') {
-              try { localStorage.removeItem('images_generate_pending'); } catch (_) { }
               // Reload session images now that job is done
               try {
                 const sr = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {

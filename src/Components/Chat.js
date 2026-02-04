@@ -711,6 +711,62 @@ const extractAspectRatioFromSessionPayload = (payload) => {
   }
 };
 
+// Helper function to handle document upload via queue
+const uploadAndExtractDocument = async (files, userId) => {
+  const form = new FormData();
+  if (Array.isArray(files)) {
+    files.forEach(f => form.append('files', f));
+  } else {
+    form.append('files', files);
+  }
+  form.append('user_id', userId);
+
+  const queueUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents_queue`;
+  const queueResp = await fetch(queueUrl, { method: 'POST', body: form });
+
+  if (!queueResp.ok) {
+    const txt = await queueResp.text();
+    throw new Error(`Queue request failed: ${queueResp.status} ${txt}`);
+  }
+
+  const queueData = await queueResp.json();
+  const jobId = queueData.job_id || queueData.jobId;
+
+  if (!jobId) {
+    throw new Error('No job_id returned from queue API');
+  }
+
+  // Poll for status
+  const maxDuration = 5 * 60 * 1000; // 5 minutes timeout
+  const startTime = Date.now();
+  const pollInterval = 2000;
+
+  while (Date.now() - startTime < maxDuration) {
+    const statusUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/job-status/${encodeURIComponent(jobId)}?user_id=${encodeURIComponent(userId)}`;
+    const statusResp = await fetch(statusUrl);
+
+    if (!statusResp.ok) {
+      throw new Error(`Job status check failed: ${statusResp.status}`);
+    }
+
+    const statusData = await statusResp.json();
+    const status = (statusData.status || statusData.job_status || '').toLowerCase();
+
+    if (status === 'completed' || status === 'succeeded' || status === 'success') {
+      console.log('Document extraction result:', statusData.result);
+      return statusData;
+    }
+
+    if (status === 'failed' || status === 'error') {
+      throw new Error(statusData.error || 'Document extraction job failed');
+    }
+
+    await new Promise(r => setTimeout(r, pollInterval));
+  }
+
+  throw new Error('Document extraction timed out');
+};
+
 const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHistory, setChatHistory, isChatLoading = false, onOpenImagesList, imagesAvailable = false, onGoToScenes, scenesMode = false, initialScenes = null, onBackToChat, enablePresenterOptions = false, isSwitchingVideoType = false, loadingVideoType = null, onScriptChange = null }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -5680,51 +5736,35 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         isFinancialVT = vtLower === 'financial' || vtLower.includes('financial');
       } catch (_) { /* noop */ }
 
-      // Process each file sequentially
-      for (const file of files) {
+      // Process all files in a single batch
+      if (files.length > 0) {
         try {
-          setUploadStatusText(`Uploading and processing ${file.name}...`);
+          setUploadStatusText(`Uploading and processing ${files.length} files...`);
 
           // Call extract API
-          const extractFormData = new FormData();
-          extractFormData.append('files', file);
-          extractFormData.append('user_id', token);
-
-          console.log('Calling extract API for file:', file.name);
+          console.log('Calling extract API for files:', files.map(f => f.name));
           try {
-            // Unified extract endpoint for all video types
-            const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
-            const extractResponse = await fetch(extractUrl, {
-              method: 'POST',
-              body: extractFormData
-            });
+            // Unified extract endpoint for all video types (queue based)
+            const extractData = await uploadAndExtractDocument(files, token);
+            console.log('Extract API Response:', extractData.result);
 
-            if (!extractResponse.ok) {
-              throw new Error(`Document extraction failed for ${file.name}: ${extractResponse.status}`);
-            }
+            // Store extract data on the first file only, to avoid duplication in summary API
+            files[0].extractData = extractData;
 
-            const extractData = await extractResponse.json();
-            console.log('Extract API Response for', file.name, ':', extractData);
-            // Store extract data for later use in summary API
-            file.extractData = extractData;
             // Log the documents array structure
-            if (extractData.documents && Array.isArray(extractData.documents)) {
+            if (extractData.result && extractData.result.result) {
+              console.log('Documents object from API:', extractData.result.result);
+            } else if (extractData.documents && Array.isArray(extractData.documents)) {
               console.log('Documents array from API:', extractData.documents);
               console.log('Number of documents:', extractData.documents.length);
-              extractData.documents.forEach((doc, index) => {
-                console.log(`Document ${index + 1}:`, doc);
-                if (doc.additionalProp1) {
-                  console.log(`Document ${index + 1} additionalProp1:`, doc.additionalProp1);
-                }
-              });
             } else {
               console.log('No documents array found in response or invalid structure');
             }
           } catch (extractErr) {
-            console.error(`Error extracting file ${file.name}:`, extractErr);
+            console.error(`Error extracting files:`, extractErr);
           }
         } catch (fileError) {
-          console.error(`Error extracting file ${file.name}:`, fileError);
+          console.error(`Error extracting files:`, fileError);
         }
       }
 
@@ -5763,7 +5803,11 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Use the extract API response directly for the documents array when available
       // Build documents array for summary from extract response (robust to shapes)
       let documentsFromExtract = [];
-      if (Array.isArray(file.extractData?.documents)) {
+      if (file.extractData?.result?.result) {
+        documentsFromExtract = [file.extractData.result.result];
+      } else if (file.extractData?.result) {
+        documentsFromExtract = [file.extractData.result];
+      } else if (Array.isArray(file.extractData?.documents)) {
         documentsFromExtract = file.extractData.documents;
       } else if (Array.isArray(file.extractData)) {
         documentsFromExtract = file.extractData;
@@ -5983,6 +6027,8 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         .filter(f => f.extractData)
         .flatMap(f => {
           const ed = f.extractData;
+          if (ed?.result?.result) return [ed.result.result];
+          if (ed?.result) return [ed.result];
           if (Array.isArray(ed?.documents)) return ed.documents;
           if (Array.isArray(ed)) return ed;
           if (ed && (ed.documentName || ed.slides)) return [ed];
@@ -9181,17 +9227,12 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                             if (!userId || !sessionId) throw new Error('Missing session');
                             let combinedSummary = '';
                             for (const file of valids) {
-                              const form = new FormData();
-                              form.append('files', file);
-                              form.append('user_id', userId);
-                              form.append('session_id', sessionId);
-                              const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
-                              const ex = await fetch(extractUrl, { method: 'POST', body: form });
-                              const tx = await ex.text();
-                              if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
-                              let exJson; try { exJson = JSON.parse(tx); } catch (_) { exJson = {}; }
+                              // Use queue-based extraction
+                              const exJson = await uploadAndExtractDocument(file, userId);
                               let documents = [];
-                              if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                              if (exJson?.result?.result) documents = [exJson.result.result];
+                              else if (exJson?.result) documents = [exJson.result];
+                              else if (Array.isArray(exJson?.documents)) documents = exJson.documents;
                               else if (Array.isArray(exJson)) documents = exJson;
                               else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
                               else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];
@@ -9473,17 +9514,12 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                           if (!userId || !sessionId) throw new Error('Missing session');
                           let combinedSummary = '';
                           for (const file of valids) {
-                            const form = new FormData();
-                            form.append('files', file);
-                            form.append('user_id', userId);
-                            form.append('session_id', sessionId);
-                            const extractUrl = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/documents/extract_documents`;
-                            const ex = await fetch(extractUrl, { method: 'POST', body: form });
-                            const tx = await ex.text();
-                            if (!ex.ok) throw new Error(`extract failed: ${ex.status} ${tx}`);
-                            let exJson; try { exJson = JSON.parse(tx); } catch (_) { exJson = {}; }
+                            // Use queue-based extraction
+                            const exJson = await uploadAndExtractDocument(file, userId);
                             let documents = [];
-                            if (Array.isArray(exJson?.documents)) documents = exJson.documents;
+                            if (exJson?.result?.result) documents = [exJson.result.result];
+                            else if (exJson?.result) documents = [exJson.result];
+                            else if (Array.isArray(exJson?.documents)) documents = exJson.documents;
                             else if (Array.isArray(exJson)) documents = exJson;
                             else if (exJson && (exJson.documentName || exJson.slides)) documents = [exJson];
                             else if (Array.isArray(exJson?.data)) documents = exJson.data; else documents = [];

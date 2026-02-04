@@ -1431,7 +1431,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
         }
 
         // If we have a jobId, always poll job API until status is "succeeded" or "failed"
-        const id = jobId || localStorage.getItem('current_video_job_id');
+        const id = jobId;
         const shouldPollJob = !!id;
         if (!shouldPollJob) {
           setIsLoading(false);
@@ -3058,7 +3058,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel }) => {
       // Store job_id for final video component
       const jobId = data?.job_id || data?.jobId || data?.id || '';
       if (jobId) {
-        localStorage.setItem('current_merge_job_id', jobId);
         setMergeJobId(jobId);
       }
 
