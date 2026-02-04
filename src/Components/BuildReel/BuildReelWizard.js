@@ -10,9 +10,7 @@ import ImageList from '../Scenes/ImageList';
 import VideosList from '../Scenes/VideosList';
 import ChartDataEditor from '../ChartDataEditor';
 import Loader from '../Loader';
-import { useProgressLoader } from '../../hooks/useProgressLoader';
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
-import loadingGif from '../../asset/loadingv2.gif';
 
 // Helper to preserve ALL fields from session_data including nested structures
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
@@ -2305,11 +2303,14 @@ const SceneScriptModal = ({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
       {/* Saving Loader */}
-      {isSaving && (
-        <div className="absolute inset-0 z-[101] flex items-center justify-center bg-white/50 backdrop-blur-[1px] rounded-xl">
-          <Loader title="Saving Script..." />
-        </div>
-      )}
+      <Loader
+        isOpen={isSaving}
+        simulateProgress={true}
+        fullScreen
+        zIndex="z-[102]"
+        title="Saving Script..."
+        description="Saving your changes..."
+      />
 
       <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh] m-auto relative">
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
@@ -3019,11 +3020,14 @@ const SceneScriptModal = ({
             <div className="flex-1 overflow-y-auto p-4 mt-9 bg-gray-50">
               {isLoadingAssets ? (
                 <div className="flex justify-center py-10">
-                  <Loader title={
-                    assetsTab === 'generated_images' ? 'Loading generated images...' :
-                      ['preset_templates', 'uploaded_templates', 'veo3_templates'].includes(assetsTab) ? 'Loading templates by aspect ratio...' :
-                        'Loading assets...'
-                  } />
+                  <Loader
+                    fullScreen={false}
+                    simulateProgress={true}
+                    title={
+                      assetsTab === 'generated_images' ? 'Loading generated images...' :
+                        ['preset_templates', 'uploaded_templates', 'veo3_templates'].includes(assetsTab) ? 'Loading templates by aspect ratio...' :
+                          'Loading assets...'
+                    } />
                 </div>
               ) : (
                 <>
@@ -3372,10 +3376,6 @@ const BuildReelWizard = () => {
   const [isSavingStoryboard, setIsSavingStoryboard] = useState(false);
   const [isGeneratingImagesQueue, setIsGeneratingImagesQueue] = useState(false);
 
-  // Progress bars for loaders
-  const creatingScriptProgress = useProgressLoader(isCreatingScenes, 95, 60000);
-  const savingStoryboardProgress = useProgressLoader(isSavingStoryboard, 95, 30000);
-  const generatingImagesQueueProgress = useProgressLoader(isGeneratingImagesQueue, 95, 20000);
   const [showShortGenPopup, setShowShortGenPopup] = useState(false);
   // Sub-flow: images and videos views similar to Home
   const [subView, setSubView] = useState(() => {
@@ -4896,13 +4896,16 @@ const BuildReelWizard = () => {
           )}
         </>
       )}
-      {isCreatingScenes && (
-        <Loader
-          title="Creating Scene"
-          fullScreen={true}
-          progress={creatingScriptProgress}
-        />
-      )}
+      <Loader
+        isOpen={isCreatingScenes}
+        simulateProgress={true}
+        fullScreen
+        zIndex="z-40"
+        overlayBg="bg-black/30"
+        title="Creating Script…"
+        description="Please wait while we create your script..."
+      />
+
       {showShortGenPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white w-[100%] max-w-sm rounded-lg shadow-xl p-6 text-center">
@@ -4921,41 +4924,26 @@ const BuildReelWizard = () => {
           </div>
         </div>
       )}
-      {/* Loader for creating script when transitioning from step 1 to step 2 */}
-      {isCreatingScenes && (
-        <Loader
-          fullScreen
-          zIndex="z-40"
-          overlayBg="bg-black/30"
-          title="Creating Script…"
-          description="Please wait while we create your script..."
-          progress={creatingScriptProgress}
-        />
-      )}
 
-      {/* Loader for saving storyboard */}
-      {isSavingStoryboard && (
-        <Loader
-          fullScreen
-          zIndex="z-40"
-          overlayBg="bg-black/30"
-          title="Saving Storyboard…"
-          description="Please wait while we save your storyboard..."
-          progress={savingStoryboardProgress}
-        />
-      )}
+      <Loader
+        isOpen={isSavingStoryboard}
+        simulateProgress={true}
+        fullScreen
+        zIndex="z-40"
+        overlayBg="bg-black/30"
+        title="Saving Storyboard…"
+        description="Please wait while we save your storyboard..."
+      />
 
-      {/* Loader for generating images queue */}
-      {isGeneratingImagesQueue && (
-        <Loader
-          fullScreen
-          zIndex="z-40"
-          overlayBg="bg-black/30"
-          title="Generating Images Queue…"
-          description="Please wait while we queue your image generation..."
-          progress={generatingImagesQueueProgress}
-        />
-      )}
+      <Loader
+        isOpen={isGeneratingImagesQueue}
+        simulateProgress={true}
+        fullScreen
+        zIndex="z-40"
+        overlayBg="bg-black/30"
+        title="Generating Images Queue…"
+        description="Please wait while we queue your image generation..."
+      />
 
       {/* Image List Modal (Popup) */}
       {showStoryboardModal && (
@@ -5045,30 +5033,17 @@ const BuildReelWizard = () => {
         </div>
       )}
 
-      {/* Universal Loader (Video or Storyboard) */}
-      {(isVideoGenerating || isGeneratingStoryboard) && (
-        <div className="fixed inset-0 z-[999] flex flex-col items-center justify-center bg-white/40 backdrop-blur-sm">
-          <div className='bg-white flex flex-col items-center justify-center'>
-            <img src={loadingGif} alt="Loading..." className="w-32 h-32 mb-6" />
-            <h3 className="text-2xl font-bold text-[#13008B] mb-3">
-              {isVideoGenerating ? 'Generating Video' : 'Generating Storyboard'}
-            </h3>
-            <p className="text-gray-600 text-lg">
-              {isVideoGenerating
-                ? 'This may take a few moments. Please keep this tab open while we finish.'
-                : 'Creating your storyboard...'}
-            </p>
-            {isVideoGenerating && videoProgress > 0 && (
-              <div className="mt-6 w-80 bg-gray-200 rounded-full h-3">
-                <div
-                  className="bg-[#13008B] h-3 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${videoProgress}%` }}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <Loader
+        isOpen={isVideoGenerating || isGeneratingStoryboard}
+        simulateProgress={true}
+        fullScreen
+        zIndex="z-[999]"
+        overlayBg="bg-white/40 backdrop-blur-sm"
+        title={isVideoGenerating ? 'Generating Video' : 'Generating Storyboard'}
+        description={isVideoGenerating
+          ? 'This may take a few moments. Please keep this tab open while we finish.'
+          : 'Creating your storyboard...'}
+      />
 
     </>
   );
