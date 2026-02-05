@@ -1449,7 +1449,7 @@ const getSampleChartData = (type) => {
     };
   }
 
-  if (t === 'waterfall' || t === 'waterfall_bar' || t === 'waterfall_column') {
+  if (t === 'waterfall_bar' || t === 'waterfall_column') {
     return {
       series: {
         x: ['Start', 'Income', 'Expense', 'Tax', 'Net Profit'],
@@ -1462,52 +1462,7 @@ const getSampleChartData = (type) => {
     };
   }
 
-  if (t === 'funnel') {
-    return {
-      series: {
-        x: ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4'],
-        data: [{
-          name: 'Conversion',
-          y: [1000, 800, 400, 100]
-        }]
-      }
-    };
-  }
-
-  if (t === 'gauge') {
-    return {
-      series: {
-        x: ['Score'],
-        data: [{
-          name: 'Performance',
-          y: [75]
-        }]
-      }
-    };
-  }
-
-  if (t === 'scatter') {
-    return {
-      series: {
-        x: ['1', '2', '3', '4', '5'],
-        data: [{ name: 'Points', y: [10, 15, 13, 17, 20] }]
-      }
-    };
-  }
-
-  if (t === 'radar') {
-    return {
-      series: {
-        x: ['Metric A', 'Metric B', 'Metric C', 'Metric D', 'Metric E'],
-        data: [{
-          name: 'Series 1',
-          y: [80, 90, 70, 85, 60]
-        }]
-      }
-    };
-  }
-
-  // Default (Bar, Line, Area, etc.)
+  // Clustered Bar, Clustered Column, Line, Stacked Bar, Stacked Column
   return {
     series: {
       x: ['Q1', 'Q2', 'Q3', 'Q4'],
@@ -1664,6 +1619,178 @@ const SceneScriptModal = ({
     '#4169E1', '#00008B', '#4B0082', '#483D8B', '#6A5ACD', '#8A2BE2', '#9400D3', '#C71585',
     '#708090', '#778899', '#B0C4DE', '#ADD8E6', '#87CEEB', '#87CEFA', '#B0E0E6', '#AFEEEE'
   ];
+
+  const ensureSeriesInfo = (cData, type) => {
+    if (!cData || !cData.series) return cData;
+
+    const newChartData = JSON.parse(JSON.stringify(cData));
+    if (!newChartData.formatting) newChartData.formatting = {};
+    if (!newChartData.formatting.series_info) newChartData.formatting.series_info = [];
+
+    const t = String(type || '').toLowerCase();
+    const isPie = t === 'pie' || t === 'donut';
+    const seriesInfo = newChartData.formatting.series_info;
+
+    // Helper to get next color
+    const getColor = (idx) => presetColors[idx % presetColors.length];
+
+    if (isPie) {
+      // For Pie/Donut, series_info corresponds to labels
+      const labels = newChartData.series.labels || [];
+      // Ensure we have enough series_info entries
+      for (let i = 0; i < labels.length; i++) {
+        if (!seriesInfo[i]) {
+          seriesInfo[i] = { name: labels[i], color: getColor(i) };
+        } else {
+          // Ensure distinct object
+          seriesInfo[i] = { ...seriesInfo[i] };
+          if (!seriesInfo[i].color) seriesInfo[i].color = getColor(i);
+          if (!seriesInfo[i].name) seriesInfo[i].name = labels[i];
+        }
+      }
+      // Trim excess
+      if (seriesInfo.length > labels.length) {
+        seriesInfo.length = labels.length;
+      }
+    } else {
+      // For Bar/Column/Line, series_info corresponds to series.data
+      const dataSeries = newChartData.series.data || [];
+      for (let i = 0; i < dataSeries.length; i++) {
+        const sName = dataSeries[i].name || `Series ${i + 1}`;
+        if (!seriesInfo[i]) {
+          seriesInfo[i] = { name: sName, color: getColor(i) };
+        } else {
+          // Ensure distinct object
+          seriesInfo[i] = { ...seriesInfo[i] };
+          if (!seriesInfo[i].color) seriesInfo[i].color = getColor(i);
+          if (!seriesInfo[i].name) seriesInfo[i].name = sName;
+        }
+      }
+      if (seriesInfo.length > dataSeries.length) {
+        seriesInfo.length = dataSeries.length;
+      }
+    }
+
+    newChartData.formatting.series_info = seriesInfo;
+    return newChartData;
+  };
+
+  const generateChartDataFromTable = (type) => {
+    const t = String(type || '').toLowerCase();
+    const sData = sessionData?.session_data || sessionData?.session || sessionData || {};
+
+    // Attempt to find table data
+    let table = null;
+    if (sData.scripts && sData.scripts[0]) {
+      table = sData.scripts[0].table_data || sData.scripts[0].table;
+    }
+    if (!table) {
+      table = sData.table_data || sData.table || sData.parsed_table;
+    }
+
+    // Helper to generate unique series info
+    const applyFormatting = (data) => ensureSeriesInfo(data, type);
+
+    if (!table) {
+      return applyFormatting(getSampleChartData(type));
+    }
+
+    try {
+      // Case 1: Array of Objects
+      if (Array.isArray(table) && table.length > 0 && typeof table[0] === 'object' && !Array.isArray(table[0])) {
+        const keys = Object.keys(table[0]);
+        if (keys.length > 0) {
+          const labelKey = keys[0];
+          const valueKeys = keys.slice(1);
+
+          const labels = table.map(row => row[labelKey]);
+
+          if (t === 'pie' || t === 'donut') {
+            // Pie: Labels = X, Values = first series
+            const valKey = valueKeys[0] || labelKey;
+            const values = table.map(row => {
+              const v = parseFloat(String(row[valKey]).replace(/,/g, ''));
+              return isNaN(v) ? 0 : v;
+            });
+
+            return applyFormatting({
+              series: {
+                labels: labels,
+                data: [{ values: values }]
+              }
+            });
+          } else {
+            // Bar/Line
+            const seriesData = valueKeys.map(key => ({
+              name: key,
+              y: table.map(row => {
+                const v = parseFloat(String(row[key]).replace(/,/g, ''));
+                return isNaN(v) ? 0 : v;
+              })
+            }));
+
+            if (seriesData.length === 0) {
+              seriesData.push({
+                name: 'Value',
+                y: table.map(() => 0)
+              });
+            }
+
+            return applyFormatting({
+              series: {
+                x: labels,
+                data: seriesData
+              }
+            });
+          }
+        }
+      }
+
+      // Case 2: Object with headers/rows
+      if (table && table.headers && Array.isArray(table.rows)) {
+        const headers = table.headers;
+        const rows = table.rows;
+
+        if (headers.length > 0) {
+          const labels = rows.map(r => r[0]);
+
+          if (t === 'pie' || t === 'donut') {
+            const values = rows.map(r => {
+              const v = parseFloat(String(r[1]).replace(/,/g, ''));
+              return isNaN(v) ? 0 : v;
+            });
+            return applyFormatting({
+              series: {
+                labels: labels,
+                data: [{ values: values }]
+              }
+            });
+          } else {
+            const seriesData = [];
+            for (let i = 1; i < headers.length; i++) {
+              seriesData.push({
+                name: headers[i],
+                y: rows.map(r => {
+                  const v = parseFloat(String(r[i]).replace(/,/g, ''));
+                  return isNaN(v) ? 0 : v;
+                })
+              });
+            }
+            return applyFormatting({
+              series: {
+                x: labels,
+                data: seriesData
+              }
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing table data:', e);
+    }
+
+    return applyFormatting(getSampleChartData(type));
+  };
 
   const normalizeColor = (color) => {
     if (!color) return null;
@@ -1969,7 +2096,11 @@ const SceneScriptModal = ({
   // Initialize local script
   useEffect(() => {
     if (isOpen && scriptContent) {
-      setLocalScript(typeof scriptContent === 'string' ? {} : JSON.parse(JSON.stringify(scriptContent)));
+      let initialScript = typeof scriptContent === 'string' ? {} : JSON.parse(JSON.stringify(scriptContent));
+      if (initialScript.chart_data) {
+        initialScript.chart_data = ensureSeriesInfo(initialScript.chart_data, initialScript.chart_type);
+      }
+      setLocalScript(initialScript);
     }
   }, [isOpen, scriptContent]);
 
@@ -2926,23 +3057,30 @@ const SceneScriptModal = ({
               <div className="col-span-full">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chart Type</label>
                 <select
-                  value={localScript.chart_type || 'Bar'}
+                  value={localScript.chart_type || ''}
                   onChange={(e) => {
                     const val = e.target.value;
-                    setLocalScript(prev => ({ ...prev, chart_type: val, chart_data: getSampleChartData(val) }));
+                    setLocalScript(prev => ({ ...prev, chart_type: val, chart_data: generateChartDataFromTable(val) }));
                   }}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 >
-                  {['Clustered Bar', 'Clustered Column', 'Line', 'Pie', 'Stacked Bar', 'Stacked Column', 'Waterfall Bar', 'Waterfall Column', 'Donut'].map(t => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
+                  <option value="">Select</option>
+                  <option value="clustered_bar">Clustered Bar</option>
+                  <option value="clustered_column">Clustered Column</option>
+                  <option value="line">Line</option>
+                  <option value="pie">Pie</option>
+                  <option value="stacked_bar">Stacked Bar</option>
+                  <option value="stacked_column">Stacked Column</option>
+                  <option value="waterfall_bar">Waterfall Bar</option>
+                  <option value="waterfall_column">Waterfall Column</option>
+                  <option value="donut">Donut</option>
                 </select>
               </div>
               <div className="col-span-full">
                 {!localScript.chart_data ? (
                   <button
                     onClick={() => {
-                      updateField('chart_data', getSampleChartData(localScript.chart_type));
+                      updateField('chart_data', generateChartDataFromTable(localScript.chart_type));
                     }}
                     className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 text-sm font-medium"
                   >
@@ -2951,7 +3089,7 @@ const SceneScriptModal = ({
                 ) : (
                   <div className=" rounded-lg overflow-hidden">
                     <ChartDataEditor
-                      chartType={localScript.chart_type || 'Bar'}
+                      chartType={localScript.chart_type || ''}
                       chartData={localScript.chart_data}
                       onDataChange={(newData) => updateField('chart_data', newData)}
                       onSave={(newData) => updateField('chart_data', newData)}

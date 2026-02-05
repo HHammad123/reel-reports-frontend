@@ -194,7 +194,7 @@ const Home = () => {
     try {
       console.log('Adding user chat:', chat);
       const sessionId = localStorage.getItem('session_id');
-      
+
       if (!sessionId || !token) {
         console.error('Missing session_id or token');
         return;
@@ -204,7 +204,7 @@ const Home = () => {
       const sidForFlag = localStorage.getItem('session_id') || sessionId || '';
       const isDocFollowupFromStorage = localStorage.getItem(sidForFlag ? `is_doc_followup:${sidForFlag}` : 'is_doc_followup') === 'true';
       const hasFirstMessageFlag = localStorage.getItem(sidForFlag ? `has_first_message:${sidForFlag}` : 'has_first_message') === 'true';
-      
+
       let requestBody;
 
       // First message (hasn't been sent yet and not a doc follow-up): do NOT call user-session-data
@@ -225,7 +225,7 @@ const Home = () => {
           is_doc_followup: false
         };
       } else {
-      // Follow-up messages: call user-session-data first and use its session_data
+        // Follow-up messages: call user-session-data first and use its session_data
         try {
           console.log('Getting session data for follow-up message...');
           const sessionDataResponse = await sendUserSessionData();
@@ -328,7 +328,7 @@ const Home = () => {
       if (!hasFirstMessageFlag && !isDocFollowupFromStorage) {
         try { await maybeUpdateSessionTitle(sessionId); } catch (e) { /* noop */ }
       }
-      
+
       // Reset the localStorage flag after sending a document follow-up chat
       if (isDocFollowupFromStorage) {
         console.log('Resetting is_doc_followup flag to FALSE after chat send.');
@@ -351,22 +351,22 @@ const Home = () => {
   const sendUserSessionData = async () => {
     try {
       console.log('Sending user session data...');
-      
+
       const sessionId = localStorage.getItem('session_id');
-      
+
       if (!sessionId || !token) {
         console.error('Missing session_id or token');
         return;
       }
-      
+
       // Prepare the request body
       const requestBody = {
         user_id: token,
         session_id: sessionId
       };
-      
+
       console.log('Sending user session data request:', requestBody);
-      
+
       // Call the user session data API
       const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
         method: 'POST',
@@ -375,11 +375,11 @@ const Home = () => {
         },
         body: JSON.stringify(requestBody)
       });
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const sessionDataResponse = await response.json();
       console.log('User session data sent successfully:', sessionDataResponse);
 
@@ -389,12 +389,12 @@ const Home = () => {
         const vids = Array.isArray(sd?.videos) ? sd.videos : [];
         setHasImagesAvailable(imgs.length > 0);
         setHasVideosAvailable(vids.length > 0);
-        try { localStorage.setItem('has_images_available', imgs.length > 0 ? 'true' : 'false'); } catch(_){}
-        try { localStorage.setItem('has_videos_available', vids.length > 0 ? 'true' : 'false'); } catch(_){}
-      } catch(_) { /* noop */ }
+        try { localStorage.setItem('has_images_available', imgs.length > 0 ? 'true' : 'false'); } catch (_) { }
+        try { localStorage.setItem('has_videos_available', vids.length > 0 ? 'true' : 'false'); } catch (_) { }
+      } catch (_) { /* noop */ }
 
       return sessionDataResponse;
-      
+
     } catch (error) {
       console.error('Error sending user session data:', error);
       throw error;
@@ -482,9 +482,9 @@ const Home = () => {
         const sid = localStorage.getItem('session_id');
         if (sid) localStorage.setItem(`has_questionnaire_agent:${sid}`, 'true');
       } catch (_) { /* noop */ }
-      
+
       const sessionId = localStorage.getItem('session_id');
-      
+
       if (!sessionId || !token) {
         console.error('Missing session_id or token');
         return;
@@ -554,7 +554,7 @@ const Home = () => {
       // Validation: ensure a videoType is selected before generating
       if (!qVideoType) {
         alert('Please select a video type before generating the questionnaire.');
-        try { window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: false } })); } catch (_) {}
+        try { window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: false } })); } catch (_) { }
         return;
       }
       // Always use questionnaire endpoints per video type
@@ -648,7 +648,7 @@ const Home = () => {
       try {
         window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: true, progress: 20 } }));
       } catch (e) { /* noop */ }
-      
+
       const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/${qEndpoint}`, {
         method: 'POST',
         headers: {
@@ -656,18 +656,18 @@ const Home = () => {
         },
         body: JSON.stringify(questionnairePayload)
       });
-      
+
       // Progress: 50% - API call successful, processing response
       try {
         window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: true, progress: 50 } }));
       } catch (e) { /* noop */ }
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const questionnaireResponse = await response.json();
-      
+
       // Progress: 100% - Response received and processed
       try {
         window.dispatchEvent(new CustomEvent('questionnaire-generating', { detail: { isGenerating: true, progress: 100 } }));
@@ -679,13 +679,13 @@ const Home = () => {
       } catch (e) {
         console.warn('Failed to store questionnaire data:', e);
       }
-      
+
       // Move to step 2 (Guidelines)
       console.log('Setting currentStep to 2 (Guidelines)');
       setCurrentStep(2);
-      
+
       return questionnaireResponse;
-      
+
     } catch (error) {
       console.error('Error generating questionnaire:', error);
       // Still move to step 2 even if API fails
@@ -770,13 +770,13 @@ const Home = () => {
       setIsCreatingSession(true);
       // Set loading video type for display in loader
       setLoadingVideoType(label);
-      try { localStorage.setItem('is_creating_session', 'true'); } catch(_){}
+      try { localStorage.setItem('is_creating_session', 'true'); } catch (_) { }
       const userId = token || localStorage.getItem('token');
-      if (!userId) { 
+      if (!userId) {
         setLoadingVideoType(null);
         setIsCreatingSession(false);
-        navigate('/login'); 
-        return; 
+        navigate('/login');
+        return;
       }
       // 1) Create a new session
       const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/new', {
@@ -820,7 +820,7 @@ const Home = () => {
       alert('Unable to switch video type. Please try again.');
       setLoadingVideoType(null);
       setIsCreatingSession(false);
-      try { localStorage.removeItem('is_creating_session'); } catch(_){}
+      try { localStorage.removeItem('is_creating_session'); } catch (_) { }
     }
   };
 
@@ -833,7 +833,7 @@ const Home = () => {
       if (!flag && loadingVideoType) {
         setLoadingVideoType(null);
       }
-    } catch(_){}
+    } catch (_) { }
   }, [sessionId, loadingVideoType]);
 
   // Function to move from Guidelines to Questionnaire
@@ -895,11 +895,11 @@ const Home = () => {
     // Allow Chat component to flag next chat as doc follow-up
     window.markDocFollowup = () => {
       try {
-        console.log('isDocFollowup will be set to TRUE' , isDocFollowup);
+        console.log('isDocFollowup will be set to TRUE', isDocFollowup);
         setIsDocFollowup(true);
       } catch (e) { /* noop */ }
     };
-    
+
     // Cleanup function
     return () => {
       delete window.startVideoGeneration;
@@ -978,7 +978,7 @@ const Home = () => {
           setHasVideosAvailable(vids.length > 0);
           localStorage.setItem('has_images_available', imgs.length > 0 ? 'true' : 'false');
           localStorage.setItem('has_videos_available', vids.length > 0 ? 'true' : 'false');
-        } catch(_){}
+        } catch (_) { }
         const msgs = Array.isArray(s?.messages) ? s.messages : [];
         // Detect presence of questionnaire agent and capture latest questionnaire content
         try {
@@ -1085,24 +1085,24 @@ const Home = () => {
               });
             });
             if (urls.length > 0) {
-              try { localStorage.setItem('prefetched_video_urls', JSON.stringify(Array.from(new Set(urls)))); } catch(_){}
+              try { localStorage.setItem('prefetched_video_urls', JSON.stringify(Array.from(new Set(urls)))); } catch (_) { }
             }
             setVideosJobId(localStorage.getItem('current_video_job_id') || '');
             setCurrentStep(5);
             setIsChatLoading(false);
             return;
           }
-        } catch(_) { /* noop */ }
+        } catch (_) { /* noop */ }
 
         try {
           if (Array.isArray(s?.images) && s.images.length > 0) {
-            try { localStorage.setItem('prefetched_images_urls', JSON.stringify(s.images)); } catch(_){}
+            try { localStorage.setItem('prefetched_images_urls', JSON.stringify(s.images)); } catch (_) { }
             setImagesJobId(localStorage.getItem('current_images_job_id') || '');
             setCurrentStep(4);
             setIsChatLoading(false);
             return;
           }
-        } catch(_) { /* noop */ }
+        } catch (_) { /* noop */ }
 
         // No images/videos present → ensure Chat is shown
         setCurrentStep(1);
@@ -1148,7 +1148,7 @@ const Home = () => {
   //     setuserChat("");
   //   }
   // }, [currentStep]);
-  
+
   return (
     <div className='flex h-screen bg-[#E5E2FF] relative'>
       {showVideoTypeModal && (
@@ -1197,7 +1197,7 @@ const Home = () => {
           </div>
         </div>
       )}
-      <Sidebar/>
+      <Sidebar />
       <div className="flex-1 mx-[2rem] mt-[1rem] overflow-x-hidden min-w-0">
         {isNonValidated && !isAdmin ? (
           // Show trial ended message for non-validated users
@@ -1216,209 +1216,214 @@ const Home = () => {
           </div>
         ) : (
           <>
-            <Topbar/>
+            <Topbar />
             {currentStep !== 5 && <Typetabs onChangeVideoType={handleVideoTypeTabChange} />}
             {/* Step-based component rendering */}
             <div className='overflow-y-auto overflow-x-hidden h-[85vh] mt-2 scrollbar-hide'>
-          {/* Debug info - remove this later */}
-          {/* <div className="mb-2 text-sm text-gray-500">Current Step: {currentStep} | Chat Messages: {chatHistory.length}</div> */}
-         {/* <Typetabs /> */}
-          {currentStep === 1 && (
-            <>
-            
-              <ErrorBoundary>
-                <Chat
-                  addUserChat={addUserChat} 
-                  userChat={userChat} 
-                  setuserChat={setuserChat} 
+              {/* Debug info - remove this later */}
+              {/* <div className="mb-2 text-sm text-gray-500">Current Step: {currentStep} | Chat Messages: {chatHistory.length}</div> */}
+              {/* <Typetabs /> */}
+              {currentStep === 1 && (
+                <>
+
+                  <ErrorBoundary>
+                    <Chat
+                      addUserChat={addUserChat}
+                      userChat={userChat}
+                      setuserChat={setuserChat}
+                      sendUserSessionData={sendUserSessionData}
+                      chatHistory={chatHistory}
+                      setChatHistory={setChatHistory}
+                      isChatLoading={isChatLoading}
+                      showQuestionnaireOptions={showQuestionnaireOptions}
+                      onGoToQuestionnaire={() => {
+                        if (latestQuestionnaireData) {
+                          try { setQuestionnaireData(latestQuestionnaireData); } catch (_) { /* noop */ }
+                        }
+                        setCurrentStep(3);
+                      }}
+                      onRegenerateScene={() => {
+                        try { window.startVideoGeneration && window.startVideoGeneration(); } catch (_) { /* noop */ }
+                      }}
+                      onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch (_) { }; setCurrentStep(4); }}
+                      imagesAvailable={hasImagesAvailable}
+                      onGoToScenes={(scriptContainer) => { setScenesInitialData(scriptContainer || null); setCurrentStep(6); }}
+                      isSwitchingVideoType={isCreatingSession}
+                      loadingVideoType={loadingVideoType}
+                      key="chat-component"
+                    />
+                  </ErrorBoundary>
+                </>
+              )}
+              {currentStep === 6 && (
+                <ScriptEditor
+                  title="The Generated Script is:"
+                  initialScenes={scenesInitialData}
+                  onBack={() => { setCurrentStep(1); setScenesInitialData(null); }}
+                  onGenerateImages={async () => { try { await sendUserSessionData(); } catch (_) { } setCurrentStep(4); }}
+                  // passthrough
+                  addUserChat={addUserChat}
+                  userChat={userChat}
+                  setuserChat={setuserChat}
                   sendUserSessionData={sendUserSessionData}
                   chatHistory={chatHistory}
                   setChatHistory={setChatHistory}
-                  isChatLoading={isChatLoading}
-                  showQuestionnaireOptions={showQuestionnaireOptions}
-                  onGoToQuestionnaire={() => {
-                    if (latestQuestionnaireData) {
-                      try { setQuestionnaireData(latestQuestionnaireData); } catch (_) { /* noop */ }
-                    }
-                    setCurrentStep(3);
-                  }}
-                  onRegenerateScene={() => {
-                    try { window.startVideoGeneration && window.startVideoGeneration(); } catch (_) { /* noop */ }
-                  }}
-                  onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch(_){}; setCurrentStep(4); }}
                   imagesAvailable={hasImagesAvailable}
-                  onGoToScenes={(scriptContainer) => { setScenesInitialData(scriptContainer || null); setCurrentStep(6); }}
-                  isSwitchingVideoType={isCreatingSession}
-                  loadingVideoType={loadingVideoType}
-                  key="chat-component"
+                  onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch (_) { }; setCurrentStep(4); }}
                 />
-              </ErrorBoundary>
-            </>
-          )}
-          {currentStep === 6 && (
-            <ScriptEditor
-              title="The Generated Script is:"
-              initialScenes={scenesInitialData}
-              onBack={() => { setCurrentStep(1); setScenesInitialData(null); }}
-              onGenerateImages={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}
-              // passthrough
-              addUserChat={addUserChat}
-              userChat={userChat}
-              setuserChat={setuserChat}
-              sendUserSessionData={sendUserSessionData}
-              chatHistory={chatHistory}
-              setChatHistory={setChatHistory}
-              imagesAvailable={hasImagesAvailable}
-              onOpenImagesList={async (jobId) => { try { setImagesJobId(jobId || ''); await sendUserSessionData(); } catch(_){}; setCurrentStep(4); }}
-            />
-          )}
-          {currentStep === 2 && (
-            <div>
-              <Guidlines />
-            </div>
-          )}
-          {currentStep === 3 && (
-            <div>
-              <DynamicQuestion 
-                questionsData={questionnaireData}
-                onNextStep={handleQuestionnaireNext}
-                onPreviousStep={goToPreviousStep}
-              />
-            </div>
-          )}
-          {currentStep === 4 && (
-            <div className='bg-white rounded-lg'>
-              <ImageList
-                jobId={imagesJobId}
-                hasVideos={hasVideosAvailable}
-                onGoToVideos={() => setCurrentStep(5)}
-                onClose={async () => {
-                  try {
-                    const sessionDataResponse = await sendUserSessionData();
-                    const s = sessionDataResponse?.session_data || {};
-                    const msgs = Array.isArray(s?.messages) ? s.messages : [];
-                    // Map messages to chat history
-                    let history = mapMessagesToChatHistory(msgs);
-                    // If no script message present in chat history yet, check session scripts
-                    try {
-                      const hasScriptMsg = history.some(m => !!m.script);
-                      if (!hasScriptMsg) {
-                        let scriptObj = null;
-                        if (Array.isArray(s?.scripts) && s.scripts.length > 0) {
-                          const first = s.scripts[0];
-                          if (Array.isArray(first?.airesponse)) {
-                            scriptObj = { script: first.airesponse };
-                          } else if (Array.isArray(first)) {
-                            scriptObj = { script: first };
-                          } else if (first && typeof first === 'object') {
-                            scriptObj = first;
-                          }
-                        }
-                        if (!scriptObj) {
-                          const sid = localStorage.getItem('session_id');
-                          let raw = sid ? localStorage.getItem(`updated_script_structure:${sid}`) : null;
-                          if (!raw && sid) raw = localStorage.getItem(`last_generated_script:${sid}`);
-                          if (raw) {
-                            try { scriptObj = JSON.parse(raw); } catch (_) { scriptObj = null; }
-                          }
-                        }
-                        if (scriptObj) {
-                          const now = new Date().toISOString();
-                          history = [
-                            ...history,
-                            { id: Date.now(), type: 'ai', content: 'Your script is ready. You can view it or generate the video.', script: scriptObj, timestamp: now },
-                          ];
-                          try {
-                            const sid = localStorage.getItem('session_id');
-                            if (sid) {
-                              localStorage.setItem(`last_generated_script:${sid}`, JSON.stringify(scriptObj));
-                              localStorage.setItem(`has_generated_script:${sid}`, 'true');
+              )}
+              {currentStep === 2 && (
+                <div>
+                  <Guidlines />
+                </div>
+              )}
+              {currentStep === 3 && (
+                <div>
+                  <DynamicQuestion
+                    questionsData={questionnaireData}
+                    onNextStep={handleQuestionnaireNext}
+                    onPreviousStep={goToPreviousStep}
+                  />
+                </div>
+              )}
+              {currentStep === 4 && (
+                <div className='bg-white rounded-lg'>
+                  <ImageList
+                    jobId={imagesJobId}
+                    hasVideos={hasVideosAvailable}
+                    onGoToVideos={() => setCurrentStep(5)}
+                    onClose={async () => {
+                      try {
+                        const sessionDataResponse = await sendUserSessionData();
+                        const s = sessionDataResponse?.session_data || {};
+                        const msgs = Array.isArray(s?.messages) ? s.messages : [];
+                        // Map messages to chat history
+                        let history = mapMessagesToChatHistory(msgs);
+                        // If no script message present in chat history yet, check session scripts
+                        try {
+                          const hasScriptMsg = history.some(m => !!m.script);
+                          if (!hasScriptMsg) {
+                            let scriptObj = null;
+                            if (Array.isArray(s?.scripts) && s.scripts.length > 0) {
+                              const first = s.scripts[0];
+                              if (Array.isArray(first?.airesponse)) {
+                                scriptObj = { script: first.airesponse };
+                              } else if (Array.isArray(first)) {
+                                scriptObj = { script: first };
+                              } else if (first && typeof first === 'object') {
+                                scriptObj = first;
+                              }
                             }
-                          } catch (_) { /* noop */ }
+                            if (!scriptObj) {
+                              const sid = localStorage.getItem('session_id');
+                              let raw = sid ? localStorage.getItem(`updated_script_structure:${sid}`) : null;
+                              if (!raw && sid) raw = localStorage.getItem(`last_generated_script:${sid}`);
+                              if (raw) {
+                                try { scriptObj = JSON.parse(raw); } catch (_) { scriptObj = null; }
+                              }
+                            }
+                            if (scriptObj) {
+                              const now = new Date().toISOString();
+                              history = [
+                                ...history,
+                                { id: Date.now(), type: 'ai', content: 'Your script is ready. You can view it or generate the video.', script: scriptObj, timestamp: now },
+                              ];
+                              try {
+                                const sid = localStorage.getItem('session_id');
+                                if (sid) {
+                                  localStorage.setItem(`last_generated_script:${sid}`, JSON.stringify(scriptObj));
+                                  localStorage.setItem(`has_generated_script:${sid}`, 'true');
+                                }
+                              } catch (_) { /* noop */ }
+                            }
+                          }
+                        } catch (_) { /* noop */ }
+                        setChatHistory(history);
+                        setHasSentFirstMessage(history.some(h => h.type === 'user'));
+                      } catch (_) { /* noop */ }
+                      setCurrentStep(1);
+                    }}
+                    onGenerateVideos={async (images = []) => {
+                      try {
+                        const sessionId = localStorage.getItem('session_id');
+                        const token = localStorage.getItem('token');
+                        if (!sessionId || !token) { alert('Login expired'); return; }
+                        const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
+                        });
+                        const sessText = await sessResp.text();
+                        let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
+                        if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
+                        const sd = sessData?.session_data || {};
+                        const sessionForBody = {
+                          id: sd.session_id || sessionId,
+                          user_id: token,
+                          title: sd.title || '',
+                          // API expects a string duration per latest sample; ensure it's not a literal placeholder
+                          video_duration: String(sd.video_duration ?? 60),
+                          created_at: sd.created_at || new Date().toISOString(),
+                          updated_at: sd.updated_at || new Date().toISOString(),
+                          document_summary: sd.document_summary || [],
+                          messages: Array.isArray(sd.messages) ? sd.messages : [],
+                          total_summary: sd.total_summary || [],
+                          scripts: [
+                            {
+                              userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
+                              airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
+                              version: sd?.scripts?.[0]?.version || 'v1'
+                            }
+                          ],
+                          videos: sd.videos || [],
+                          // Use images exactly as provided by user-session/data; do not coerce to URL strings
+                          images: Array.isArray(sd.images) ? sd.images : (sd.images || [])
+                        };
+                        const body = { session: sessionForBody };
+                        const genResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/generate-from-session', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+                        });
+                        const genText = await genResp.text();
+                        let genData; try { genData = JSON.parse(genText); } catch (_) { genData = genText; }
+                        if (!genResp.ok) throw new Error(`videos/generate-from-session failed: ${genResp.status} ${genText}`);
+                        const jobId = genData?.job_id || genData?.jobId || genData?.id;
+                        if (jobId) {
+                          setVideosJobId(jobId);
                         }
+                        setShowVideoPopup(true);
+                        setTimeout(() => { setShowVideoPopup(false); setCurrentStep(5); }, 5000);
+                      } catch (e) {
+                        alert(e?.message || 'Failed to start video generation');
                       }
-                    } catch (_) { /* noop */ }
-                    setChatHistory(history);
-                    setHasSentFirstMessage(history.some(h => h.type === 'user'));
-                  } catch(_) { /* noop */ }
-                  setCurrentStep(1);
-                }}
-                onGenerateVideos={async (images = []) => {
-                  try {
-                    const sessionId = localStorage.getItem('session_id');
-                    const token = localStorage.getItem('token');
-                    if (!sessionId || !token) { alert('Login expired'); return; }
-                    const sessResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: token, session_id: sessionId })
-                    });
-                    const sessText = await sessResp.text();
-                    let sessData; try { sessData = JSON.parse(sessText); } catch (_) { sessData = sessText; }
-                    if (!sessResp.ok) throw new Error(`user-session/data failed: ${sessResp.status} ${sessText}`);
-                    const sd = sessData?.session_data || {};
-                    const sessionForBody = {
-                      id: sd.session_id || sessionId,
-                      user_id: token,
-                      title: sd.title || '',
-                      // API expects a string duration per latest sample; ensure it's not a literal placeholder
-                      video_duration: String(sd.video_duration ?? 60),
-                      created_at: sd.created_at || new Date().toISOString(),
-                      updated_at: sd.updated_at || new Date().toISOString(),
-                      document_summary: sd.document_summary || [],
-                      messages: Array.isArray(sd.messages) ? sd.messages : [],
-                      total_summary: sd.total_summary || [],
-                      scripts: [
-                        {
-                          userquery: Array.isArray(sd?.scripts?.[0]?.userquery) ? sd.scripts[0].userquery : [],
-                          airesponse: Array.isArray(sd?.scripts?.[0]?.airesponse) ? sd.scripts[0].airesponse : [],
-                          version: sd?.scripts?.[0]?.version || 'v1'
-                        }
-                      ],
-                      videos: sd.videos || [],
-                      // Use images exactly as provided by user-session/data; do not coerce to URL strings
-                      images: Array.isArray(sd.images) ? sd.images : (sd.images || [])
-                    };
-                    const body = { session: sessionForBody };
-                    const genResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/generate-from-session', {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-                    });
-                    const genText = await genResp.text();
-                    let genData; try { genData = JSON.parse(genText); } catch (_) { genData = genText; }
-                    if (!genResp.ok) throw new Error(`videos/generate-from-session failed: ${genResp.status} ${genText}`);
-                    const jobId = genData?.job_id || genData?.jobId || genData?.id;
-                    if (jobId) {
-                      try { localStorage.setItem('current_video_job_id', jobId); } catch (_) {}
-                      setVideosJobId(jobId);
-                    }
-                    setShowVideoPopup(true);
-                    setTimeout(() => { setShowVideoPopup(false); setCurrentStep(5); }, 5000);
-                  } catch (e) {
-                    alert(e?.message || 'Failed to start video generation');
-                  }
-                }}
-              />
-            </div>
-          )}
-          {currentStep === 5 && (
-            <div className='bg-white rounded-lg'>
-              <VideosList 
-                jobId={videosJobId} 
-                onClose={async () => { try { await sendUserSessionData(); } catch(_){} setCurrentStep(4); }}
-                onGenerateFinalReel={(jobId) => {
-                  const mergeJobIdToUse = jobId || localStorage.getItem('current_merge_job_id') || '';
-                  setMergeJobId(mergeJobIdToUse);
-                  setCurrentStep(7); // Navigate to final video section
-                }}
-              />
-            </div>
-          )}
-          {currentStep === 7 && (
-            <div className='bg-white rounded-lg'>
-              <FinalVideo 
-                jobId={mergeJobId || localStorage.getItem('current_merge_job_id') || ''} 
-                onClose={() => setCurrentStep(5)} 
-              />
-            </div>
-          )}
+                    }}
+                    onGoToVideos={(jobId) => {
+                      if (jobId) {
+                        setVideosJobId(jobId);
+                      }
+                      setCurrentStep(5);
+                    }}
+                  />
+                </div>
+              )}
+              {currentStep === 5 && (
+                <div className='bg-white rounded-lg'>
+                  <VideosList
+                    jobId={videosJobId}
+                    onClose={async () => { try { await sendUserSessionData(); } catch (_) { } setCurrentStep(4); }}
+                    onGenerateFinalReel={(jobId) => {
+                      const mergeJobIdToUse = jobId || '';
+                      setMergeJobId(mergeJobIdToUse);
+                      setCurrentStep(7); // Navigate to final video section
+                    }}
+                  />
+                </div>
+              )}
+              {currentStep === 7 && (
+                <div className='bg-white rounded-lg'>
+                  <FinalVideo
+                    jobId={mergeJobId || ''}
+                    onClose={() => setCurrentStep(5)}
+                  />
+                </div>
+              )}
             </div>
           </>
         )}

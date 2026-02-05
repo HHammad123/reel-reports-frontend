@@ -5803,7 +5803,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
       // Use the extract API response directly for the documents array when available
       // Build documents array for summary from extract response (robust to shapes)
       let documentsFromExtract = [];
-      if (file.extractData?.result?.result) {
+      if (Array.isArray(file.extractData?.result?.documents)) {
+        documentsFromExtract = file.extractData.result.documents;
+      } else if (file.extractData?.result?.result) {
         documentsFromExtract = [file.extractData.result.result];
       } else if (file.extractData?.result) {
         documentsFromExtract = [file.extractData.result];
@@ -6027,6 +6029,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
         .filter(f => f.extractData)
         .flatMap(f => {
           const ed = f.extractData;
+          if (Array.isArray(ed?.result?.documents)) return ed.result.documents;
           if (ed?.result?.result) return [ed.result.result];
           if (ed?.result) return [ed.result];
           if (Array.isArray(ed?.documents)) return ed.documents;

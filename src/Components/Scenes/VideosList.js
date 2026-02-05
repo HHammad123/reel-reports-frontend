@@ -1432,6 +1432,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone }) => 
 
         // If we have a jobId, always poll job API until status is "succeeded" or "failed"
         const id = jobId;
+        console.log('Video job ID:', id);
         const shouldPollJob = !!id;
         if (!shouldPollJob) {
           setIsLoading(false);
@@ -1450,6 +1451,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone }) => 
 
         const poll = async () => {
           try {
+            console.log('Calling video-job-status for job_id:', id);
             const jresp = await fetch(
               `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/video-job-status/${encodeURIComponent(id)}`
             );
