@@ -36,6 +36,8 @@ import VideoEditor from './pages/VideoEditor';
 import VideoEditorPage from './pages/VideoEditorPage';
 import FreeTrialOver from './pages/FreeTrialOver';
 import ManageCredits from './pages/ManageCredits';
+import AddCredits from './pages/AddCredits';
+import Success from './pages/Success';
 
 
 function App() {
@@ -210,6 +212,11 @@ function App() {
               <Subscription />
             </ProtectedRoute>
           } />
+          <Route path="/success" element={
+            <ProtectedRoute>
+              <Success />
+            </ProtectedRoute>
+          } />
           <Route path="/result" element={
             <ProtectedRoute>
               <Result />
@@ -273,6 +280,11 @@ function App() {
           <Route path="/admin/managecredits" element={
             <ProtectedRoute>
               <ManageCredits />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/addcredits" element={
+            <ProtectedRoute>
+              <AddCredits />
             </ProtectedRoute>
           } />
         </Routes>

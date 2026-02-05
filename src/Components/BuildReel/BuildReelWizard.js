@@ -1514,6 +1514,70 @@ const SceneScriptModal = ({
   const [isUploadingAvatarFiles, setIsUploadingAvatarFiles] = useState(false);
   const avatarUploadFileInputRef = useRef(null);
 
+  // AI Field Generator State
+  const [promptText, setPromptText] = useState('');
+  const [isGeneratingFields, setIsGeneratingFields] = useState(false);
+
+  const handleGenerateFields = async () => {
+    if (!promptText.trim()) {
+      toast.error('Please enter a prompt');
+      return;
+    }
+
+    setIsGeneratingFields(true);
+    try {
+      const body = {
+        desc_prompt: promptText,
+        model_type: localScript.model || 'SORA',
+        scene_narration: localScript.narration || '',
+        scene_title: localScript.scene_title || ''
+      };
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/generate-fields', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate fields');
+      }
+
+      const data = await response.json();
+
+      // Update fields based on model type
+      const model = String(localScript.model || '').toUpperCase();
+
+      // Common field
+      if (data.desc) updateField('desc', data.desc);
+
+      if (model === 'VEO3' || model.includes('VEO') || model === 'AVATAR') {
+        if (data.veo3_prompt_template) updateField('veo3_prompt_template', data.veo3_prompt_template);
+        if (data.presenter_options) updateField('presenter_options', data.presenter_options);
+      } else if (model === 'ANCHOR') {
+        if (data.opening_frame) updateField('opening_frame', data.opening_frame);
+        if (data.closing_frame) updateField('closing_frame', data.closing_frame);
+        if (data.animation_desc) updateField('animation_desc', data.animation_desc);
+      } else if (model === 'SORA' || model.includes('SORA') || model === 'INFOGRAPHIC') {
+        if (data.opening_frame) updateField('opening_frame', data.opening_frame);
+        if (data.closing_frame) updateField('closing_frame', data.closing_frame);
+        if (data.animation_desc) updateField('animation_desc', data.animation_desc);
+      } else if (model === 'PLOTLY' || model === 'FINANCIAL') {
+        if (data.background_frame) updateField('background_frame', data.background_frame);
+        if (data.animation_desc) updateField('animation_desc', data.animation_desc);
+      }
+
+      toast.success('Fields generated successfully');
+    } catch (error) {
+      console.error('Error generating fields:', error);
+      toast.error('Failed to generate fields');
+    } finally {
+      setIsGeneratingFields(false);
+    }
+  };
+
   const isLatestScene = useMemo(() => {
     if (!sessionData) return true;
     const sData = sessionData.session_data || sessionData.session || sessionData || {};
@@ -2495,6 +2559,37 @@ const SceneScriptModal = ({
                 className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${narrationError ? 'border-red-500' : 'border-gray-300'}`}
               />
               {narrationError && <p className="text-xs text-red-500 mt-1">{narrationError}</p>}
+            </div>
+
+            {/* AI Field Generator */}
+            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
+                  rows={2}
+                  className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                />
+                <button
+                  onClick={handleGenerateFields}
+                  disabled={isGeneratingFields}
+                  className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isGeneratingFields ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      Generate Fields
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Gen Image Checkbox */}

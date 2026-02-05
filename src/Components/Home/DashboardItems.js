@@ -202,18 +202,18 @@ const DashboardItems = () => {
 					</div>
 
 					{/* Right Section - Most recent video */}
-					<div className="flex-1 mt-8 md:mt-0 md:ml-8 flex justify-center relative bg-black rounded-lg overflow-hidden">
+					<div className="flex-1 mt-8 md:mt-0 md:ml-8 flex justify-center relative bg-black rounded-lg overflow-hidden aspect-video max-h-[400px]">
 						{recentVideos[0]?.url ? (
-							<video src={recentVideos[0].url} controls className="w-full md:w-[90%] h-full object-contain" onClick={() => navigate(`/result/${encodeURIComponent(recentVideos[0].id)}`)} />
+							<video src={recentVideos[0].url} controls className="w-full h-full object-contain" onClick={() => navigate(`/result/${encodeURIComponent(recentVideos[0].id)}`)} />
 						) : (
 							<img
 								src={bg}
 								alt="Most recent video"
-								className=" w-full md:w-[90%] object-cover rounded-lg"
+								className="w-full h-full object-cover rounded-lg"
 							/>
 						)}
 						{!recentVideos[0]?.url && (
-							<div className='bg-white/60 absolute top-1/2 w-10 h-10 rounded-full flex justify-center items-center'>
+							<div className='bg-white/60 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full flex justify-center items-center'>
 								<FaPlay />
 							</div>
 						)}
@@ -256,13 +256,13 @@ const DashboardItems = () => {
 
 					{isLoadingRecent && (<div className="flex w-full justify-center items-center"><Loader title='Fetching recent videos..' /></div>)}
 					{recentError && (<div className="mt-2 text-sm text-red-600">{recentError}</div>)}
-					<div className="flex gap-6 mt-2 w-[70vw] overflow-x-auto flex-nowrap scrollbar-hide">
+					<div className="flex gap-6 mt-2 w-[70vw] overflow-x-auto flex-nowrap scrollbar-hide pb-4">
 						{recentVideos.map((vid) => (
-							<div key={vid.id} className="min-w-[400px] rounded-lg shadow-sm hover:shadow-md cursor-pointer transition relative bg-black">
+							<div key={vid.id} className="min-w-[400px] aspect-video rounded-lg shadow-sm hover:shadow-md cursor-pointer transition relative bg-black overflow-hidden">
 								{vid.url ? (
-									<video src={vid.url} className="w-full h-[200px] object-cover rounded-lg" controls muted />
+									<video src={vid.url} className="w-full h-full object-contain rounded-lg" controls muted />
 								) : (
-									<img src={bg} alt={vid.title} className="w-full h-[200px] object-cover rounded-lg opacity-70" />
+									<img src={bg} alt={vid.title} className="w-full h-full object-cover rounded-lg opacity-70" />
 								)}
 								<div className='bg-white/70 absolute top-2 left-2 px-2 py-0.5 rounded text-xs text-gray-700'>
 									{new Date(vid.created_at).toLocaleDateString()}
