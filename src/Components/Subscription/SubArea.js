@@ -1,8 +1,22 @@
 import React, { useState } from "react";
-import { Check, Info, Zap, Video, CreditCard } from "lucide-react";
+import { Check, Info, Zap, Video, CreditCard, X } from "lucide-react";
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements } from '@stripe/react-stripe-js';
+import CheckoutForm from './CheckoutForm';
+
+// Use environment variable or fallback to the provided key for immediate functionality
+const STRIPE_KEY = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY || 'pk_test_51SupA42Oz1R1zU2z95NyHp2O7AmNlF6uXEjKttahvZbAK6TNA5dFZMuppVlqMA46f4gkh5rU19ky8AW9Cf6B4HHk00SwN7msxw';
+const stripePromise = loadStripe(STRIPE_KEY);
 
 const SubArea = () => {
     const [activeTab, setActiveTab] = useState('subscription');
+    const [selectedPlan, setSelectedPlan] = useState(null);
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+
+    const handleSelectPlan = (plan) => {
+        setSelectedPlan(plan);
+        setShowPaymentModal(true);
+    };
 
     const tabBase = "px-8 py-3 rounded-full text-sm font-medium transition-all duration-200";
     const tabActive = "bg-[#13008B] text-white shadow-lg scale-105";
@@ -17,7 +31,7 @@ const SubArea = () => {
         </div>
     );
 
-    const PlanCard = ({ title, price, credits, features, isPopular, buttonText = "Choose Plan" }) => (
+    const PlanCard = ({ title, price, credits, features, isPopular, buttonText = "Choose Plan", onSelect }) => (
         <div className={`relative flex flex-col p-6 bg-white rounded-2xl border transition-all duration-300 hover:shadow-xl ${isPopular ? 'border-[#13008B] shadow-lg scale-105 z-10' : 'border-gray-200 hover:border-gray-300'}`}>
             {isPopular && (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-[#13008B] text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wide">
@@ -47,7 +61,10 @@ const SubArea = () => {
                 </div>
             </div>
 
-            <button className={`w-full py-2.5 rounded-xl font-semibold transition-colors ${isPopular ? 'bg-[#13008B] text-white hover:bg-blue-800' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}>
+            <button
+                onClick={onSelect}
+                className={`w-full py-2.5 rounded-xl font-semibold transition-colors ${isPopular ? 'bg-[#13008B] text-white hover:bg-blue-800' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+            >
                 {buttonText}
             </button>
         </div>
@@ -136,7 +153,7 @@ const SubArea = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
                     {(activeTab === 'subscription' ? subscriptionPlans : topUpPlans).map((plan, idx) => (
-                        <PlanCard key={idx} {...plan} />
+                        <PlanCard key={idx} {...plan} onSelect={() => handleSelectPlan(plan)} />
                     ))}
                 </div>
 
@@ -174,6 +191,33 @@ const SubArea = () => {
                     </div>
                 </div>
             </div>
+
+            {showPaymentModal && selectedPlan && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative animate-in fade-in zoom-in duration-200">
+                        <button
+                            onClick={() => setShowPaymentModal(false)}
+                            className="absolute top-4 right-4 p-1 rounded-full hover:bg-gray-100 transition-colors z-10"
+                        >
+                            <X size={20} className="text-gray-500" />
+                        </button>
+                        <div className="p-6 pt-10">
+                            <Elements stripe={stripePromise}>
+                                <CheckoutForm
+                                    plan={selectedPlan}
+                                    onSuccess={(paymentMethod) => {
+                                        console.log("Payment successful:", paymentMethod);
+                                        // Close modal after brief delay or show success state
+                                        setShowPaymentModal(false);
+                                        alert(`Payment Method Created: ${paymentMethod.id}`);
+                                    }}
+                                    onClose={() => setShowPaymentModal(false)}
+                                />
+                            </Elements>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

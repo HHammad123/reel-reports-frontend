@@ -8,7 +8,11 @@ import '../video-editor-js/pro/styles.utilities.css';
 import '../video-editor-js/pro/styles/base-themes/dark.css';
 import '../video-editor-js/pro/styles/base-themes/light.css';
 import '../video-editor-js/pro/styles/base-themes/rve.css';
-import { Zap, ChevronRight, X, Menu } from 'lucide-react';
+import { Zap, ChevronRight, X, Menu, Plus } from 'lucide-react';
+import { FaPlus } from 'react-icons/fa';
+import AddSceneDropdown from '../BuildReel/AddSceneDropdown';
+import { SidebarMenuButton } from '../video-editor-js/pro/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../video-editor-js/pro/components/ui/tooltip';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import LogoImage from '../../asset/mainLogo.png';
@@ -58,7 +62,7 @@ const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
 const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
 
-const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone }) => {
+const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -78,8 +82,61 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone }) => 
   const [logoEnabled, setLogoEnabled] = useState(true);
   const [subtitleEnabled, setSubtitleEnabled] = useState(true);
   const [sidebarVisible, setSidebarVisible] = useState(false);
+  const [isAddSceneOpen, setIsAddSceneOpen] = useState(false);
+  const addSceneButtonRef = useRef(null);
   // Aspect ratio from session/script data
   const [aspectRatio, setAspectRatio] = useState('16:9');
+
+  const sidebarTopActions = useMemo(() => {
+    // Only show the button if onAddScene is provided (i.e., in BuildReelWizard)
+    if (!onAddScene) return null;
+
+    return (
+      <div className="relative">
+        <TooltipProvider delayDuration={0}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarMenuButton
+                ref={addSceneButtonRef}
+                onClick={() => setIsAddSceneOpen(!isAddSceneOpen)}
+                size="lg"
+                className="flex flex-col items-center gap-2 px-1.5 py-2.5"
+                data-active={isAddSceneOpen}
+              >
+                <Plus className="h-4 w-4" strokeWidth={1.25} />
+                <span className="text-[8px] leading-none">Add Scene</span>
+              </SidebarMenuButton>
+            </TooltipTrigger>
+            <TooltipContent side="right">Add Scene</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        {isAddSceneOpen && (
+          <div
+            className="fixed z-[9999]"
+            style={{
+              top: addSceneButtonRef.current ? addSceneButtonRef.current.getBoundingClientRect().top : 0,
+              left: (addSceneButtonRef.current ? addSceneButtonRef.current.getBoundingClientRect().right : 0) + 10
+            }}
+          >
+            <div className="relative">
+              {/* Arrow pointing left */}
+              <div className="absolute top-4 -left-2 w-4 h-4 bg-white transform rotate-45 border-l border-b border-gray-100"></div>
+              <AddSceneDropdown
+                hasScripts={hasScripts}
+                onAdd={(options) => {
+                  setIsAddSceneOpen(false);
+                  if (onAddScene) onAddScene(options);
+                }}
+                className="w-72 shadow-xl"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }, [isAddSceneOpen, hasScripts, onAddScene]);
+
   const applyChromaKey = useCallback((videoElement) => {
     if (!videoElement || !videoElement.parentNode) return;
 
@@ -9050,6 +9107,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone }) => 
               }}
               showDefaultThemes={true}
               showSidebar={sidebarVisible}
+              sidebarTopActions={sidebarTopActions}
               sidebarLogo={null}
               sidebarFooterText=""
               onOverlaysChange={handleOverlaysChange}

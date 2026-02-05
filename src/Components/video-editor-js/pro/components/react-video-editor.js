@@ -6,7 +6,7 @@ import { Editor } from "./core/editor";
 import { VideoPlayer } from "./core/video-player";
 // AutosaveStatus removed - autosave functionality disabled
 import { ReactVideoEditorProvider } from "./providers/react-video-editor-provider";
-export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true, className, customSidebar, sidebarLogo, sidebarFooterText, disabledPanels, showIconTitles = true, availableThemes = [], selectedTheme, onThemeChange, showDefaultThemes = true, hideThemeToggle = false, defaultTheme = 'dark', onSaving, onSaved, onSelectedOverlayChange, isPlayerOnly = false, ...providerProps }) => {
+export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true, className, customSidebar, sidebarLogo, sidebarFooterText, disabledPanels, showIconTitles = true, availableThemes = [], selectedTheme, onThemeChange, showDefaultThemes = true, hideThemeToggle = false, defaultTheme = 'dark', onSaving, onSaved, onSelectedOverlayChange, isPlayerOnly = false, sidebarTopActions, ...providerProps }) => {
     // Log aspect ratio when received
     if (providerProps.defaultAspectRatio) {
         // console.log('[ReactVideoEditor] Received defaultAspectRatio:', providerProps.defaultAspectRatio);
@@ -27,7 +27,7 @@ export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true
         if (!isPlayerOnly)
             return;
         const handleResize = () => {
-           
+
         };
         // Initial call
         handleResize();
@@ -41,12 +41,16 @@ export const ReactVideoEditor = ({ showSidebar = true, showAutosaveStatus = true
             window.removeEventListener("orientationchange", handleResize);
         };
     }, [isPlayerOnly]);
-    return (_jsx(ReactVideoEditorProvider, { ...providerProps, onSaving: handleSaving, onSaved: handleSaved, ...(onSelectedOverlayChange && { onSelectedOverlayChange }), playerRef: playerRef, children: isPlayerOnly ? (
-        // Player-only mode: Simple fullscreen video player
-        _jsx("div", { className: "w-full bg-black flex items-center justify-center", style: {
-                height: "100%",
-                maxHeight: "-webkit-fill-available" /* Safari fix */,
-            }, children: _jsx(VideoPlayer, { playerRef: playerRef, isPlayerOnly: true }) })) : (
-        // Editor mode: Full editor interface with sidebar
-        _jsxs(_Fragment, { children: [showSidebar && (customSidebar || _jsx(DefaultSidebar, { logo: sidebarLogo, footerText: sidebarFooterText || "RVE", disabledPanels: disabledPanels || [], showIconTitles: showIconTitles })), _jsx(SidebarInset, { className: className, children: _jsx(Editor, { availableThemes: availableThemes, selectedTheme: selectedTheme, onThemeChange: onThemeChange, showDefaultThemes: showDefaultThemes, hideThemeToggle: hideThemeToggle, defaultTheme: defaultTheme }) })] })) }));
+    return (_jsx(ReactVideoEditorProvider, {
+        ...providerProps, onSaving: handleSaving, onSaved: handleSaved, ...(onSelectedOverlayChange && { onSelectedOverlayChange }), playerRef: playerRef, children: isPlayerOnly ? (
+            // Player-only mode: Simple fullscreen video player
+            _jsx("div", {
+                className: "w-full bg-black flex items-center justify-center", style: {
+                    height: "100%",
+                    maxHeight: "-webkit-fill-available" /* Safari fix */,
+                }, children: _jsx(VideoPlayer, { playerRef: playerRef, isPlayerOnly: true })
+            })) : (
+            // Editor mode: Full editor interface with sidebar
+            _jsxs(_Fragment, { children: [showSidebar && (customSidebar || _jsx(DefaultSidebar, { logo: sidebarLogo, footerText: sidebarFooterText || "RVE", disabledPanels: disabledPanels || [], showIconTitles: showIconTitles, sidebarTopActions: sidebarTopActions })), _jsx(SidebarInset, { className: className, children: _jsx(Editor, { availableThemes: availableThemes, selectedTheme: selectedTheme, onThemeChange: onThemeChange, showDefaultThemes: showDefaultThemes, hideThemeToggle: hideThemeToggle, defaultTheme: defaultTheme }) })] }))
+    }));
 };

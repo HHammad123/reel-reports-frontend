@@ -600,6 +600,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const sceneUpdatingProgress = useProgressLoader(isSceneUpdating, 95, 15000);
   const savingAnimationDescProgress = useProgressLoader(isSavingAnimationDesc, 95, 15000);
   const savingDescriptionProgress = useProgressLoader(isSavingDescription, 95, 10000);
+  const generatingAvatarProgress = useProgressLoader(isGeneratingAvatar, 95, 45000);
+  const updatingAvatarsProgress = useProgressLoader(isUpdatingAvatars, 95, 20000);
   const activeSceneNumber = selected?.sceneNumber || selected?.scene_number || 1;
 
   // Preset avatars (same as Chat.js)
@@ -6851,7 +6853,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         <Loader
           fullScreen
           zIndex="z-40"
-          overlayBg="bg-white/90 backdrop-blur-sm"
+          overlayBg="bg-black/90 backdrop-blur-sm"
           title={
             videoGenProgress.step === 'saving_images' ? 'Saving images to workspace' :
               videoGenProgress.step === 'uploading_frames' ? 'Uploading frames' :
@@ -12146,15 +12148,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
               {isUpdatingAvatars && (
                 <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex items-center justify-center z-50 px-6 text-center">
-                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                    <img
-                      src={loadingGif}
-                      alt="Updating avatars..."
-                      className="w-24 h-24 object-contain"
-                    />
-                    <p className="text-lg font-semibold text-[#13008B]">Updating Avatars...</p>
-                    <p className="text-sm text-gray-600">Please wait while we update your avatars...</p>
-                  </div>
+                  <Loader
+                    videoSize="w-16 h-16"
+                    title="Updating Avatars..."
+                    description="Please wait while we update your avatars..."
+                    containerClass="!max-w-sm"
+                    progress={updatingAvatarsProgress > 0 ? updatingAvatarsProgress : null}
+                  />
                 </div>
               )}
             </div>
@@ -12241,6 +12241,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                       title="Regenerating Avatar"
                       description="Please wait while we create your new avatar..."
                       containerClass="!max-w-sm"
+                      progress={generatingAvatarProgress > 0 ? generatingAvatarProgress : null}
                     />
                   </div>
                 )}

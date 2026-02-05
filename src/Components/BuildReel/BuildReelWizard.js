@@ -3242,69 +3242,7 @@ const SceneScriptModal = ({
   );
 };
 
-const AddSceneDropdown = ({ onAdd, hasScripts }) => {
-  const [aspectRatio, setAspectRatio] = useState('16:9');
-  const [videoType, setVideoType] = useState('Infographic');
-
-  return (
-    <div className="absolute top-full right-0 mt-2 w-72 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 p-4 flex flex-col gap-4">
-      {/* Aspect Ratio Section - Only show if NO scripts exist */}
-      {!hasScripts && (
-        <div>
-          <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Aspect Ratio</h3>
-          <div className="flex gap-3">
-            <button
-              onClick={() => setAspectRatio('9:16')}
-              className={`flex-1 p-3 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${aspectRatio === '9:16' ? 'border-[#13008B] bg-blue-50 text-[#13008B]' : 'border-gray-100 hover:border-gray-200 text-gray-500'
-                }`}
-            >
-              <div className="w-6 h-10 border-2 border-current rounded-sm"></div>
-              <span className="text-xs font-bold">9:16</span>
-            </button>
-            <button
-              onClick={() => setAspectRatio('16:9')}
-              className={`flex-1 p-3 rounded-lg border-2 flex flex-col items-center gap-2 transition-all ${aspectRatio === '16:9' ? 'border-[#13008B] bg-blue-50 text-[#13008B]' : 'border-gray-100 hover:border-gray-200 text-gray-500'
-                }`}
-            >
-              <div className="w-10 h-6 border-2 border-current rounded-sm"></div>
-              <span className="text-xs font-bold">16:9</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Video Type Section */}
-      <div>
-        <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Video Type</h3>
-        <div className="flex flex-col gap-2">
-          {[
-            { id: 'Infographic', icon: FaChartPie, label: 'Infographic' },
-            { id: 'Avatar', icon: FaUserTie, label: 'Avatar' },
-            { id: 'Financial Scene', icon: FaCoins, label: 'Financial Scene' }
-          ].map((type) => (
-            <button
-              key={type.id}
-              onClick={() => setVideoType(type.id)}
-              className={`flex items-center gap-3 p-3 rounded-lg transition-all w-full text-left ${videoType === type.id ? 'bg-[#13008B] text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-                }`}
-            >
-              <type.icon className={videoType === type.id ? 'text-white' : 'text-gray-400'} />
-              <span className="text-sm font-medium">{type.label}</span>
-              {videoType === type.id && <FaCheck className="ml-auto text-xs" />}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <button
-        onClick={() => onAdd({ aspectRatio, videoType })}
-        className="w-full py-3 bg-[#13008B] text-white rounded-lg font-bold hover:bg-[#0e006b] transition-colors mt-2 shadow-lg shadow-blue-900/20"
-      >
-        Create Scene
-      </button>
-    </div>
-  );
-};
+// AddSceneDropdown moved to separate file
 
 const StepTwo = ({
   values,
@@ -3335,8 +3273,6 @@ const StepTwo = ({
   };
 
   const [visibleStartIndex, setVisibleStartIndex] = useState(0);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
   const [isSceneMenuOpen, setIsSceneMenuOpen] = useState(false);
   const sceneMenuRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
@@ -3344,9 +3280,6 @@ const StepTwo = ({
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsDropdownOpen(false);
-      }
       if (sceneMenuRef.current && !sceneMenuRef.current.contains(event.target)) {
         // Check if the click is on the trigger button (which we might need to track, but simply closing is usually fine if we don't click inside the menu)
         setIsSceneMenuOpen(false);
@@ -3372,26 +3305,8 @@ const StepTwo = ({
     <div className='bg-white h-[100vh] w-full rounded-lg p-6 overflow-y-auto'>
       <div className='flex items-center justify-between mb-6'>
         <h2 className='text-[24px] font-semibold'>Add Your Scenes</h2>
-        <div className="flex items-center gap-2 relative" ref={dropdownRef}>
+        <div className="flex items-center gap-2 relative">
           {/* Generate Video Button */}
-
-          {/* Add Scene button - top right */}
-          <button
-            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-            className='px-5 py-2 rounded-lg bg-[#13008B] text-white flex items-center gap-2 hover:bg-gray-800 transition-colors'
-          >
-            <FaPlus /> Add Scene
-          </button>
-
-          {isDropdownOpen && (
-            <AddSceneDropdown
-              hasScripts={values.scripts && values.scripts.length > 0}
-              onAdd={(options) => {
-                setIsDropdownOpen(false);
-                addScene(options);
-              }}
-            />
-          )}
         </div>
       </div>
 
@@ -3438,7 +3353,7 @@ const StepTwo = ({
         </div>
       )}
 
-      <VideosList jobId={videosJobId || ''} onJobPhaseDone={onJobPhaseDone} />
+      <VideosList jobId={videosJobId || ''} onJobPhaseDone={onJobPhaseDone} onAddScene={addScene} hasScripts={values.scripts && values.scripts.length > 0} />
 
       {/* Scene Menu - Fixed Position to avoid overflow clipping */}
       {isSceneMenuOpen && (
@@ -5029,6 +4944,8 @@ const BuildReelWizard = () => {
                   try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
                   try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
                 }}
+                onAddScene={createFromScratch}
+                hasScripts={form.scripts && form.scripts.length > 0}
               />
             </div>
           )}
