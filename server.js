@@ -20,8 +20,8 @@ app.use((req, res, next) => {
 
 // Middleware for parsing JSON and form data
 // Note: These skip multipart/form-data automatically, which multer handles
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// app.use(express.json());
+// app.use(express.urlencoded({ extended: true }));
 
 // Request logging middleware for debugging
 app.use((req, res, next) => {

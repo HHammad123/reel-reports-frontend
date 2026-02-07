@@ -18,7 +18,7 @@ const Subscription = () => {
       <Sidebar />
       <div className="flex-1 mx-[2rem] mt-[1rem] min-w-0">
         <Topbar />
-        <div className='h-[77vh] my-2 flex items-start justify-start'>
+        <div className='h-[85vh] my-2 flex items-start justify-start'>
           <ProfileSidebar />
           <SubArea />
         </div>

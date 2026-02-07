@@ -96,29 +96,38 @@ const SubArea = () => {
 
     const handleSelectPlan = async (plan) => {
         try {
-            const response = await fetch("/api/create-checkout-session", {
+            const PROD_API_BASE = "https://app.reelreports.ai"; // ✅ change this
+            const apiURL =
+                window.location.hostname === "localhost"
+                    ? "http://localhost:3000/api/create-checkout-session"
+                    : `${PROD_API_BASE}/api/create-checkout-session`;
+
+            const response = await fetch(apiURL, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     planTitle: plan.title,
-                    amount: plan.price,
-                    mode: "payment", // one-time payment
-                    // Redirect back to this page with success params
+                    mode: "payment",
                     successUrl: `${window.location.origin}/subscription?payment_success=true&credits=${plan.credits}&plan_title=${encodeURIComponent(plan.title)}&amount=${plan.price}`,
                     cancelUrl: `${window.location.origin}/subscription`,
                 }),
             });
 
-            const data = await response.json();
+            // ✅ safer parsing
+            const text = await response.text();
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch {
+                throw new Error("API did not return JSON. Got: " + text.slice(0, 120));
+            }
 
             if (!response.ok) {
                 throw new Error(data?.error?.message || "Failed to create checkout session");
             }
 
             if (data?.url) {
-                window.location.href = data.url; // ✅ Stripe Checkout opens here
+                window.location.href = data.url;
                 return;
             }
 
@@ -128,6 +137,7 @@ const SubArea = () => {
             alert("Could not open Stripe Checkout: " + error.message);
         }
     };
+
 
     const tabBase =
         "px-8 py-3 rounded-full text-sm font-medium transition-all duration-200";
@@ -256,7 +266,7 @@ const SubArea = () => {
                 planTitle={successModal.plan}
                 onClose={handleCloseModal}
             />
-            <div className="w-full h-[600px] bg-white rounded-xl overflow-y-scroll">
+            <div className="w-full h-full bg-white rounded-xl overflow-y-scroll">
                 <div className="max-w-6xl mx-auto p-8">
                     <div className="text-center mb-10">
                         <h2 className="text-3xl font-bold text-gray-900 mb-2">

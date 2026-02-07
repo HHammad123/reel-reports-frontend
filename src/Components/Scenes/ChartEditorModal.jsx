@@ -160,6 +160,28 @@ const formatNumber = (value, format = '', prefix = '', suffix = '') => {
   return `${prefix}${formatted}${suffix}`
 }
 
+const coerceNumber = (value, fallback = 0) => {
+  if (typeof value === 'number') return value
+  if (value == null || value === '') return fallback
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : fallback
+}
+
+const detectBleeding = (values = [], ratio = 0.15) => {
+  const numericValues = Array.isArray(values)
+    ? values.map(v => coerceNumber(v, 0))
+    : []
+
+  const maxAbs = numericValues.reduce((max, val) => Math.max(max, Math.abs(val)), 0)
+  const safeMax = Math.max(maxAbs, 1)
+  const threshold = safeMax * ratio
+
+  const hasBleeding = numericValues.some(val => Math.abs(val) > 0 && Math.abs(val) < threshold)
+  return { hasBleeding, threshold, maxAbs: safeMax }
+}
+
+const isNarrowValue = (value, threshold) => Math.abs(value) > 0 && Math.abs(value) < threshold
+
 const resolveBrandFont = (fontValue) => {
   if (fontValue === 'var(--brand-font)') return 'Verdana'
   return fontValue || 'Verdana'
@@ -314,6 +336,12 @@ const createPieChart = (data, presetData, chartData, chartType, sections) => {
     segment_values_section: effectiveSections?.segment_values
   })
 
+  const { hasBleeding, threshold } = detectBleeding(values, 0.15)
+  const defaultTextPosition = getConfig(effectiveSections, 'segment_values', 'position', 'global') || 'inside'
+  const textPositions = values.map(value => (hasBleeding && isNarrowValue(value, threshold) ? 'outside' : defaultTextPosition))
+  const labelFontSize = getConfig(effectiveSections, 'segment_values', 'font_size', 'global') || 16
+  const labelFontColor = hasBleeding ? '#000000' : (getConfig(effectiveSections, 'segment_values', 'font_color', 'global') || '#FFFFFF')
+
   return [
     {
       type: 'pie',
@@ -323,10 +351,10 @@ const createPieChart = (data, presetData, chartData, chartType, sections) => {
       hole: isDonut ? 0.4 : 0,
       // ✅ When showLabels is false, completely hide text
       textinfo: showLabels ? 'label+percent' : 'none',
-      textposition: getConfig(effectiveSections, 'segment_values', 'position', 'global') || 'inside',
+      textposition: textPositions,
       textfont: {
         size: getConfig(effectiveSections, 'segment_values', 'font_size', 'global') || 16,
-        color: getConfig(effectiveSections, 'segment_values', 'font_color', 'global') || '#FFFFFF',
+        color: labelFontColor,
         family: resolveBrandFont(getConfig(effectiveSections, 'segment_values', 'font_family', 'global'))
       },
       marker: {
@@ -347,7 +375,6 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
   const categories = data.categories ?? []
   const dataset = data.dataset ?? {}
   const effectiveSections = sections ?? presetData?.preset_definitions?.[0]?.sections ?? {}
-  const series = chartData?.series || {}
   const isStacked = chartType.includes('stacked')
   const isHorizontal = chartType.includes('bar') && !chartType.includes('column')
 
@@ -361,6 +388,17 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
 
     return defaultValue
   }
+
+  const allValues = Object.values(dataset).reduce((acc, yValues) => {
+    if (Array.isArray(yValues)) {
+      return acc.concat(yValues)
+    }
+    return acc
+  }, [])
+
+  const { hasBleeding, threshold, maxAbs } = detectBleeding(allValues, 0.15)
+  const textColorGlobal = hasBleeding ? '#000000' : '#FFFFFF'
+  const annotations = []
 
   const traces = Object.entries(dataset).map(([seriesName, yValues]) => {
     const color = getConfig(effectiveSections, 'colors', 'color', seriesName)
@@ -389,11 +427,34 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
     const labelPrefix = getValue('segment_values', 'prefix', seriesName, '')
     const labelSuffix = getValue('segment_values', 'suffix', seriesName, '')
     const labelFontSize = getValue('segment_values', 'font_size', seriesName, 16)
-    const labelFontColor = getValue('segment_values', 'font_color', seriesName, '#FFFFFF')
+    const labelFontColor = textColorGlobal
     const labelFontFamily = resolveBrandFont(getValue('segment_values', 'font_family', seriesName, 'Verdana'))
     const labelFontWeight = getValue('segment_values', 'font_weight', seriesName, 'bold')
 
-    const textValues = showLabels ? paddedYValues.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
+    const textValues = []
+    const textPositions = []
+
+    if (showLabels) {
+      paddedYValues.forEach((v, idx) => {
+        const formatted = formatNumber(v, labelFormat, labelPrefix, labelSuffix)
+
+        if (hasBleeding && isNarrowValue(v, threshold)) {
+          textValues.push('')
+          textPositions.push('none')
+          annotations.push({
+            value: v,
+            label: formatted,
+            index: idx,
+            orientation: isHorizontal,
+            categories,
+            maxAbs
+          })
+        } else {
+          textValues.push(formatted)
+          textPositions.push(labelPosition)
+        }
+      })
+    }
 
     // ✅ Build marker with opacity baked into color
     const marker = {}
@@ -432,10 +493,10 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
     return {
       type: 'bar',
       name: seriesName,
-      x: isHorizontal ? paddedYValues : (series.x || categories),
-      y: isHorizontal ? (series.x || categories) : paddedYValues,
+      x: isHorizontal ? paddedYValues : categories,
+      y: isHorizontal ? categories : paddedYValues,
       text: textValues,
-      textposition: labelPosition,
+      textposition: showLabels ? textPositions : [],
       textfont: {
         size: labelFontSize,
         color: labelFontColor,
@@ -443,16 +504,55 @@ const createBarChart = (data, presetData, chartData, chartType, sections) => {
         weight: labelFontWeight
       },
       constraintext: 'none',
-      insidetextanchor: 'middle',
+      insidetextanchor: isHorizontal ? 'auto' : 'end',
       marker: marker,
       orientation: isHorizontal ? 'h' : 'v'
     }
   })
 
+  const layoutAnnotations = hasBleeding && annotations.length
+    ? annotations.map(({ label, index, orientation, categories: cats, maxAbs }) => {
+      if (orientation) {
+        return {
+          x: -maxAbs * 0.02,
+          y: cats[index],
+          text: label,
+          showarrow: false,
+          font: {
+            family: resolveBrandFont(getValue('segment_values', 'font_family', 'global') || 'Verdana'),
+            size: getValue('segment_values', 'font_size', 'global', 16),
+            color: '#000000'
+          },
+          xanchor: 'right',
+          yanchor: 'middle',
+          xref: 'x',
+          yref: 'y'
+        }
+      }
+
+      return {
+        x: cats[index],
+        y: maxAbs * 1.02,
+        text: label,
+        showarrow: false,
+        font: {
+          family: resolveBrandFont(getValue('segment_values', 'font_family', 'global') || 'Verdana'),
+          size: getValue('segment_values', 'font_size', 'global', 16),
+          color: '#000000'
+        },
+        xanchor: 'center',
+        yanchor: 'bottom',
+        xref: 'x',
+        yref: 'y'
+      }
+    })
+    : []
+
   const layout = {
     barmode: isStacked ? 'stack' : 'group',
     bargap: getConfig(effectiveSections, 'spacing', 'bargap') ?? 0.15,
-    bargroupgap: getConfig(effectiveSections, 'spacing', 'bargroupgap') ?? 0
+    bargroupgap: getConfig(effectiveSections, 'spacing', 'bargroupgap') ?? 0,
+    annotations: layoutAnnotations
   }
   return { traces, layout }
 }
@@ -501,7 +601,7 @@ const createLineChart = (data, presetData, chartData, chartType, sections) => {
     const areaColor = getValue('areas', 'color', seriesName, color)
 
     // Label properties
-    const showLabels = getValue('data_labels', 'show', seriesName, false)
+    const showLabels = getValue('data_labels', 'show', seriesName, true)
     const labelFormat = getValue('data_labels', 'format', seriesName, '.0f')
     const labelPrefix = getValue('data_labels', 'prefix', seriesName, '')
     const labelSuffix = getValue('data_labels', 'suffix', seriesName, '')
@@ -601,7 +701,6 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
   const isHorizontal = chartType === 'waterfall_bar'
 
   // ✅ Get waterfall colors from colors section (matching backend preset structure)
-  // Look for entries with name="increasing", name="decreasing", name="totals"
   const colorsSection = effectiveSections.colors || []
   const findColor = (name, fallback) => {
     const entry = colorsSection.find(item => item.name === name || item.name === name.toLowerCase())
@@ -612,38 +711,121 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
   const decreasingColor = findColor('decreasing', '#FF375E')
   const totalsColor = findColor('totals', '#4F008C')
 
-  // Get connector settings
+  // Connector styling
   const showConnector = getConfig(effectiveSections, 'connector', 'show') !== false
   const connectorColor = getConfig(effectiveSections, 'connector', 'line_color') || '#999999'
   const connectorWidth = getConfig(effectiveSections, 'connector', 'line_width') || 2
   const connectorDash = getConfig(effectiveSections, 'connector', 'line_dash') || 'solid'
 
-  // Get text/label settings for waterfall bars
+  // Text/label settings
   const showLabels = getConfig(effectiveSections, 'segment_values', 'show', 'global') !== false
   const labelFormat = getConfig(effectiveSections, 'segment_values', 'format', 'global') || '.0f'
   const labelPrefix = getConfig(effectiveSections, 'segment_values', 'prefix', 'global') || ''
   const labelSuffix = getConfig(effectiveSections, 'segment_values', 'suffix', 'global') || ''
-  const labelPosition = getConfig(effectiveSections, 'segment_values', 'position', 'global') || 'outside'
   const labelFontSize = getConfig(effectiveSections, 'segment_values', 'font_size', 'global') || 14
-  const labelFontColor = getConfig(effectiveSections, 'segment_values', 'font_color', 'global') || '#000000'
   const labelFontFamily = resolveBrandFont(getConfig(effectiveSections, 'segment_values', 'font_family', 'global'))
 
-  const textValues = showLabels ? values.map(v => formatNumber(v, labelFormat, labelPrefix, labelSuffix)) : []
+  const absValues = values.filter(v => v !== 0).map(v => Math.abs(v))
+  const maxAbs = absValues.length ? Math.max(...absValues) : 1
+  const threshold = maxAbs * 0.15
 
-  return [{
+  const textValues = []
+  const textPositions = []
+  const narrowBars = []
+  let cumulative = 0
+  let hasBleeding = false
+
+  if (showLabels) {
+    values.forEach((val, idx) => {
+      const formatted = formatNumber(val, labelFormat, labelPrefix, labelSuffix)
+      const absVal = Math.abs(val)
+      const measureType = measure[idx] || 'absolute'
+      const isTotal = ['absolute', 'total'].includes(measureType)
+      let barStart = 0
+      let barEnd = val
+
+      if (measureType === 'relative') {
+        barStart = cumulative
+        barEnd = cumulative + val
+        cumulative += val
+      } else {
+        barStart = 0
+        barEnd = val
+        cumulative = val
+      }
+
+      const isNarrow = absVal > 0 && absVal < threshold
+      if (!isTotal && isNarrow) {
+        hasBleeding = true
+        textValues.push('')
+        textPositions.push('none')
+        narrowBars.push({ idx, label: formatted, barStart, barEnd })
+      } else {
+        textValues.push(formatted)
+        textPositions.push('inside')
+      }
+    })
+  }
+
+  const textColor = hasBleeding ? '#000000' : '#FFFFFF'
+  const manualAnnotations = hasBleeding
+    ? narrowBars.map(({ idx, label, barStart, barEnd }) => {
+      if (isHorizontal) {
+        const offset = barStart !== 0 ? Math.abs(barStart) * 0.01 : maxAbs * 0.01
+        return {
+          x: barStart - offset,
+          y: idx,
+          text: label,
+          showarrow: false,
+          font: {
+            family: labelFontFamily,
+            size: labelFontSize,
+            color: '#000000'
+          },
+          xanchor: 'right',
+          yanchor: 'middle',
+          xref: 'x',
+          yref: 'y'
+        }
+      }
+      const yOffset = barEnd !== 0 ? Math.abs(barEnd) * 0.01 : maxAbs * 0.01
+      return {
+        x: idx,
+        y: barEnd + yOffset,
+        text: label,
+        showarrow: false,
+        font: {
+          family: labelFontFamily,
+          size: labelFontSize,
+          color: '#000000'
+        },
+        xanchor: 'center',
+        yanchor: 'bottom',
+        xref: 'x',
+        yref: 'y'
+      }
+    })
+    : []
+
+  const trace = {
     type: 'waterfall',
     name: 'Waterfall',
     orientation: isHorizontal ? 'h' : 'v',
     x: isHorizontal ? values : categories,
     y: isHorizontal ? categories : values,
     measure: measure,
-    text: textValues,
-    textposition: labelPosition,
-    textfont: {
-      size: labelFontSize,
-      color: labelFontColor,
-      family: labelFontFamily
-    },
+    text: showLabels ? textValues : undefined,
+    textposition: showLabels ? textPositions : undefined,
+    textfont: showLabels
+      ? {
+        size: labelFontSize,
+        color: textColor,
+        family: labelFontFamily
+      }
+      : undefined,
+    textangle: 0,
+    constraintext: 'none',
+    cliponaxis: false,
     increasing: { marker: { color: increasingColor } },
     decreasing: { marker: { color: decreasingColor } },
     totals: { marker: { color: totalsColor } },
@@ -655,7 +837,12 @@ const createWaterfallChart = (data, presetData, chartData, chartType, sections) 
         dash: connectorDash
       }
     }
-  }]
+  }
+
+  return {
+    traces: [trace],
+    annotations: manualAnnotations
+  }
 }
 
 const applyDimensions = (fig, sections) => {
@@ -702,6 +889,127 @@ const applyBackground = (fig, sections) => {
   } else {
     fig.layout.plot_bgcolor = '#FFFFFF'
   }
+}
+
+const ensureShapesArray = (fig) => {
+  if (!Array.isArray(fig.layout.shapes)) {
+    fig.layout.shapes = []
+  }
+}
+
+const applyBackgroundBars = (fig, sections, chartData, chartType) => {
+  const bgConfig = getConfigDict(sections?.background_bars ?? [])
+  const showBg = bgConfig.show
+  if (!showBg) return
+
+  const categories = Array.isArray(chartData?.series?.x) ? chartData.series.x : []
+  if (!categories.length) return
+  if (!chartType.includes('bar') && !chartType.includes('column')) return
+
+  ensureShapesArray(fig)
+  const barColor = bgConfig.color || '#AFCFFF'
+  const barOpacity = bgConfig.opacity ?? 0.35
+  const shapes = [...fig.layout.shapes]
+
+  categories.forEach((_, idx) => {
+    if (idx % 2 !== 0) return
+    shapes.push({
+      type: 'rect',
+      xref: 'x',
+      yref: 'paper',
+      x0: idx - 0.5,
+      x1: idx + 0.5,
+      y0: 0,
+      y1: 1,
+      fillcolor: barColor,
+      opacity: barOpacity,
+      layer: 'below',
+      line: { width: 0 }
+    })
+  })
+
+  fig.layout.shapes = shapes
+}
+
+const applyRangeBand = (fig, sections) => {
+  const bandConfig = getConfigDict(sections?.range_band ?? [])
+  if (!bandConfig.show) return
+
+  ensureShapesArray(fig)
+
+  const bandColor = bandConfig.color || '#AFCFFF'
+  const bandOpacity = bandConfig.opacity ?? 0.3
+  const bandMin = coerceNumber(bandConfig.min, 20)
+  const bandMax = coerceNumber(bandConfig.max, 80)
+
+  fig.layout.shapes = [
+    ...fig.layout.shapes,
+    {
+      type: 'rect',
+      xref: 'paper',
+      yref: 'y',
+      x0: 0,
+      x1: 1,
+      y0: bandMin,
+      y1: bandMax,
+      fillcolor: bandColor,
+      opacity: bandOpacity,
+      layer: 'below',
+      line: { width: 0 }
+    }
+  ]
+}
+
+const applyReferenceLines = (fig, sections) => {
+  const refConfig = getConfigDict(sections?.reference_lines ?? [])
+  if (!refConfig.average_line_show) return
+
+  ensureShapesArray(fig)
+
+  const lineValue = coerceNumber(refConfig.average_line_value, 0)
+  const lineColor = refConfig.average_line_color || '#000000'
+  const lineWidth = refConfig.average_line_width ?? 2
+  const lineDash = refConfig.average_line_dash || 'dash'
+  const label = refConfig.average_line_label || 'Avg'
+  const labelSize = refConfig.average_line_label_font_size || 12
+  const labelColor = refConfig.average_line_label_font_color || '#000000'
+
+  fig.layout.shapes = [
+    ...fig.layout.shapes,
+    {
+      type: 'line',
+      xref: 'paper',
+      x0: 0,
+      x1: 1,
+      yref: 'y',
+      y0: lineValue,
+      y1: lineValue,
+      line: {
+        color: lineColor,
+        width: lineWidth,
+        dash: lineDash
+      },
+      layer: 'above'
+    }
+  ]
+
+  fig.layout._referenceLineAnnotations = [
+    ...(fig.layout._referenceLineAnnotations || []),
+    {
+      text: label,
+      x: 1,
+      y: lineValue,
+      xref: 'paper',
+      yref: 'y',
+      xanchor: 'right',
+      yanchor: 'bottom',
+      showarrow: false,
+      font: {
+        size: labelSize,
+        color: labelColor
+      }
+    }
+  ]
 }
 
 const applyTitle = (fig, sections) => {
@@ -762,11 +1070,17 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
     'Line visible value:',
     getAxisConfig(sections, 'y_axis', 'line', 'visible')
   )
+  fig.layout._referenceLineAnnotations = []
   applyDimensions(fig, sections)
   applyMargins(fig, sections)
   applyBackground(fig, sections)
   applyTitle(fig, sections)
   applyLegend(fig, sections)
+
+  const isBarLike = ['bar', 'column', 'stacked_bar', 'stacked_column', 'clustered_bar', 'clustered_column'].includes(chartType)
+  if (isBarLike) {
+    applyBackgroundBars(fig, sections, chartData, chartType)
+  }
 
   const isPieDonut = chartType === 'pie' || chartType === 'donut'
 
@@ -1004,8 +1318,28 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
     }
   }
 
+  if (chartType === 'line' || chartType === 'area') {
+    applyRangeBand(fig, sections)
+  }
+
+  if (!isPieDonut) {
+    applyReferenceLines(fig, sections)
+  }
+
   // Annotations for subtitle and center value
-  fig.layout.annotations = []
+  const existingAnnotations = Array.isArray(fig.layout.annotations) ? [...fig.layout.annotations] : []
+  const referenceAnnotations = Array.isArray(fig.layout._referenceLineAnnotations)
+    ? [...fig.layout._referenceLineAnnotations]
+    : []
+  const filteredExisting = existingAnnotations.filter((ann) => {
+    return !referenceAnnotations.some(ref =>
+      ref.text === ann.text &&
+      ref.y === ann.y &&
+      ref.xref === ann.xref &&
+      ref.yref === ann.yref
+    )
+  })
+  fig.layout.annotations = [...referenceAnnotations, ...filteredExisting]
 
   const subtitleText = getConfig(sections, 'subtitle', 'text')
   if (subtitleText && subtitleText.trim() !== '') {
@@ -1247,7 +1581,14 @@ const generateChart = (sceneData, sectionsOverride = null) => {
   } else if (chartType === 'scatter') {
     fig.data = createScatterChart(data, presetData, chartData, sections)
   } else if (chartType === 'waterfall_bar' || chartType === 'waterfall_column') {
-    fig.data = createWaterfallChart(data, presetData, chartData, chartType, sections)
+    const waterfallResult = createWaterfallChart(data, presetData, chartData, chartType, sections)
+    fig.data = waterfallResult.traces
+    if (waterfallResult.annotations?.length) {
+      fig.layout.annotations = [
+        ...(fig.layout.annotations || []),
+        ...waterfallResult.annotations
+      ]
+    }
   } else {
     throw new Error(`Unsupported chart type: ${chartType}`)
   }
