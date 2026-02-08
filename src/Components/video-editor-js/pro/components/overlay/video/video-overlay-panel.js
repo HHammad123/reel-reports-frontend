@@ -317,7 +317,7 @@ export const VideoOverlayPanel = () => {
                 
                 // PRIORITY 4: Old nested format with wrapper - normalize and sort (fallback)
                 if (allGeneratedVideos.length === 0) {
-                    const { normalizeGeneratedBaseVideosResponse } = await import('../../../../../utils/generatedMediaUtils');
+                    const { normalizeGeneratedBaseVideosResponse } = await import('../../../../../../utils/generatedMediaUtils');
                     const normalized = normalizeGeneratedBaseVideosResponse(data);
                     const baseVideosData = normalized.base_videos || {};
                     // Transform all videos from generate-base-video API (all sessions, all aspect ratios)

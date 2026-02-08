@@ -1554,7 +1554,26 @@ const SceneScriptModal = ({
       if (data.desc) updateField('desc', data.desc);
 
       if (model === 'VEO3' || model.includes('VEO') || model === 'AVATAR') {
-        if (data.veo3_prompt_template) updateField('veo3_prompt_template', data.veo3_prompt_template);
+        if (data.veo3_prompt_template) {
+          const tpl = typeof data.veo3_prompt_template === 'string'
+            ? (() => { try { return JSON.parse(data.veo3_prompt_template); } catch (_) { return {}; } })()
+            : (data.veo3_prompt_template || {});
+          const setIfPresent = (key, val) => {
+            if (val !== undefined && val !== null && String(val).trim() !== '') {
+              updateField(key, val);
+            }
+          };
+          setIfPresent('subject', tpl.subject);
+          setIfPresent('action', tpl.action);
+          setIfPresent('background', tpl.background);
+          setIfPresent('styleCard', tpl.style);
+          setIfPresent('cameraCard', tpl.camera);
+          setIfPresent('composition', tpl.composition);
+          setIfPresent('focus_and_lens', tpl.focus_and_lens);
+          setIfPresent('ambiance', tpl.ambiance);
+          setIfPresent('user', tpl.user);
+          setIfPresent('system', tpl.system);
+        }
         if (data.presenter_options) updateField('presenter_options', data.presenter_options);
       } else if (model === 'ANCHOR') {
         if (data.opening_frame) updateField('opening_frame', data.opening_frame);
@@ -2003,6 +2022,7 @@ const SceneScriptModal = ({
           composition: currentScript.composition || "",
           focus_and_lens: currentScript.focus_and_lens || ""
         };
+
         const presOptions = currentScript.presenter_options || {};
 
         formattedScene = {
@@ -2163,6 +2183,30 @@ const SceneScriptModal = ({
       let initialScript = typeof scriptContent === 'string' ? {} : JSON.parse(JSON.stringify(scriptContent));
       if (initialScript.chart_data) {
         initialScript.chart_data = ensureSeriesInfo(initialScript.chart_data, initialScript.chart_type);
+      }
+      const m = String(initialScript.model || '').toUpperCase();
+      if (m === 'VEO3' || m.includes('VEO') || m === 'AVATAR') {
+        const tplRaw = initialScript.veo3_prompt_template;
+        let tpl = {};
+        if (tplRaw) {
+          if (typeof tplRaw === 'string') {
+            try { tpl = JSON.parse(tplRaw); } catch (_) { tpl = {}; }
+          } else if (typeof tplRaw === 'object') {
+            tpl = tplRaw;
+          }
+        }
+        if (tpl && typeof tpl === 'object') {
+          if (tpl.subject && !initialScript.subject) initialScript.subject = tpl.subject;
+          if (tpl.action && !initialScript.action) initialScript.action = tpl.action;
+          if (tpl.background && !initialScript.background) initialScript.background = tpl.background;
+          if (tpl.style && !initialScript.styleCard) initialScript.styleCard = tpl.style;
+          if (tpl.camera && !initialScript.cameraCard) initialScript.cameraCard = tpl.camera;
+          if (tpl.composition && !initialScript.composition) initialScript.composition = tpl.composition;
+          if (tpl.focus_and_lens && !initialScript.focus_and_lens) initialScript.focus_and_lens = tpl.focus_and_lens;
+          if (tpl.ambiance && !initialScript.ambiance) initialScript.ambiance = tpl.ambiance;
+          if (tpl.user && !initialScript.user) initialScript.user = tpl.user;
+          if (tpl.system && !initialScript.system) initialScript.system = tpl.system;
+        }
       }
       setLocalScript(initialScript);
     }
@@ -2379,7 +2423,25 @@ const SceneScriptModal = ({
     { key: 'setting', label: 'Setting' },
     { key: 'subject', label: 'Subject' },
     { key: 'composition', label: 'Composition' },
-    { key: 'final_prompt', label: 'Final Prompt' },
+    { key: 'factual_details', label: 'Factual Details' },
+    { key: 'camera_lens_shadow_lighting', label: 'Camera, Lens, Shadow & Lighting' }
+  ];
+
+  const openingFrame = [
+    { key: 'style', label: 'Style' },
+    { key: 'action', label: 'Action' },
+    { key: 'setting', label: 'Setting' },
+    { key: 'subject', label: 'Subject' },
+    { key: 'composition', label: 'Composition' },
+    { key: 'factual_details', label: 'Factual Details' },
+    { key: 'camera_lens_shadow_lighting', label: 'Camera, Lens, Shadow & Lighting' }
+  ];
+  const closingFrame = [
+    { key: 'style', label: 'Style' },
+    { key: 'action', label: 'Action' },
+    { key: 'setting', label: 'Setting' },
+    { key: 'subject', label: 'Subject' },
+    { key: 'composition', label: 'Composition' },
     { key: 'factual_details', label: 'Factual Details' },
     { key: 'camera_lens_shadow_lighting', label: 'Camera, Lens, Shadow & Lighting' }
   ];
@@ -2511,9 +2573,15 @@ const SceneScriptModal = ({
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <div>
             <h3 className="text-lg font-bold text-gray-900">Script Editor</h3>
-            <div className="flex gap-4 mt-1 text-xs text-gray-500 font-medium">
-              <span className="bg-gray-100 px-2 py-0.5 rounded">Scene {localScript.scene_number || '#'}</span>
-              <span className="bg-gray-100 px-2 py-0.5 rounded">{localScript.model || 'Unknown Type'}</span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-[#13008B] text-white">
+                <Video className="w-3 h-3" />
+                {(localScript.model || 'Unknown Type').toString().toUpperCase()}
+              </span>
+              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-green-600 text-white">
+                Scene {localScript.scene_number || '#'}
+              </span>
+
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
@@ -2561,36 +2629,37 @@ const SceneScriptModal = ({
               {narrationError && <p className="text-xs text-red-500 mt-1">{narrationError}</p>}
             </div>
 
-            {/* AI Field Generator */}
-            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
-              <div className="flex flex-col gap-2">
-                <textarea
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
-                  rows={2}
-                  className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                />
-                <button
-                  onClick={handleGenerateFields}
-                  disabled={isGeneratingFields}
-                  className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isGeneratingFields ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={16} />
-                      Generate Fields
-                    </>
-                  )}
-                </button>
+            {isLatestScene && (
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    value={promptText}
+                    onChange={(e) => setPromptText(e.target.value)}
+                    placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
+                    rows={2}
+                    className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                  />
+                  <button
+                    onClick={handleGenerateFields}
+                    disabled={isGeneratingFields}
+                    className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isGeneratingFields ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        Generate Fields
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Gen Image Checkbox */}
             <div className="flex items-center gap-2">
@@ -2635,11 +2704,9 @@ const SceneScriptModal = ({
           {isVeo && (
             <div className="col-span-full space-y-4 border-t border-gray-100 pt-4">
               <h4 className="font-bold text-sm text-gray-900">VEO3 Template Details</h4>
-              <Accordion title="VEO Prompt Template" defaultOpen={true}>
+              <Accordion title="VEO3 Prompt Template" defaultOpen={true}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
-                    { label: 'User', key: 'user' },
-                    { label: 'System', key: 'system' },
                     { label: 'Style', key: 'styleCard' },
                     { label: 'Camera', key: 'cameraCard' },
                     { label: 'Subject', key: 'subject' },
@@ -2933,12 +3000,12 @@ const SceneScriptModal = ({
             <>
               <div className="col-span-full">
                 <Accordion title="Opening Frame" defaultOpen={true}>
-                  {renderNestedFields('opening_frame', backgroundFrameFields)}
+                  {renderNestedFields('opening_frame', openingFrame)}
                 </Accordion>
               </div>
               <div className="col-span-full">
                 <Accordion title="Closing Frame" defaultOpen={true}>
-                  {renderNestedFields('closing_frame', backgroundFrameFields)}
+                  {renderNestedFields('closing_frame', closingFrame)}
                 </Accordion>
               </div>
               <div className="col-span-full">

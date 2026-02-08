@@ -275,7 +275,7 @@ export const ImageOverlayPanel = () => {
                     });
                 } else {
                     // Old nested format with wrapper - normalize and sort
-                    const { normalizeGeneratedMediaResponse } = await import('../../../../../utils/generatedMediaUtils');
+                    const { normalizeGeneratedMediaResponse } = await import('../../../../../../utils/generatedMediaUtils');
                     const normalized = normalizeGeneratedMediaResponse(data);
                     const generatedImagesData = normalized.generated_images || {};
                     

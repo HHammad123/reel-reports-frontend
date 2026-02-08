@@ -49,7 +49,7 @@ export const normalizeAndSortGeneratedMedia = (data, mediaType = 'images') => {
       if (sessionData && typeof sessionData === 'object' && !Array.isArray(sessionData)) {
         mediaArray = sessionData[mediaKey] || sessionData[mediaType] || [];
         updatedAt = sessionData.updated_at || sessionData.updatedAt || null;
-      } 
+      }
       // Handle old format: array directly
       else if (Array.isArray(sessionData)) {
         mediaArray = sessionData;
