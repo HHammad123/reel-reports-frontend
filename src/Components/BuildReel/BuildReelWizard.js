@@ -11,6 +11,7 @@ import VideosList from '../Scenes/VideosList';
 import ChartDataEditor from '../ChartDataEditor';
 import Loader from '../Loader';
 import { normalizeGeneratedMediaResponse } from '../../utils/generatedMediaUtils';
+import LoadingAnimationGif from '../../asset/loadingv2.gif';
 
 // Helper to preserve ALL fields from session_data including nested structures
 const sanitizeSessionSnapshot = (sessionData = {}, sessionId = '', token = '') => {
@@ -1496,7 +1497,8 @@ const SceneScriptModal = ({
   hasVideosAvailable, setSubView, hasImages,
   sendUserSessionData, handleGenerateVideosFromImages,
   setShowStoryboardModal, isGeneratingStoryboard, setIsGeneratingStoryboard,
-  activeSceneIndex // Received from parent
+  activeSceneIndex, // Received from parent
+  animationDescDefaultOpen // Received from parent to control accordion state
 }) => {
   const [localScript, setLocalScript] = useState({});
   const colorInputRef = useRef(null);
@@ -1939,6 +1941,78 @@ const SceneScriptModal = ({
   const [assetsData, setAssetsData] = useState({ templates: [], logos: [], icons: [], uploaded_images: [], documents_images: [] });
   const [generatedImagesData, setGeneratedImagesData] = useState({ generated_images: {}, generated_videos: {} });
   const [assetsTab, setAssetsTab] = useState('preset_templates');
+  const [isUploadingBackground, setIsUploadingBackground] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const assetImageUploadRef = useRef(null);
+  const [convertColors] = useState(true);
+
+  // Helper: Get profile_id from brand assets
+  const getProfileId = useCallback(async (userId) => {
+    try {
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/${encodeURIComponent(userId)}`);
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = {}; }
+      if (!resp.ok) throw new Error(`Failed to get brand assets: ${resp.status}`);
+      const profileId = data?.active_profile_id || data?.profile_id || data?.profileId || data?.profile?.id || data?.id;
+      return profileId;
+    } catch (err) {
+      console.error('Error fetching profile_id:', err);
+      return null;
+    }
+  }, []);
+
+  // Handle image upload to brand assets
+  const handleUploadImages = useCallback(async (files) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        alert('Missing user. Please log in again.');
+        return;
+      }
+
+      setIsUploadingBackground(true);
+      setUploadError('');
+      const profileId = await getProfileId(token);
+      if (!profileId) {
+        alert('Failed to get profile ID. Please try again.');
+        setIsUploadingBackground(false);
+        return;
+      }
+
+      const form = new FormData();
+      files.forEach(file => form.append('images', file));
+      form.append('convert_colors', String(convertColors));
+
+      const resp = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/profiles/${encodeURIComponent(token)}/${encodeURIComponent(profileId)}/upload-images`, {
+        method: 'POST',
+        body: form
+      });
+
+      const text = await resp.text();
+      let data; try { data = JSON.parse(text); } catch (_) { data = text; }
+
+      if (!resp.ok) throw new Error(`Upload failed: ${resp.status} ${text}`);
+
+      toast.success('Images uploaded successfully!');
+      // Refresh assets data
+      const cacheKey = `brand_assets_images:${token}`;
+      localStorage.removeItem(cacheKey);
+      // Reload assets
+      const url = `https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/images/${encodeURIComponent(token)}`;
+      const resp2 = await fetch(url);
+      const text2 = await resp2.text();
+      let data2; try { data2 = JSON.parse(text2); } catch (_) { data2 = {}; }
+      const normalized = normalizeBrandAssetsResponse(data2);
+      setAssetsData(normalized);
+      if (assetImageUploadRef.current) assetImageUploadRef.current.value = '';
+    } catch (err) {
+      console.error('Image upload failed:', err);
+      setUploadError(`Failed to upload images: ${err.message || 'Please try again.'}`);
+      toast.error(`Failed to upload images: ${err.message || 'Please try again.'}`);
+    } finally {
+      setIsUploadingBackground(false);
+    }
+  }, [convertColors, getProfileId]);
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
   const [showChartEditor, setShowChartEditor] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
@@ -2468,7 +2542,8 @@ const SceneScriptModal = ({
   const isPlotly = model === 'PLOTLY' || model === 'FINANCIAL' || model.includes('FINANCIAL');
 
   // Filter by aspect ratio if possible
-  const scriptAspect = localScript.aspect_ratio || '16:9';
+  const sessionAspect = sessionData?.scripts?.[0]?.userquery?.[0]?.guidelines?.technical_and_formal_constraints?.aspect_ratio;
+  const scriptAspect = sessionAspect || localScript.aspect_ratio || '16:9';
   const normalizedTargetAspect = normalizeTemplateAspectLabel(scriptAspect);
 
   let currentAssets = [];
@@ -2629,37 +2704,35 @@ const SceneScriptModal = ({
               {narrationError && <p className="text-xs text-red-500 mt-1">{narrationError}</p>}
             </div>
 
-            {isLatestScene && (
-              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
-                <div className="flex flex-col gap-2">
-                  <textarea
-                    value={promptText}
-                    onChange={(e) => setPromptText(e.target.value)}
-                    placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
-                    rows={2}
-                    className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                  />
-                  <button
-                    onClick={handleGenerateFields}
-                    disabled={isGeneratingFields}
-                    className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    {isGeneratingFields ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        Generate Fields
-                      </>
-                    )}
-                  </button>
-                </div>
+            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
+                  rows={2}
+                  className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                />
+                <button
+                  onClick={handleGenerateFields}
+                  disabled={isGeneratingFields}
+                  className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isGeneratingFields ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      Generate Fields
+                    </>
+                  )}
+                </button>
               </div>
-            )}
+            </div>
 
             {/* Gen Image Checkbox */}
             <div className="flex items-center gap-2">
@@ -2704,7 +2777,7 @@ const SceneScriptModal = ({
           {isVeo && (
             <div className="col-span-full space-y-4 border-t border-gray-100 pt-4">
               <h4 className="font-bold text-sm text-gray-900">VEO3 Template Details</h4>
-              <Accordion title="VEO3 Prompt Template" defaultOpen={true}>
+              <Accordion title="VEO3 Prompt Template" defaultOpen={false}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
                     { label: 'Style', key: 'styleCard' },
@@ -2999,17 +3072,17 @@ const SceneScriptModal = ({
           {isSora && (
             <>
               <div className="col-span-full">
-                <Accordion title="Opening Frame" defaultOpen={true}>
+                <Accordion title="Opening Frame" defaultOpen={false}>
                   {renderNestedFields('opening_frame', openingFrame)}
                 </Accordion>
               </div>
               <div className="col-span-full">
-                <Accordion title="Closing Frame" defaultOpen={true}>
+                <Accordion title="Closing Frame" defaultOpen={false}>
                   {renderNestedFields('closing_frame', closingFrame)}
                 </Accordion>
               </div>
               <div className="col-span-full">
-                <Accordion title="Animation Description" defaultOpen={true}>
+                <Accordion title="Animation Description" defaultOpen={animationDescDefaultOpen} key={`animation-desc-openclose-${animationDescDefaultOpen ? 'open' : 'closed'}`}>
                   {renderNestedFields('animation_desc', animationDescFields)}
                 </Accordion>
               </div>
@@ -3153,12 +3226,12 @@ const SceneScriptModal = ({
           {isPlotly && (
             <>
               <div className="col-span-full">
-                <Accordion title="Background Frame" defaultOpen={true}>
+                <Accordion title="Background Frame" defaultOpen={false}>
                   {renderNestedFields('background_frame', backgroundFrameFields)}
                 </Accordion>
               </div>
               <div className="col-span-full">
-                <Accordion title="Animation Description" defaultOpen={true}>
+                <Accordion title="Animation Description" defaultOpen={animationDescDefaultOpen} key={`animation-desc-openclose-${animationDescDefaultOpen ? 'open' : 'closed'}`}>
                   {renderNestedFields('animation_desc', animationDescFields)}
                 </Accordion>
               </div>
@@ -3369,6 +3442,28 @@ const SceneScriptModal = ({
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                      {assetsTab === 'uploaded_images' && (
+                        <div
+                          className={`rounded-lg border-2 border-dashed ${isUploadingBackground ? 'border-[#13008B] bg-blue-50 cursor-default' : 'border-gray-300 bg-gray-50 hover:border-[#13008B] hover:bg-gray-100 cursor-pointer'} transition-all flex flex-col items-center justify-center min-h-[140px]`}
+                          onClick={() => {
+                            if (isUploadingBackground) return;
+                            assetImageUploadRef.current?.click();
+                          }}
+                        >
+                          {isUploadingBackground ? (
+                            <div className="flex flex-col items-center justify-center p-4">
+                              <img src={LoadingAnimationGif} alt="Uploading..." className="w-12 h-12 object-contain mb-2" />
+                              <p className="text-xs text-[#13008B] font-medium animate-pulse">Uploading...</p>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center gap-2 p-4 text-center">
+                              <Upload className="w-8 h-8 text-gray-400" />
+                              <span className="text-sm font-medium text-gray-700">Upload Image</span>
+                              <span className="text-xs text-gray-500">Click to upload image</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {currentAssets.map((asset, i) => (
                         <div
                           key={i}
@@ -3400,6 +3495,20 @@ const SceneScriptModal = ({
           </div>
         </div>
       )}
+      {/* Hidden File Inputs */}
+      <input
+        type="file"
+        ref={assetImageUploadRef}
+        accept="image/*"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files || []);
+          if (files.length > 0) {
+            handleUploadImages(files);
+          }
+        }}
+      />
     </div>
   );
 };
@@ -3613,6 +3722,7 @@ const BuildReelWizard = () => {
   }, [paramSessionId]);
 
   const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], scripts: [], userquery: null, videoDuration: '60' });
+  const [animationDescDefaultOpen, setAnimationDescDefaultOpen] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
   const [isSavingStoryboard, setIsSavingStoryboard] = useState(false);
@@ -3665,17 +3775,9 @@ const BuildReelWizard = () => {
     localStorage.setItem('buildreel_active_scene_index', String(activeSceneIndex));
   }, [activeSceneIndex]);
 
-  // Initialize editor aspect ratio from localStorage or session payload
+  // Initialize editor aspect ratio from session payload
   useEffect(() => {
     try {
-      const storedAR = localStorage.getItem('buildreel_aspect_ratio');
-      if (storedAR && typeof storedAR === 'string') {
-        const normalized = normalizeTemplateAspectLabel(storedAR).replace(/[xX_]/g, ':');
-        if (normalized && normalized !== 'Unspecified') {
-          setEditorAspectRatio(normalized);
-          return;
-        }
-      }
       const rawUq = localStorage.getItem('buildreel_userquery');
       if (rawUq) {
         const val = JSON.parse(rawUq);
@@ -4724,23 +4826,7 @@ const BuildReelWizard = () => {
       if (options) {
         setIsCreatingScenes(true);
         console.log('[BuildReel] Adding scene with options:', options);
-        // Sync aspect ratio with editor state and localStorage for rendering
-        try {
-          const rawAspect = String(options.aspectRatio || '').trim();
-          if (rawAspect) {
-            const cleaned = rawAspect.replace(/[xX_]/g, ':');
-            const parts = cleaned.split(':');
-            if (parts.length === 2) {
-              const w = parts[0].trim();
-              const h = parts[1].trim();
-              if (w && h) {
-                const normalized = `${w}:${h}`;
-                setEditorAspectRatio(normalized);
-                try { localStorage.setItem('buildreel_aspect_ratio', normalized); } catch (_) { }
-              }
-            }
-          }
-        } catch (_) { /* noop */ }
+
         // If adding a scene via options, we need to fetch user data and call the scene creation API
         const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
         const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
@@ -4788,8 +4874,22 @@ const BuildReelWizard = () => {
           }
         }
 
+        // Determine Aspect Ratio
+        let targetAspectRatio = options.aspectRatio || '16:9';
+
+        // If we have existing scripts, use the session's aspect ratio to ensure consistency
+        if (existingScripts.length > 0) {
+          const sessionAspect = extractAspectRatioFromSessionPayload({ session_data: sessionDataObj });
+          if (sessionAspect && sessionAspect !== 'Unspecified') {
+            targetAspectRatio = sessionAspect.replace(/[xX_]/g, ':');
+          }
+        }
+
+        // Update editor state
+        setEditorAspectRatio(targetAspectRatio);
+
         // Format Aspect Ratio (e.g., "16:9" -> "16_9")
-        const formattedAspectRatio = options.aspectRatio ? options.aspectRatio.replace(':', '_') : '16_9';
+        const formattedAspectRatio = targetAspectRatio.replace(':', '_');
 
         // Map video type to model type
         // Avatar -> VEO3-avatar
@@ -4879,17 +4979,20 @@ const BuildReelWizard = () => {
 
             setCurrentScriptContent(latestScene);
             setShowSceneScriptModal(true);
+            setAnimationDescDefaultOpen(false);
           } else {
             // Fallback to previous logic if no scripts found in session (though unexpected)
             const scriptContent = sceneData?.script || sceneData?.message || sceneData;
             setCurrentScriptContent(scriptContent);
             setShowSceneScriptModal(true);
+            setAnimationDescDefaultOpen(false);
           }
         } else {
           // Fallback if session fetch fails
           const scriptContent = sceneData?.script || sceneData?.message || sceneData;
           setCurrentScriptContent(scriptContent);
           setShowSceneScriptModal(true);
+          setAnimationDescDefaultOpen(false);
         }
 
         setIsCreatingScenes(false);
@@ -4928,6 +5031,41 @@ const BuildReelWizard = () => {
         if (scripts[0].airesponse && Array.isArray(scripts[0].airesponse)) {
           currentScriptObj.airesponse = scripts[0].airesponse;
         }
+
+        let persistedAspect = '';
+        try {
+          const storedAR = localStorage.getItem('buildreel_aspect_ratio');
+          if (storedAR && typeof storedAR === 'string') persistedAspect = storedAR;
+        } catch (_) { }
+        if (!persistedAspect) {
+          const extractedAR =
+            extractAspectRatioFromSessionPayload({ session_data: sData }) ||
+            '';
+          if (extractedAR) persistedAspect = extractedAR.replace(/[xX_]/g, ':');
+        }
+        const formattedAR =
+          /^\d+:\d+$/.test(persistedAspect)
+            ? persistedAspect.replace(':', '_')
+            : '16_9';
+        const ensureUserQuery = () => {
+          const uq = currentScriptObj.userquery ||
+            currentScriptObj.user_query ||
+            currentScriptObj.userQuery ||
+            currentScriptObj.UserQuery;
+          if (Array.isArray(uq) && uq.length > 0) return uq;
+          return [{
+            guidelines: { technical_and_formal_constraints: { aspect_ratio: formattedAR } }
+          }];
+        };
+        const userQueryArr = ensureUserQuery();
+        const uq0 = userQueryArr[0] || {};
+        const gl = uq0.guidelines || {};
+        const tfc = gl.technical_and_formal_constraints || {};
+        tfc.aspect_ratio = formattedAR;
+        uq0.guidelines = gl;
+        uq0.guidelines.technical_and_formal_constraints = tfc;
+        userQueryArr[0] = uq0;
+        currentScriptObj.userquery = userQueryArr;
 
         // Construct payload using scripts[0] as current_script
         const payload = {
@@ -4984,6 +5122,7 @@ const BuildReelWizard = () => {
             }
             setCurrentScriptContent(latest);
             setShowSceneScriptModal(true);
+            setAnimationDescDefaultOpen(false);
           }
         }
 
@@ -5211,7 +5350,7 @@ const BuildReelWizard = () => {
         fullScreen
         zIndex="z-40"
         overlayBg="bg-black/30"
-        title="Creating Script…"
+        title="Creating Scenes"
         description="Please wait while we create your script..."
       />
 
@@ -5311,6 +5450,7 @@ const BuildReelWizard = () => {
         isGeneratingStoryboard={isGeneratingStoryboard}
         setIsGeneratingStoryboard={setIsGeneratingStoryboard}
         activeSceneIndex={activeSceneIndex}
+        animationDescDefaultOpen={animationDescDefaultOpen}
       />
 
       {/* Confirm Delete Scene Popup */}

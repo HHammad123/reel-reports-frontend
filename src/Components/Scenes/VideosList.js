@@ -23,27 +23,6 @@ import { useProgressLoader } from '../../hooks/useProgressLoader';
 import { sessionImagesAdaptor } from '../video-editor-js/pro/adaptors/session-images-adaptor';
 import { useLocation } from 'react-router-dom';
 
-// Normalize aspect ratio strings to canonical "W:H"
-const normalizeAspect = (aspectInput) => {
-  try {
-    const raw = String(aspectInput || '').trim();
-    if (!raw) return '';
-    // Extract first occurrence of pattern like 16:9 or 9:16
-    const match = raw.match(/(\d+)\s*[:xX_]\s*(\d+)/);
-    if (match) {
-      return `${match[1]}:${match[2]}`;
-    }
-    const lower = raw.toLowerCase();
-    if (lower.includes('portrait')) return '9:16';
-    if (lower.includes('vertical')) return '9:16';
-    if (lower.includes('landscape')) return '16:9';
-    if (lower.includes('widescreen')) return '16:9';
-    return '';
-  } catch (_) {
-    return '';
-  }
-};
-
 // FFmpeg xfade filter transition types
 // Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
 const TRANSITION_MAP = {
@@ -84,7 +63,7 @@ const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
 const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
 
-const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts, onViewScene, aspectRatio: aspectRatioProp }) => {
+const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts, onViewScene }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -107,30 +86,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const [isAddSceneOpen, setIsAddSceneOpen] = useState(false);
   const addSceneButtonRef = useRef(null);
   // Aspect ratio from session/script data
-  const [aspectRatio, setAspectRatio] = useState(() => normalizeAspect(aspectRatioProp) || '16:9');
+  const [aspectRatio, setAspectRatio] = useState('16:9');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const location = useLocation();
-
-  // Sync aspect ratio when prop changes
-  useEffect(() => {
-    const normalized = normalizeAspect(aspectRatioProp) || '16:9';
-    if (normalized !== aspectRatio) {
-      setAspectRatio(normalized);
-    }
-  }, [aspectRatioProp]);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setIsMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
 
   const sidebarTopActions = useMemo(() => {
     // Only show the button if onAddScene is provided (i.e., in BuildReelWizard)
@@ -181,6 +140,18 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       </div>
     );
   }, [isAddSceneOpen, hasScripts, onAddScene]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const applyChromaKey = useCallback((videoElement) => {
     if (!videoElement || !videoElement.parentNode) return;
@@ -6285,7 +6256,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     const overlayIdsSignature = overlayIds.substring(0, 100); // Use first 100 chars for stability
 
     // Create new key based on overlay IDs (more stable than URLs)
-    const newKey = `rve-${overlayCount}-${overlayIdsSignature}-${aspectRatio}`;
+    const newKey = `rve-${overlayCount}-${overlayIdsSignature}`;
 
     // Only update refs if key actually changed (prevents unnecessary remounts)
     if (newKey !== editorKeyRef.current) {
@@ -6297,8 +6268,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     return editorKeyRef.current;
   }, [
     defaultOverlays.length,
-    defaultOverlays.map(o => o?.id || '').filter(Boolean).sort().join(','),
-    aspectRatio
+    defaultOverlays.map(o => o?.id || '').filter(Boolean).sort().join(',')
   ]);
 
   // Auto-load ALL videos from upload section to timeline when session changes
@@ -9001,12 +8971,11 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
               {isSavingLayers ? 'Saving...' : 'Save Layers'}
             </button>
           )}
-
-          {/* Actions Menu */}
           <div className="relative" ref={menuRef}>
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
               className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              aria-label="Actions"
             >
               <MoreVertical className="w-6 h-6 text-gray-600" />
             </button>
@@ -9023,13 +8992,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                 >
                   Upload Base Video
                 </button>
-
                 <div className="h-px bg-gray-100 my-0"></div>
-
                 <button
                   onClick={() => {
-                    // Trigger render by finding and clicking the render button inside the editor
-                    // The render button is typically in the editor header/controls
                     setTimeout(() => {
                       const renderButton = document.querySelector('.rve-host button[class*="Render"]') ||
                         document.querySelector('.rve-host button[aria-label*="render" i]') ||
@@ -9050,7 +9015,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                 >
                   {showRenderModal ? 'Rendering...' : 'Render Video'}
                 </button>
-
                 {location.pathname.includes('/buildreel') && (
                   <>
                     <div className="h-px bg-gray-100 my-0"></div>
@@ -9154,7 +9118,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         {/* React Video Editor - contained within the white panel */}
         <div
           className="flex-1 flex flex-col bg-white rve-host"
-          data-aspect-ratio={aspectRatio}
         // style={{ paddingLeft: '16rem' }}
         >
           <div className="flex-1 rounded-lg border border-gray-200 shadow-sm relative ">

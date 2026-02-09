@@ -19,7 +19,7 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
         throw new Error('VideoPlayer must be used within ReactVideoEditorProvider');
     }
     const { overlays, setSelectedOverlayId, changeOverlay, selectedOverlayId, aspectRatio, playerDimensions, updatePlayerDimensions, getAspectRatioDimensions, durationInFrames, fps, playbackRate, playerRef: contextPlayerRef, // Get playerRef from context
-    showAlignmentGuides, backgroundColor, } = context;
+        showAlignmentGuides, backgroundColor, } = context;
     // Use external playerRef if provided, otherwise use context playerRef
     // This allows for override when needed but defaults to context
     const playerRef = externalPlayerRef || contextPlayerRef;
@@ -27,6 +27,7 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
     const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
     // Ref to track the container element
     const containerRef = useRef(null);
+    const playerAreaRef = useRef(null);
     /**
      * Updates the player dimensions when the container size or aspect ratio changes
      */
@@ -39,12 +40,10 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
         let containerElement = null;
         let resizeObserver = null;
         if (isPlayerOnly) {
-            // In player-only mode, use the ref to the container
             containerElement = containerRef.current;
         }
         else {
-            // In editor mode, use the video-container as before
-            containerElement = document.querySelector(".video-container");
+            containerElement = playerAreaRef.current || document.querySelector(".video-container");
         }
         if (containerElement) {
             // Initial update
@@ -84,14 +83,24 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
     const playerSize = useMemo(() => {
         const containerWidth = containerDimensions.width || playerDimensions.width;
         const containerHeight = containerDimensions.height || playerDimensions.height;
+
+        // Calculate scale to fit within container while maintaining aspect ratio
+        // Cap at 1 to prevent upscaling if composition is smaller than container
+        const scale = Math.min(
+            1,
+            containerWidth / compositionWidth,
+            containerHeight / compositionHeight
+        );
+
         return {
-            width: Math.min(containerWidth, compositionWidth),
-            height: Math.min(containerHeight, compositionHeight),
+            width: compositionWidth * scale,
+            height: compositionHeight * scale,
         };
     }, [containerDimensions, playerDimensions, compositionWidth, compositionHeight]);
+
     const handleAutoPlayError = useCallback((err) => {
         if (process.env.NODE_ENV === 'development') {
-        console.error('[VideoPlayer] onAutoPlayError', err);
+            console.error('[VideoPlayer] onAutoPlayError', err);
         }
     }, []);
     const editorInputProps = useMemo(() => ({
@@ -140,29 +149,45 @@ export const VideoPlayer = ({ playerRef: externalPlayerRef, className, style, is
         compositionHeight,
         backgroundColor,
     ]);
-    return (_jsx("div", { ref: containerRef, className: `w-full h-full overflow-hidden ${className || ''}`, style: style, children: !isPlayerOnly ? (
-        /* Editor mode: Grid background container */
-        _jsx("div", { className: "z-0 video-container relative w-full h-full select-none shadow-lg", style: {
-                background: '#2a2a2a',
-                backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px)',
-                backgroundSize: '20px 20px'
-            }, children: _jsx("div", { className: "z-10 absolute inset-2 sm:inset-4 flex items-center justify-center", children: _jsx("div", { className: "relative mx-2 sm:mx-0", style: {
-                        width: Math.min(playerDimensions.width, compositionWidth),
-                        height: Math.min(playerDimensions.height, compositionHeight),
+    return (_jsx("div", {
+        ref: containerRef, className: `w-full h-full overflow-hidden ${className || ''}`, style: style, children: !isPlayerOnly ? (
+            /* Editor mode: Grid background container */
+            _jsx("div", {
+                className: "z-0 video-container relative w-full h-full select-none shadow-lg", style: {
+                    background: '#2a2a2a',
+                    backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px)',
+                    backgroundSize: '20px 20px'
+                }, children: _jsx("div", {
+                    ref: playerAreaRef, className: "z-10 absolute inset-2 sm:inset-4 flex items-center justify-center", children: _jsx("div", {
+                        className: "relative mx-2 sm:mx-0", style: {
+                            width: playerSize.width,
+                            height: playerSize.height,
+                            maxWidth: "100%",
+                            maxHeight: "100%",
+                        }, children: _jsx(Player, {
+                            ref: playerRef, className: "w-full h-full", component: Main, compositionWidth: compositionWidth, compositionHeight: compositionHeight, style: {
+                                width: "100%",
+                                height: "100%",
+                            }, durationInFrames: PLAYER_CONFIG.durationInFrames, fps: PLAYER_CONFIG.fps, playbackRate: playbackRate, acknowledgeRemotionLicense: true, inputProps: editorInputProps, errorFallback: () => _jsx(_Fragment, {}), overflowVisible: true, onAutoPlayError: handleAutoPlayError
+                        })
+                    })
+                })
+            })) : (
+            /* Player-only mode: Simple centered container */
+            _jsx("div", {
+                className: "w-full h-full flex items-center justify-center ", children: _jsx("div", {
+                    className: "relative", style: {
+                        width: playerSize.width,
+                        height: playerSize.height,
                         maxWidth: "100%",
                         maxHeight: "100%",
-                    }, children: _jsx(Player, { ref: playerRef, className: "w-full h-full", component: Main, compositionWidth: compositionWidth, compositionHeight: compositionHeight, style: {
+                    }, children: _jsx(Player, {
+                        ref: playerRef, className: "w-full h-full", component: Main, compositionWidth: compositionWidth, compositionHeight: compositionHeight, style: {
                             width: "100%",
                             height: "100%",
-                        }, durationInFrames: PLAYER_CONFIG.durationInFrames, fps: PLAYER_CONFIG.fps, playbackRate: playbackRate, acknowledgeRemotionLicense: true, inputProps: editorInputProps, errorFallback: () => _jsx(_Fragment, {}), overflowVisible: true, onAutoPlayError: handleAutoPlayError }) }) }) })) : (
-        /* Player-only mode: Simple centered container */
-        _jsx("div", { className: "w-full h-full flex items-center justify-center ", children: _jsx("div", { className: "relative", style: {
-                    width: playerSize.width,
-                    height: playerSize.height,
-                    maxWidth: "100%",
-                    maxHeight: "100%",
-                }, children: _jsx(Player, { ref: playerRef, className: "w-full h-full", component: Main, compositionWidth: compositionWidth, compositionHeight: compositionHeight, style: {
-                        width: "100%",
-                        height: "100%",
-                    }, acknowledgeRemotionLicense: true, durationInFrames: PLAYER_CONFIG.durationInFrames, fps: PLAYER_CONFIG.fps, playbackRate: playbackRate, inputProps: playerOnlyInputProps, errorFallback: () => _jsx(_Fragment, {}), overflowVisible: true, onAutoPlayError: handleAutoPlayError }) }) })) }));
+                        }, acknowledgeRemotionLicense: true, durationInFrames: PLAYER_CONFIG.durationInFrames, fps: PLAYER_CONFIG.fps, playbackRate: playbackRate, inputProps: playerOnlyInputProps, errorFallback: () => _jsx(_Fragment, {}), overflowVisible: true, onAutoPlayError: handleAutoPlayError
+                    })
+                })
+            }))
+    }));
 };

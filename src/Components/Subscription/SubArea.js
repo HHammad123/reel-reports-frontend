@@ -155,16 +155,103 @@ const SubArea = () => {
 
     const handleCloseModal = () => {
         setSuccessModal({ show: false, credits: 0, plan: "" });
-        navigate("/subscription", { replace: true });
+        navigate("/", { replace: true });
     };
 
-    const handleSelectPlan = (plan) => {
-        if (plan?.url) {
-            // Save plan details for post-payment processing
-            localStorage.setItem("pending_plan", JSON.stringify(plan));
-            window.location.href = plan.url;
+    const handleSelectPlan = async (plan) => {
+        if (plan.type === 'topup') {
+            try {
+                setProcessingPayment(true);
+                // Save plan details for post-payment processing
+                localStorage.setItem("pending_plan", JSON.stringify(plan));
+
+                const userStr = localStorage.getItem("user");
+                const user = userStr ? JSON.parse(userStr) : {};
+                const token = localStorage.getItem("token");
+                const userId = user.id;
+
+                if (!userId) {
+                    alert("User not found. Please log in again.");
+                    return;
+                }
+
+                const response = await fetch(`${API_BASE}/v1/admin/api/payments/create-checkout`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        package: plan.price.toString(),
+                        user_id: userId
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error("Failed to create checkout session");
+                }
+
+                const data = await response.json();
+                if (data.checkout_url) {
+                    window.open(data.checkout_url, '_blank');
+                } else {
+                    alert("No checkout URL returned from server.");
+                    localStorage.removeItem("pending_plan");
+                }
+            } catch (error) {
+                console.error("Error creating checkout session:", error);
+                alert("Failed to initiate payment. Please try again.");
+                localStorage.removeItem("pending_plan");
+            } finally {
+                setProcessingPayment(false);
+            }
             return;
         }
+
+        if (plan.type === 'subscription') {
+            try {
+                setProcessingPayment(true);
+                const userStr = localStorage.getItem("user");
+                const user = userStr ? JSON.parse(userStr) : {};
+                const token = localStorage.getItem("token");
+                const userId = user.id;
+
+                if (!userId) {
+                    alert("User not found. Please log in again.");
+                    return;
+                }
+
+                const response = await fetch(`${API_BASE}/v1/admin/api/payments/create-subscription`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        plan: plan.price.toString(),
+                        user_id: userId
+                    }),
+                });
+
+                if (!response.ok) {
+                    throw new Error("Failed to create subscription");
+                }
+
+                const data = await response.json();
+                if (data.checkout_url) {
+                    window.open(data.checkout_url, '_blank');
+                } else {
+                    alert("No checkout URL returned from server.");
+                }
+            } catch (error) {
+                console.error("Error creating subscription:", error);
+                alert("Failed to initiate subscription. Please try again.");
+            } finally {
+                setProcessingPayment(false);
+            }
+            return;
+        }
+
         alert("No payment link available for this plan.");
     };
 
@@ -250,16 +337,14 @@ const SubArea = () => {
             price: 30,
             credits: 1250,
             features: ["Access to basic templates", "Standard generation speed", "Email support"],
-            url: "https://buy.stripe.com/test_28EeV62jN0dCdkNgQfa3u00",
             type: "subscription",
         },
         {
             title: "Professional",
-            price: 75,
+            price: 70,
             credits: 3750,
             features: ["Access to all templates", "Priority generation", "Priority support", "Commercial usage rights"],
             isPopular: true,
-            url: "https://buy.stripe.com/test_3cIeV6f6z6C02G96bBa3u01",
             type: "subscription",
         },
         {
@@ -267,7 +352,6 @@ const SubArea = () => {
             price: 100,
             credits: 5250,
             features: ["All Professional features", "Highest priority queue", "Dedicated account manager", "API access"],
-            url: "https://buy.stripe.com/test_6oUdR2e2vaSg94x43ta3u02",
             type: "subscription",
         },
     ];
@@ -278,7 +362,6 @@ const SubArea = () => {
             price: 5,
             credits: 200,
             features: ["Great for quick edits", "Valid for 1 year"],
-            url: "https://buy.stripe.com/test_14A00cf6z1hG3Kd9nNa3u05",
             type: "topup",
         },
         {
@@ -286,7 +369,6 @@ const SubArea = () => {
             price: 10,
             credits: 400,
             features: ["Best for short videos", "Valid for 1 year"],
-            url: "https://buy.stripe.com/test_eVq5kw2jNbWk1C59nNa3u04",
             type: "topup",
         },
         {
@@ -295,7 +377,6 @@ const SubArea = () => {
             credits: 850,
             features: ["Best value top-up", "Valid for 1 year"],
             isPopular: true,
-            url: "https://buy.stripe.com/test_4gMeV6aQj0dC6WpgQfa3u03",
             type: "topup",
         },
     ];
