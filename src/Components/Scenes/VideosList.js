@@ -23,6 +23,27 @@ import { useProgressLoader } from '../../hooks/useProgressLoader';
 import { sessionImagesAdaptor } from '../video-editor-js/pro/adaptors/session-images-adaptor';
 import { useLocation } from 'react-router-dom';
 
+// Normalize aspect ratio strings to canonical "W:H"
+const normalizeAspect = (aspectInput) => {
+  try {
+    const raw = String(aspectInput || '').trim();
+    if (!raw) return '';
+    // Extract first occurrence of pattern like 16:9 or 9:16
+    const match = raw.match(/(\d+)\s*[:xX_]\s*(\d+)/);
+    if (match) {
+      return `${match[1]}:${match[2]}`;
+    }
+    const lower = raw.toLowerCase();
+    if (lower.includes('portrait')) return '9:16';
+    if (lower.includes('vertical')) return '9:16';
+    if (lower.includes('landscape')) return '16:9';
+    if (lower.includes('widescreen')) return '16:9';
+    return '';
+  } catch (_) {
+    return '';
+  }
+};
+
 // FFmpeg xfade filter transition types
 // Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
 const TRANSITION_MAP = {
@@ -63,7 +84,7 @@ const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
 const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
 
-const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts, onViewScene }) => {
+const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts, onViewScene, aspectRatio: aspectRatioProp }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -86,10 +107,18 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const [isAddSceneOpen, setIsAddSceneOpen] = useState(false);
   const addSceneButtonRef = useRef(null);
   // Aspect ratio from session/script data
-  const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [aspectRatio, setAspectRatio] = useState(() => normalizeAspect(aspectRatioProp) || '16:9');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const location = useLocation();
+
+  // Sync aspect ratio when prop changes
+  useEffect(() => {
+    const normalized = normalizeAspect(aspectRatioProp) || '16:9';
+    if (normalized !== aspectRatio) {
+      setAspectRatio(normalized);
+    }
+  }, [aspectRatioProp]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -6256,7 +6285,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     const overlayIdsSignature = overlayIds.substring(0, 100); // Use first 100 chars for stability
 
     // Create new key based on overlay IDs (more stable than URLs)
-    const newKey = `rve-${overlayCount}-${overlayIdsSignature}`;
+    const newKey = `rve-${overlayCount}-${overlayIdsSignature}-${aspectRatio}`;
 
     // Only update refs if key actually changed (prevents unnecessary remounts)
     if (newKey !== editorKeyRef.current) {
@@ -6268,7 +6297,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     return editorKeyRef.current;
   }, [
     defaultOverlays.length,
-    defaultOverlays.map(o => o?.id || '').filter(Boolean).sort().join(',')
+    defaultOverlays.map(o => o?.id || '').filter(Boolean).sort().join(','),
+    aspectRatio
   ]);
 
   // Auto-load ALL videos from upload section to timeline when session changes
@@ -8768,11 +8798,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             }
             progress={videoLoaderProgress > 0 ? videoLoaderProgress : null}
           >
-            {jobProgress.phase && jobProgress.percent > 0 && (
-              <p className="text-xs text-gray-500 mt-2">
-                {jobProgress.phase.toUpperCase()}
-              </p>
-            )}
+
           </Loader>
         </>
       )}
@@ -9128,6 +9154,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         {/* React Video Editor - contained within the white panel */}
         <div
           className="flex-1 flex flex-col bg-white rve-host"
+          data-aspect-ratio={aspectRatio}
         // style={{ paddingLeft: '16rem' }}
         >
           <div className="flex-1 rounded-lg border border-gray-200 shadow-sm relative ">

@@ -3422,7 +3422,8 @@ const StepTwo = ({
   videosJobId,
   onGenerateVideo,
   isVideoGenerating = false,
-  onJobPhaseDone
+  onJobPhaseDone,
+  aspectRatio: aspectRatioProp
 }) => {
   const [internalActiveIndex, setInternalActiveIndex] = useState(0);
 
@@ -3531,6 +3532,7 @@ const StepTwo = ({
         onAddScene={addScene}
         hasScripts={values.scripts && values.scripts.length > 0}
         onViewScene={() => setIsSceneListVisible(true)}
+        aspectRatio={aspectRatioProp}
       />
 
       {/* Scene Menu - Fixed Position to avoid overflow clipping */}
@@ -3637,6 +3639,7 @@ const BuildReelWizard = () => {
   const [isMerging, setIsMerging] = useState(false);
   const [showImagesPopup, setShowImagesPopup] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(false);
+  const [editorAspectRatio, setEditorAspectRatio] = useState('16:9');
   // Scene Script Modal State
   const [showSceneScriptModal, setShowSceneScriptModal] = useState(false);
   // Storyboard Modal State
@@ -3661,6 +3664,40 @@ const BuildReelWizard = () => {
   useEffect(() => {
     localStorage.setItem('buildreel_active_scene_index', String(activeSceneIndex));
   }, [activeSceneIndex]);
+
+  // Initialize editor aspect ratio from localStorage or session payload
+  useEffect(() => {
+    try {
+      const storedAR = localStorage.getItem('buildreel_aspect_ratio');
+      if (storedAR && typeof storedAR === 'string') {
+        const normalized = normalizeTemplateAspectLabel(storedAR).replace(/[xX_]/g, ':');
+        if (normalized && normalized !== 'Unspecified') {
+          setEditorAspectRatio(normalized);
+          return;
+        }
+      }
+      const rawUq = localStorage.getItem('buildreel_userquery');
+      if (rawUq) {
+        const val = JSON.parse(rawUq);
+        const arr = Array.isArray(val?.userquery) ? val.userquery : [];
+        const first = arr[0] || {};
+        const ar =
+          first?.technical_and_formal_constraints?.aspect_ratio ||
+          first?.additonalprop1?.technical_and_formal_constraints?.aspect_ratio ||
+          '';
+        const normalized = normalizeTemplateAspectLabel(ar).replace(/[xX_]/g, ':');
+        if (normalized && normalized !== 'Unspecified') {
+          setEditorAspectRatio(normalized);
+          return;
+        }
+      }
+      const extracted = extractAspectRatioFromSessionPayload({ session_data: sessionDataState }) || '';
+      const normalized = normalizeTemplateAspectLabel(extracted).replace(/[xX_]/g, ':');
+      if (normalized && normalized !== 'Unspecified') {
+        setEditorAspectRatio(normalized);
+      }
+    } catch (_) { /* noop */ }
+  }, [sessionDataState]);
 
   // Persist Modal State
   useEffect(() => {
@@ -4687,6 +4724,23 @@ const BuildReelWizard = () => {
       if (options) {
         setIsCreatingScenes(true);
         console.log('[BuildReel] Adding scene with options:', options);
+        // Sync aspect ratio with editor state and localStorage for rendering
+        try {
+          const rawAspect = String(options.aspectRatio || '').trim();
+          if (rawAspect) {
+            const cleaned = rawAspect.replace(/[xX_]/g, ':');
+            const parts = cleaned.split(':');
+            if (parts.length === 2) {
+              const w = parts[0].trim();
+              const h = parts[1].trim();
+              if (w && h) {
+                const normalized = `${w}:${h}`;
+                setEditorAspectRatio(normalized);
+                try { localStorage.setItem('buildreel_aspect_ratio', normalized); } catch (_) { }
+              }
+            }
+          }
+        } catch (_) { /* noop */ }
         // If adding a scene via options, we need to fetch user data and call the scene creation API
         const sessionId = (typeof window !== 'undefined' && localStorage.getItem('session_id')) ? localStorage.getItem('session_id') : '';
         const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : '';
@@ -5106,6 +5160,7 @@ const BuildReelWizard = () => {
                 try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
                 try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
               }}
+              aspectRatio={editorAspectRatio}
             />
           )}
           {subView === 'images' && (
@@ -5144,6 +5199,7 @@ const BuildReelWizard = () => {
                 }}
                 onAddScene={createFromScratch}
                 hasScripts={form.scripts && form.scripts.length > 0}
+                aspectRatio={editorAspectRatio}
               />
             </div>
           )}

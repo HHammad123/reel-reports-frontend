@@ -118,13 +118,6 @@ const Loader = ({
         {Math.round(currentProgress)}%
       </div>
 
-      {/* Status Text */}
-      {status && (
-        <div className="text-xs text-gray-400 uppercase tracking-wider mt-1">
-          {status}
-        </div>
-      )}
-
       {children}
     </div>
   );
