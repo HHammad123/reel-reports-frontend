@@ -3438,6 +3438,7 @@ const StepTwo = ({
   const [isSceneMenuOpen, setIsSceneMenuOpen] = useState(false);
   const sceneMenuRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const [isSceneListVisible, setIsSceneListVisible] = useState(false);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -3464,58 +3465,73 @@ const StepTwo = ({
 
   // Simplified StepTwo with VideosList and Add Scene button
   return (
-    <div className='bg-white h-[100vh] w-full rounded-lg p-6 overflow-y-auto'>
-      <div className='flex items-center justify-between mb-6'>
-        <h2 className='text-[24px] font-semibold'>Add Your Scenes</h2>
+    <div className='bg-white h-[100vh] w-full rounded-lg p-2 overflow-y-auto'>
+      <div className='flex items-center justify-end mb-6'>
         <div className="flex items-center gap-2 relative">
           {/* Generate Video Button */}
         </div>
       </div>
 
       {/* Horizontal Scenes List (Pills) */}
-      {scenes.length > 0 && (
-        <div className="flex items-center gap-3 overflow-x-auto mb-6 pb-2 scrollbar-hide">
-          {scenes.map((scene, idx) => {
-            const isActive = activeIndex === idx;
-            return (
-              <div
-                key={idx}
-                onClick={() => {
-                  setActiveIndex(idx);
-                  setIsSceneMenuOpen(false);
-                }}
-                className={`relative flex flex-col items-start gap-1 p-3 rounded-xl border transition-all min-w-[140px] cursor-pointer ${isActive
-                  ? 'bg-blue-50 border-[#13008B] shadow-sm'
-                  : 'bg-white border-gray-200 hover:border-gray-300'
-                  }`}
-              >
-                <div className="flex items-center justify-between w-full">
-                  <span className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-[#13008B]' : 'text-gray-500'}`}>Scene {scene.scene_number || idx + 1}</span>
-                  {isActive && (
-                    <button
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setMenuPosition({ top: rect.bottom + 5, left: rect.left });
-                        setIsSceneMenuOpen(!isSceneMenuOpen);
-                      }}
-                      className="p-1 hover:bg-black/5 rounded-full transition-colors text-gray-500"
-                    >
-                      <MoreVertical size={14} />
-                    </button>
-                  )}
+      {scenes.length > 0 && isSceneListVisible && (
+        <div className="relative mb-6">
+          <div className="absolute right-0 -top-4 z-10">
+            <button
+              onClick={() => setIsSceneListVisible(false)}
+              className="p-1 bg-white rounded-full shadow-md border border-gray-200 hover:bg-gray-50 text-gray-500 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-hide">
+            {scenes.map((scene, idx) => {
+              const isActive = activeIndex === idx;
+              return (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    setActiveIndex(idx);
+                    setIsSceneMenuOpen(false);
+                  }}
+                  className={`relative flex flex-col items-start gap-1 p-3 rounded-xl border transition-all min-w-[140px] cursor-pointer ${isActive
+                    ? 'bg-blue-50 border-[#13008B] shadow-sm'
+                    : 'bg-white border-gray-200 hover:border-gray-300'
+                    }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className={`text-xs font-bold uppercase tracking-wider ${isActive ? 'text-[#13008B]' : 'text-gray-500'}`}>Scene {scene.scene_number || idx + 1}</span>
+                    {isActive && (
+                      <button
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setMenuPosition({ top: rect.bottom + 5, left: rect.left });
+                          setIsSceneMenuOpen(!isSceneMenuOpen);
+                        }}
+                        className="p-1 hover:bg-black/5 rounded-full transition-colors text-gray-500"
+                      >
+                        <MoreVertical size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className={`text-sm font-medium truncate w-full ${isActive ? 'text-gray-900' : 'text-gray-600'}`}>
+                    {scene.scene_title || 'Untitled Scene'}
+                  </div>
                 </div>
-                <div className={`text-sm font-medium truncate w-full ${isActive ? 'text-gray-900' : 'text-gray-600'}`}>
-                  {scene.scene_title || 'Untitled Scene'}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
 
-      <VideosList jobId={videosJobId || ''} onJobPhaseDone={onJobPhaseDone} onAddScene={addScene} hasScripts={values.scripts && values.scripts.length > 0} />
+      <VideosList
+        jobId={videosJobId || ''}
+        onJobPhaseDone={onJobPhaseDone}
+        onAddScene={addScene}
+        hasScripts={values.scripts && values.scripts.length > 0}
+        onViewScene={() => setIsSceneListVisible(true)}
+      />
 
       {/* Scene Menu - Fixed Position to avoid overflow clipping */}
       {isSceneMenuOpen && (
@@ -3585,6 +3601,15 @@ const BuildReelWizard = () => {
       return 1;
     }
   });
+  useEffect(() => {
+    const stored = localStorage.getItem('buildreel_current_step');
+    if (stored) {
+      setStep(parseInt(stored, 10));
+    } else {
+      setStep(1);
+    }
+  }, [paramSessionId]);
+
   const [form, setForm] = useState({ prompt: '', industry: '', scenes: [], scripts: [], userquery: null, videoDuration: '60' });
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCreatingScenes, setIsCreatingScenes] = useState(false);
@@ -3982,9 +4007,18 @@ const BuildReelWizard = () => {
         // Strict Title-Based Step Logic
         const sessionTitle = sd?.title || sd?.session_title || '';
 
-        // If title exists -> Step 2
-        // If title is null/empty -> Step 1
-        if (sessionTitle && sessionTitle.trim()) {
+        // Check localStorage for explicit step intent
+        const storedStepStr = localStorage.getItem('buildreel_current_step');
+        const storedStep = storedStepStr ? parseInt(storedStepStr, 10) : null;
+
+        // If storedStep is 1 (e.g. from Sidebar), respect it.
+        // Otherwise, if title exists, allow Step 2.
+        if (storedStep === 1) {
+          setStep(1);
+          try {
+            localStorage.setItem('buildreel_current_step', '1');
+          } catch (_) { }
+        } else if (sessionTitle && sessionTitle.trim()) {
           setStep(2);
           setSubView('editor');
           try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
@@ -4013,11 +4047,13 @@ const BuildReelWizard = () => {
           setShowStoryboardModal(true);
         } else if (sessionVideos.length > 0) {
           setShowStoryboardModal(false);
-          // Ensure we are on step 2
-          setStep(2);
-          setSubView('editor');
-          try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
-          try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
+          // Ensure we are on step 2 (unless explicitly on step 1)
+          if (storedStep !== 1) {
+            setStep(2);
+            setSubView('editor');
+            try { localStorage.setItem('buildreel_subview', 'editor'); } catch (_) { }
+            try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
+          }
         }
 
         // Extract scripts/airesponse from session data

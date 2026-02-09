@@ -8,7 +8,7 @@ import '../video-editor-js/pro/styles.utilities.css';
 import '../video-editor-js/pro/styles/base-themes/dark.css';
 import '../video-editor-js/pro/styles/base-themes/light.css';
 import '../video-editor-js/pro/styles/base-themes/rve.css';
-import { Zap, ChevronRight, X, Menu, Plus } from 'lucide-react';
+import { Zap, ChevronRight, X, Menu, Plus, MoreVertical } from 'lucide-react';
 import { FaPlus } from 'react-icons/fa';
 import AddSceneDropdown from '../BuildReel/AddSceneDropdown';
 import { SidebarMenuButton } from '../video-editor-js/pro/components/ui/sidebar';
@@ -21,6 +21,7 @@ import { uploadBlobUrl } from '../../utils/uploadAssets';
 import Loader from '../Loader';
 import { useProgressLoader } from '../../hooks/useProgressLoader';
 import { sessionImagesAdaptor } from '../video-editor-js/pro/adaptors/session-images-adaptor';
+import { useLocation } from 'react-router-dom';
 
 // FFmpeg xfade filter transition types
 // Reference: https://ffmpeg.org/ffmpeg-filters.html#xfade
@@ -62,7 +63,7 @@ const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
 const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
 
-const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts }) => {
+const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts, onViewScene }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -86,6 +87,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const addSceneButtonRef = useRef(null);
   // Aspect ratio from session/script data
   const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const location = useLocation();
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const sidebarTopActions = useMemo(() => {
     // Only show the button if onAddScene is provided (i.e., in BuildReelWizard)
@@ -8946,18 +8962,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
           <h3 className="text-lg font-semibold text-[#13008B]">Videos</h3>
         </div>
         <div className="flex items-center gap-4">
-          {/* Upload Base Video Button */}
-          <button
-            onClick={() => setShowUploadBaseVideoModal(true)}
-            disabled={items.length === 0}
-            className={`px-4 py-2 rounded-lg text-sm font-medium text-white shadow-lg transition-all ${items.length === 0
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-[#13008B] hover:bg-[#0f0069]'
-              }`}
-          >
-            Upload Base Video
-          </button>
-
           {/* Save Layers Button - only show when there are new layers */}
           {hasUnsavedLayers && (
             <button
@@ -8972,33 +8976,72 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             </button>
           )}
 
-          {/* Render Video Button */}
-          <button
-            onClick={() => {
-              // Trigger render by finding and clicking the render button inside the editor
-              // The render button is typically in the editor header/controls
-              setTimeout(() => {
-                const renderButton = document.querySelector('.rve-host button[class*="Render"]') ||
-                  document.querySelector('.rve-host button[aria-label*="render" i]') ||
-                  Array.from(document.querySelectorAll('.rve-host button')).find(btn =>
-                    btn.textContent?.toLowerCase().includes('render') &&
-                    !btn.textContent?.toLowerCase().includes('rendering')
-                  );
-                if (renderButton) {
-                  renderButton.click();
-                } else {
-                  console.warn('Render button not found in editor');
-                }
-              }, 100);
-            }}
-            disabled={items.length === 0 || showRenderModal}
-            className={`px-4 py-2 rounded-lg text-sm font-medium text-white shadow-lg transition-all ${items.length === 0 || showRenderModal
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-purple-600 hover:bg-purple-700'
-              }`}
-          >
-            {showRenderModal ? 'Rendering...' : 'Render Video'}
-          </button>
+          {/* Actions Menu */}
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            >
+              <MoreVertical className="w-6 h-6 text-gray-600" />
+            </button>
+
+            {isMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-100 z-50 overflow-hidden">
+                <button
+                  onClick={() => {
+                    setShowUploadBaseVideoModal(true);
+                    setIsMenuOpen(false);
+                  }}
+                  disabled={items.length === 0}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:text-gray-400"
+                >
+                  Upload Base Video
+                </button>
+
+                <div className="h-px bg-gray-100 my-0"></div>
+
+                <button
+                  onClick={() => {
+                    // Trigger render by finding and clicking the render button inside the editor
+                    // The render button is typically in the editor header/controls
+                    setTimeout(() => {
+                      const renderButton = document.querySelector('.rve-host button[class*="Render"]') ||
+                        document.querySelector('.rve-host button[aria-label*="render" i]') ||
+                        Array.from(document.querySelectorAll('.rve-host button')).find(btn =>
+                          btn.textContent?.toLowerCase().includes('render') &&
+                          !btn.textContent?.toLowerCase().includes('rendering')
+                        );
+                      if (renderButton) {
+                        renderButton.click();
+                      } else {
+                        console.warn('Render button not found in editor');
+                      }
+                    }, 100);
+                    setIsMenuOpen(false);
+                  }}
+                  disabled={items.length === 0 || showRenderModal}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:text-gray-400"
+                >
+                  {showRenderModal ? 'Rendering...' : 'Render Video'}
+                </button>
+
+                {location.pathname.includes('/buildreel') && (
+                  <>
+                    <div className="h-px bg-gray-100 my-0"></div>
+                    <button
+                      onClick={() => {
+                        if (onViewScene) onViewScene();
+                        setIsMenuOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700"
+                    >
+                      View Scene
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Debug info in development */}
 

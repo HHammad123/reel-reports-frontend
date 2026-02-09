@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Check, Info, Video } from "lucide-react";
+import { format, addMonths, addYears } from "date-fns";
 
 const SuccessModal = ({ isOpen, onClose, credits, planTitle }) => {
     if (!isOpen) return null;
@@ -36,54 +37,117 @@ const SubArea = () => {
     const [processingPayment, setProcessingPayment] = useState(false);
     const [successModal, setSuccessModal] = useState({ show: false, credits: 0, plan: "" });
 
+    const API_BASE = "https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net";
+
     useEffect(() => {
         const query = new URLSearchParams(location.search);
         const paymentSuccess = query.get("payment_success");
-        const creditsToAdd = query.get("credits");
-        const planTitle = query.get("plan_title");
-        const amount = query.get("amount");
 
-        if (paymentSuccess === "true" && creditsToAdd && amount && !processingPayment) {
-            setProcessingPayment(true);
-            handlePaymentSuccess(creditsToAdd, planTitle, amount);
+        console.log("SubArea: Checking payment status...", { paymentSuccess, search: location.search });
+
+        const pendingPlanStr = localStorage.getItem("pending_plan");
+
+        if (paymentSuccess && pendingPlanStr && !processingPayment) {
+            console.log("SubArea: Payment success detected, processing...");
+            try {
+                const pendingPlan = JSON.parse(pendingPlanStr);
+                setProcessingPayment(true);
+                handlePaymentSuccess(pendingPlan);
+            } catch (e) {
+                console.error("Error parsing pending plan", e);
+            }
+        } else if (paymentSuccess && !pendingPlanStr) {
+            console.warn("SubArea: Payment success param found but no pending plan in localStorage.");
         }
     }, [location]);
 
-    const handlePaymentSuccess = async (credits, planTitle, amount) => {
+    const handlePaymentSuccess = async (plan) => {
+        console.log("SubArea: Starting handlePaymentSuccess with plan:", plan);
         try {
-            const user = JSON.parse(localStorage.getItem("user") || "{}");
+            const userStr = localStorage.getItem("user");
+            const user = userStr ? JSON.parse(userStr) : {};
             const token = localStorage.getItem("token");
             const userId = user.id;
+
+            console.log("SubArea: User details:", { userId, hasToken: !!token });
 
             if (!userId) {
                 alert("User not found. Please log in again.");
                 return;
             }
 
-            // Call API to add credits
-            const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/admin/api/admin/users/${userId}/credits/add`, {
+            // 1. Add Credits
+            console.log("SubArea: Adding credits...");
+            const creditsResponse = await fetch(`${API_BASE}/v1/admin/api/admin/users/${userId}/credits/add`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`, // Include token if needed
+                    "Authorization": `Bearer ${token}`,
                 },
                 body: JSON.stringify({
-                    amount_added: amount.toString(),
-                    note: `Purchase - ${planTitle || "Credits"}`,
+                    amount_added: plan.credits.toString(),
+                    note: plan.title,
                 }),
             });
 
-            if (response.ok) {
-                // Show success modal instead of alert
-                setSuccessModal({ show: true, credits, plan: planTitle });
-            } else {
-                const errorData = await response.json().catch(() => ({}));
-                console.error("Failed to add credits:", errorData);
-                alert("Payment successful, but failed to add credits automatically. Please contact support.");
+            console.log("SubArea: Credits response status:", creditsResponse.status);
+
+            if (!creditsResponse.ok) {
+                const errText = await creditsResponse.text();
+                console.error("SubArea: Failed to add credits response:", errText);
+                throw new Error(`Failed to add credits: ${creditsResponse.status}`);
             }
+
+            // 2. Update Subscription
+            console.log("SubArea: Updating subscription...");
+            const isTopUp = plan.type === "topup";
+            const today = new Date();
+            const expiryDate = isTopUp ? addYears(today, 1) : addMonths(today, 1);
+
+            const subscriptionBody = {
+                subscription_details: {
+                    status: "active",
+                    plan: plan.price.toString(),
+                    renewal_date: format(today, "yyyy-MM-dd"),
+                    expiry_date: format(expiryDate, "yyyy-MM-dd"),
+                    subscription_id: `sub_${Date.now()}`,
+                    payment_method: "credit_card",
+                    billing_cycle: "monthly",
+                    add_ons: isTopUp ? [
+                        {
+                            name: plan.price.toString(),
+                            price: parseFloat(plan.price),
+                            pack: `${plan.credits}_credits`
+                        }
+                    ] : []
+                }
+            };
+
+            const subResponse = await fetch(`${API_BASE}/v1/admin/api/admin/users/${userId}/subscription`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                },
+                body: JSON.stringify(subscriptionBody),
+            });
+
+            console.log("SubArea: Subscription response status:", subResponse.status);
+
+            if (!subResponse.ok) {
+                const errText = await subResponse.text();
+                console.error("SubArea: Failed to update subscription response:", errText);
+                throw new Error(`Failed to update subscription: ${subResponse.status}`);
+            }
+
+            // Success
+            console.log("SubArea: Payment processing complete. Showing success modal.");
+            localStorage.removeItem("pending_plan");
+            setSuccessModal({ show: true, credits: plan.credits, plan: plan.title });
+
         } catch (error) {
-            console.error("Error adding credits:", error);
-            alert("Error adding credits: " + error.message);
+            console.error("Error processing payment success:", error);
+            alert("Payment successful, but failed to update account. Please contact support.");
         } finally {
             setProcessingPayment(false);
         }
@@ -94,48 +158,14 @@ const SubArea = () => {
         navigate("/subscription", { replace: true });
     };
 
-    const handleSelectPlan = async (plan) => {
-        try {
-            const PROD_API_BASE = "https://app.reelreports.ai"; // ✅ change this
-            const apiURL =
-                window.location.hostname === "localhost"
-                    ? "http://localhost:3000/api/create-checkout-session"
-                    : `${PROD_API_BASE}/api/create-checkout-session`;
-
-            const response = await fetch(apiURL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    planTitle: plan.title,
-                    mode: "payment",
-                    successUrl: `${window.location.origin}/subscription?payment_success=true&credits=${plan.credits}&plan_title=${encodeURIComponent(plan.title)}&amount=${plan.price}`,
-                    cancelUrl: `${window.location.origin}/subscription`,
-                }),
-            });
-
-            // ✅ safer parsing
-            const text = await response.text();
-            let data;
-            try {
-                data = JSON.parse(text);
-            } catch {
-                throw new Error("API did not return JSON. Got: " + text.slice(0, 120));
-            }
-
-            if (!response.ok) {
-                throw new Error(data?.error?.message || "Failed to create checkout session");
-            }
-
-            if (data?.url) {
-                window.location.href = data.url;
-                return;
-            }
-
-            throw new Error("No checkout URL returned by backend");
-        } catch (error) {
-            console.error("Stripe redirect error:", error);
-            alert("Could not open Stripe Checkout: " + error.message);
+    const handleSelectPlan = (plan) => {
+        if (plan?.url) {
+            // Save plan details for post-payment processing
+            localStorage.setItem("pending_plan", JSON.stringify(plan));
+            window.location.href = plan.url;
+            return;
         }
+        alert("No payment link available for this plan.");
     };
 
 
@@ -220,6 +250,8 @@ const SubArea = () => {
             price: 30,
             credits: 1250,
             features: ["Access to basic templates", "Standard generation speed", "Email support"],
+            url: "https://buy.stripe.com/test_28EeV62jN0dCdkNgQfa3u00",
+            type: "subscription",
         },
         {
             title: "Professional",
@@ -227,12 +259,16 @@ const SubArea = () => {
             credits: 3750,
             features: ["Access to all templates", "Priority generation", "Priority support", "Commercial usage rights"],
             isPopular: true,
+            url: "https://buy.stripe.com/test_3cIeV6f6z6C02G96bBa3u01",
+            type: "subscription",
         },
         {
             title: "Business",
             price: 100,
             credits: 5250,
             features: ["All Professional features", "Highest priority queue", "Dedicated account manager", "API access"],
+            url: "https://buy.stripe.com/test_6oUdR2e2vaSg94x43ta3u02",
+            type: "subscription",
         },
     ];
 
@@ -242,12 +278,16 @@ const SubArea = () => {
             price: 5,
             credits: 200,
             features: ["Great for quick edits", "Valid for 1 year"],
+            url: "https://buy.stripe.com/test_14A00cf6z1hG3Kd9nNa3u05",
+            type: "topup",
         },
         {
             title: "Medium Pack",
             price: 10,
             credits: 400,
             features: ["Best for short videos", "Valid for 1 year"],
+            url: "https://buy.stripe.com/test_eVq5kw2jNbWk1C59nNa3u04",
+            type: "topup",
         },
         {
             title: "Large Pack",
@@ -255,6 +295,8 @@ const SubArea = () => {
             credits: 850,
             features: ["Best value top-up", "Valid for 1 year"],
             isPopular: true,
+            url: "https://buy.stripe.com/test_4gMeV6aQj0dC6WpgQfa3u03",
+            type: "topup",
         },
     ];
 

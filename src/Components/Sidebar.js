@@ -374,6 +374,33 @@ const Sidebar = () => {
       const newId = data?.session?.session_id || data?.session_id || data?.id;
       if (!newId) throw new Error('Session ID missing in response');
       try { localStorage.setItem('session_id', newId); } catch (_) { /* noop */ }
+
+      // Call user-session-data API to ensure fresh state and check title
+      try {
+        const sessionResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userToken, session_id: newId })
+        });
+        const sessionText = await sessionResp.text();
+        let sessionData; try { sessionData = JSON.parse(sessionText); } catch (_) { sessionData = sessionText; }
+
+        const sd = sessionData?.session_data || sessionData?.session || {};
+        const sessionTitle = sd?.title || sd?.session_title || '';
+
+        // If title is missing (expected for new session), force step 1
+        if (!sessionTitle || !sessionTitle.trim()) {
+          try { localStorage.setItem('buildreel_current_step', '1'); } catch (_) { }
+        } else {
+          // If somehow it has a title, allow step 2 (though unlikely for new session)
+          try { localStorage.setItem('buildreel_current_step', '2'); } catch (_) { }
+        }
+      } catch (sessionError) {
+        console.error('Failed to fetch session data for new session:', sessionError);
+        // Fallback to step 1 for new session
+        try { localStorage.setItem('buildreel_current_step', '1'); } catch (_) { }
+      }
+
       try {
         navigate(`/buildreel/${newId}`);
       } catch (navError) {
@@ -614,21 +641,17 @@ const Sidebar = () => {
 
                                     // If videoType is 'custom', navigate to buildreel
                                     if (videoType === 'custom') {
-                                      // Check title for step determination
-                                      // User requirement: if title is null -> step 1, if title exists -> step 2
                                       const sessionTitle = sd?.title || sd?.session_title || '';
 
-                                      // Determine step and subView
+                                      // Default to step 1
                                       let targetStep = 1;
                                       let targetSubView = 'editor';
 
+                                      // If title exists, we can go to step 2
                                       if (sessionTitle && sessionTitle.trim()) {
                                         targetStep = 2;
-                                        // Default subview for step 2
                                         targetSubView = 'editor';
 
-                                        // Optional: keep existing logic for subview refinement if needed, 
-                                        // but ensure step is 2 if title exists.
                                         const videos = Array.isArray(sd?.videos) ? sd.videos : [];
                                         const images = Array.isArray(sd?.images) ? sd.images : [];
 
@@ -638,6 +661,7 @@ const Sidebar = () => {
                                           targetSubView = 'images';
                                         }
                                       } else {
+                                        // If title is missing (new session), force step 1
                                         targetStep = 1;
                                         targetSubView = 'editor';
                                       }
