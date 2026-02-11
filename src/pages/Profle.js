@@ -7,6 +7,7 @@ import ProfileContent from '../Components/Profile/ProfileContent';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
+import loadingGif from '../asset/loadingv2.gif';
 
 const API_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1';
 
@@ -100,11 +101,9 @@ const Profile = () => {
         <div className='h-[77vh] my-2 flex items-start justify-start'>
           <ProfileSidebar />
           {loading ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#13008B]/30 border-t-[#13008B] mx-auto mb-4"></div>
-                <p className="text-gray-600">Loading profile...</p>
-              </div>
+            <div className="flex-1 flex flex-col items-center justify-center h-[77vh] bg-white">
+              <img src={loadingGif} alt="Loading..." className="w-16 h-16" />
+              <p className="text-[#13008B] mt-2 animate-pulse font-medium">Loading Profile...</p>
             </div>
           ) : error ? (
             <div className="flex-1 flex items-center justify-center">

@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
-const AUTH_BASE = 'https://auth-js-g3hnh7gbc4c5fje4.uaenorth-01.azurewebsites.net';
+const AUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
 
 // Helper function to save auth data to localStorage
 const saveAuthToStorage = (user, token) => {
@@ -40,7 +40,7 @@ const getAuthFromStorage = () => {
     const user = localStorage.getItem('user');
     const token = localStorage.getItem('token');
     const isAuthenticated = localStorage.getItem('isAuthenticated');
-    
+
     if (user && token && isAuthenticated === 'true') {
       return {
         user: JSON.parse(user),
@@ -60,8 +60,8 @@ export const loginUser = createAsyncThunk(
   'user/login',
   async ({ email, password }, { rejectWithValue }) => {
     try {
-      const response = await axios.post(`${AUTH_BASE}/api/auth/login`, 
-        { email, password }, 
+      const response = await axios.post(`${AUTH_BASE}/v1/auth/login`,
+        { email, password },
         {
           headers: {
             'Content-Type': 'application/json',
@@ -69,23 +69,33 @@ export const loginUser = createAsyncThunk(
           }
         }
       );
-      
-      if (response.data.message === 'Login Successful') {
-        const authData = {
-          user: response.data.user,
-          token: response.data.user.id
+
+      const data = response.data;
+      if (data.access_token) {
+        const user = {
+          id: data.user_id,
+          email: data.email,
+          display_name: data.display_name,
+          folder_url: data.folder_url,
+          role: data.role,
+          status: data.status
         };
-        
+        const authData = {
+          user,
+          token: data.user_id
+        };
+
         // Save to localStorage
         saveAuthToStorage(authData.user, authData.token);
-        
+        try { localStorage.setItem('auth_jwt', data.access_token); } catch (_) { }
+
         return authData;
       } else {
-        return rejectWithValue(response.data.message || 'Login failed');
+        return rejectWithValue('Login failed');
       }
     } catch (error) {
-      if (error.response?.data?.message) {
-        return rejectWithValue(error.response.data.message);
+      if (error.response?.data?.detail) {
+        return rejectWithValue(error.response.data.detail);
       } else if (error.response?.status === 401) {
         return rejectWithValue('Invalid credentials. Please check your email and password.');
       } else {
@@ -98,15 +108,14 @@ export const loginUser = createAsyncThunk(
 // Async thunk for signup
 export const signupUser = createAsyncThunk(
   'user/signup',
-  async ({ name, email, password, type }, { rejectWithValue }) => {
+  async ({ name, email, password }, { rejectWithValue }) => {
     try {
-      const response = await axios.post(`${AUTH_BASE}/api/auth/signup`, 
-        { 
-          display_name: name, 
-          email, 
-          password, 
-          type 
-        }, 
+      const response = await axios.post(`${AUTH_BASE}/v1/auth/register`,
+        {
+          display_name: name,
+          email,
+          password
+        },
         {
           headers: {
             'Content-Type': 'application/json',
@@ -114,19 +123,35 @@ export const signupUser = createAsyncThunk(
           }
         }
       );
-      
-      if (response.data.message === 'User Successfully Registered') {
-        return response.data;
+
+      const data = response.data;
+      if (data.access_token) {
+        const user = {
+          id: data.user_id,
+          email: data.email,
+          display_name: data.display_name,
+          folder_url: data.folder_url,
+          role: data.role,
+          status: data.status
+        };
+        const authData = {
+          user,
+          token: data.user_id
+        };
+
+        // Save to localStorage
+        saveAuthToStorage(authData.user, authData.token);
+        try { localStorage.setItem('auth_jwt', data.access_token); } catch (_) { }
+
+        return authData;
       } else {
-        return rejectWithValue(response.data.message || 'Signup failed');
+        return rejectWithValue('Signup failed');
       }
     } catch (error) {
-      if (error.response?.data?.message) {
-        return rejectWithValue(error.response.data.message);
+      if (error.response?.data?.detail) {
+        return rejectWithValue(error.response.data.detail);
       } else if (error.response?.status === 400) {
-        return rejectWithValue('Invalid data provided. Please check your information.');
-      } else if (error.response?.status === 409) {
-        return rejectWithValue('An account with this email already exists.');
+        return rejectWithValue(error.response.data.detail || 'Invalid data provided. Please check your information.');
       } else {
         return rejectWithValue('An error occurred during signup. Please try again.');
       }
@@ -140,9 +165,9 @@ export const handleOAuthCallback = createAsyncThunk(
   async ({ code, state, provider }, { rejectWithValue }) => {
     try {
       const OAUTH_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
-      
+
       console.log(`Processing ${provider} OAuth callback with code:`, code);
-      
+
       // Call the provider-specific GET endpoint with query params
       const response = await axios.get(`${OAUTH_BASE}/v1/auth/callback/${provider}`, {
         params: {
@@ -153,9 +178,9 @@ export const handleOAuthCallback = createAsyncThunk(
           'Accept': 'application/json'
         }
       });
-      
+
       console.log('OAuth callback response:', response.data);
-      
+
       if (response.data && response.data.access_token) {
         const authData = {
           user: {
@@ -165,10 +190,10 @@ export const handleOAuthCallback = createAsyncThunk(
           },
           token: response.data.access_token
         };
-        
+
         // Save to localStorage
         saveAuthToStorage(authData.user, authData.token);
-        
+
         return authData;
       } else {
         return rejectWithValue('No token received from OAuth callback');
@@ -198,10 +223,10 @@ export const logoutUser = createAsyncThunk(
         //   headers: { 'Authorization': `Bearer ${token}` }
         // });
       }
-      
+
       // Clear from localStorage
       clearAuthFromStorage();
-      
+
       return true;
     } catch (error) {
       return rejectWithValue('Logout failed');
@@ -218,11 +243,11 @@ export const checkAuthStatus = createAsyncThunk(
       if (!token) {
         return rejectWithValue('No token found');
       }
-      
+
       const response = await axios.get('http://localhost:8000/api/auth/status', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      
+
       if (response.data.authenticated) {
         return response.data.user;
       } else {
@@ -246,7 +271,7 @@ const getInitialState = () => {
       error: null
     };
   }
-  
+
   return {
     user: null,
     token: null,
@@ -268,7 +293,7 @@ const userSlice = createSlice({
       state.token = action.payload.token;
       state.isAuthenticated = true;
       state.error = null;
-      
+
       // Save to localStorage
       saveAuthToStorage(action.payload.user, action.payload.token);
     },
@@ -277,7 +302,7 @@ const userSlice = createSlice({
       state.token = null;
       state.isAuthenticated = false;
       state.error = null;
-      
+
       // Clear from localStorage
       clearAuthFromStorage();
     },
@@ -318,6 +343,9 @@ const userSlice = createSlice({
       })
       .addCase(signupUser.fulfilled, (state, action) => {
         state.loading = false;
+        state.user = action.payload.user;
+        state.token = action.payload.token;
+        state.isAuthenticated = true;
         state.error = null;
       })
       .addCase(signupUser.rejected, (state, action) => {

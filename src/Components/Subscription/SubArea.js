@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Check, Info, Video } from "lucide-react";
+import { Check, Video } from "lucide-react";
 import { format, addMonths, addYears } from "date-fns";
 
 const SuccessModal = ({ isOpen, onClose, credits, planTitle }) => {
@@ -422,46 +422,6 @@ const SubArea = () => {
                         )}
                     </div>
 
-                    <div className="bg-gray-50 rounded-2xl p-8 border border-gray-100">
-                        <div className="flex items-center gap-3 mb-6">
-                            <Info className="text-[#13008B]" />
-                            <h3 className="text-xl font-bold text-gray-900">Credit Usage Guide</h3>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                            <div className="bg-white p-4 rounded-xl border border-gray-200">
-                                <div className="text-xs text-gray-500 uppercase font-semibold mb-1">
-                                    Exchange Rate
-                                </div>
-                                <div className="text-lg font-bold text-gray-900">1 Credit ≈ $ 0.01</div>
-                                <div className="text-xs text-gray-400 mt-1">Base value</div>
-                            </div>
-
-                            <div className="bg-white p-4 rounded-xl border border-gray-200">
-                                <div className="text-xs text-gray-500 uppercase font-semibold mb-1">
-                                    Standard Video
-                                </div>
-                                <div className="text-lg font-bold text-gray-900">225 Credits</div>
-                                <div className="text-xs text-gray-400 mt-1">Per 1 minute of video</div>
-                            </div>
-
-                            <div className="bg-white p-4 rounded-xl border border-gray-200">
-                                <div className="text-xs text-gray-500 uppercase font-semibold mb-1">
-                                    Veo3 Generation
-                                </div>
-                                <div className="text-lg font-bold text-gray-900">30 Credits</div>
-                                <div className="text-xs text-gray-400 mt-1">Per 8 seconds</div>
-                            </div>
-
-                            <div className="bg-white p-4 rounded-xl border border-gray-200">
-                                <div className="text-xs text-gray-500 uppercase font-semibold mb-1">
-                                    Hailou Model
-                                </div>
-                                <div className="text-lg font-bold text-gray-900">45 Credits</div>
-                                <div className="text-xs text-gray-400 mt-1">Per generation</div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </>

@@ -51,6 +51,8 @@ const ManageCredits = () => {
   const [selectedUserIds, setSelectedUserIds] = useState(new Set())
   const [isAllSelected, setIsAllSelected] = useState(false)
   const [updatingPricing, setUpdatingPricing] = useState(false)
+  const [fetchingPricing, setFetchingPricing] = useState(false)
+  const [pricingFetchUser, setPricingFetchUser] = useState(null)
 
   const toggleSelectAll = () => {
     setIsAllSelected(!isAllSelected)
@@ -74,6 +76,53 @@ const ManageCredits = () => {
       ...prev,
       [name]: parseFloat(value) || 0
     }))
+  }
+
+  const fetchUserPricing = async (userId) => {
+    try {
+      setFetchingPricing(true)
+      const token = localStorage.getItem('token') || ''
+      const response = await fetch(`${ADMIN_BASE}/v1/admin/api/admin/users/${encodeURIComponent(userId)}/pricing`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      })
+      if (!response.ok) throw new Error('Failed to fetch pricing')
+      const data = await response.json()
+      if (data.pricing) {
+        setPricingForm({
+          veo3_per_video: data.pricing.veo3_per_video ?? 30,
+          hailuo2_per_video: data.pricing.hailuo2_per_video ?? 45,
+          nano_banana_per_image: data.pricing.nano_banana_per_image ?? 7,
+          chart_animation_per_scene: data.pricing.chart_animation_per_scene ?? 0,
+          audio_per_generation: data.pricing.audio_per_generation ?? 0
+        })
+        setPricingFetchUser(data.email || userId)
+      }
+    } catch (err) {
+      console.error('Failed to fetch user pricing:', err)
+    } finally {
+      setFetchingPricing(false)
+    }
+  }
+
+  const openPricingModal = () => {
+    // If exactly one user selected, fetch their current pricing to pre-fill
+    if (!isAllSelected && selectedUserIds.size === 1) {
+      const userId = Array.from(selectedUserIds)[0]
+      fetchUserPricing(userId)
+    } else {
+      // Reset to defaults for bulk/all updates
+      setPricingForm({
+        veo3_per_video: 30,
+        hailuo2_per_video: 45,
+        nano_banana_per_image: 7,
+        chart_animation_per_scene: 0,
+        audio_per_generation: 0
+      })
+      setPricingFetchUser(null)
+    }
+    setIsPricingModalOpen(true)
   }
 
   const handleUpdatePricingSubmit = async () => {
@@ -256,7 +305,7 @@ const ManageCredits = () => {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsPricingModalOpen(true)}
+                  onClick={openPricingModal}
                   className="inline-flex items-center justify-center rounded-lg border bg-[#13008B] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#13008B]/90"
                 >
                   Update Pricing
@@ -338,6 +387,7 @@ const ManageCredits = () => {
                                 Amount Spent
                               </div>
                             </th>
+                            <th className="px-4 py-3 font-semibold whitespace-nowrap text-right">Pricing</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#F0EDFF]">
@@ -378,6 +428,20 @@ const ManageCredits = () => {
                                 </td>
                                 <td className="px-4 py-3 text-gray-900 font-medium">
                                   ${credits.amount_spent?.toLocaleString() || 0}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedUserIds(new Set([userId]))
+                                      setIsAllSelected(false)
+                                      fetchUserPricing(userId)
+                                      setIsPricingModalOpen(true)
+                                    }}
+                                    className="inline-flex items-center rounded-lg border border-[#D8D3FF] px-3 py-1.5 text-xs font-semibold text-[#13008B] transition hover:bg-[#13008B]/10"
+                                  >
+                                    View / Edit
+                                  </button>
                                 </td>
                               </tr>
                             )
@@ -456,12 +520,17 @@ const ManageCredits = () => {
                 <img src={loadingGif} alt="Updating..." className="w-20 h-20 mb-4" />
                 <p className="text-lg font-semibold text-[#13008B]">Updating Price...</p>
               </div>
+            ) : fetchingPricing ? (
+              <div className="flex flex-col items-center justify-center py-8">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#13008B]/30 border-t-[#13008B] mb-4"></div>
+                <p className="text-sm font-medium text-[#13008B]">Loading current pricing...</p>
+              </div>
             ) : (
               <>
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-xl font-bold text-[#13008B]">Update Pricing</h2>
                   <button
-                    onClick={() => setIsPricingModalOpen(false)}
+                    onClick={() => { setIsPricingModalOpen(false); setPricingFetchUser(null) }}
                     className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                   >
                     <X className="h-5 w-5" />
@@ -469,9 +538,11 @@ const ManageCredits = () => {
                 </div>
 
                 <p className="mb-4 text-sm text-gray-600">
-                  {isAllSelected
-                    ? "Updating pricing for ALL users."
-                    : `Updating pricing for ${selectedUserIds.size} selected user${selectedUserIds.size !== 1 ? 's' : ''}.`
+                  {pricingFetchUser
+                    ? <>Current pricing for <span className="font-semibold text-[#13008B]">{pricingFetchUser}</span>. Edit and save.</>
+                    : isAllSelected
+                      ? "Updating pricing for ALL users."
+                      : `Updating pricing for ${selectedUserIds.size} selected user${selectedUserIds.size !== 1 ? 's' : ''}.`
                   }
                 </p>
 
@@ -500,7 +571,7 @@ const ManageCredits = () => {
 
                 <div className="mt-6 flex gap-3">
                   <button
-                    onClick={() => setIsPricingModalOpen(false)}
+                    onClick={() => { setIsPricingModalOpen(false); setPricingFetchUser(null) }}
                     className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                   >
                     Cancel

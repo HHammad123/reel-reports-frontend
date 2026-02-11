@@ -17,7 +17,7 @@ const Login = () => {
     email: '',
     password: ''
   });
-  
+
   const navigate = useNavigate();
   const isAuthenticated = useSelector(selectIsAuthenticated);
 
@@ -80,27 +80,25 @@ const Login = () => {
         <div className="flex gap-3 mb-8">
           <button
             onClick={() => setActiveTab('login')}
-            className={`flex-1 py-3 px-4 text-[0.8rem] rounded-md font-medium transition-colors ${
-              activeTab === 'login'
+            className={`flex-1 py-3 px-4 text-[0.8rem] rounded-md font-medium transition-colors ${activeTab === 'login'
                 ? 'bg-[#5A49FF] text-white'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
+              }`}
           >
             LOGIN
           </button>
           <button
             onClick={() => setActiveTab('create')}
-            className={`flex-1 py-3 px-4 text-[0.8rem] rounded-md font-medium transition-colors ${
-              activeTab === 'create'
+            className={`flex-1 py-3 px-4 text-[0.8rem] rounded-md font-medium transition-colors ${activeTab === 'create'
                 ? 'bg-[#5A49FF] text-white'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
+              }`}
           >
             CREATE AN ACCOUNT
           </button>
         </div>
 
-        {activeTab === 'login' && 
+        {activeTab === 'login' &&
           <LoginForm activeTab={activeTab} setActiveTab={setActiveTab} />
         }
 

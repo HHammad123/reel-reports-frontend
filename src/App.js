@@ -12,7 +12,6 @@ import Main from './pages/Main';
 import Profile from './pages/Profle';
 import Dashboard from './pages/Dashboard';
 import BrandGuidelines from './pages/BrandGuidelines';
-import Scenesettings from './pages/Scenesettings';
 import Subscription from './pages/Subscription';
 import Result from './pages/Result';
 import Details from './pages/Details';
@@ -37,7 +36,10 @@ import VideoEditorPage from './pages/VideoEditorPage';
 import FreeTrialOver from './pages/FreeTrialOver';
 import ManageCredits from './pages/ManageCredits';
 import AddCredits from './pages/AddCredits';
+import TransactionHistory from './pages/TransactionHistory';
+import UserTransactions from './pages/UserTransactions';
 import Success from './pages/Success';
+import Cancel from './pages/Cancel';
 
 
 function App() {
@@ -197,11 +199,6 @@ function App() {
               <BuildReel />
             </ProtectedRoute>
           } />
-          <Route path="/scenesettings" element={
-            <ProtectedRoute>
-              <Scenesettings />
-            </ProtectedRoute>
-          } />
           <Route path="/videoEditor" element={
             <ProtectedRoute>
               <VideoEditor />
@@ -215,6 +212,11 @@ function App() {
           <Route path="/success" element={
             <ProtectedRoute>
               <Success />
+            </ProtectedRoute>
+          } />
+          <Route path="/cancel" element={
+            <ProtectedRoute>
+              <Cancel />
             </ProtectedRoute>
           } />
           <Route path="/result" element={
@@ -285,6 +287,16 @@ function App() {
           <Route path="/admin/addcredits" element={
             <ProtectedRoute>
               <AddCredits />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/transactions" element={
+            <ProtectedRoute>
+              <TransactionHistory />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/transactions/:userId" element={
+            <ProtectedRoute>
+              <UserTransactions />
             </ProtectedRoute>
           } />
         </Routes>

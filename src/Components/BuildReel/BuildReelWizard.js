@@ -1607,7 +1607,7 @@ const SceneScriptModal = ({
     const airesponse = scripts[0].airesponse || [];
     if (airesponse.length === 0) return true;
     if (activeSceneIndex === undefined || activeSceneIndex === null) return true;
-    return activeSceneIndex === airesponse.length - 1;
+    return activeSceneIndex >= airesponse.length - 1;
   }, [sessionData, activeSceneIndex]);
 
   const presetAvatars = useMemo(
@@ -2020,10 +2020,6 @@ const SceneScriptModal = ({
   const [isSaving, setIsSaving] = useState(false);
 
   const autoSaveScript = async (currentScript) => {
-    if (!isLatestScene) {
-      console.log('Auto-save skipped: Not the latest scene');
-      return;
-    }
     try {
       let freshSession = sessionData;
       let freshUser = user;
@@ -2254,6 +2250,7 @@ const SceneScriptModal = ({
   // Initialize local script
   useEffect(() => {
     if (isOpen && scriptContent) {
+      setPromptText('');
       let initialScript = typeof scriptContent === 'string' ? {} : JSON.parse(JSON.stringify(scriptContent));
       if (initialScript.chart_data) {
         initialScript.chart_data = ensureSeriesInfo(initialScript.chart_data, initialScript.chart_type);
@@ -2651,7 +2648,13 @@ const SceneScriptModal = ({
             <div className="flex items-center gap-2 mt-1">
               <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-[#13008B] text-white">
                 <Video className="w-3 h-3" />
-                {(localScript.model || 'Unknown Type').toString().toUpperCase()}
+                {(() => {
+                  const m = (localScript.model || 'Unknown Type').toString().toUpperCase();
+                  if (m.includes('SORA')) return 'Infographic Scene';
+                  if (m.includes('VEO')) return 'Avatar Scene';
+                  if (m.includes('PLOTLY')) return 'Financial Scene';
+                  return m;
+                })()}
               </span>
               <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-green-600 text-white">
                 Scene {localScript.scene_number || '#'}
@@ -2704,35 +2707,37 @@ const SceneScriptModal = ({
               {narrationError && <p className="text-xs text-red-500 mt-1">{narrationError}</p>}
             </div>
 
-            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
-              <div className="flex flex-col gap-2">
-                <textarea
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
-                  rows={2}
-                  className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
-                />
-                <button
-                  onClick={handleGenerateFields}
-                  disabled={isGeneratingFields}
-                  className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isGeneratingFields ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={16} />
-                      Generate Fields
-                    </>
-                  )}
-                </button>
+            {isLatestScene && (
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <label className="block text-sm font-medium text-gray-700 mb-1">AI Field Generator</label>
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    value={promptText}
+                    onChange={(e) => setPromptText(e.target.value)}
+                    placeholder="Enter prompt (e.g., Tech CEO in modern startup announcing AI breakthrough)"
+                    rows={2}
+                    className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent"
+                  />
+                  <button
+                    onClick={handleGenerateFields}
+                    disabled={isGeneratingFields}
+                    className="self-end px-4 py-2 bg-[#13008B] text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isGeneratingFields ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={16} />
+                        Generate Fields
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Gen Image Checkbox */}
             <div className="flex items-center gap-2">
@@ -3349,15 +3354,13 @@ const SceneScriptModal = ({
             </button>
           )}
           {isLatestScene && (
-            <>
-              <button onClick={handleGenerateStoryboard} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
-                Generate Storyboard
-              </button>
-              <button onClick={handleSave} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
-                Save
-              </button>
-            </>
+            <button onClick={handleGenerateStoryboard} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
+              Generate Storyboard
+            </button>
           )}
+          <button onClick={handleSave} className="px-4 py-2 bg-[#13008B] text-white rounded-lg hover:bg-blue-800 transition-colors font-medium">
+            Save
+          </button>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import React from 'react'
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars, FaFileAlt, FaWallet, FaPlusCircle, FaTicketAlt } from "react-icons/fa";
+import { FaImage, FaPlay, FaThLarge, FaUsers, FaUserPlus, FaBars, FaFileAlt, FaWallet, FaPlusCircle, FaTicketAlt, FaList } from "react-icons/fa";
 import { IoMdLogOut } from "react-icons/io";
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { logoutUser, selectUser, selectIsAuthenticated } from '../redux/slices/userSlice';
@@ -534,6 +534,13 @@ const Sidebar = () => {
                   >
                     <FaTicketAlt className="h-5 w-5" />
                     <span>Add Credits</span>
+                  </button>
+                  <button
+                    onClick={() => navigate('/admin/transactions')}
+                    className={pathname.startsWith('/admin/transactions') ? activeClass : inactiveClass}
+                  >
+                    <FaList className="h-5 w-5" />
+                    <span>Transactions</span>
                   </button>
                 </div>
               )}

@@ -4,7 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import Sidebar from '../Components/Sidebar'
 import Topbar from '../Components/Topbar'
 import { selectUser } from '../redux/slices/userSlice'
-import { Wallet, TrendingDown, Coins, CreditCard, X, PlusCircle, Check } from 'lucide-react'
+import { Wallet, TrendingDown, Coins, CreditCard, X, PlusCircle, Check, Search } from 'lucide-react'
 import loadingGif from '../asset/loadingv2.gif'
 
 const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
@@ -73,6 +73,7 @@ const AddCredits = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Add Credits & Selection State
   const [isAddCreditsModalOpen, setIsAddCreditsModalOpen] = useState(false)
@@ -222,17 +223,28 @@ const AddCredits = () => {
     return () => clearTimeout(timer)
   }, [])
 
+  // Search filter
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery) return users
+    const lowerQuery = searchQuery.toLowerCase()
+    return users.filter(user =>
+      (user?.email || '').toLowerCase().includes(lowerQuery) ||
+      (user?.display_name || user?.name || '').toLowerCase().includes(lowerQuery) ||
+      (user?.id || user?._id || user?.user_id || '').toString().toLowerCase().includes(lowerQuery)
+    )
+  }, [users, searchQuery])
+
   // Pagination calculations
   const itemsPerPage = 50
-  const totalPages = Math.ceil(users.length / itemsPerPage)
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedUsers = users.slice(startIndex, endIndex)
+  const paginatedUsers = filteredUsers.slice(startIndex, endIndex)
 
-  // Reset to page 1 when users change
+  // Reset to page 1 when users or search query change
   useEffect(() => {
     setCurrentPage(1)
-  }, [users.length])
+  }, [users.length, searchQuery])
 
   const handlePageChange = (newPage) => {
     if (newPage >= 1 && newPage <= totalPages) {
@@ -250,7 +262,10 @@ const AddCredits = () => {
         <div className="flex-1 mx-[2rem] mt-[1rem] flex flex-col overflow-hidden min-h-0 min-w-0">
           <Topbar />
           <div className="flex-1 my-2 overflow-hidden min-h-0 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#13008B]/30 border-t-[#13008B]"></div>
+            <div className="flex flex-col items-center justify-center">
+              <img src={loadingGif} alt="Loading..." className="h-16 w-16" />
+              <p className="mt-4 text-[#13008B] font-medium animate-pulse">Checking access...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -300,6 +315,16 @@ const AddCredits = () => {
                 </p>
               </div>
               <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9 pr-4 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#13008B] w-64"
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsAddCreditsModalOpen(true)}
@@ -320,7 +345,10 @@ const AddCredits = () => {
             <div className="mt-6 flex-1 overflow-scroll">
               {loading ? (
                 <div className="flex h-full items-center justify-center">
-                  <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#13008B]/30 border-t-[#13008B]"></div>
+                  <div className="flex flex-col items-center justify-center">
+                    <img src={loadingGif} alt="Loading..." className="h-16 w-16" />
+                    <p className="mt-4 text-[#13008B] font-medium animate-pulse">Loading users...</p>
+                  </div>
                 </div>
               ) : error ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -435,54 +463,31 @@ const AddCredits = () => {
 
                   {/* Pagination Controls */}
                   {totalPages > 1 && (
-                    <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handlePageChange(currentPage - 1)}
-                          disabled={currentPage === 1}
-                          className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Previous
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handlePageChange(currentPage + 1)}
-                          disabled={currentPage === totalPages}
-                          className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Next
-                        </button>
+                    <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
+                      <div className="text-sm text-gray-500">
+                        Page {currentPage} of {totalPages}
                       </div>
-
-                      <div className="flex items-center gap-2">
-                        {/* Page numbers */}
-                        {Array.from({ length: totalPages }, (_, i) => i + 1)
-                          .filter((page) => {
-                            // Show first page, last page, current page, and pages around current
-                            return (
-                              page === 1 ||
-                              page === totalPages ||
-                              (page >= currentPage - 2 && page <= currentPage + 2)
-                            )
-                          })
-                          .map((page, i, arr) => (
-                            <React.Fragment key={page}>
-                              {i > 0 && arr[i - 1] !== page - 1 && (
-                                <span className="px-2 text-gray-400">...</span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => handlePageChange(page)}
-                                className={`inline-flex h-8 w-8 items-center justify-center rounded-lg text-sm font-medium transition ${currentPage === page
-                                  ? 'bg-[#13008B] text-white'
-                                  : 'text-gray-700 hover:bg-gray-100'
-                                  }`}
-                              >
-                                {page}
-                              </button>
-                            </React.Fragment>
-                          ))}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                          disabled={currentPage === 1}
+                          className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="sr-only">Previous</span>
+                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                          disabled={currentPage === totalPages}
+                          className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="sr-only">Next</span>
+                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
                   )}
@@ -529,8 +534,8 @@ const AddCredits = () => {
                         key={pkg.price}
                         onClick={() => setSelectedPackage(pkg)}
                         className={`flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-all ${selectedPackage?.price === pkg.price
-                            ? 'border-[#13008B] bg-blue-50 ring-1 ring-[#13008B]'
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          ? 'border-[#13008B] bg-blue-50 ring-1 ring-[#13008B]'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                           }`}
                       >
                         <div className="flex flex-col">

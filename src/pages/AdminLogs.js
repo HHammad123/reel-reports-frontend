@@ -4,7 +4,8 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import Sidebar from '../Components/Sidebar'
 import Topbar from '../Components/Topbar'
 import { selectUser } from '../redux/slices/userSlice'
-import { MoreVertical } from 'lucide-react'
+import { MoreVertical, Search } from 'lucide-react'
+import loadingGif from '../asset/loadingv2.gif'
 
 const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
 
@@ -16,7 +17,7 @@ const AdminLogs = () => {
   const isAdmin = useMemo(() => {
     // First check Redux user
     let rawRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase()
-    
+
     // Fallback to localStorage if not in Redux
     if (!rawRole || rawRole === '') {
       try {
@@ -29,7 +30,7 @@ const AdminLogs = () => {
         console.warn('Error reading user from localStorage:', e)
       }
     }
-    
+
     const adminStatus = rawRole === 'admin'
     return adminStatus
   }, [user])
@@ -38,6 +39,7 @@ const AdminLogs = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [searchQuery, setSearchQuery] = useState('')
   const [openDropdownId, setOpenDropdownId] = useState(null)
   const dropdownRefs = useRef({})
 
@@ -80,7 +82,7 @@ const AdminLogs = () => {
           // If it's a single object, wrap it in an array
           logsData = [data]
         }
-        
+
         setLogs(logsData)
       } catch (err) {
         if (err.name === 'AbortError') return
@@ -102,7 +104,7 @@ const AdminLogs = () => {
 
   // Don't redirect immediately - wait a bit for Redux state to load
   const [checkingAdmin, setCheckingAdmin] = useState(true)
-  
+
   useEffect(() => {
     // Give Redux a moment to load, then check
     const timer = setTimeout(() => {
@@ -111,22 +113,33 @@ const AdminLogs = () => {
     return () => clearTimeout(timer)
   }, [])
 
+  // Search filter
+  const filteredLogs = useMemo(() => {
+    if (!searchQuery) return logs
+    const lowerQuery = searchQuery.toLowerCase()
+    return logs.filter(log =>
+      (log?.email || log?.user_email || '').toLowerCase().includes(lowerQuery) ||
+      (log?.display_name || log?.name || '').toLowerCase().includes(lowerQuery) ||
+      (log?.user_id || log?.id || log?._id || '').toString().toLowerCase().includes(lowerQuery)
+    )
+  }, [logs, searchQuery])
+
   // Pagination calculations
   const itemsPerPage = 50
-  const totalPages = Math.ceil(logs.length / itemsPerPage)
+  const totalPages = Math.ceil(filteredLogs.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedLogs = logs.slice(startIndex, endIndex)
+  const paginatedLogs = filteredLogs.slice(startIndex, endIndex)
 
-  // Reset to page 1 when logs change
+  // Reset to page 1 when logs or search query change
   useEffect(() => {
     setCurrentPage(1)
-  }, [logs.length])
+  }, [logs.length, searchQuery])
 
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      const clickedOutside = Object.values(dropdownRefs.current).every(ref => 
+      const clickedOutside = Object.values(dropdownRefs.current).every(ref =>
         ref && !ref.contains(event.target)
       )
       if (clickedOutside) {
@@ -157,7 +170,10 @@ const AdminLogs = () => {
         <div className="flex-1 mx-[2rem] mt-[1rem] flex flex-col overflow-hidden min-h-0 min-w-0">
           <Topbar />
           <div className="flex-1 my-2 overflow-hidden min-h-0 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#13008B]/30 border-t-[#13008B]"></div>
+            <div className="flex flex-col items-center justify-center">
+              <img src={loadingGif} alt="Loading..." className="h-16 w-16" />
+              <p className="mt-4 text-[#13008B] font-medium animate-pulse">Checking access...</p>
+            </div>
           </div>
         </div>
       </div>
@@ -213,7 +229,7 @@ const AdminLogs = () => {
 
   // Check if a log has any complex data (objects/arrays)
   const hasComplexData = (log) => {
-    return Object.values(log || {}).some(val => 
+    return Object.values(log || {}).some(val =>
       (typeof val === 'object' && val !== null) || Array.isArray(val)
     )
   }
@@ -320,19 +336,34 @@ const AdminLogs = () => {
                   View all user generation statistics and activity logs.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleRefresh}
-                className="inline-flex items-center justify-center rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#13008B]/10"
-              >
-                Refresh
-              </button>
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by email, name or ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9 pr-4 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#13008B] w-64"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  className="inline-flex items-center justify-center rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-[#13008B] shadow-sm transition hover:bg-[#13008B]/10"
+                >
+                  Refresh
+                </button>
+              </div>
             </div>
 
             <div className="mt-6 flex-1 overflow-scroll">
               {loading ? (
                 <div className="flex h-full items-center justify-center">
-                  <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#13008B]/30 border-t-[#13008B]"></div>
+                  <div className="flex flex-col items-center justify-center">
+                    <img src={loadingGif} alt="Loading..." className="h-16 w-16" />
+                    <p className="mt-4 text-[#13008B] font-medium animate-pulse">Loading logs...</p>
+                  </div>
                 </div>
               ) : error ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -378,7 +409,7 @@ const AdminLogs = () => {
                                 {tableKeys.map((key) => {
                                   const value = log[key]
                                   const formattedValue = formatValue(value)
-                                  
+
                                   return (
                                     <td key={key} className="px-4 py-3 text-gray-900">
                                       {formattedValue !== null ? (
@@ -392,8 +423,8 @@ const AdminLogs = () => {
                                   )
                                 })}
                                 <td className="px-4 py-3 text-right">
-                                  <div 
-                                    className="relative inline-block" 
+                                  <div
+                                    className="relative inline-block"
                                     ref={(el) => {
                                       const logId = log?.user_id || log?.id || log?._id || idx
                                       if (el) dropdownRefs.current[logId] = el
@@ -453,78 +484,31 @@ const AdminLogs = () => {
 
                   {/* Pagination Controls */}
                   {totalPages > 1 && (
-                    <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
-                      <div className="flex items-center gap-2">
+                    <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
+                      <div className="text-sm text-gray-500">
+                        Page {currentPage} of {totalPages}
+                      </div>
+                      <div className="flex gap-2">
                         <button
-                          type="button"
                           onClick={() => handlePageChange(currentPage - 1)}
                           disabled={currentPage === 1}
-                          className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          Previous
+                          <span className="sr-only">Previous</span>
+                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                          </svg>
                         </button>
                         <button
-                          type="button"
                           onClick={() => handlePageChange(currentPage + 1)}
                           disabled={currentPage === totalPages}
-                          className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          Next
+                          <span className="sr-only">Next</span>
+                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
                         </button>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {/* Page numbers */}
-                        {Array.from({ length: totalPages }, (_, i) => i + 1)
-                          .filter((page) => {
-                            // Show first page, last page, current page, and pages around current
-                            return (
-                              page === 1 ||
-                              page === totalPages ||
-                              (page >= currentPage - 2 && page <= currentPage + 2)
-                            )
-                          })
-                          .map((page, idx, array) => {
-                            // Add ellipsis if there's a gap
-                            const prevPage = array[idx - 1]
-                            const showEllipsisBefore = prevPage && page - prevPage > 1
-
-                            return (
-                              <React.Fragment key={page}>
-                                {showEllipsisBefore && (
-                                  <span className="px-2 text-gray-500">...</span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => handlePageChange(page)}
-                                  className={`inline-flex items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                                    currentPage === page
-                                      ? 'border-[#13008B] bg-[#13008B] text-white'
-                                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                                  }`}
-                                >
-                                  {page}
-                                </button>
-                              </React.Fragment>
-                            )
-                          })}
-                      </div>
-
-                      <div className="text-sm text-gray-600">
-                        Go to page:
-                        <input
-                          type="number"
-                          min="1"
-                          max={totalPages}
-                          value={currentPage}
-                          onChange={(e) => {
-                            const page = parseInt(e.target.value)
-                            if (page >= 1 && page <= totalPages) {
-                              handlePageChange(page)
-                            }
-                          }}
-                          className="ml-2 w-16 rounded-lg border border-gray-300 px-2 py-1 text-center text-sm focus:border-[#13008B] focus:outline-none focus:ring-1 focus:ring-[#13008B]"
-                        />
                       </div>
                     </div>
                   )}

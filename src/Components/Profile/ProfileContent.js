@@ -1,7 +1,7 @@
 import React from 'react'
 import { useSelector } from 'react-redux'
 import { selectUser, selectIsAuthenticated } from '../../redux/slices/userSlice'
-import { Wallet, TrendingDown, Coins } from 'lucide-react'
+import { Wallet, TrendingDown, Coins, CreditCard, Calendar, Clock, Package } from 'lucide-react'
 
 const ProfileContent = ({ userProfile }) => {
   // Redux selectors
@@ -41,15 +41,18 @@ const ProfileContent = ({ userProfile }) => {
   const hasUserData = user || parsedProfile || localAuthState.user;
 
   const [credits, setCredits] = React.useState(null);
+  const [subscription, setSubscription] = React.useState(null);
 
   React.useEffect(() => {
     const fetchCredits = async () => {
       try {
         const token = localStorage.getItem('token');
         const email = displayUser.email;
+        const userId = displayUser.id || displayUser.user_id;
 
         if (!token || !email) return;
 
+        // Fetch Credits
         const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/admin/users/list', {
           method: 'POST',
           headers: {
@@ -68,13 +71,36 @@ const ProfileContent = ({ userProfile }) => {
             setCredits(currentUser.credits_summary);
           }
         }
+
+        // Fetch Subscription Details
+        if (userId) {
+          try {
+            const subResponse = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/admin/api/admin/users/${userId}/subscription`, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              }
+            });
+
+            if (subResponse.ok) {
+              const subData = await subResponse.json();
+              if (subData.success && subData.subscription_details) {
+                setSubscription(subData.subscription_details);
+              }
+            }
+          } catch (subError) {
+            console.error('Failed to fetch subscription:', subError);
+          }
+        }
+
       } catch (error) {
         console.error('Failed to fetch credits:', error);
       }
     };
 
     fetchCredits();
-  }, [displayUser.email]);
+  }, [displayUser.email, displayUser.id, displayUser.user_id]);
 
   // Helper function to get initials
   const getInitials = (user) => {
@@ -256,6 +282,93 @@ const ProfileContent = ({ userProfile }) => {
                         <div className="text-lg font-bold text-gray-900">${credits.amount_spent?.toLocaleString() || 0}</div>
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Subscription Details */}
+              {subscription && (
+                <div className="mt-8">
+                  <h4 className="text-xl font-bold text-gray-800 mb-5 flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-[#13008B]" />
+                    Subscription Details
+                  </h4>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                    <div className="p-6 border-b border-gray-100 bg-gray-50/50">
+                      <div className="flex flex-wrap gap-4 justify-between items-center">
+                        <div>
+                          <div className="text-sm text-gray-500 font-medium uppercase tracking-wide mb-1">Current Plan</div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl font-bold text-gray-900 capitalize">${subscription.plan} Plan</span>
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${subscription.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                              }`}>
+                              {subscription.status}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex gap-8">
+                          <div>
+                            <div className="flex items-center gap-1.5 text-sm text-gray-500 mb-1">
+                              <Calendar className="w-4 h-4" />
+                              Renewal Date
+                            </div>
+                            <div className="font-semibold text-gray-900">
+                              {subscription.renewal_date ? new Date(subscription.renewal_date).toLocaleDateString() : 'N/A'}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5 text-sm text-gray-500 mb-1">
+                              <Clock className="w-4 h-4" />
+                              Billing Cycle
+                            </div>
+                            <div className="font-semibold text-gray-900 capitalize">
+                              {subscription.billing_cycle || 'Monthly'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Add-ons History */}
+                    {subscription.add_ons && subscription.add_ons.length > 0 && (
+                      <div className="p-6">
+                        <h5 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-4 flex items-center gap-2">
+                          <Package className="w-4 h-4 text-[#13008B]" />
+                          Purchase History
+                        </h5>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-gray-500 uppercase bg-gray-50 border-b border-gray-100">
+                              <tr>
+                                <th className="px-4 py-3 font-medium">Package</th>
+                                <th className="px-4 py-3 font-medium">Price</th>
+                                <th className="px-4 py-3 font-medium">Date</th>
+                                <th className="px-4 py-3 font-medium">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {subscription.add_ons.map((addon, index) => (
+                                <tr key={index} className="hover:bg-gray-50/50 transition-colors">
+                                  <td className="px-4 py-3 font-medium text-gray-900">
+                                    {addon.pack ? addon.pack.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Add-on'}
+                                  </td>
+                                  <td className="px-4 py-3 text-gray-600">${addon.price}</td>
+                                  <td className="px-4 py-3 text-gray-600">
+                                    {addon.purchased_at ? new Date(addon.purchased_at).toLocaleDateString() : 'N/A'}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-100">
+                                      Paid
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

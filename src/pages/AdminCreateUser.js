@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react'
 import { useSelector } from 'react-redux'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import Sidebar from '../Components/Sidebar'
 import Topbar from '../Components/Topbar'
 import { selectUser } from '../redux/slices/userSlice'
 
-const AUTH_BASE = 'https://auth-js-g3hnh7gbc4c5fje4.uaenorth-01.azurewebsites.net'
+const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
 
 const AdminCreateUser = () => {
   const user = useSelector(selectUser)
@@ -15,11 +15,14 @@ const AdminCreateUser = () => {
     return rawRole === 'admin'
   }, [user])
 
+  const navigate = useNavigate()
+
   const [form, setForm] = useState({
     display_name: '',
     email: '',
     password: '',
-    role: 'user'
+    role: 'user',
+    status: 'validated'
   })
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState('')
@@ -48,9 +51,10 @@ const AdminCreateUser = () => {
         display_name: form.display_name.trim(),
         email: form.email.trim(),
         password: form.password,
-        role: form.role
+        role: form.role,
+        status: form.status
       }
-      const response = await fetch(`${AUTH_BASE}/api/admin/users`, {
+      const response = await fetch(`${ADMIN_BASE}/v1/admin/users/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -59,16 +63,19 @@ const AdminCreateUser = () => {
         body: JSON.stringify(payload)
       })
       if (!response.ok) {
-        const text = await response.text()
-        throw new Error(text || `Unable to create user (${response.status})`)
+        const data = await response.json().catch(() => null)
+        throw new Error(data?.detail || `Unable to create user (${response.status})`)
       }
       setSuccess('User account created successfully.')
       setForm({
         display_name: '',
         email: '',
         password: '',
-        role: 'user'
+        role: 'user',
+        status: 'validated'
       })
+      // Navigate back to admin users page after short delay
+      setTimeout(() => navigate('/admin/users'), 1500)
     } catch (err) {
       console.error('Failed to create user:', err)
       setError(err.message || 'Failed to create user.')
@@ -157,8 +164,26 @@ const AdminCreateUser = () => {
                   disabled={submitting}
                 >
                   <option value="user">User</option>
-                  <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium text-[#13008B]" htmlFor="status">
+                  Status
+                </label>
+                <select
+                  id="status"
+                  name="status"
+                  value={form.status}
+                  onChange={handleChange}
+                  className="rounded-lg border border-[#D8D3FF] bg-white px-4 py-2 text-sm text-gray-800 focus:border-[#13008B] focus:outline-none focus:ring-2 focus:ring-[#13008B]/40"
+                  disabled={submitting}
+                >
+                  <option value="validated">Validated</option>
+                  <option value="not_validated">Not Validated</option>
                 </select>
               </div>
             </div>
@@ -183,7 +208,8 @@ const AdminCreateUser = () => {
                     display_name: '',
                     email: '',
                     password: '',
-                    role: 'user'
+                    role: 'user',
+                    status: 'validated'
                   })
                   setError('')
                   setSuccess('')
@@ -195,9 +221,8 @@ const AdminCreateUser = () => {
               </button>
               <button
                 type="submit"
-                className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${
-                  submitting ? 'cursor-not-allowed bg-[#9C95FF]' : 'bg-[#13008B] hover:bg-[#0f006b]'
-                }`}
+                className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold text-white shadow ${submitting ? 'cursor-not-allowed bg-[#9C95FF]' : 'bg-[#13008B] hover:bg-[#0f006b]'
+                  }`}
                 disabled={submitting}
               >
                 {submitting ? 'Creating…' : 'Create User'}
