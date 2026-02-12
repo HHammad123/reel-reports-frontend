@@ -988,7 +988,40 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         }
 
         if (!cancelled && parsedSessionVideos.length > 0) {
-          setItems(parsedSessionVideos);
+          // In load() function (initial load from session data):
+          // If we have existing items (e.g. from a previous successful job poll that happened before session load completed),
+          // we should merge them, although typically session load happens first.
+          // But to be safe and consistent with the "merge" philosophy requested:
+
+          setItems(prevItems => {
+            const merged = [...parsedSessionVideos]; // Start with session data as base
+            // If we want to PRESERVE local items that might not be in session data yet?
+            // Actually, usually session data is the source of truth for "previous" videos.
+            // But if we have just generated a video and it hasn't reached session data yet...
+            // The job polling logic handles that merging.
+
+            // However, if this load() is triggered by a re-render while we have items...
+            if (prevItems.length > 0) {
+              // Merge prevItems into parsedSessionVideos (session data takes precedence for updates, but we keep local-only items?)
+              // Actually, if we just generated a video, it is in prevItems but maybe not in parsedSessionVideos.
+              prevItems.forEach(pItem => {
+                const existsInSession = merged.some(sItem =>
+                  sItem.id === pItem.id ||
+                  (sItem.sceneNumber != null && pItem.sceneNumber != null && sItem.sceneNumber === pItem.sceneNumber)
+                );
+                if (!existsInSession) {
+                  merged.push(pItem);
+                }
+              });
+
+              merged.sort((a, b) => {
+                if (a.sceneNumber != null && b.sceneNumber != null) return a.sceneNumber - b.sceneNumber;
+                return 0;
+              });
+              return merged;
+            }
+            return parsedSessionVideos;
+          });
 
           // ============================================================
           // STEP 2A: STORE ORIGINAL BASE VIDEO URLS FROM SESSION DATA
@@ -1300,10 +1333,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             });
 
             // Combine video entries with logo image entries, chart video entries, and session images
-            window.__SESSION_MEDIA_FILES = [...window.__SESSION_MEDIA_FILES, ...logoImages, ...chartVideos, ...sessionImages];
+            // Merge with existing session media files instead of replacing
+            setSessionMediaVersion(prev => {
+              const existingFiles = window.__SESSION_MEDIA_FILES || [];
+              const newFiles = [...logoImages, ...chartVideos, ...sessionImages];
 
-            // Trigger timeline rebuild by updating sessionMediaVersion
-            setSessionMediaVersion(prev => prev + 1);
+              // Add new files if they don't exist
+              newFiles.forEach(nf => {
+                if (!existingFiles.some(ef => ef.id === nf.id)) {
+                  existingFiles.push(nf);
+                }
+              });
+
+              window.__SESSION_MEDIA_FILES = existingFiles;
+              return prev + 1;
+            });
           }
 
           // Log the session videos resolved for the timeline (url + title)
@@ -1623,15 +1667,46 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                         const jobVideos = parseVideosPayload(jobPayload);
 
                         if (!cancelled && jobVideos.length > 0) {
-                          // Set items from job API results
-                          setItems(jobVideos);
+                          // MERGE JOB VIDEOS WITH EXISTING SESSION VIDEOS
+                          // This preserves previous videos/layers when generating a new scene
+                          const mergedVideos = [...parsedSessionVideos];
+                          jobVideos.forEach(jobVideo => {
+                            const existingIndex = mergedVideos.findIndex(v => {
+                              // Match by scene number if available
+                              if (v.sceneNumber != null && jobVideo.sceneNumber != null) {
+                                return Number(v.sceneNumber) === Number(jobVideo.sceneNumber);
+                              }
+                              // Fallback to ID match
+                              return v.id === jobVideo.id;
+                            });
+
+                            if (existingIndex !== -1) {
+                              mergedVideos[existingIndex] = jobVideo;
+                            } else {
+                              mergedVideos.push(jobVideo);
+                            }
+                          });
+
+                          // Re-sort by scene number
+                          mergedVideos.sort((a, b) => {
+                            const aSceneNum = a.sceneNumber;
+                            const bSceneNum = b.sceneNumber;
+                            if (aSceneNum != null && bSceneNum != null) return Number(aSceneNum) - Number(bSceneNum);
+                            if (aSceneNum != null) return -1;
+                            if (bSceneNum != null) return 1;
+                            return 0;
+                          });
+
+                          // Set items to merged result
+                          setItems(mergedVideos);
 
                           // ============================================================
                           // STEP 2B: STORE ORIGINAL BASE VIDEO URLS FROM JOB RESULTS
                           // ============================================================
 
                           // Store original base video URLs for change detection (from job results)
-                          const originalUrlsFromJob = {};
+                          // Merge with existing
+                          const originalUrlsFromJob = { ...originalBaseVideoUrlsRef.current };
                           jobVideos.forEach((video, index) => {
                             // Extract base video URL with priority order
                             const baseVideoUrl = video.videos?.v1?.base_video_url ||
@@ -1696,7 +1771,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                               return null;
                             };
 
-                            window.__SESSION_MEDIA_FILES = jobVideos.map((it, idx) => {
+                            const newJobMediaFiles = jobVideos.map((it, idx) => {
                               // Get the raw base video URL - prioritize base_video_url from new schema
                               const rawBaseUrl = it.videos?.v1?.base_video_url ||
                                 it.videos?.base_video_url ||
@@ -1832,6 +1907,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                                 videos: it.videos || {},
                               };
                             });
+
+                            // Append new media files to existing ones
+                            window.__SESSION_MEDIA_FILES = [...(window.__SESSION_MEDIA_FILES || []), ...newJobMediaFiles];
 
                             // Add logo images as separate entries to upload section (same as base video)
                             const logoImages = [];
@@ -1918,15 +1996,41 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                         const jobVideos = parseVideosPayload(jobPayload);
 
                         if (!cancelled && jobVideos.length > 0) {
-                          // Set items from job API results
-                          setItems(jobVideos);
+                          // MERGE JOB VIDEOS WITH EXISTING SESSION VIDEOS (LEGACY FALLBACK)
+                          const mergedVideos = [...parsedSessionVideos];
+                          jobVideos.forEach(jobVideo => {
+                            const existingIndex = mergedVideos.findIndex(v => {
+                              if (v.sceneNumber != null && jobVideo.sceneNumber != null) {
+                                return Number(v.sceneNumber) === Number(jobVideo.sceneNumber);
+                              }
+                              return v.id === jobVideo.id;
+                            });
+                            if (existingIndex !== -1) {
+                              mergedVideos[existingIndex] = jobVideo;
+                            } else {
+                              mergedVideos.push(jobVideo);
+                            }
+                          });
+
+                          mergedVideos.sort((a, b) => {
+                            const aSceneNum = a.sceneNumber;
+                            const bSceneNum = b.sceneNumber;
+                            if (aSceneNum != null && bSceneNum != null) return Number(aSceneNum) - Number(bSceneNum);
+                            if (aSceneNum != null) return -1;
+                            if (bSceneNum != null) return 1;
+                            return 0;
+                          });
+
+                          // Set items to merged result
+                          setItems(mergedVideos);
 
                           // ============================================================
                           // STEP 2B: STORE ORIGINAL BASE VIDEO URLS FROM JOB RESULTS (LEGACY)
                           // ============================================================
 
                           // Store original base video URLs for change detection (from job results - legacy)
-                          const originalUrlsFromJob = {};
+                          // Merge with existing
+                          const originalUrlsFromJob = { ...originalBaseVideoUrlsRef.current };
                           jobVideos.forEach((video, index) => {
                             // Extract base video URL with priority order
                             const baseVideoUrl = video.videos?.v1?.base_video_url ||
@@ -1979,7 +2083,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                               return null;
                             };
 
-                            window.__SESSION_MEDIA_FILES = jobVideos.map((it, idx) => {
+                            const newJobMediaFiles = jobVideos.map((it, idx) => {
                               // Get the raw base video URL - prioritize base_video_url from new schema
                               const rawBaseUrl = it.videos?.v1?.base_video_url ||
                                 it.videos?.base_video_url ||
@@ -2115,6 +2219,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                                 videos: it.videos || {},
                               };
                             });
+
+                            // Append new media files to existing ones
+                            window.__SESSION_MEDIA_FILES = [...(window.__SESSION_MEDIA_FILES || []), ...newJobMediaFiles];
 
                             // Add logo images as separate entries to upload section (same as base video)
                             const logoImages = [];
@@ -2239,9 +2346,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                         if (!cancelled && hasVideos && hasAllLayers) {
                           // All videos and layers are available
-                          setItems(refreshedVideos);
+                          // MERGE with existing items to prevent data loss if API returns partial data
+                          const mergedRefreshed = [...items]; // Use current items state
+                          refreshedVideos.forEach(rv => {
+                            const idx = mergedRefreshed.findIndex(v => v.id === rv.id || (v.sceneNumber != null && rv.sceneNumber != null && v.sceneNumber === rv.sceneNumber));
+                            if (idx !== -1) mergedRefreshed[idx] = rv;
+                            else mergedRefreshed.push(rv);
+                          });
+                          mergedRefreshed.sort((a, b) => {
+                            if (a.sceneNumber != null && b.sceneNumber != null) return a.sceneNumber - b.sceneNumber;
+                            return 0;
+                          });
+
+                          setItems(mergedRefreshed);
                           setStatus('succeeded');
-                          setSelectedIndex(0);
+                          // setSelectedIndex(0); // Don't reset selection forcefully
                           setIsLoading(false);
                           setShowVideoLoader(false);
                           return; // Stop polling
@@ -2258,9 +2377,20 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                           setShowVideoLoader(false);
                           if (refreshedVideos.length > 0) {
                             // At least we have some videos, show them
-                            setItems(refreshedVideos);
+                            // MERGE with existing items
+                            const mergedRefreshed = [...items];
+                            refreshedVideos.forEach(rv => {
+                              const idx = mergedRefreshed.findIndex(v => v.id === rv.id || (v.sceneNumber != null && rv.sceneNumber != null && v.sceneNumber === rv.sceneNumber));
+                              if (idx !== -1) mergedRefreshed[idx] = rv;
+                              else mergedRefreshed.push(rv);
+                            });
+                            mergedRefreshed.sort((a, b) => {
+                              if (a.sceneNumber != null && b.sceneNumber != null) return a.sceneNumber - b.sceneNumber;
+                              return 0;
+                            });
+                            setItems(mergedRefreshed);
                             setStatus('succeeded');
-                            setSelectedIndex(0);
+                            // setSelectedIndex(0);
                           }
                           return;
                         }
@@ -2324,8 +2454,14 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     }
 
     // Clear items before loading to prevent showing stale videos from previous session
-    setItems([]);
-    setSelectedIndex(0);
+    // BUT only if session ID changed or we are initializing.
+    // If jobId changed (e.g. generating new video), we want to KEEP items until we merge new ones
+    // However, the load() function logic relies on parsing session data first.
+    // If we clear items here, we lose them.
+    // Let's modify load() to merge instead of replace.
+
+    // setItems([]); // DISABLED: Don't clear items here, let load() handle state updates
+    // setSelectedIndex(0);
 
     load();
     return () => { cancelled = true; if (timeoutId) clearTimeout(timeoutId); };

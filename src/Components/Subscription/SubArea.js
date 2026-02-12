@@ -341,7 +341,7 @@ const SubArea = () => {
         },
         {
             title: "Professional",
-            price: 70,
+            price: 75,
             credits: 3750,
             features: ["Access to all templates", "Priority generation", "Priority support", "Commercial usage rights"],
             isPopular: true,

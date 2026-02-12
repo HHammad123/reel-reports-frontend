@@ -4734,13 +4734,21 @@ const BuildReelWizard = () => {
       // Extract aspect ratio
       const aspectRatio = extractAspectRatioFromSessionPayload(sd) || '16:9';
 
+      // Extract latest scene number from session data
+      const aiResponse = Array.isArray(sd?.airesponse) ? sd.airesponse : [];
+      let latestSceneNum = 0;
+      if (aiResponse.length > 0) {
+        const lastScene = aiResponse[aiResponse.length - 1];
+        latestSceneNum = Number(lastScene?.scene_number) || 0;
+      }
+
       const payload = {
         session_id: sessionId,
         user_id: token,
         aspect_ratio: aspectRatio,
         subtitles: false,
         scenes: [],
-        scene_numbers: [0]
+        scene_numbers: [latestSceneNum]
       };
 
       const genResp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue', {
@@ -5218,6 +5226,31 @@ const BuildReelWizard = () => {
     } finally { setIsCreatingScenes(false); }
   };
 
+  // Calculate latest scene number for ImageList
+  let latestSceneNumForImageList = 0;
+
+  // Try to get from scripts array first (as requested: session_data.scripts[0].airesponse)
+  const scripts = Array.isArray(sessionDataState?.scripts) ? sessionDataState.scripts : [];
+  if (scripts.length > 0) {
+    // Check first script as requested
+    const firstScript = scripts[0];
+    const scriptAiResponse = Array.isArray(firstScript?.airesponse) ? firstScript.airesponse : [];
+
+    if (scriptAiResponse.length > 0) {
+      const lastScene = scriptAiResponse[scriptAiResponse.length - 1];
+      latestSceneNumForImageList = Number(lastScene?.scene_number) || 0;
+    }
+  }
+
+  // Fallback to direct airesponse if not found in scripts (legacy/fallback)
+  if (latestSceneNumForImageList === 0) {
+    const aiResponseForImageList = Array.isArray(sessionDataState?.airesponse) ? sessionDataState.airesponse : [];
+    if (aiResponseForImageList.length > 0) {
+      const lastScene = aiResponseForImageList[aiResponseForImageList.length - 1];
+      latestSceneNumForImageList = Number(lastScene?.scene_number) || 0;
+    }
+  }
+
   return (
     <>
       {step === 1 ? (
@@ -5308,6 +5341,8 @@ const BuildReelWizard = () => {
           {subView === 'images' && (
             <div className='bg-white rounded-lg w-full'>
               <ImageList
+                isBuildReel={true}
+                latestSceneNum={latestSceneNumForImageList}
                 jobId={imagesJobId}
                 hasVideos={hasVideosAvailable}
                 onGoToVideos={(jobId) => {
@@ -5411,6 +5446,8 @@ const BuildReelWizard = () => {
             </div>
             <div className="flex-1 overflow-y-auto relative">
               <ImageList
+                isBuildReel={true}
+                latestSceneNum={latestSceneNumForImageList}
                 jobId={imagesJobId}
                 hasVideos={hasVideosAvailable}
                 onGoToVideos={(jobId) => {

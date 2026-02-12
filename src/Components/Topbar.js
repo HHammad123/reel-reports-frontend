@@ -210,14 +210,6 @@ const Topbar = () => {
       </div>
 
       <div className="flex items-center gap-3">
-        {videoJob?.jobId && videoJob.status !== 'failed' && videoJob.status !== 'succeeded' && (
-          <div className="hidden items-center gap-2 rounded-full border border-[#E4E1FF] bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm md:flex">
-            <span className="font-medium text-[#13008B]">Video:</span>
-            <span className={videoJob.status === 'succeeded' ? 'text-green-700' : videoJob.status === 'failed' ? 'text-red-700' : 'text-[#4B3CC4]'}>
-              {videoJob.status || 'queued'} {typeof videoJob?.progress?.percent === 'number' ? `• ${videoJob.progress.percent}%` : ''}
-            </span>
-          </div>
-        )}
 
         {/* Brand Profile List and Set Active */}
         {effectiveIsAuthenticated && effectiveUser && profiles.length > 0 && (

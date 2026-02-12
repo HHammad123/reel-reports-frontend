@@ -11,7 +11,17 @@ const AdminCreateUser = () => {
   const user = useSelector(selectUser)
 
   const isAdmin = useMemo(() => {
-    const rawRole = (user?.role || user?.user_role || user?.type || user?.userType || '').toString().toLowerCase()
+    let currentUser = user
+    // Fallback to localStorage if Redux user is missing
+    if (!currentUser) {
+      try {
+        const stored = localStorage.getItem('user')
+        if (stored) currentUser = JSON.parse(stored)
+      } catch (e) {
+        // ignore
+      }
+    }
+    const rawRole = (currentUser?.role || currentUser?.user_role || currentUser?.type || currentUser?.userType || '').toString().toLowerCase()
     return rawRole === 'admin'
   }, [user])
 

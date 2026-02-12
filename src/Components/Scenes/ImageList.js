@@ -295,7 +295,7 @@ const aspectRatioToCss = (ratio) => {
   return '16 / 9';
 };
 
-const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoToVideos }) => {
+const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoToVideos, isBuildReel = false, latestSceneNum = 0 }) => {
   const getOverlayBackgroundRemovedUrl = useOverlayBackgroundRemoval(245);
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState({
@@ -6444,6 +6444,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         scenes: scenesPayload,
       };
 
+      if (isBuildReel) {
+        body.scene_numbers = [latestSceneNum || 0];
+      }
+
       // Call generate-videos-queue API
       const apiUrl = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue';
       const response = await fetch(apiUrl, {
@@ -6484,7 +6488,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       }));
       throw error;
     }
-  }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getSessionAspectRatioRaw, transitionPresets]);
+  }, [rows, sceneAdvancedOptions, sessionAssets, subtitlesEnabled, getSessionAspectRatioRaw, transitionPresets, isBuildReel, latestSceneNum]);
 
   const handleGenerateVideosClick = React.useCallback(async (e) => {
     // Prevent any default behavior and navigation

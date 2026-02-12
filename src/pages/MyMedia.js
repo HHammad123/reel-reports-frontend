@@ -994,7 +994,7 @@ const MyMedia = () => {
             </div>
 
             {/* In-progress video card at top if a job exists */}
-            {videoJob?.jobId && videoJob.status !== 'failed' && videoJob.status !== 'succeeded' && (
+            {/* {videoJob?.jobId && videoJob.status !== 'failed' && videoJob.status !== 'succeeded' && (
               <div className="mb-8 p-4 border border-gray-200 rounded-xl bg-gray-50">
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-gray-900 font-medium">Generating Video</div>
@@ -1016,7 +1016,7 @@ const MyMedia = () => {
                   <div className="mt-2 text-sm text-red-700">{videoJob.error || 'Video generation failed.'}</div>
                 )}
               </div>
-            )}
+            )} */}
 
             {/* WebM Conversion job status card */}
             {webmConversionJobId && webmConversionStatus && webmConversionStatus !== 'succeeded' && webmConversionStatus !== 'completed' && webmConversionStatus !== 'failed' && webmConversionStatus !== 'error' && (

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { FaChartPie, FaUserTie, FaCoins, FaCheck } from 'react-icons/fa';
+import { FaChartPie, FaUserTie, FaCoins, FaCheck, FaCharts } from 'react-icons/fa';
 import LoadingAnimationGif from '../../asset/loadingv2.gif';
+import { PiPresentationChartBold } from "react-icons/pi";
+import { FaPhotoVideo } from "react-icons/fa";
 
 const AddSceneDropdown = ({ onAdd, hasScripts, className = "" }) => {
   const [aspectRatio, setAspectRatio] = useState('16:9');
@@ -95,9 +97,9 @@ const AddSceneDropdown = ({ onAdd, hasScripts, className = "" }) => {
             <h3 className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Video Type</h3>
             <div className="flex flex-col gap-2">
               {[
-                { id: 'Infographic', icon: FaChartPie, label: 'Infographic' },
+                { id: 'Infographic', icon: FaPhotoVideo, label: 'Infographic' },
                 { id: 'Avatar', icon: FaUserTie, label: 'Avatar' },
-                { id: 'Financial Scene', icon: FaCoins, label: 'Financial Scene' }
+                { id: 'Financial Scene', icon: PiPresentationChartBold, label: 'Financial Scene' }
               ].map((type) => (
                 <button
                   key={type.id}
