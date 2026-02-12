@@ -89,6 +89,16 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef(null);
+
+  // Regenerate Video State
+  const [showRegenerateModal, setShowRegenerateModal] = useState(false);
+  const [regenerateSceneNumber, setRegenerateSceneNumber] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regenerateProgress, setRegenerateProgress] = useState(0);
+  const [availableScenes, setAvailableScenes] = useState([]);
+  const [isLoadingScenes, setIsLoadingScenes] = useState(false);
+  const [showRegenerateSuccess, setShowRegenerateSuccess] = useState(false);
+
   const location = useLocation();
 
   const sidebarTopActions = useMemo(() => {
@@ -6246,6 +6256,212 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     }
   }, [isSavingLayers, selectedVideo, getLayerName, framesToTime, items, detectBaseVideoChanges, aspectRatio]);
 
+  // Fetch scenes for regenerate modal
+  const fetchScenesForRegenerate = useCallback(async () => {
+    setIsLoadingScenes(true);
+    setAvailableScenes([]);
+    try {
+      const session_id = localStorage.getItem('session_id');
+      let user_id = localStorage.getItem('token');
+
+      try {
+        const userObj = JSON.parse(localStorage.getItem('user') || '{}');
+        if (userObj.id) user_id = userObj.id;
+      } catch (e) {
+        console.warn('Error parsing user from localStorage', e);
+      }
+
+      if (!session_id || !user_id) {
+        throw new Error('Session ID or User ID not found');
+      }
+
+      const sessionRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id, session_id })
+      });
+
+      if (!sessionRes.ok) throw new Error('Failed to fetch session data');
+      const responseData = await sessionRes.json();
+      const sessionData = responseData?.session_data || responseData?.session || responseData;
+
+      // User instruction: fetch all scene from session_data.scripts[0].airesponse
+      const scenes = sessionData?.scripts?.[0]?.airesponse || [];
+      console.log('Scenes fetched from airesponse:', scenes);
+      setAvailableScenes(scenes);
+    } catch (error) {
+      console.error('Error fetching scenes:', error);
+      alert('Failed to load scenes. Please try again.');
+    } finally {
+      setIsLoadingScenes(false);
+    }
+  }, []);
+
+  // Regenerate Video Handler
+  const handleRegenerateVideo = useCallback(async () => {
+    if (!regenerateSceneNumber) {
+      alert('Please enter a scene number');
+      return;
+    }
+
+    setIsRegenerating(true);
+    setRegenerateProgress(10);
+
+    try {
+      const session_id = localStorage.getItem('session_id');
+      let user_id = localStorage.getItem('token');
+
+      try {
+        const userObj = JSON.parse(localStorage.getItem('user') || '{}');
+        if (userObj.id) user_id = userObj.id;
+      } catch (e) {
+        console.warn('Error parsing user from localStorage', e);
+      }
+
+      if (!session_id || !user_id) {
+        throw new Error('Session ID or User ID not found');
+      }
+
+      // 1. Fetch Session Data
+      const sessionRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id, session_id })
+      });
+      if (!sessionRes.ok) throw new Error('Failed to fetch session data');
+      const responseData = await sessionRes.json();
+      const sessionData = responseData?.session_data || responseData?.session || responseData;
+
+      setRegenerateProgress(20);
+
+      // 2. Extract Constraints
+      const guidelines = sessionData?.scripts?.[0]?.userquery?.[0]?.guidelines?.technical_and_formal_constraints || [];
+
+      let aspectRatioParam = "16:9";
+      let logoParam = false;
+
+      if (Array.isArray(guidelines)) {
+        if (guidelines.includes("16_9")) aspectRatioParam = "16:9";
+        else if (guidelines.includes("9_16")) aspectRatioParam = "9:16";
+
+        if (guidelines.includes("Yes")) logoParam = true;
+        else if (guidelines.includes("No")) logoParam = false;
+      }
+
+      // 3. Find Scene
+      const scenes = sessionData?.scripts?.[0]?.airesponse || [];
+      const scene = scenes.find(s =>
+        String(s.scene_number) === String(regenerateSceneNumber)
+      );
+
+      if (!scene) {
+        throw new Error(`Scene number ${regenerateSceneNumber} not found in session data`);
+      }
+
+      setRegenerateProgress(30);
+
+      // 4. Call Regenerate API
+      const payload = {
+        session_id,
+        user_id,
+        aspect_ratio: aspectRatioParam,
+        subtitles: false,
+        logo: logoParam,
+        scenes: [scene],
+        scene_numbers: [Number(regenerateSceneNumber)]
+      };
+
+      const regenerateRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!regenerateRes.ok) {
+        const errData = await regenerateRes.json().catch(() => ({}));
+        throw new Error(errData.detail || errData.message || 'Regeneration failed');
+      }
+
+      const regenerateData = await regenerateRes.json();
+      const jobId = regenerateData.job_id;
+
+      if (!jobId) {
+        throw new Error('No job_id returned from regeneration request');
+      }
+
+      // 5. Poll for status
+      let isComplete = false;
+      while (!isComplete) {
+        const statusRes = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/video-job-status/${encodeURIComponent(jobId)}`);
+        if (!statusRes.ok) throw new Error('Failed to check job status');
+
+        const statusData = await statusRes.json();
+        const jobStatus = String(statusData?.status || '').toLowerCase();
+        const progress = statusData?.progress || {};
+        const percent = Number(progress?.percent) || 0;
+
+        setRegenerateProgress(percent);
+
+        if (jobStatus === 'succeeded' || jobStatus === 'completed') {
+          isComplete = true;
+          const newVideoUrl = statusData?.final_video_url || statusData?.finalVideoUrl || statusData?.video_url || statusData?.videoUrl || statusData?.result_url || statusData?.resultUrl;
+
+          if (newVideoUrl) {
+            // Replace old video with new video
+            setItems(prevItems => prevItems.map(item => {
+              if (String(item.sceneNumber || item.scene_number) === String(regenerateSceneNumber)) {
+                return {
+                  ...item,
+                  video: newVideoUrl,
+                  timestamp: Date.now()
+                };
+              }
+              return item;
+            }));
+
+            // Also update window.__SESSION_MEDIA_FILES if it exists
+            if (window.__SESSION_MEDIA_FILES) {
+              const existingIndex = window.__SESSION_MEDIA_FILES.findIndex(f => String(f.scene_number) === String(regenerateSceneNumber));
+              if (existingIndex !== -1) {
+                window.__SESSION_MEDIA_FILES[existingIndex].url = newVideoUrl;
+              } else {
+                window.__SESSION_MEDIA_FILES.push({
+                  scene_number: regenerateSceneNumber,
+                  url: newVideoUrl,
+                  type: 'video'
+                });
+              }
+            }
+          }
+
+          // Success handled by popup
+          setShowRegenerateModal(false);
+          setRegenerateSceneNumber('');
+          setShowRegenerateSuccess(true);
+          setTimeout(() => setShowRegenerateSuccess(false), 3000);
+        } else if (jobStatus === 'failed' || jobStatus === 'error') {
+          throw new Error(statusData?.error || statusData?.message || 'Video generation failed');
+        } else {
+          // Wait 3 seconds
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      }
+
+    } catch (error) {
+      console.error('Regenerate Video Error:', error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsRegenerating(false);
+      setRegenerateProgress(0);
+    }
+  }, [regenerateSceneNumber]);
+
   // Upload base video for selected scene
   const handleUploadBaseVideo = useCallback(async () => {
     // Validation
@@ -9026,6 +9242,85 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         </>
       )}
 
+      {/* Regenerate Video Modal */}
+      {showRegenerateModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h3 className="text-lg font-semibold text-gray-900">Regenerate Video</h3>
+              <button
+                onClick={() => setShowRegenerateModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select Scene
+                </label>
+                {isLoadingScenes ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                    <div className="w-4 h-4 border-2 border-gray-300 border-t-[#13008B] rounded-full animate-spin"></div>
+                    Loading scenes...
+                  </div>
+                ) : (
+                  <select
+                    value={regenerateSceneNumber}
+                    onChange={(e) => setRegenerateSceneNumber(e.target.value)}
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-[#13008B] focus:border-transparent outline-none transition-all appearance-none bg-white"
+                    style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: `right 0.5rem center`, backgroundRepeat: `no-repeat`, backgroundSize: `1.5em 1.5em`, paddingRight: `2.5rem` }}
+                  >
+                    <option value="">Select a scene to regenerate</option>
+                    {availableScenes.map((scene, idx) => (
+                      <option key={scene.scene_number || idx} value={scene.scene_number}>
+                        Scene {scene.scene_number} {scene.scene_heading ? `- ${scene.scene_heading}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <p className="text-xs text-gray-500 mt-1">
+                  Choose the scene you want to regenerate from the list.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setShowRegenerateModal(false)}
+                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRegenerateVideo}
+                disabled={!regenerateSceneNumber || isRegenerating}
+                className={`px-4 py-2 rounded-lg text-white font-medium transition-colors ${!regenerateSceneNumber || isRegenerating
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-[#13008B] hover:bg-[#0f0069]'
+                  }`}
+              >
+                {isRegenerating ? 'Regenerating...' : 'Regenerate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Regenerate Loader */}
+      {isRegenerating && (
+        <Loader
+          fullScreen
+          zIndex="z-[110]"
+          overlayBg="bg-black/40 backdrop-blur-sm"
+          title="Regenerating Video"
+          description="Please wait while we regenerate your video..."
+          progress={regenerateProgress > 0 ? regenerateProgress : null}
+        />
+      )}
+
       {/* Upload Base Video Loader - Show during upload process */}
       {isUploadingBaseVideo && (
         <>
@@ -9080,6 +9375,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
           </div>
         </div>
       )}
+
+      {/* Regenerate Success Popup */}
+      {showRegenerateSuccess && (
+        <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md animate-in fade-in zoom-in duration-300">
+            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div className="text-lg font-semibold text-[#13008B]">Video Regenerated!</div>
+            <p className="text-sm text-gray-600">Your video has been successfully regenerated and updated in the timeline.</p>
+          </div>
+        </div>
+      )}
       {/* Header with Save Layers Button */}
       <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-4">
@@ -9127,6 +9437,17 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                   className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:text-gray-400"
                 >
                   Upload Base Video
+                </button>
+                <div className="h-px bg-gray-100 my-0"></div>
+                <button
+                  onClick={() => {
+                    fetchScenesForRegenerate();
+                    setShowRegenerateModal(true);
+                    setIsMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700"
+                >
+                  Regenerate Video
                 </button>
                 <div className="h-px bg-gray-100 my-0"></div>
                 <button
