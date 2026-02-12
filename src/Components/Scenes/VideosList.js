@@ -98,6 +98,17 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const [availableScenes, setAvailableScenes] = useState([]);
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
   const [showRegenerateSuccess, setShowRegenerateSuccess] = useState(false);
+  const [showRegenerateDropdown, setShowRegenerateDropdown] = useState(false);
+  const [regenerateLoaderTitle, setRegenerateLoaderTitle] = useState('Regenerating Video');
+
+  // Replace Audio State
+  const [showReplaceAudioModal, setShowReplaceAudioModal] = useState(false);
+  const [showReplaceAudioDropdown, setShowReplaceAudioDropdown] = useState(false);
+  const [replaceAudioSceneNumber, setReplaceAudioSceneNumber] = useState('');
+  const [availableAudioScenes, setAvailableAudioScenes] = useState([]);
+  const [isLoadingAudioScenes, setIsLoadingAudioScenes] = useState(false);
+  const [isReplacingAudio, setIsReplacingAudio] = useState(false);
+  const [showReplaceAudioSuccess, setShowReplaceAudioSuccess] = useState(false);
 
   const location = useLocation();
 
@@ -6289,13 +6300,59 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
       // User instruction: fetch all scene from session_data.scripts[0].airesponse
       const scenes = sessionData?.scripts?.[0]?.airesponse || [];
-      console.log('Scenes fetched from airesponse:', scenes);
+      // Use all scenes for regeneration (do not filter by VEO3)
+      console.log('Scenes fetched from airesponse (all scenes):', scenes);
       setAvailableScenes(scenes);
     } catch (error) {
       console.error('Error fetching scenes:', error);
       alert('Failed to load scenes. Please try again.');
     } finally {
       setIsLoadingScenes(false);
+    }
+  }, []);
+
+  // Fetch scenes for replace audio modal
+  const fetchScenesForReplaceAudio = useCallback(async () => {
+    setIsLoadingAudioScenes(true);
+    setAvailableAudioScenes([]);
+    try {
+      const session_id = localStorage.getItem('session_id');
+      let user_id = localStorage.getItem('token');
+
+      try {
+        const userObj = JSON.parse(localStorage.getItem('user') || '{}');
+        if (userObj.id) user_id = userObj.id;
+      } catch (e) {
+        console.warn('Error parsing user from localStorage', e);
+      }
+
+      if (!session_id || !user_id) {
+        throw new Error('Session ID or User ID not found');
+      }
+
+      const sessionRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id, session_id })
+      });
+
+      if (!sessionRes.ok) throw new Error('Failed to fetch session data');
+      const responseData = await sessionRes.json();
+      const sessionData = responseData?.session_data || responseData?.session || responseData;
+
+      // Fetch all scenes from airesponse and filter by model === 'VEO3'
+      const scenes = sessionData?.scripts?.[0]?.airesponse || [];
+      const filteredScenes = scenes.filter(scene => scene.model === 'VEO3');
+
+      console.log('Scenes fetched for audio replacement:', filteredScenes);
+      setAvailableAudioScenes(filteredScenes);
+    } catch (error) {
+      console.error('Error fetching audio scenes:', error);
+      alert('Failed to load scenes. Please try again.');
+    } finally {
+      setIsLoadingAudioScenes(false);
     }
   }, []);
 
@@ -6307,6 +6364,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     }
 
     setIsRegenerating(true);
+    setRegenerateLoaderTitle('Analyzing scene...');
+    setShowRegenerateModal(false);
     setRegenerateProgress(10);
 
     try {
@@ -6396,6 +6455,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       }
 
       // 5. Poll for status
+      setRegenerateLoaderTitle('Regenerating Video');
       let isComplete = false;
       while (!isComplete) {
         const statusRes = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/video-job-status/${encodeURIComponent(jobId)}`);
@@ -6461,6 +6521,44 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       setRegenerateProgress(0);
     }
   }, [regenerateSceneNumber]);
+
+  const handleReplaceAudio = async () => {
+    if (!replaceAudioSceneNumber) return;
+
+    setIsReplacingAudio(true);
+    try {
+      const userObj = JSON.parse(localStorage.getItem('user')) || {};
+      const userId = userObj.id || localStorage.getItem('user_id');
+      const sessionParams = new URLSearchParams(location.search);
+      const sessionId = sessionParams.get('session_id') || localStorage.getItem('current_session_id') || localStorage.getItem('session_id');
+
+      if (!sessionId || !userId) {
+        throw new Error('Missing session ID or user ID');
+      }
+
+      const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/sessions/${sessionId}/scenes/${replaceAudioSceneNumber}/veo3-extracted-audio?user_id=${userId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to replace audio');
+      }
+
+      setShowReplaceAudioModal(false);
+      setReplaceAudioSceneNumber('');
+      setShowReplaceAudioSuccess(true);
+      setTimeout(() => setShowReplaceAudioSuccess(false), 3000);
+
+    } catch (error) {
+      console.error('Error replacing audio:', error);
+      alert('Failed to replace audio. Please try again.');
+    } finally {
+      setIsReplacingAudio(false);
+    }
+  };
 
   // Upload base video for selected scene
   const handleUploadBaseVideo = useCallback(async () => {
@@ -9267,21 +9365,49 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                     Loading scenes...
                   </div>
                 ) : (
-                  <select
-                    value={regenerateSceneNumber}
-                    onChange={(e) => setRegenerateSceneNumber(e.target.value)}
-                    className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-[#13008B] focus:border-transparent outline-none transition-all appearance-none bg-white"
-                    style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`, backgroundPosition: `right 0.5rem center`, backgroundRepeat: `no-repeat`, backgroundSize: `1.5em 1.5em`, paddingRight: `2.5rem` }}
-                  >
-                    <option value="">Select a scene to regenerate</option>
-                    {availableScenes.map((scene, idx) => (
-                      <option key={scene.scene_number || idx} value={scene.scene_number}>
-                        Scene {scene.scene_number} {scene.scene_heading ? `- ${scene.scene_heading}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <div
+                      onClick={() => setShowRegenerateDropdown(!showRegenerateDropdown)}
+                      className="w-full pl-4 pr-4 py-2.5 rounded-lg border border-gray-200 bg-white text-gray-700 cursor-pointer shadow-sm flex items-center justify-between hover:border-gray-300 transition-all focus:ring-2 focus:ring-[#13008B]/20 focus:border-[#13008B]"
+                    >
+                      <span className={regenerateSceneNumber ? 'text-gray-900' : 'text-gray-500'}>
+                        {regenerateSceneNumber
+                          ? (() => {
+                            const s = availableScenes.find(sc => String(sc.scene_number) === String(regenerateSceneNumber));
+                            return s ? `Scene ${s.scene_number} ${s.scene_heading ? `- ${s.scene_heading}` : ''}` : regenerateSceneNumber;
+                          })()
+                          : 'Select a scene to regenerate'}
+                      </span>
+                      <svg
+                        className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${showRegenerateDropdown ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+
+                    {showRegenerateDropdown && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-100 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                        {availableScenes.map((scene, idx) => (
+                          <div
+                            key={scene.scene_number || idx}
+                            onClick={() => {
+                              setRegenerateSceneNumber(scene.scene_number);
+                              setShowRegenerateDropdown(false);
+                            }}
+                            className="px-4 py-2.5 hover:bg-gray-50 cursor-pointer text-sm text-gray-700 transition-colors border-b border-gray-50 last:border-0"
+                          >
+                            Scene {scene.scene_number} {scene.scene_heading ? `- ${scene.scene_heading}` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#13008B]"></span>
                   Choose the scene you want to regenerate from the list.
                 </p>
               </div>
@@ -9309,13 +9435,119 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         </div>
       )}
 
+      {/* Replace Audio Modal */}
+      {showReplaceAudioModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50">
+              <h3 className="text-xl font-semibold text-[#13008B] flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                </svg>
+                Replace Audio
+              </h3>
+              <button
+                onClick={() => setShowReplaceAudioModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Select Scene
+                </label>
+                {isLoadingAudioScenes ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                    <div className="w-4 h-4 border-2 border-gray-300 border-t-[#13008B] rounded-full animate-spin"></div>
+                    Loading audio scenes...
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <div
+                      onClick={() => setShowReplaceAudioDropdown(!showReplaceAudioDropdown)}
+                      className="w-full pl-4 pr-4 py-2.5 rounded-lg border border-gray-200 bg-white text-gray-700 cursor-pointer shadow-sm flex items-center justify-between hover:border-gray-300 transition-all focus:ring-2 focus:ring-[#13008B]/20 focus:border-[#13008B]"
+                    >
+                      <span className={replaceAudioSceneNumber ? 'text-gray-900' : 'text-gray-500'}>
+                        {replaceAudioSceneNumber
+                          ? (() => {
+                            const s = availableAudioScenes.find(sc => String(sc.scene_number) === String(replaceAudioSceneNumber));
+                            return s ? `Scene ${s.scene_number} ${s.scene_heading ? `- ${s.scene_heading}` : ''}` : replaceAudioSceneNumber;
+                          })()
+                          : 'Select a scene to replace audio'}
+                      </span>
+                      <svg
+                        className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${showReplaceAudioDropdown ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+
+                    {showReplaceAudioDropdown && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-100 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                        {availableAudioScenes.length > 0 ? (
+                          availableAudioScenes.map((scene, idx) => (
+                            <div
+                              key={scene.scene_number || idx}
+                              onClick={() => {
+                                setReplaceAudioSceneNumber(scene.scene_number);
+                                setShowReplaceAudioDropdown(false);
+                              }}
+                              className="px-4 py-2.5 hover:bg-gray-50 cursor-pointer text-sm text-gray-700 transition-colors border-b border-gray-50 last:border-0"
+                            >
+                              Scene {scene.scene_number} {scene.scene_heading ? `- ${scene.scene_heading}` : ''}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-4 py-2.5 text-sm text-gray-500">
+                            No VEO3 scenes available
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#13008B]"></span>
+                  Choose the scene to replace audio (only VEO3 scenes).
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setShowReplaceAudioModal(false)}
+                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReplaceAudio}
+                disabled={!replaceAudioSceneNumber || isReplacingAudio}
+                className={`px-4 py-2 rounded-lg text-white font-medium text-sm transition-all shadow-lg shadow-[#13008B]/20 ${!replaceAudioSceneNumber || isReplacingAudio
+                  ? 'bg-gray-400 cursor-not-allowed shadow-none'
+                  : 'bg-[#13008B] hover:bg-[#0f0069] hover:shadow-xl hover:shadow-[#13008B]/30 transform active:scale-95'
+                  }`}
+              >
+                {isReplacingAudio ? 'Replacing...' : 'Replace Audio'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Regenerate Loader */}
       {isRegenerating && (
         <Loader
           fullScreen
           zIndex="z-[110]"
           overlayBg="bg-black/40 backdrop-blur-sm"
-          title="Regenerating Video"
+          title={regenerateLoaderTitle}
           description="Please wait while we regenerate your video..."
           progress={regenerateProgress > 0 ? regenerateProgress : null}
         />
@@ -9390,6 +9622,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
           </div>
         </div>
       )}
+
+      {/* Replace Audio Success Popup */}
+      {showReplaceAudioSuccess && (
+        <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md animate-in fade-in zoom-in duration-300">
+            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div className="text-lg font-semibold text-[#13008B]">Audio Replaced!</div>
+            <p className="text-sm text-gray-600">The audio has been successfully replaced for the selected scene.</p>
+          </div>
+        </div>
+      )}
       {/* Header with Save Layers Button */}
       <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-4">
@@ -9448,6 +9695,17 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                   className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700"
                 >
                   Regenerate Video
+                </button>
+                <div className="h-px bg-gray-100 my-0"></div>
+                <button
+                  onClick={() => {
+                    fetchScenesForReplaceAudio();
+                    setShowReplaceAudioModal(true);
+                    setIsMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 text-sm font-medium text-gray-700"
+                >
+                  Replace Audio
                 </button>
                 <div className="h-px bg-gray-100 my-0"></div>
                 <button
