@@ -5,124 +5,7 @@ import Sidebar from '../Components/Sidebar';
 import Topbar from '../Components/Topbar';
 import { SlidersHorizontal, Play, Pause, Volume2, VolumeX, Maximize2, Minimize2, Download } from 'lucide-react';
 import { selectVideoJob, updateJobStatus, setJob } from '../redux/slices/videoJobSlice';
-
-// Download video function - handles CORS and ensures complete download
-const downloadVideo = async (videoUrl, videoName) => {
-  let loadingMsg = null;
-
-  try {
-    // Show loading indicator
-    loadingMsg = document.createElement('div');
-    loadingMsg.id = 'video-download-loading';
-    loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#13008B;color:white;padding:20px;border-radius:8px;z-index:10000;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
-    loadingMsg.textContent = 'Preparing download...';
-    document.body.appendChild(loadingMsg);
-
-    // Try fetch approach first (more reliable for binary data)
-    const response = await fetch(videoUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'video/*,*/*',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    // Get content type
-    const contentType = response.headers.get('content-type') || 'video/mp4';
-
-    // Read the response as blob (handles binary data correctly)
-    const blob = await response.blob();
-
-    // Verify blob is valid and not empty
-    if (!blob || blob.size === 0) {
-      throw new Error('Downloaded file is empty or invalid');
-    }
-
-    // Determine file extension from content type or URL
-    let extension = 'mp4';
-    if (contentType.includes('webm')) extension = 'webm';
-    else if (contentType.includes('mov')) extension = 'mov';
-    else if (contentType.includes('avi')) extension = 'avi';
-    else if (videoUrl.toLowerCase().match(/\.(webm|mov|avi)$/)) {
-      const match = videoUrl.toLowerCase().match(/\.(\w+)$/);
-      if (match) extension = match[1];
-    }
-
-    // Create download link
-    const url = window.URL.createObjectURL(blob);
-    const downloadLink = document.createElement('a');
-    downloadLink.href = url;
-    downloadLink.download = videoName
-      ? (videoName.endsWith('.mp4') || videoName.endsWith('.webm') || videoName.endsWith('.mov')
-        ? videoName
-        : `${videoName}.${extension}`)
-      : `video.${extension}`;
-    downloadLink.style.display = 'none';
-
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-
-    // Cleanup after a delay
-    setTimeout(() => {
-      window.URL.revokeObjectURL(url);
-      if (downloadLink.parentNode) {
-        document.body.removeChild(downloadLink);
-      }
-      if (loadingMsg && loadingMsg.parentNode) {
-        document.body.removeChild(loadingMsg);
-      }
-    }, 200);
-
-  } catch (fetchError) {
-    // If fetch fails (CORS or other issue), try direct download
-    console.warn('Fetch download failed, trying direct download:', fetchError);
-
-    if (loadingMsg && loadingMsg.parentNode) {
-      loadingMsg.textContent = 'Trying alternative method...';
-    }
-
-    try {
-      const directLink = document.createElement('a');
-      directLink.href = videoUrl;
-      directLink.download = videoName || 'video.mp4';
-      directLink.style.display = 'none';
-      document.body.appendChild(directLink);
-      directLink.click();
-
-      setTimeout(() => {
-        if (directLink.parentNode) {
-          document.body.removeChild(directLink);
-        }
-        if (loadingMsg && loadingMsg.parentNode) {
-          document.body.removeChild(loadingMsg);
-        }
-      }, 200);
-    } catch (directError) {
-      // Final fallback: open in new tab
-      if (loadingMsg && loadingMsg.parentNode) {
-        document.body.removeChild(loadingMsg);
-      }
-
-      const fallbackLink = document.createElement('a');
-      fallbackLink.href = videoUrl;
-      fallbackLink.target = '_blank';
-      fallbackLink.rel = 'noopener noreferrer';
-      fallbackLink.style.display = 'none';
-      document.body.appendChild(fallbackLink);
-      fallbackLink.click();
-      setTimeout(() => {
-        if (fallbackLink.parentNode) {
-          document.body.removeChild(fallbackLink);
-        }
-      }, 200);
-
-      alert('Download failed. The video will open in a new tab - please right-click and select "Save video as..." to download.');
-    }
-  }
-};
+import Loader from '../Components/Loader';
 
 // Video Player Component
 const VideoPlayer = ({ videoUrl, videoName }) => {
@@ -134,6 +17,7 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const controlsTimeoutRef = useRef(null);
 
   useEffect(() => {
@@ -142,18 +26,27 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
 
     const updateTime = () => setCurrentTime(video.currentTime);
     const updateDuration = () => setDuration(video.duration);
-    const handlePlay = () => setIsPlaying(true);
+    const handlePlay = () => {
+      setIsPlaying(true);
+      setIsLoading(false);
+    };
     const handlePause = () => setIsPlaying(false);
     const handleEnded = () => {
       setIsPlaying(false);
       setCurrentTime(0);
     };
+    const handleWaiting = () => setIsLoading(true);
+    const handleCanPlay = () => setIsLoading(false);
+    const handleLoadStart = () => setIsLoading(true);
 
     video.addEventListener('timeupdate', updateTime);
     video.addEventListener('loadedmetadata', updateDuration);
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
     video.addEventListener('ended', handleEnded);
+    video.addEventListener('waiting', handleWaiting);
+    video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('loadstart', handleLoadStart);
 
     return () => {
       video.removeEventListener('timeupdate', updateTime);
@@ -161,6 +54,9 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
       video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('waiting', handleWaiting);
+      video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('loadstart', handleLoadStart);
     };
   }, []);
 
@@ -295,6 +191,13 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
         onClick={togglePlay}
       />
 
+      {/* Loading Spinner */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/20 z-10 pointer-events-none">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-white border-t-transparent"></div>
+        </div>
+      )}
+
       {/* Controls Overlay */}
       <div
         className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'
@@ -349,18 +252,6 @@ const VideoPlayer = ({ videoUrl, videoName }) => {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Download Button */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                downloadVideo(videoUrl, videoName);
-              }}
-              className="text-white hover:text-[#13008B] transition-colors"
-              title="Download video"
-            >
-              <Download size={20} />
-            </button>
-
             {/* Fullscreen Button */}
             <button
               onClick={toggleFullscreen}
@@ -408,17 +299,6 @@ const VideoThumbnail = ({ videoUrl, videoName }) => {
           >
             ← Back to thumbnail
           </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              downloadVideo(videoUrl, videoName);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-white bg-[#13008B] hover:bg-[#0f0069] rounded-md transition-colors"
-            title="Download video"
-          >
-            <Download size={16} />
-            Download
-          </button>
         </div>
         <VideoPlayer videoUrl={videoUrl} videoName={videoName} />
       </div>
@@ -439,26 +319,19 @@ const VideoThumbnail = ({ videoUrl, videoName }) => {
           muted
           playsInline
         />
+
+        {/* Loading Spinner */}
+        {!thumbnailReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 z-10 pointer-events-none">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-white border-t-transparent"></div>
+          </div>
+        )}
+
         {/* Play button overlay */}
         <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors pointer-events-none">
           <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
             <Play size={32} className="text-black ml-1" fill="black" />
           </div>
-        </div>
-        {/* Download button overlay - appears on hover */}
-        <div
-          className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={(e) => {
-            e.stopPropagation();
-            downloadVideo(videoUrl, videoName);
-          }}
-        >
-          <button
-            className="p-2 bg-black/70 hover:bg-black/90 rounded-full text-white transition-colors"
-            title="Download video"
-          >
-            <Download size={18} />
-          </button>
         </div>
       </div>
     </div>
@@ -467,7 +340,7 @@ const VideoThumbnail = ({ videoUrl, videoName }) => {
 
 // Section expects an array of items: { id, url, name, created_at, type }
 
-const Section = ({ title, items }) => {
+const Section = ({ title, items, onDownload }) => {
   return (
     <div className="mb-10">
       <h2 className="text-2xl font-semibold text-gray-900 mb-4">{title}</h2>
@@ -502,7 +375,9 @@ const Section = ({ title, items }) => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        downloadVideo(item.url, item.name);
+                        if (onDownload) {
+                          onDownload(item.url, item.name);
+                        }
                       }}
                       className="ml-2 p-2 text-gray-600 hover:text-[#13008B] hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
                       title="Download video"
@@ -512,20 +387,7 @@ const Section = ({ title, items }) => {
                   )}
                 </div>
               )}
-              {!item?.name && isVideo && item?.url && (
-                <div className="mt-3 flex justify-end">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      downloadVideo(item.url, item.name || 'video.mp4');
-                    }}
-                    className="p-2 text-gray-600 hover:text-[#13008B] hover:bg-gray-100 rounded-md transition-colors"
-                    title="Download video"
-                  >
-                    <Download size={18} />
-                  </button>
-                </div>
-              )}
+
             </div>
           );
         })}
@@ -551,6 +413,105 @@ const MyMedia = () => {
   const [renderVideoProgress, setRenderVideoProgress] = useState({ percent: 0, phase: '' });
   // State for final videos
   const [finalVideos, setFinalVideos] = useState([]);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  // Download video function - handles CORS and ensures complete download
+  const downloadVideo = async (videoUrl, videoName) => {
+    setIsDownloading(true);
+    try {
+      // Try fetch approach first (more reliable for binary data)
+      const response = await fetch(videoUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'video/*,*/*',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Get content type
+      const contentType = response.headers.get('content-type') || 'video/mp4';
+
+      // Read the response as blob (handles binary data correctly)
+      const blob = await response.blob();
+
+      // Verify blob is valid and not empty
+      if (!blob || blob.size === 0) {
+        throw new Error('Downloaded file is empty or invalid');
+      }
+
+      // Determine file extension from content type or URL
+      let extension = 'mp4';
+      if (contentType.includes('webm')) extension = 'webm';
+      else if (contentType.includes('mov')) extension = 'mov';
+      else if (contentType.includes('avi')) extension = 'avi';
+      else if (videoUrl.toLowerCase().match(/\.(webm|mov|avi)$/)) {
+        const match = videoUrl.toLowerCase().match(/\.(\w+)$/);
+        if (match) extension = match[1];
+      }
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = url;
+      downloadLink.download = videoName
+        ? (videoName.endsWith('.mp4') || videoName.endsWith('.webm') || videoName.endsWith('.mov')
+          ? videoName
+          : `${videoName}.${extension}`)
+        : `video.${extension}`;
+      downloadLink.style.display = 'none';
+
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+
+      // Cleanup after a delay
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        if (downloadLink.parentNode) {
+          document.body.removeChild(downloadLink);
+        }
+      }, 200);
+
+    } catch (fetchError) {
+      // If fetch fails (CORS or other issue), try direct download
+      console.warn('Fetch download failed, trying direct download:', fetchError);
+
+      try {
+        const directLink = document.createElement('a');
+        directLink.href = videoUrl;
+        directLink.download = videoName || 'video.mp4';
+        directLink.style.display = 'none';
+        document.body.appendChild(directLink);
+        directLink.click();
+
+        setTimeout(() => {
+          if (directLink.parentNode) {
+            document.body.removeChild(directLink);
+          }
+        }, 200);
+      } catch (directError) {
+        // Final fallback: open in new tab
+        const fallbackLink = document.createElement('a');
+        fallbackLink.href = videoUrl;
+        fallbackLink.target = '_blank';
+        fallbackLink.rel = 'noopener noreferrer';
+        fallbackLink.style.display = 'none';
+        document.body.appendChild(fallbackLink);
+        fallbackLink.click();
+        setTimeout(() => {
+          if (fallbackLink.parentNode) {
+            document.body.removeChild(fallbackLink);
+          }
+        }, 200);
+
+        alert('Download failed. The video will open in a new tab - please right-click and select "Save video as..." to download.');
+      }
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   // Initialize Redux job from localStorage if user hit this page via redirect
   useEffect(() => {
@@ -1059,7 +1020,18 @@ const MyMedia = () => {
               </div>
             )}
 
-            {isLoadingLib && (<div className="mb-4 text-sm text-gray-600">Loading your videos…</div>)}
+            <Loader
+              isOpen={isLoadingLib}
+              title="Loading Library"
+              description="Fetching your videos..."
+              simulateProgress={true}
+            />
+            <Loader
+              isOpen={isDownloading}
+              title="Preparing Download"
+              description="Please wait while we prepare your video..."
+              simulateProgress={true}
+            />
             {libError && (<div className="mb-4 text-sm text-red-600">{libError}</div>)}
 
             {/* Show message if no videos found */}
@@ -1074,30 +1046,35 @@ const MyMedia = () => {
               <Section
                 title="Today"
                 items={data.today}
+                onDownload={downloadVideo}
               />
             )}
             {data.week.length > 0 && (
               <Section
                 title="This Week"
                 items={data.week}
+                onDownload={downloadVideo}
               />
             )}
             {data.month.length > 0 && (
               <Section
                 title="This Month"
                 items={data.month}
+                onDownload={downloadVideo}
               />
             )}
             {data.year.length > 0 && (
               <Section
                 title="This Year"
                 items={data.year}
+                onDownload={downloadVideo}
               />
             )}
             {data.all.length > 0 && (
               <Section
                 title="All Videos"
                 items={data.all}
+                onDownload={downloadVideo}
               />
             )}
           </div>
