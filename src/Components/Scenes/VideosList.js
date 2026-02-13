@@ -8,7 +8,7 @@ import '../video-editor-js/pro/styles.utilities.css';
 import '../video-editor-js/pro/styles/base-themes/dark.css';
 import '../video-editor-js/pro/styles/base-themes/light.css';
 import '../video-editor-js/pro/styles/base-themes/rve.css';
-import { Zap, ChevronRight, X, Menu, Plus, MoreVertical } from 'lucide-react';
+import { Zap, ChevronRight, ChevronDown, ChevronUp, X, Menu, Plus, MoreVertical } from 'lucide-react';
 import { FaPlus } from 'react-icons/fa';
 import AddSceneDropdown from '../BuildReel/AddSceneDropdown';
 import { SidebarMenuButton } from '../video-editor-js/pro/components/ui/sidebar';
@@ -62,6 +62,29 @@ const APP_CONFIG = { fps: 30 };
 const LAMBDA_RENDER_ENDPOINT = '/api/render/lambda';
 const SSR_RENDER_ENDPOINT = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/api/render/ssr';
 
+const VEO3_FIELDS = {
+  style: "Contemporary, upbeat, energetic",
+  action: "Presenter walks toward camera emphasizing connection",
+  camera: "Medium shot; handheld feel for movement",
+  subject: "Energetic news presenter",
+  ambiance: "Bright, balanced, inviting lighting",
+  background: "Lively, modern studio with geometric accents in deep red and vibrant purple, clear brand logo top left",
+  composition: "Presenter centered with brand space for overlays",
+  focus_and_lens: "Wide lens, shallow depth for focus pop"
+};
+
+const ANIMATION_FIELDS = {
+  lighting: "Even flat studio lighting, slight glow effect behind chart for depth and energy, lighting maintains broadcast-quality backdrop.",
+  style_mood: "Dynamic, energetic mood with bright professional finish; modern, clear lines evoke credibility and sophistication.",
+  transition_type: "Gentle, rhythmic background pulsing with subtle shimmer, smooth natural transitions.",
+  scene_description: "Clean professional infographic studio with bold color energy, vibrant but minimal backdrop, lively scene for real-time data with professional ambient movement.",
+  subject_description: "Geometric infographic panels and brand-color accents frame chart, deep red and blue backgrounds, soft gray gradients at edges, bars and circles visible with organic transitions in background template.",
+  action_specification: "Background shapes pulse gently, subtle highlight sweeps across color panels, brand accents softly animate without disrupting chart overlay, all motion confined to decorative elements.",
+  content_modification: "Scene contains no text or charts, pure decorative background with gentle ambient motion only, no morphing or new content generation.",
+  camera_specifications: "Static camera preserved completely; fixed center frame allows chart overlay to remain anchored and clear throughout, no movement.",
+  geometric_preservation: "All decorative elements locked, chart overlay fixed; only minor ambient motion allowed in background."
+};
+
 
 const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAddScene, hasScripts, onViewScene }) => {
   const [items, setItems] = useState([]); // array of { url, description, narration, scenes: [] }
@@ -94,12 +117,20 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const [showRegenerateModal, setShowRegenerateModal] = useState(false);
   const [regenerateSceneNumber, setRegenerateSceneNumber] = useState('');
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isGeneratingFields, setIsGeneratingFields] = useState(false);
   const [regenerateProgress, setRegenerateProgress] = useState(0);
   const [availableScenes, setAvailableScenes] = useState([]);
   const [isLoadingScenes, setIsLoadingScenes] = useState(false);
   const [showRegenerateSuccess, setShowRegenerateSuccess] = useState(false);
   const [showRegenerateDropdown, setShowRegenerateDropdown] = useState(false);
   const [regenerateLoaderTitle, setRegenerateLoaderTitle] = useState('Regenerating Video');
+  const [regenerateParams, setRegenerateParams] = useState({});
+  const [isAccordionOpen, setIsAccordionOpen] = useState(true);
+
+  // Reset regenerate params when scene changes
+  useEffect(() => {
+    setRegenerateParams({});
+  }, [regenerateSceneNumber]);
 
   // Replace Audio State
   const [showReplaceAudioModal, setShowReplaceAudioModal] = useState(false);
@@ -6356,6 +6387,57 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     }
   }, []);
 
+  // Generate Fields Handler
+  const handleGenerateFields = async () => {
+    if (!regenerateParams.ai_prompt) {
+      alert('Please enter an AI Prompt first');
+      return;
+    }
+
+    setIsGeneratingFields(true);
+    try {
+      const selectedScene = availableScenes.find(s => String(s.scene_number) === String(regenerateSceneNumber));
+      if (!selectedScene) throw new Error('Scene not found');
+
+      const model = selectedScene.model || 'VEO3';
+
+      const payload = {
+        desc_prompt: regenerateParams.ai_prompt,
+        model_type: model,
+        scene_narration: selectedScene.narration || '',
+        scene_title: selectedScene.scene_heading || ''
+      };
+
+      const response = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/scripts/generate-fields', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate fields');
+      }
+
+      const data = await response.json();
+
+      if (model.toLowerCase() === 'veo3' && data.veo3_prompt_template) {
+        setRegenerateParams(prev => ({ ...prev, ...data.veo3_prompt_template }));
+      } else if ((model.toLowerCase() === 'sora' || model.toLowerCase() === 'plotly') && data.animation_desc) {
+        setRegenerateParams(prev => ({ ...prev, ...data.animation_desc }));
+      }
+
+      setIsAccordionOpen(true);
+
+    } catch (error) {
+      console.error('Error generating fields:', error);
+      alert('Error generating fields: ' + error.message);
+    } finally {
+      setIsGeneratingFields(false);
+    }
+  };
+
   // Regenerate Video Handler
   const handleRegenerateVideo = useCallback(async () => {
     if (!regenerateSceneNumber) {
@@ -6424,17 +6506,62 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       setRegenerateProgress(30);
 
       // 4. Call Regenerate API
+      const modelLower = (scene.model || 'VEO3').toLowerCase();
+      const userPrompt = regenerateParams.ai_prompt || "";
+
+      const transitionObject = {
+        is_preset: false,
+        userQuery: userPrompt,
+        parameters: {
+          name: "",
+          preservation_notes: {
+            camera_specifications: regenerateParams.camera_specifications || "",
+            subject_description: regenerateParams.subject_description || "",
+            action_specification: regenerateParams.action_specification || "",
+            scene_description: regenerateParams.scene_description || "",
+            lighting: regenerateParams.lighting || "",
+            style_mood: regenerateParams.style_mood || "",
+            geometric_preservation: regenerateParams.geometric_preservation || "",
+            transition_type: regenerateParams.transition_type || "",
+            content_modification: regenerateParams.content_modification || ""
+          },
+          prompt_description: userPrompt
+        },
+        savecustom: false,
+        custom_name: userPrompt
+      };
+
+      const scenePayload = {
+        scene_number: scene.scene_number,
+        model: scene.model
+      };
+
+      if (modelLower === 'veo3' || modelLower === 'avatar') {
+        scenePayload.veo3_prompt_template = {
+          style: regenerateParams.style || "",
+          action: regenerateParams.action || "",
+          camera: regenerateParams.camera || "",
+          subject: regenerateParams.subject || "",
+          ambiance: regenerateParams.ambiance || "",
+          background: regenerateParams.background || "",
+          composition: regenerateParams.composition || "",
+          focus_and_lens: regenerateParams.focus_and_lens || ""
+        };
+      } else {
+        // Only add transitions for non-VEO3 scenes (SORA, PLOTLY)
+        scenePayload.transitions = [transitionObject];
+      }
+
       const payload = {
         session_id,
         user_id,
         aspect_ratio: aspectRatioParam,
-        subtitles: false,
+        subtitles: true,
         logo: logoParam,
-        scenes: [scene],
-        scene_numbers: [Number(regenerateSceneNumber)]
+        scenes: [scenePayload],
       };
 
-      const regenerateRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/generate-videos-queue', {
+      const regenerateRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/regenerate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -6458,7 +6585,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       setRegenerateLoaderTitle('Regenerating Video');
       let isComplete = false;
       while (!isComplete) {
-        const statusRes = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/video-job-status/${encodeURIComponent(jobId)}`);
+        const statusRes = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/videos/regenerate/${encodeURIComponent(jobId)}/status`);
         if (!statusRes.ok) throw new Error('Failed to check job status');
 
         const statusData = await statusRes.json();
@@ -6520,7 +6647,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       setIsRegenerating(false);
       setRegenerateProgress(0);
     }
-  }, [regenerateSceneNumber]);
+  }, [regenerateSceneNumber, regenerateParams]);
 
   const handleReplaceAudio = async () => {
     if (!replaceAudioSceneNumber) return;
@@ -9343,94 +9470,208 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       {/* Regenerate Video Modal */}
       {showRegenerateModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h3 className="text-lg font-semibold text-gray-900">Regenerate Video</h3>
-              <button
-                onClick={() => setShowRegenerateModal(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Select Scene
-                </label>
-                {isLoadingScenes ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                    <div className="w-4 h-4 border-2 border-gray-300 border-t-[#13008B] rounded-full animate-spin"></div>
-                    Loading scenes...
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <div
-                      onClick={() => setShowRegenerateDropdown(!showRegenerateDropdown)}
-                      className="w-full pl-4 pr-4 py-2.5 rounded-lg border border-gray-200 bg-white text-gray-700 cursor-pointer shadow-sm flex items-center justify-between hover:border-gray-300 transition-all focus:ring-2 focus:ring-[#13008B]/20 focus:border-[#13008B]"
-                    >
-                      <span className={regenerateSceneNumber ? 'text-gray-900' : 'text-gray-500'}>
-                        {regenerateSceneNumber
-                          ? (() => {
-                            const s = availableScenes.find(sc => String(sc.scene_number) === String(regenerateSceneNumber));
-                            return s ? `Scene ${s.scene_number} ${s.scene_heading ? `- ${s.scene_heading}` : ''}` : regenerateSceneNumber;
-                          })()
-                          : 'Select a scene to regenerate'}
-                      </span>
-                      <svg
-                        className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${showRegenerateDropdown ? 'rotate-180' : ''}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
-                      </svg>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            {!regenerateSceneNumber ? (
+              // VIEW 1: SCENE LIST
+              <>
+                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                  <h3 className="text-lg font-semibold text-gray-900">Regenerate Video</h3>
+                  <button
+                    onClick={() => setShowRegenerateModal(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Select a scene to regenerate
+                  </label>
+                  {isLoadingScenes ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-4 justify-center">
+                      <div className="w-5 h-5 border-2 border-gray-300 border-t-[#13008B] rounded-full animate-spin"></div>
+                      Loading scenes...
                     </div>
-
-                    {showRegenerateDropdown && (
-                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-100 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                        {availableScenes.map((scene, idx) => (
+                  ) : (
+                    <div className="max-h-[400px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                      {availableScenes.length > 0 ? (
+                        availableScenes.map((scene, idx) => (
                           <div
                             key={scene.scene_number || idx}
                             onClick={() => {
                               setRegenerateSceneNumber(scene.scene_number);
-                              setShowRegenerateDropdown(false);
+                              // Reset params when selecting a scene
+                              setRegenerateParams({});
+                              setIsAccordionOpen(true);
                             }}
-                            className="px-4 py-2.5 hover:bg-gray-50 cursor-pointer text-sm text-gray-700 transition-colors border-b border-gray-50 last:border-0"
+                            className="p-3 rounded-lg border border-gray-100 hover:border-[#13008B] hover:bg-[#F5F3FF] cursor-pointer transition-all group"
                           >
-                            Scene {scene.scene_number} {scene.scene_heading ? `- ${scene.scene_heading}` : ''}
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium text-gray-700 group-hover:text-[#13008B]">
+                                Scene {scene.scene_number}
+                              </span>
+                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full group-hover:bg-white group-hover:text-[#13008B]">
+                                {(scene.model || '').toUpperCase() === 'VEO3' ? 'Avatar' : (scene.model || '').toUpperCase() === 'SORA' ? 'Infographic' : (scene.model || '').toUpperCase() === 'PLOTLY' ? 'Financial' : scene.model || 'Unknown Model'}
+                              </span>
+                            </div>
+                            {scene.scene_heading && (
+                              <div className="text-xs text-gray-500 mt-1 truncate">
+                                {scene.scene_heading}
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#13008B]"></span>
-                  Choose the scene you want to regenerate from the list.
-                </p>
-              </div>
-            </div>
+                        ))
+                      ) : (
+                        <div className="text-center text-gray-500 py-4 text-sm">
+                          No scenes available
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              // VIEW 2: OPTIONS
+              (() => {
+                const selectedScene = availableScenes.find(s => String(s.scene_number) === String(regenerateSceneNumber));
+                const model = (selectedScene?.model || '').toLowerCase();
+                const isVeo3 = model === 'veo3';
+                const isSoraOrPlotly = model === 'sora' || model === 'plotly';
 
-            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
-              <button
-                onClick={() => setShowRegenerateModal(false)}
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRegenerateVideo}
-                disabled={!regenerateSceneNumber || isRegenerating}
-                className={`px-4 py-2 rounded-lg text-white font-medium transition-colors ${!regenerateSceneNumber || isRegenerating
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-[#13008B] hover:bg-[#0f0069]'
-                  }`}
-              >
-                {isRegenerating ? 'Regenerating...' : 'Regenerate'}
-              </button>
-            </div>
+                let fields = {};
+                let accordionTitle = "Prompt Settings";
+
+                if (isVeo3) {
+                  fields = VEO3_FIELDS;
+                  accordionTitle = "VEO3 prompt template fields";
+                } else if (isSoraOrPlotly) {
+                  fields = ANIMATION_FIELDS;
+                  accordionTitle = "Animation description";
+                }
+
+                return (
+                  <>
+                    <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setRegenerateSceneNumber('')}
+                          className="text-gray-400 hover:text-[#13008B] transition-colors"
+                        >
+                          <ChevronRight className="w-5 h-5 rotate-180" />
+                        </button>
+                        <h3 className="text-lg font-semibold text-gray-900">
+                          Regenerate Scene {regenerateSceneNumber}
+                        </h3>
+                      </div>
+                      <button
+                        onClick={() => setShowRegenerateModal(false)}
+                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                      {/* AI Prompt Section */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          AI Prompt
+                        </label>
+                        <div className="flex gap-2 items-start">
+                          <textarea
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#13008B]/20 focus:border-[#13008B] min-h-[120px] resize-y"
+                            placeholder="Describe how you want to change the scene..."
+                            value={regenerateParams['ai_prompt'] || ''}
+                            onChange={(e) => setRegenerateParams(prev => ({ ...prev, ai_prompt: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Generate Fields Button */}
+                      <button
+                        onClick={handleGenerateFields}
+                        disabled={isGeneratingFields || !regenerateParams.ai_prompt}
+                        className={`w-full py-2.5 rounded-lg border border-[#13008B] font-medium transition-colors flex items-center justify-center gap-2 ${isGeneratingFields || !regenerateParams.ai_prompt
+                          ? 'bg-[#eee] text-[#000] text-white cursor-not-allowed border-gray-300'
+                          : 'text-[#fff] bg-[#13008B] hover:bg-[#13008B/50]'
+                          }`}
+                      >
+                        {isGeneratingFields ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-[#13008B]/30 border-t-[#13008B] rounded-full animate-spin"></div>
+                            Generating Fields...
+                          </>
+                        ) : (
+                          <>
+
+                            Generate Fields
+                          </>
+                        )}
+                      </button>
+
+                      {/* Accordion Section */}
+                      {Object.keys(fields).length > 0 && (
+                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                          <button
+                            onClick={() => setIsAccordionOpen(!isAccordionOpen)}
+                            className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between text-left hover:bg-gray-100 transition-colors"
+                          >
+                            <span className="font-medium text-gray-700 text-sm">{accordionTitle}</span>
+                            {isAccordionOpen ? (
+                              <ChevronUp className="w-4 h-4 text-gray-500" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-gray-500" />
+                            )}
+                          </button>
+
+                          {isAccordionOpen && (
+                            <div className="p-4 space-y-3 bg-white border-t border-gray-100 animate-in slide-in-from-top-2 duration-200">
+                              {Object.entries(fields).map(([key, placeholder]) => (
+                                <div key={key}>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1 capitalize">
+                                    {key.replace(/_/g, ' ')}
+                                  </label>
+                                  <textarea
+                                    className="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#13008B]/20 focus:border-[#13008B] min-h-[60px] resize-y bg-gray-50 focus:bg-white transition-colors"
+                                    placeholder={placeholder}
+                                    value={regenerateParams[key] || ''}
+                                    onChange={(e) => setRegenerateParams(prev => ({ ...prev, [key]: e.target.value }))}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer with Regenerate Button */}
+                    <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end">
+                      <button
+                        onClick={handleRegenerateVideo}
+                        disabled={isRegenerating}
+                        className={`px-6 py-2.5 rounded-lg text-white font-medium transition-colors flex items-center justify-center gap-2 ${isRegenerating
+                          ? 'bg-gray-400 cursor-not-allowed'
+                          : 'bg-[#13008B] hover:bg-[#0f0069]'
+                          }`}
+                      >
+                        {isRegenerating ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            Regenerating...
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="w-4 h-4" />
+                            Regenerate
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()
+            )}
           </div>
         </div>
       )}
@@ -9489,7 +9730,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                     </div>
 
                     {showReplaceAudioDropdown && (
-                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-100 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-100 rounded-lg shadow-xl max-h-20 overflow-y-scroll">
                         {availableAudioScenes.length > 0 ? (
                           availableAudioScenes.map((scene, idx) => (
                             <div
