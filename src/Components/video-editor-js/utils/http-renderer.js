@@ -10,18 +10,18 @@ export class HttpRenderer {
         // Get session_id and user_id from localStorage
         const sessionId = typeof window !== 'undefined' ? localStorage.getItem('session_id') : '';
         const userId = typeof window !== 'undefined' ? localStorage.getItem('token') : '';
-        
+
         if (!sessionId || !userId) {
             throw new Error('Missing session_id or user_id. Please sign in again.');
         }
-        
+
         // Prepare request body for /v1/videos/render-video API
         const requestBody = {
             session_id: sessionId,
             user_id: userId,
             input_props: JSON.stringify(params.inputProps || params)
         };
-        
+
         // Use the new API endpoint
         const apiBase = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net';
         const response = await fetch(`${apiBase}/v1/videos/render-video`, {
@@ -35,21 +35,21 @@ export class HttpRenderer {
                 input_props: requestBody.input_props
             }).toString()
         });
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Render request failed: ${response.statusText} - ${errorText}`);
         }
-        
+
         const responseData = await response.json();
-        
+
         // Extract job_id from response
         const jobId = responseData?.job_id || responseData?.jobId || responseData?.id;
-        
+
         if (!jobId) {
             throw new Error('No job_id received from render API');
         }
-        
+
         // Return in format expected by useRendering hook
         return {
             renderId: jobId,
@@ -87,16 +87,23 @@ export class HttpRenderer {
                 'Content-Type': 'application/json',
             },
         });
-        
+
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Render job status check failed: ${response.statusText} - ${errorText}`);
         }
-        
+
         const responseData = await response.json();
+        if (responseData?.progress?.percent !== undefined && responseData?.progress?.percent !== null) {
+            const percentValue = Number(responseData.progress.percent);
+            if (!Number.isNaN(percentValue)) {
+                responseData.progress = percentValue;
+                responseData.progress_percent = percentValue;
+            }
+        }
         return responseData;
     }
-    
+
     get renderType() {
         return this.renderTypeInfo;
     }

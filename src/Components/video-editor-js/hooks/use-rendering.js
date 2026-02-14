@@ -96,18 +96,29 @@ export const useRendering = (id, inputProps) => {
                     }
                     
                     const status = result?.status || result?.job_status || 'queued';
-                    const progress = result?.progress || result?.progress_percent || 0;
+                    const rawProgress = result?.progress;
+                    let progressValue = 0;
+                    if (typeof rawProgress === "number") {
+                        progressValue = rawProgress;
+                    } else if (rawProgress && typeof rawProgress === "object") {
+                        const nested = rawProgress.percent ?? rawProgress.progress ?? rawProgress.value;
+                        const parsed = typeof nested === "number" ? nested : Number(nested);
+                        progressValue = Number.isNaN(parsed) ? 0 : parsed;
+                    } else {
+                        const parsed = Number(result?.progress_percent);
+                        progressValue = Number.isNaN(parsed) ? 0 : parsed;
+                    }
                     const phase = result?.phase || result?.message || '';
                     
                     // Update progress callback
                     if (onRenderProgress) {
-                        onRenderProgress({ percent: progress, phase });
+                        onRenderProgress({ percent: progressValue, phase });
                     }
                     
                     // Update state
                     setState({
                         status: "rendering",
-                        progress: typeof progress === 'number' ? progress / 100 : 0,
+                        progress: progressValue / 100,
                         renderId: jobId,
                     });
                     

@@ -472,6 +472,61 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     };
   }, [currentSessionId]);
 
+  const getVideoUrlFromEntry = (entry = {}) =>
+    entry?.video?.v1?.video_url ||
+    entry?.video?.video_url ||
+    entry?.videos?.v1?.video_url ||
+    entry?.videos?.video_url ||
+    entry?.video_url ||
+    entry?.blobLink?.video_link ||
+    entry?.url;
+
+  const getCurrentVideoVersion = (entry = {}) => {
+    const version = entry?.videos?.current_version || entry?.videos?.currentVersion ||
+      entry?.video?.current_version || entry?.video?.currentVersion;
+    return typeof version === 'string' && version.trim() ? version : null;
+  };
+
+  const getBaseVideoUrlFromEntry = (entry = {}) => {
+    const currentVersion = getCurrentVideoVersion(entry);
+    if (currentVersion && entry?.videos?.[currentVersion]?.base_video_url) {
+      return entry.videos[currentVersion].base_video_url;
+    }
+    if (currentVersion && entry?.video?.[currentVersion]?.base_video_url) {
+      return entry.video[currentVersion].base_video_url;
+    }
+    if (entry?.videos?.v1?.base_video_url) {
+      return entry.videos.v1.base_video_url;
+    }
+    if (entry?.videos?.base_video_url) {
+      return entry.videos.base_video_url;
+    }
+    if (entry?.video?.v1?.base_video_url) {
+      return entry.video.v1.base_video_url;
+    }
+    if (entry?.video?.base_video_url) {
+      return entry.video.base_video_url;
+    }
+    return getVideoUrlFromEntry(entry);
+  };
+
+  const getCurrentVideoLayers = (entry = {}) => {
+    const currentVersion = getCurrentVideoVersion(entry);
+    if (currentVersion && Array.isArray(entry?.videos?.[currentVersion]?.layers)) {
+      return entry.videos[currentVersion].layers;
+    }
+    if (currentVersion && Array.isArray(entry?.video?.[currentVersion]?.layers)) {
+      return entry.video[currentVersion].layers;
+    }
+    if (Array.isArray(entry?.videos?.v1?.layers)) {
+      return entry.videos.v1.layers;
+    }
+    if (Array.isArray(entry?.video?.v1?.layers)) {
+      return entry.video.v1.layers;
+    }
+    return null;
+  };
+
   useEffect(() => {
     let cancelled = false;
     let timeoutId = null;
@@ -521,39 +576,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       return null;
     };
 
-    // Get regular video URL (fallback if specific version not available)
-    const getVideoUrlFromEntry = (entry = {}) =>
-      entry?.video?.v1?.video_url ||
-      entry?.video?.video_url ||
-      entry?.videos?.v1?.video_url ||
-      entry?.videos?.video_url ||
-      entry?.video_url ||
-      entry?.blobLink?.video_link ||
-      entry?.url;
-
-    // Get base video URL from new schema (highest priority)
-    // This is the canonical base video without overlays
-    const getBaseVideoUrlFromEntry = (entry = {}) => {
-      // Priority 1: Check videos.v1.base_video_url (NEW SCHEMA)
-      if (entry?.videos?.v1?.base_video_url) {
-        return entry.videos.v1.base_video_url;
-      }
-
-      // Priority 2: Fall back to existing logic
-      if (entry?.videos?.base_video_url) {
-        return entry.videos.base_video_url;
-      }
-      if (entry?.video?.v1?.base_video_url) {
-        return entry.video.v1.base_video_url;
-      }
-      if (entry?.video?.base_video_url) {
-        return entry.video.base_video_url;
-      }
-
-      // Priority 3: Fall back to regular video URL extraction
-      return getVideoUrlFromEntry(entry);
-    };
-
     // Get video URL based on logo and subtitle toggle states
     const getVideoUrlBasedOnToggles = (entry = {}) => {
       let url = null;
@@ -600,9 +622,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get chart video URL from layers array (NEW SCHEMA - Priority 1)
     const getChartVideoUrlFromLayers = (entry = {}) => {
-      // Priority 1: Check videos.v1.layers array for chart layer (NEW SCHEMA)
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const chartLayer = layers.find(layer => layer?.name === 'chart');
         if (chartLayer?.url) {
           return chartLayer.url;
         }
@@ -614,8 +636,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get complete chart layer data with all properties
     const getChartLayerData = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const chartLayer = layers.find(layer => layer?.name === 'chart');
         if (chartLayer) {
           return {
             url: chartLayer.url,
@@ -674,9 +697,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get audio URL from layers array (NEW SCHEMA - Priority 1)
     const getAudioUrlFromLayers = (entry = {}) => {
-      // Priority 1: Check videos.v1.layers array for audio layer (NEW SCHEMA)
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const audioLayer = layers.find(layer => layer?.name === 'audio');
         if (audioLayer?.url) {
           return audioLayer.url;
         }
@@ -688,8 +711,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get audio layer data (url, timing, volume, enabled) from layers array
     const getAudioLayerData = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const audioLayer = layers.find(layer => layer?.name === 'audio');
         if (audioLayer) {
           return {
             url: audioLayer.url,
@@ -711,6 +735,13 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       }
 
       // PRIORITY 2: Check videos.v1.audio_only_url (for SORA/PLOTLY scenes)
+      const currentVersion = getCurrentVideoVersion(entry);
+      if (currentVersion && entry?.videos?.[currentVersion]?.audio_only_url) {
+        return entry.videos[currentVersion].audio_only_url;
+      }
+      if (currentVersion && entry?.videos?.[currentVersion]?.audio_url) {
+        return entry.videos[currentVersion].audio_url;
+      }
       if (entry?.videos?.v1?.audio_only_url) {
         return entry.videos.v1.audio_only_url;
       }
@@ -1083,15 +1114,11 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
           const originalUrls = {};
           parsedSessionVideos.forEach((video, index) => {
             // Extract base video URL with priority order
-            const baseVideoUrl = video.videos?.v1?.base_video_url ||
-              video.videos?.base_video_url ||
-              video.video?.v1?.base_video_url ||
-              video.video?.base_video_url ||
+            const baseVideoUrl = getBaseVideoUrlFromEntry(video) ||
               video.baseVideoUrl ||
               video.base_video_url ||
               video.url;
-
-            const sceneNumber = video.sceneNumber || video.scene_number;
+            const sceneNumber = video.sceneNumber || video.scene_number || (index + 1);
             if (sceneNumber && baseVideoUrl) {
               originalUrls[sceneNumber] = baseVideoUrl;
             } else {
@@ -1111,8 +1138,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
           if (typeof window !== 'undefined') {
             // Helper function to get logo layer data (defined outside map for reuse)
             const getLogoLayerDataForSession = (entry) => {
-              if (Array.isArray(entry?.videos?.v1?.layers)) {
-                const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+              const layers = getCurrentVideoLayers(entry);
+              if (Array.isArray(layers)) {
+                const logoLayer = layers.find(layer => layer?.name === 'logo');
                 if (logoLayer) {
                   return {
                     url: logoLayer.url,
@@ -1134,11 +1162,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             };
 
             window.__SESSION_MEDIA_FILES = parsedSessionVideos.map((it, idx) => {
-              // Get the raw base video URL - prioritize base_video_url from new schema
-              const rawBaseUrl = it.videos?.v1?.base_video_url ||
-                it.videos?.base_video_url ||
-                it.video?.v1?.base_video_url ||
-                it.video?.base_video_url ||
+              const rawBaseUrl = getBaseVideoUrlFromEntry(it) ||
                 it.url ||
                 it.video_url ||
                 it.videos?.v1?.video_url ||
@@ -1149,8 +1173,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
               // Get audio URL from layers first (NEW SCHEMA - Priority 1), then fallback
               const getAudioLayerDataForSession = (entry) => {
-                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                  const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+                const layers = getCurrentVideoLayers(entry);
+                if (Array.isArray(layers)) {
+                  const audioLayer = layers.find(layer => layer?.name === 'audio');
                   if (audioLayer) {
                     return {
                       url: audioLayer.url,
@@ -1180,8 +1205,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
               // Get chart URL from layers first (NEW SCHEMA - Priority 1), then fallback
               const getChartLayerDataForSession = (entry) => {
-                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                  const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+                const layers = getCurrentVideoLayers(entry);
+                if (Array.isArray(layers)) {
+                  const chartLayer = layers.find(layer => layer?.name === 'chart');
                   if (chartLayer) {
                     return {
                       url: chartLayer.url,
@@ -1213,8 +1239,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
               // Get subtitle layer data from layers
               const getSubtitleLayerDataForSession = (entry) => {
-                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                  const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+                const layers = getCurrentVideoLayers(entry);
+                if (Array.isArray(layers)) {
+                  const subtitleLayer = layers.find(layer => layer?.name === 'subtitles');
                   if (subtitleLayer) {
                     return {
                       url: subtitleLayer.url || null,
@@ -1304,8 +1331,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             parsedSessionVideos.forEach((it, idx) => {
               // Helper function to get chart layer data
               const getChartLayerDataForSession = (entry) => {
-                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                  const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+                const layers = getCurrentVideoLayers(entry);
+                if (Array.isArray(layers)) {
+                  const chartLayer = layers.find(layer => layer?.name === 'chart');
                   if (chartLayer) {
                     return {
                       url: chartLayer.url,
@@ -1525,11 +1553,11 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                     videoTitle = `Generated Video ${idx + 1} (${normalizedAspectRatio})`;
                   } else {
                     // If video is an object
-                    videoUrl = video.base_video_url ||
+                    videoUrl = getBaseVideoUrlFromEntry(video) ||
                       video.video_url ||
                       video.url ||
-                      video.videos?.v1?.base_video_url ||
-                      video.videos?.base_video_url ||
+                      video.videos?.v1?.video_url ||
+                      video.videos?.video_url ||
                       '';
                     videoId = video.id || video.video_id || `generated-${normalizedAspectRatio}-${idx}`;
                     videoTitle = video.title || video.name || `Generated Video ${idx + 1} (${normalizedAspectRatio})`;
@@ -1761,10 +1789,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                           const originalUrlsFromJob = { ...originalBaseVideoUrlsRef.current };
                           jobVideos.forEach((video, index) => {
                             // Extract base video URL with priority order
-                            const baseVideoUrl = video.videos?.v1?.base_video_url ||
-                              video.videos?.base_video_url ||
-                              video.video?.v1?.base_video_url ||
-                              video.video?.base_video_url ||
+                            const baseVideoUrl = getBaseVideoUrlFromEntry(video) ||
                               video.baseVideoUrl ||
                               video.base_video_url ||
                               video.url;
@@ -1801,8 +1826,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                           if (typeof window !== 'undefined') {
                             // Helper function to get logo layer data (defined outside map for reuse)
                             const getLogoLayerDataForJob = (entry) => {
-                              if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+                              const layers = getCurrentVideoLayers(entry);
+                              if (Array.isArray(layers)) {
+                                const logoLayer = layers.find(layer => layer?.name === 'logo');
                                 if (logoLayer) {
                                   return {
                                     url: logoLayer.url,
@@ -1824,11 +1850,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                             };
 
                             const newJobMediaFiles = jobVideos.map((it, idx) => {
-                              // Get the raw base video URL - prioritize base_video_url from new schema
-                              const rawBaseUrl = it.videos?.v1?.base_video_url ||
-                                it.videos?.base_video_url ||
-                                it.video?.v1?.base_video_url ||
-                                it.video?.base_video_url ||
+                              const rawBaseUrl = getBaseVideoUrlFromEntry(it) ||
                                 it.url ||
                                 it.video_url ||
                                 it.videos?.v1?.video_url ||
@@ -1839,8 +1861,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                               // Get audio URL from layers first (NEW SCHEMA - Priority 1), then fallback
                               const getAudioLayerDataForJob = (entry) => {
-                                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                  const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+                                const layers = getCurrentVideoLayers(entry);
+                                if (Array.isArray(layers)) {
+                                  const audioLayer = layers.find(layer => layer?.name === 'audio');
                                   if (audioLayer) {
                                     return {
                                       url: audioLayer.url,
@@ -1870,8 +1893,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                               // Get chart URL from layers first (NEW SCHEMA - Priority 1), then fallback
                               const getChartLayerDataForJob = (entry) => {
-                                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                  const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+                                const layers = getCurrentVideoLayers(entry);
+                                if (Array.isArray(layers)) {
+                                  const chartLayer = layers.find(layer => layer?.name === 'chart');
                                   if (chartLayer) {
                                     return {
                                       url: chartLayer.url,
@@ -1903,8 +1927,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                               // Get subtitle layer data from layers
                               const getSubtitleLayerDataForJob = (entry) => {
-                                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                  const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+                                const layers = getCurrentVideoLayers(entry);
+                                if (Array.isArray(layers)) {
+                                  const subtitleLayer = layers.find(layer => layer?.name === 'subtitles');
                                   if (subtitleLayer) {
                                     return {
                                       url: subtitleLayer.url || null,
@@ -2085,10 +2110,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                           const originalUrlsFromJob = { ...originalBaseVideoUrlsRef.current };
                           jobVideos.forEach((video, index) => {
                             // Extract base video URL with priority order
-                            const baseVideoUrl = video.videos?.v1?.base_video_url ||
-                              video.videos?.base_video_url ||
-                              video.video?.v1?.base_video_url ||
-                              video.video?.base_video_url ||
+                            const baseVideoUrl = getBaseVideoUrlFromEntry(video) ||
                               video.baseVideoUrl ||
                               video.base_video_url ||
                               video.url;
@@ -2113,8 +2135,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                           if (typeof window !== 'undefined') {
                             // Helper function to get logo layer data (defined outside map for reuse)
                             const getLogoLayerDataForJob = (entry) => {
-                              if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+                              const layers = getCurrentVideoLayers(entry);
+                              if (Array.isArray(layers)) {
+                                const logoLayer = layers.find(layer => layer?.name === 'logo');
                                 if (logoLayer) {
                                   return {
                                     url: logoLayer.url,
@@ -2136,11 +2159,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                             };
 
                             const newJobMediaFiles = jobVideos.map((it, idx) => {
-                              // Get the raw base video URL - prioritize base_video_url from new schema
-                              const rawBaseUrl = it.videos?.v1?.base_video_url ||
-                                it.videos?.base_video_url ||
-                                it.video?.v1?.base_video_url ||
-                                it.video?.base_video_url ||
+                              const rawBaseUrl = getBaseVideoUrlFromEntry(it) ||
                                 it.url ||
                                 it.video_url ||
                                 it.videos?.v1?.video_url ||
@@ -2151,8 +2170,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                               // Get audio URL from layers first (NEW SCHEMA - Priority 1), then fallback
                               const getAudioLayerDataForJob = (entry) => {
-                                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                  const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+                                const layers = getCurrentVideoLayers(entry);
+                                if (Array.isArray(layers)) {
+                                  const audioLayer = layers.find(layer => layer?.name === 'audio');
                                   if (audioLayer) {
                                     return {
                                       url: audioLayer.url,
@@ -2182,8 +2202,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                               // Get chart URL from layers first (NEW SCHEMA - Priority 1), then fallback
                               const getChartLayerDataForJob = (entry) => {
-                                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                  const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+                                const layers = getCurrentVideoLayers(entry);
+                                if (Array.isArray(layers)) {
+                                  const chartLayer = layers.find(layer => layer?.name === 'chart');
                                   if (chartLayer) {
                                     return {
                                       url: chartLayer.url,
@@ -2215,8 +2236,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                               // Get subtitle layer data from layers
                               const getSubtitleLayerDataForJob = (entry) => {
-                                if (Array.isArray(entry?.videos?.v1?.layers)) {
-                                  const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+                                const layers = getCurrentVideoLayers(entry);
+                                if (Array.isArray(layers)) {
+                                  const subtitleLayer = layers.find(layer => layer?.name === 'subtitles');
                                   if (subtitleLayer) {
                                     return {
                                       url: subtitleLayer.url || null,
@@ -2387,12 +2409,13 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
                       if (refreshResp.ok && refreshData?.session_data) {
                         const refreshedVideos = parseVideosPayload(refreshData.session_data);
+                        rebuildSessionMediaFromSessionData(refreshData.session_data);
 
                         // Check if we have videos with all required data
                         const hasVideos = refreshedVideos.length > 0;
                         const hasAllLayers = refreshedVideos.every(video => {
                           // Check if video has base video URL
-                          const hasBaseVideo = video.url || video.video_url || video.videos?.v1?.base_video_url;
+                          const hasBaseVideo = getBaseVideoUrlFromEntry(video) || video.url || video.video_url;
                           return hasBaseVideo;
                         });
 
@@ -4114,8 +4137,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     const videosArray = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
 
     const getLogoLayerDataForSession = (entry) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const logoLayer = layers.find(layer => layer?.name === 'logo');
         if (logoLayer) {
           return {
             url: logoLayer.url,
@@ -4137,8 +4161,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     };
 
     const getAudioLayerDataForSession = (entry) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const audioLayer = layers.find(layer => layer?.name === 'audio');
         if (audioLayer) {
           return {
             url: audioLayer.url,
@@ -4152,8 +4177,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     };
 
     const getChartLayerDataForSession = (entry) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const chartLayer = layers.find(layer => layer?.name === 'chart');
         if (chartLayer) {
           return {
             url: chartLayer.url,
@@ -4170,8 +4196,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     };
 
     const getSubtitleLayerDataForSession = (entry) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const subtitleLayer = layers.find(layer => layer?.name === 'subtitles');
         if (subtitleLayer) {
           return {
             url: subtitleLayer.url || null,
@@ -4193,11 +4220,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     };
 
     const sessionVideos = videosArray.map((it, idx) => {
-      const rawBaseUrl =
-        it.videos?.v1?.base_video_url ||
-        it.videos?.base_video_url ||
-        it.video?.v1?.base_video_url ||
-        it.video?.base_video_url ||
+      const rawBaseUrl = getBaseVideoUrlFromEntry(it) ||
         it.url ||
         it.video_url ||
         it.videos?.v1?.video_url ||
@@ -4483,10 +4506,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       }
 
       // Get current base video URL (priority order)
-      const currentBaseVideoUrl = video.videos?.v1?.base_video_url ||
-        video.videos?.base_video_url ||
-        video.video?.v1?.base_video_url ||
-        video.video?.base_video_url ||
+      const currentBaseVideoUrl = getBaseVideoUrlFromEntry(video) ||
         video.baseVideoUrl ||
         video.base_video_url ||
         video.url;
@@ -5211,8 +5231,7 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
               const overlaySrc = overlay.src || overlay.content;
               if (overlaySrc) {
                 for (const range of sceneFrameRanges) {
-                  const videoUrl = range.video.videos?.v1?.base_video_url ||
-                    range.video.videos?.base_video_url ||
+                  const videoUrl = getBaseVideoUrlFromEntry(range.video) ||
                     range.video.baseVideoUrl ||
                     range.video.url;
                   if (videoUrl && overlaySrc.includes(videoUrl.split('/').pop())) {
@@ -6597,17 +6616,80 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
         if (jobStatus === 'succeeded' || jobStatus === 'completed') {
           isComplete = true;
-          const newVideoUrl = statusData?.final_video_url || statusData?.finalVideoUrl || statusData?.video_url || statusData?.videoUrl || statusData?.result_url || statusData?.resultUrl;
+
+          // Fetch updated session data to get the new video URL
+          let newVideoUrl = statusData?.final_video_url || statusData?.finalVideoUrl || statusData?.video_url || statusData?.videoUrl || statusData?.result_url || statusData?.resultUrl;
+          let newLayers = null;
+          let newSceneData = null;
+
+          try {
+            const updatedSessionRes = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/sessions/user-session-data', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ user_id, session_id })
+            });
+
+            if (updatedSessionRes.ok) {
+              const updatedResponseData = await updatedSessionRes.json();
+              const updatedSessionData = updatedResponseData?.session_data || updatedResponseData?.session || updatedResponseData;
+              rebuildSessionMediaFromSessionData(updatedSessionData);
+
+              // Find matching scene in session_data.videos
+              const videosList = updatedSessionData?.videos || [];
+              const matchedVideoScene = videosList.find(v => String(v.scene_number) === String(regenerateSceneNumber));
+
+              if (matchedVideoScene) {
+                newSceneData = matchedVideoScene;
+
+                const matchedBaseUrl = getBaseVideoUrlFromEntry(matchedVideoScene);
+                if (matchedBaseUrl) {
+                  newVideoUrl = matchedBaseUrl;
+                }
+
+                // Get layers if available
+                if (matchedVideoScene.layers) {
+                  newLayers = matchedVideoScene.layers;
+                }
+
+                try {
+                  const storedVideosKey = `session_videos_${session_id}`;
+                  localStorage.removeItem(storedVideosKey);
+                } catch (lsErr) {
+                  console.warn('Error updating local storage:', lsErr);
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Error fetching updated session data:', err);
+          }
 
           if (newVideoUrl) {
             // Replace old video with new video
             setItems(prevItems => prevItems.map(item => {
               if (String(item.sceneNumber || item.scene_number) === String(regenerateSceneNumber)) {
-                return {
+
+                if (newSceneData) {
+                  return {
+                    ...item,
+                    ...newSceneData,
+                    video: newVideoUrl,
+                    timestamp: Date.now()
+                  };
+                }
+
+                const updatedItem = {
                   ...item,
                   video: newVideoUrl,
                   timestamp: Date.now()
                 };
+
+                if (newLayers) {
+                  updatedItem.layers = newLayers;
+                }
+
+                return updatedItem;
               }
               return item;
             }));
@@ -6616,9 +6698,21 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             if (window.__SESSION_MEDIA_FILES) {
               const existingIndex = window.__SESSION_MEDIA_FILES.findIndex(f => String(f.scene_number) === String(regenerateSceneNumber));
               if (existingIndex !== -1) {
-                window.__SESSION_MEDIA_FILES[existingIndex].url = newVideoUrl;
+                if (newSceneData) {
+                  window.__SESSION_MEDIA_FILES[existingIndex] = {
+                    ...window.__SESSION_MEDIA_FILES[existingIndex],
+                    ...newSceneData,
+                    url: newVideoUrl
+                  };
+                } else {
+                  window.__SESSION_MEDIA_FILES[existingIndex].url = newVideoUrl;
+                }
               } else {
-                window.__SESSION_MEDIA_FILES.push({
+                window.__SESSION_MEDIA_FILES.push(newSceneData ? {
+                  ...newSceneData,
+                  url: newVideoUrl,
+                  type: 'video'
+                } : {
                   scene_number: regenerateSceneNumber,
                   url: newVideoUrl,
                   type: 'video'
@@ -6859,9 +6953,18 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
   const getVideoFilesSignature = (files) => {
     if (!files || files.length === 0) return 'empty';
     return files.map(f => {
-      const baseUrl = f.videos?.v1?.base_video_url || f.videos?.base_video_url || f.path || f.url || f.src || '';
-      const chartUrl = f.videos?.v1?.layers?.find(l => l?.name === 'chart')?.url || f.chartVideoUrl || f.chart_video_url || '';
-      const audioUrl = f.videos?.v1?.layers?.find(l => l?.name === 'audio')?.url || f.audioUrl || f.audio_url || '';
+      const baseUrl = getBaseVideoUrlFromEntry(f) ||
+        f.path ||
+        f.url ||
+        f.src ||
+        '';
+      const layers = getCurrentVideoLayers(f);
+      const chartUrl = Array.isArray(layers)
+        ? (layers.find(l => l?.name === 'chart')?.url || f.chartVideoUrl || f.chart_video_url || '')
+        : (f.chartVideoUrl || f.chart_video_url || '');
+      const audioUrl = Array.isArray(layers)
+        ? (layers.find(l => l?.name === 'audio')?.url || f.audioUrl || f.audio_url || '')
+        : (f.audioUrl || f.audio_url || '');
       return `${baseUrl}|${chartUrl}|${audioUrl}`;
     }).join('||');
   };
@@ -6958,8 +7061,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get audio layer data helper function (for buildOverlaysFromUploadSection)
     const getAudioLayerDataForBuild = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const audioLayer = entry.videos.v1.layers.find(layer => layer?.name === 'audio');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const audioLayer = layers.find(layer => layer?.name === 'audio');
         if (audioLayer) {
           return {
             url: audioLayer.url,
@@ -6975,6 +7079,13 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     // Get audio URL from entry (comprehensive search) - local version for buildOverlaysFromUploadSection
     const getAudioUrlFromEntryLocal = (entry = {}) => {
       // Check videos.v1.audio_only_url (for SORA/PLOTLY scenes)
+      const currentVersion = getCurrentVideoVersion(entry);
+      if (currentVersion && entry?.videos?.[currentVersion]?.audio_only_url) {
+        return entry.videos[currentVersion].audio_only_url;
+      }
+      if (currentVersion && entry?.videos?.[currentVersion]?.audio_url) {
+        return entry.videos[currentVersion].audio_url;
+      }
       if (entry?.videos?.v1?.audio_only_url) {
         return entry.videos.v1.audio_only_url;
       }
@@ -7043,8 +7154,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get chart layer data helper function (for buildOverlaysFromUploadSection)
     const getChartLayerDataForBuild = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const chartLayer = entry.videos.v1.layers.find(layer => layer?.name === 'chart');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const chartLayer = layers.find(layer => layer?.name === 'chart');
         if (chartLayer) {
           return {
             url: chartLayer.url,
@@ -7067,9 +7179,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get custom_sticker layer data from layers array
     const getCustomStickerLayerDataForBuild = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
         // Filter all custom_sticker layers (there might be multiple)
-        const stickerLayers = entry.videos.v1.layers.filter(layer => layer?.name === 'custom_sticker');
+        const stickerLayers = layers.filter(layer => layer?.name === 'custom_sticker');
 
         if (stickerLayers.length > 0) {
           return stickerLayers.map((stickerLayer) => {
@@ -7107,9 +7220,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get base video layer data from layers array
     const getBaseVideoLayerData = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
         // Check for base_video or video layer name
-        const baseVideoLayer = entry.videos.v1.layers.find(layer =>
+        const baseVideoLayer = layers.find(layer =>
           layer?.name === 'base_video' || layer?.name === 'base-video' || layer?.name === 'video'
         );
         if (baseVideoLayer) {
@@ -7125,8 +7239,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get subtitle/caption layer data from layers array
     const getSubtitleLayerData = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const subtitleLayer = entry.videos.v1.layers.find(layer => layer?.name === 'subtitles');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const subtitleLayer = layers.find(layer => layer?.name === 'subtitles');
         if (subtitleLayer) {
           return {
             url: subtitleLayer.url || null, // SRT file URL
@@ -7328,8 +7443,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
     // Get logo layer data from layers array
     const getLogoLayerData = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
-        const logoLayer = entry.videos.v1.layers.find(layer => layer?.name === 'logo');
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
+        const logoLayer = layers.find(layer => layer?.name === 'logo');
         if (logoLayer) {
           return {
             url: logoLayer.url,
@@ -7436,9 +7552,10 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
     // Get text overlay layer data from layers array (supports multiple text overlays)
     // Extracts data from new schema: { name: "text_overlay", text: "...", fontSize: 28, color: "#000000", ... }
     const getTextOverlayLayerData = (entry = {}) => {
-      if (Array.isArray(entry?.videos?.v1?.layers)) {
+      const layers = getCurrentVideoLayers(entry);
+      if (Array.isArray(layers)) {
         // Filter all text_overlay layers (there might be multiple)
-        const textLayers = entry.videos.v1.layers.filter(layer => layer?.name === 'text_overlay');
+        const textLayers = layers.filter(layer => layer?.name === 'text_overlay');
 
         if (textLayers.length > 0) {
           return textLayers.map((textLayer, index) => {
@@ -7518,7 +7635,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
           // Note: Row numbers in timeline are for organization, z-index determines actual visual stacking on canvas
 
           // Get video duration first (needed for all layers)
-          const baseVideoUrl = file.videos?.v1?.base_video_url ||
+          const currentVersion = file?.videos?.current_version || file?.videos?.currentVersion;
+          const baseVideoUrl = (currentVersion && file?.videos?.[currentVersion]?.base_video_url) ||
+            file.videos?.v1?.base_video_url ||
             file.videos?.base_video_url ||
             file.video?.v1?.base_video_url ||
             file.video?.base_video_url ||
