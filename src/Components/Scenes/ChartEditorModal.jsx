@@ -1172,6 +1172,19 @@ const applyPresetFormatting = (fig, sections, chartType, chartData) => {
       }
     }
 
+    // ✅ Force category axis type for charts with string x-values (years, labels, etc.)
+    // This prevents Plotly from treating "2005","2006"... as numbers and skipping labels
+    if (!isBarLike) {
+      const xValues = chartData?.series?.x || []
+      const allStrings = xValues.length > 0 && xValues.every(v => typeof v === 'string')
+      if (allStrings) {
+        fig.layout.xaxis = {
+          ...(fig.layout.xaxis || {}),
+          type: 'category'
+        }
+      }
+    }
+
     // ✅ Y-AXIS - Exactly like Python (lines 798-821)
     const yAxisSection = sections.y_axis
     if (yAxisSection && typeof yAxisSection === 'object') {
@@ -2241,6 +2254,11 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
         // X-axis zeroline
         fig.layout.xaxis.zeroline = false
 
+        // ✅ Force category type on the category axis so ALL labels show (not just every Nth)
+        if (!isHorizontalBar) {
+          fig.layout.xaxis.type = 'category'
+        }
+
         // ✅ Apply to Plotly's Y-axis
         fig.layout.yaxis = fig.layout.yaxis || {}
         fig.layout.yaxis.automargin = true  // CRITICAL: Enable automargin to prevent label cutoff
@@ -2275,6 +2293,11 @@ const ChartEditorModal = ({ sceneData, isOpen = false, onClose, onSave }) => {
           fig.layout.yaxis.gridwidth = getAxisConfig(mergedSections, isHorizontalBar ? categoryAxisKey : valueAxisKey, 'grid', 'width') || 1
         } else {
           fig.layout.yaxis.showgrid = false
+        }
+
+        // ✅ Force category type on the category axis so ALL labels show (not just every Nth)
+        if (isHorizontalBar) {
+          fig.layout.yaxis.type = 'category'
         }
 
         // Y-axis zeroline (only for value axis)
