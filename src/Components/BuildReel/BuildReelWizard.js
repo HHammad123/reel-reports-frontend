@@ -2687,19 +2687,13 @@ const SceneScriptModal = ({
                   const val = e.target.value;
                   const words = val.trim().split(/\s+/).filter(Boolean);
                   const wordCount = words.length;
-                  const oldVal = localScript.narration || '';
-                  const oldWordCount = oldVal.trim().split(/\s+/).filter(Boolean).length;
 
                   if (wordCount > 13) {
                     setNarrationError('Narration cannot exceed 13 words.');
-                    // Allow deletion or if word count hasn't increased (e.g. extending a word)
-                    if (val.length < oldVal.length || wordCount <= oldWordCount) {
-                      updateField('narration', val);
-                    }
                   } else {
                     setNarrationError('');
-                    updateField('narration', val);
                   }
+                  updateField('narration', val);
                 }}
                 rows={3}
                 className={`w-full p-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${narrationError ? 'border-red-500' : 'border-gray-300'}`}

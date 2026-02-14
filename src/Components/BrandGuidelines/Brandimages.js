@@ -501,6 +501,10 @@ const Brandimages = () => {
   const [fonts, setFonts] = useState([])
   const [colors, setColors] = useState([])
   const [voiceovers, setVoiceovers] = useState([])
+  const [brandAssetsAvatars, setBrandAssetsAvatars] = useState([])
+  const [isLoadingAvatars, setIsLoadingAvatars] = useState(false)
+  const [isDeletingAvatar, setIsDeletingAvatar] = useState(false)
+  const [deletingAvatarUrl, setDeletingAvatarUrl] = useState('')
   const [selectedVoiceover, setSelectedVoiceover] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [targetType, setTargetType] = useState('logos') // 'logos' | 'icons' | 'templates'
@@ -674,6 +678,8 @@ const Brandimages = () => {
   const [isDeleteProfileConfirmOpen, setIsDeleteProfileConfirmOpen] = useState(false)
   const [deleteProfileConfirmData, setDeleteProfileConfirmData] = useState(null)
   const [isDeletingProfile, setIsDeletingProfile] = useState(false)
+  const [isDeleteAvatarConfirmOpen, setIsDeleteAvatarConfirmOpen] = useState(false)
+  const [deleteAvatarConfirmData, setDeleteAvatarConfirmData] = useState(null)
   // Image editor state
   const [imageEditorOpen, setImageEditorOpen] = useState(false)
   const [imageEditorSrc, setImageEditorSrc] = useState('')
@@ -2984,6 +2990,118 @@ const Brandimages = () => {
       })()
   }, [])
 
+  const loadAvatars = useCallback(async () => {
+    const token = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : ''
+    if (!token) {
+      setBrandAssetsAvatars([])
+      return
+    }
+
+    setIsLoadingAvatars(true)
+    try {
+      const cacheKey = 'brand_assets_avatars_cache'
+      const cached = localStorage.getItem(cacheKey)
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached)
+          if (Array.isArray(parsed)) setBrandAssetsAvatars(parsed)
+        } catch (_) { }
+      }
+
+      const response = await fetch(`https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/avatars/${encodeURIComponent(token)}`)
+      if (!response.ok) return
+      const data = await response.json().catch(() => ({}))
+      const rawAvatars = data?.avatars || []
+      const normalized = []
+      const seen = new Set()
+
+      const addAvatar = (avatar) => {
+        if (!avatar) return
+        let url = ''
+        let name = ''
+        if (typeof avatar === 'string') {
+          url = avatar
+          name = 'Avatar'
+        } else if (typeof avatar === 'object') {
+          url = avatar.url || avatar.link || avatar.image_url || avatar.imageUrl || ''
+          name = avatar.name || avatar.title || 'Avatar'
+        }
+        const cleaned = String(url || '').trim()
+        if (!cleaned || seen.has(cleaned)) return
+        seen.add(cleaned)
+        normalized.push({ url: cleaned, name })
+      }
+
+      if (Array.isArray(rawAvatars)) {
+        rawAvatars.forEach(addAvatar)
+      } else if (rawAvatars && typeof rawAvatars === 'object') {
+        Object.values(rawAvatars).forEach((profileAvatars) => {
+          if (Array.isArray(profileAvatars)) {
+            profileAvatars.forEach(addAvatar)
+          }
+        })
+      }
+
+      setBrandAssetsAvatars(normalized)
+      localStorage.setItem(cacheKey, JSON.stringify(normalized))
+    } catch (err) {
+      console.error('Failed to load avatars:', err)
+    } finally {
+      setIsLoadingAvatars(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAvatars()
+  }, [loadAvatars])
+
+  const handleDeleteAvatar = useCallback((avatarUrl, avatarName) => {
+    const cleanedUrl = String(avatarUrl || '').trim()
+    if (!cleanedUrl) return
+    setDeleteAvatarConfirmData({
+      url: cleanedUrl,
+      name: avatarName || 'this avatar'
+    })
+    setIsDeleteAvatarConfirmOpen(true)
+  }, [])
+
+  const confirmDeleteAvatar = useCallback(async () => {
+    if (!deleteAvatarConfirmData?.url) return
+    const userId = (typeof window !== 'undefined' && localStorage.getItem('token')) ? localStorage.getItem('token') : ''
+    if (!userId) return
+
+    const cleanedUrl = String(deleteAvatarConfirmData.url).trim()
+    if (!cleanedUrl) return
+
+    setIsDeletingAvatar(true)
+    setDeletingAvatarUrl(cleanedUrl)
+    setErrorMsg('')
+    try {
+      const formBody = new URLSearchParams()
+      formBody.set('user_id', userId)
+      formBody.set('avatar_url', cleanedUrl)
+
+      const resp = await fetch('https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net/v1/users/brand-assets/delete-avatar', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formBody.toString()
+      })
+      const text = await resp.text()
+      if (!resp.ok) {
+        throw new Error(text || `delete-avatar failed: ${resp.status}`)
+      }
+      await loadAvatars()
+      setIsDeleteAvatarConfirmOpen(false)
+      setDeleteAvatarConfirmData(null)
+    } catch (err) {
+      console.error('Failed to delete avatar:', err)
+      setErrorMsg(err?.message || 'Failed to delete avatar')
+    } finally {
+      setIsDeletingAvatar(false)
+      setDeletingAvatarUrl('')
+    }
+  }, [deleteAvatarConfirmData, loadAvatars])
+
   // Fetch generated assets
   useEffect(() => {
     const fetchGeneratedAssets = async () => {
@@ -3932,6 +4050,52 @@ const Brandimages = () => {
           </div>
         </div>
       )}
+
+      {/* Avatars */}
+      <section className="rounded-xl border border-gray-200 bg-white">
+        <div className="flex items-center justify-between px-5 py-4">
+          <p className="text-gray-800 font-medium">Avatars</p>
+          <p className="text-sm text-gray-500">{brandAssetsAvatars.length} total</p>
+        </div>
+        <div className="px-5 pb-5">
+          {isLoadingAvatars ? (
+            <p className="text-sm text-gray-500">Loading avatars...</p>
+          ) : brandAssetsAvatars.length === 0 ? (
+            <p className="text-sm text-gray-500">No avatars added yet.</p>
+          ) : (
+            <div className="flex gap-4 flex-wrap">
+              {brandAssetsAvatars.map((avatar, idx) => {
+                const url = avatar?.url || avatar
+                const name = avatar?.name || `Avatar ${idx + 1}`
+                const isDeleting = isDeletingAvatar && deletingAvatarUrl === url
+                return (
+                  <div key={`${url}-${idx}`} className="flex flex-col items-center w-24">
+                    <div className="relative group">
+                      <img
+                        src={url}
+                        alt={name}
+                        className={`h-24 w-24 object-cover rounded-full border ${isDeleting ? 'opacity-60' : ''}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAvatar(url, name)}
+                        disabled={isDeletingAvatar}
+                        className="absolute inset-0 hidden items-center justify-center group-hover:flex"
+                        title="Delete avatar"
+                      >
+                        <span className="h-9 w-9 rounded-full bg-red-600 text-white flex items-center justify-center shadow hover:bg-red-700 disabled:opacity-60">
+                          <Trash2 size={16} />
+                        </span>
+                      </button>
+                    </div>
+                    <span className="mt-2 text-xs text-gray-600 text-center">{name}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* Templates */}
       <section className="rounded-xl border border-gray-200 bg-white">
@@ -5833,6 +5997,54 @@ const Brandimages = () => {
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
                 )}
                 {isDeletingProfile ? 'Deleting...' : 'Delete Profile'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Avatar Confirmation Modal */}
+      {isDeleteAvatarConfirmOpen && deleteAvatarConfirmData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white w-[92%] max-w-md rounded-lg shadow-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Delete Avatar</h3>
+              <button
+                onClick={() => {
+                  setIsDeleteAvatarConfirmOpen(false)
+                  setDeleteAvatarConfirmData(null)
+                }}
+                className="text-gray-500 hover:text-gray-700"
+                disabled={isDeletingAvatar}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Are you sure you want to delete?
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setIsDeleteAvatarConfirmOpen(false)
+                  setDeleteAvatarConfirmData(null)
+                }}
+                disabled={isDeletingAvatar}
+                className="px-4 py-2 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteAvatar}
+                disabled={isDeletingAvatar}
+                className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isDeletingAvatar && (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
+                )}
+                {isDeletingAvatar ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

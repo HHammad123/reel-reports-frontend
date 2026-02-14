@@ -10661,8 +10661,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                   const descriptionText = scene?.description || '';
                                   const wordCount = computeWordCount(nextNarration || descriptionText);
                                   if (wordCount > 13) {
-                                    setShowNarrationLimitPopup(true);
-                                    return;
+                                    // Allow save without popup; UI shows limit indicator inline.
                                   }
                                   setIsSavingNarration(true);
                                   const computedWordCount = wordCount;
@@ -10700,16 +10699,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                         const val = e.target.value;
                                         const words = (val || '').trim().split(/\s+/).filter(w => w.length > 0);
                                         const newCount = words.length;
-                                        const oldVal = sceneNarration || '';
-                                        const oldCount = (oldVal || '').trim().split(/\s+/).filter(w => w.length > 0).length;
                                         if (newCount > 13) {
-                                          setShowNarrationLimitPopup(true);
-                                          if (val.length < oldVal.length || newCount <= oldCount) {
-                                            handleSceneUpdate(currentSceneIndex, 'narration', val);
-                                          }
-                                        } else {
-                                          handleSceneUpdate(currentSceneIndex, 'narration', val);
                                         }
+                                        handleSceneUpdate(currentSceneIndex, 'narration', val);
                                       }}
                                       className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent ${isOverLimit ? 'border-red-300 bg-red-50' : 'border-gray-300 bg-white'}`}
                                       rows={3}
@@ -10789,16 +10781,9 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
                                             const val = e.target.value;
                                             const words = (val || '').trim().split(/\s+/).filter(w => w.length > 0);
                                             const newCount = words.length;
-                                            const oldVal = currentNarrationText || '';
-                                            const oldCount = (oldVal || '').trim().split(/\s+/).filter(w => w.length > 0).length;
                                             if (newCount > 13) {
-                                              setShowNarrationLimitPopup(true);
-                                              if (val.length < oldVal.length || newCount <= oldCount) {
-                                                setPendingNarration(val);
-                                              }
-                                            } else {
-                                              setPendingNarration(val);
                                             }
+                                            setPendingNarration(val);
                                           }}
                                           onDoubleClick={startInlineEditingNarration}
                                           readOnly={!isInlineEditingNarration || isSavingNarration}
