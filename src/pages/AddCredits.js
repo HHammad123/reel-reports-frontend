@@ -9,10 +9,16 @@ import loadingGif from '../asset/loadingv2.gif'
 
 const ADMIN_BASE = 'https://coreappservicerr-aseahgexgke8f0a4.canadacentral-01.azurewebsites.net'
 
-const CREDIT_PACKAGES = [
-  { price: 30, credits: 1250 },
-  { price: 75, credits: 3750 },
-  { price: 100, credits: 5250 }
+const SUBSCRIPTION_PACKAGES = [
+  { name: 'Starter', price: 30, credits: 1250, type: 'subscription' },
+  { name: 'Professional', price: 75, credits: 3750, type: 'subscription', isTopPlan: true },
+  { name: 'Business', price: 100, credits: 5250, type: 'subscription' }
+]
+
+const TOPUP_PACKAGES = [
+  { name: 'Small Pack', price: 5, credits: 200, type: 'topup' },
+  { name: 'Medium Pack', price: 10, credits: 400, type: 'topup', isTopPlan: true },
+  { name: 'Large Pack', price: 20, credits: 850, type: 'topup' }
 ]
 
 const SuccessModal = ({ isOpen, onClose, packageDetails, userCount }) => {
@@ -528,10 +534,11 @@ const AddCredits = () => {
 
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
                   <p className="block text-sm font-medium text-gray-700">Select Credit Package</p>
-                  <div className="space-y-3">
-                    {CREDIT_PACKAGES.map((pkg) => (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Subscription Plans</p>
+                    {SUBSCRIPTION_PACKAGES.map((pkg) => (
                       <div
-                        key={pkg.price}
+                        key={`${pkg.type}-${pkg.price}`}
                         onClick={() => setSelectedPackage(pkg)}
                         className={`flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-all ${selectedPackage?.price === pkg.price
                           ? 'border-[#13008B] bg-blue-50 ring-1 ring-[#13008B]'
@@ -539,6 +546,40 @@ const AddCredits = () => {
                           }`}
                       >
                         <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-gray-500">{pkg.name}</span>
+                          <span className="text-lg font-bold text-[#13008B]">${pkg.price}</span>
+                          <span className="text-xs text-gray-500 font-medium">Subscription plan</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="bg-[#E5E2FF] p-1.5 rounded-lg text-[#13008B]">
+                            <Coins size={18} />
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-lg font-bold text-gray-900">{pkg.credits.toLocaleString()}</span>
+                            <span className="text-xs text-gray-500 font-medium">credits</span>
+                          </div>
+                          {pkg.isTopPlan && (
+                            <span className="ml-2 rounded-full bg-[#E5E2FF] px-2 py-0.5 text-[10px] font-semibold text-[#13008B]">
+                              Top Plan
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Top Up Packs</p>
+                    {TOPUP_PACKAGES.map((pkg) => (
+                      <div
+                        key={`${pkg.type}-${pkg.price}`}
+                        onClick={() => setSelectedPackage(pkg)}
+                        className={`flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-all ${selectedPackage?.price === pkg.price
+                          ? 'border-[#13008B] bg-blue-50 ring-1 ring-[#13008B]'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          }`}
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-gray-500">{pkg.name}</span>
                           <span className="text-lg font-bold text-[#13008B]">${pkg.price}</span>
                           <span className="text-xs text-gray-500 font-medium">One-time payment</span>
                         </div>
@@ -550,6 +591,11 @@ const AddCredits = () => {
                             <span className="text-lg font-bold text-gray-900">{pkg.credits.toLocaleString()}</span>
                             <span className="text-xs text-gray-500 font-medium">credits</span>
                           </div>
+                          {pkg.isTopPlan && (
+                            <span className="ml-2 rounded-full bg-[#E5E2FF] px-2 py-0.5 text-[10px] font-semibold text-[#13008B]">
+                              Top Plan
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}
