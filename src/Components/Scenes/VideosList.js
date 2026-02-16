@@ -9,11 +9,14 @@ import '../video-editor-js/pro/styles/base-themes/dark.css';
 import '../video-editor-js/pro/styles/base-themes/light.css';
 import '../video-editor-js/pro/styles/base-themes/rve.css';
 import { Zap, ChevronRight, ChevronDown, ChevronUp, X, Menu, Plus, MoreVertical } from 'lucide-react';
+import { FaPlus } from 'react-icons/fa';
 import AddSceneDropdown from '../BuildReel/AddSceneDropdown';
 import { SidebarMenuButton } from '../video-editor-js/pro/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../video-editor-js/pro/components/ui/tooltip';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import LogoImage from '../../asset/mainLogo.png';
+import LoadingAnimationGif from '../../asset/loadingv2.gif';
 import { uploadBlobUrl } from '../../utils/uploadAssets';
 import Loader from '../Loader';
 import { useProgressLoader } from '../../hooks/useProgressLoader';
@@ -889,8 +892,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             chartVideoUrl: chartVideoUrl, // Store chart_video_url for overlay layer
             // Include full videos.v1 structure for layer processing
             videos: videoEntry?.videos || {},
-            video: videoEntry?.video || {},
-            layers: (videoEntry?.videos?.v1?.layers || videoEntry?.video?.v1?.layers || videoEntry?.layers || []),
           };
         })
         .filter(Boolean)
@@ -6640,60 +6641,16 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
               const matchedVideoScene = videosList.find(v => String(v.scene_number) === String(regenerateSceneNumber));
 
               if (matchedVideoScene) {
-                const layersFromSession =
-                  matchedVideoScene?.videos?.v1?.layers ||
-                  matchedVideoScene?.video?.v1?.layers ||
-                  matchedVideoScene?.layers ||
-                  null;
-                newSceneData = layersFromSession ? { ...matchedVideoScene, layers: layersFromSession } : matchedVideoScene;
-                const resolveVideoUrl = (entry = {}) => {
-                  const withLogoAndSubtitles =
-                    entry?.video_with_logo_and_subtitles_url ||
-                    entry?.video?.video_with_logo_and_subtitles_url ||
-                    entry?.videos?.video_with_logo_and_subtitles_url ||
-                    entry?.videos?.v1?.video_with_logo_and_subtitles_url ||
-                    entry?.video?.v1?.video_with_logo_and_subtitles_url ||
-                    entry?.blobLink?.video_with_logo_and_subtitles_link;
-                  const silentUrl =
-                    entry?.silent_video_url ||
-                    entry?.video?.silent_video_url ||
-                    entry?.videos?.silent_video_url ||
-                    entry?.videos?.v1?.silent_video_url ||
-                    entry?.video?.v1?.silent_video_url ||
-                    entry?.blobLink?.silent_video_link;
-                  const withLogo =
-                    entry?.video_with_logo_url ||
-                    entry?.video?.video_with_logo_url ||
-                    entry?.videos?.video_with_logo_url ||
-                    entry?.videos?.v1?.video_with_logo_url ||
-                    entry?.video?.v1?.video_with_logo_url ||
-                    entry?.blobLink?.video_with_logo_link;
-                  const withSubtitles =
-                    entry?.video_with_subtitles_url ||
-                    entry?.video?.video_with_subtitles_url ||
-                    entry?.videos?.video_with_subtitles_url ||
-                    entry?.videos?.v1?.video_with_subtitles_url ||
-                    entry?.video?.v1?.video_with_subtitles_url ||
-                    entry?.blobLink?.video_with_subtitles_link;
-                  if (logoEnabled && subtitleEnabled && withLogoAndSubtitles) return withLogoAndSubtitles;
-                  if (!logoEnabled && !subtitleEnabled && silentUrl) return silentUrl;
-                  if (logoEnabled && !subtitleEnabled && withLogo) return withLogo;
-                  if (!logoEnabled && subtitleEnabled && withSubtitles) return withSubtitles;
-                  return getVideoUrlFromEntry(entry);
-                };
+                newSceneData = matchedVideoScene;
 
-                const resolvedVideoUrl = resolveVideoUrl(matchedVideoScene);
-                if (resolvedVideoUrl) {
-                  newVideoUrl = resolvedVideoUrl;
+                const matchedBaseUrl = getBaseVideoUrlFromEntry(matchedVideoScene);
+                if (matchedBaseUrl) {
+                  newVideoUrl = matchedBaseUrl;
                 }
 
-                const matchedLayers =
-                  getCurrentVideoLayers(matchedVideoScene) ||
-                  matchedVideoScene?.videos?.v1?.layers ||
-                  matchedVideoScene?.video?.v1?.layers ||
-                  (Array.isArray(matchedVideoScene.layers) ? matchedVideoScene.layers : null);
-                if (matchedLayers) {
-                  newLayers = matchedLayers;
+                // Get layers if available
+                if (matchedVideoScene.layers) {
+                  newLayers = matchedVideoScene.layers;
                 }
 
                 try {
@@ -6712,77 +6669,26 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             // Replace old video with new video
             setItems(prevItems => prevItems.map(item => {
               if (String(item.sceneNumber || item.scene_number) === String(regenerateSceneNumber)) {
-                const layersToUse = newLayers || getCurrentVideoLayers(newSceneData || item) || (Array.isArray(newSceneData?.layers) ? newSceneData.layers : null);
-                const audioLayer = Array.isArray(layersToUse) ? layersToUse.find(layer => layer?.name === 'audio') : null;
-                const subtitleLayer = Array.isArray(layersToUse) ? layersToUse.find(layer => layer?.name === 'subtitles') : null;
-                const chartLayer = Array.isArray(layersToUse) ? layersToUse.find(layer => layer?.name === 'chart') : null;
-                const logoLayer = Array.isArray(layersToUse) ? layersToUse.find(layer => layer?.name === 'logo') : null;
-                const audioLayerData = audioLayer ? {
-                  url: audioLayer.url,
-                  timing: audioLayer.timing || { start: "00:00:00", end: null },
-                  volume: audioLayer.volume !== undefined ? audioLayer.volume : 1,
-                  enabled: audioLayer.enabled !== undefined ? audioLayer.enabled : true,
-                } : null;
-                const subtitleLayerData = subtitleLayer ? {
-                  url: subtitleLayer.url || null,
-                  text: subtitleLayer.text || '',
-                  timing: subtitleLayer.timing || { start: "00:00:00", end: null },
-                  position: subtitleLayer.position || { x: 0.5, y: 0.85 },
-                  bounding_box: subtitleLayer.bounding_box || null,
-                  style: {
-                    fontSize: subtitleLayer.fontSize || subtitleLayer.style?.fontSize || 24,
-                    fontFamily: subtitleLayer.fontFamily || subtitleLayer.style?.fontFamily || 'Inter',
-                    fontWeight: subtitleLayer.fontWeight || subtitleLayer.style?.fontWeight || '600',
-                    color: subtitleLayer.fill || subtitleLayer.style?.color || subtitleLayer.style?.fill || '#FFFFFF',
-                  },
-                  enabled: subtitleLayer.enabled !== undefined ? subtitleLayer.enabled : true,
-                } : null;
-                const chartLayerData = chartLayer ? {
-                  url: chartLayer.url,
-                  position: chartLayer.position || { x: 0.5, y: 0.5 },
-                  bounding_box: chartLayer.bounding_box || null,
-                  scaling: chartLayer.scaling || { scale_x: 1, scale_y: 1, fit_mode: 'contain' },
-                  animation: chartLayer.animation || { type: 'none', duration: 0.5 },
-                  layout: chartLayer.layout || { align: 'center', verticalAlign: 'middle' },
-                  opacity: chartLayer.opacity !== undefined ? chartLayer.opacity : 1,
-                } : null;
-                const logoLayerData = logoLayer ? {
-                  url: logoLayer.url,
-                  timing: logoLayer.timing || { start: "00:00:00", end: null },
-                  position: logoLayer.position || { x: 0.9, y: 0.1 },
-                  bounding_box: logoLayer.bounding_box || null,
-                  size: logoLayer.size || null,
-                  scale: logoLayer.scale !== undefined ? logoLayer.scale : 1,
-                  opacity: logoLayer.opacity !== undefined ? logoLayer.opacity : 1,
-                  rotation: logoLayer.rotation || 0,
-                  style: logoLayer.style || {},
-                  blend_mode: logoLayer.blend_mode || 'normal',
-                  enabled: logoLayer.enabled !== undefined ? logoLayer.enabled : true,
-                  animation: logoLayer.animation || { type: 'none', duration: 0.5 },
-                } : null;
+
+                if (newSceneData) {
+                  return {
+                    ...item,
+                    ...newSceneData,
+                    video: newVideoUrl,
+                    timestamp: Date.now()
+                  };
+                }
+
                 const updatedItem = {
                   ...item,
-                  ...(newSceneData || {}),
-                  url: newVideoUrl || item.url,
-                  path: newVideoUrl || item.path,
-                  src: newVideoUrl || item.src,
-                  video: newVideoUrl || item.video,
-                  layers: layersToUse || item.layers,
-                  audioUrl: audioLayerData?.url || item.audioUrl,
-                  audio_url: audioLayerData?.url || item.audio_url,
-                  audioVolume: audioLayerData?.volume || item.audioVolume || 1,
-                  audioLayerData: audioLayerData || item.audioLayerData,
-                  chartVideoUrl: chartLayerData?.url || item.chartVideoUrl,
-                  chart_video_url: chartLayerData?.url || item.chart_video_url,
-                  chartLayerData: chartLayerData || item.chartLayerData,
-                  logoUrl: logoLayerData?.url || item.logoUrl,
-                  logo_url: logoLayerData?.url || item.logo_url,
-                  logoLayerData: logoLayerData || item.logoLayerData,
-                  subtitleLayerData: subtitleLayerData || item.subtitleLayerData,
-                  subtitleUrl: subtitleLayerData?.url || item.subtitleUrl || null,
-                  subtitleText: subtitleLayerData?.text || item.subtitleText || '',
+                  video: newVideoUrl,
                   timestamp: Date.now()
                 };
+
+                if (newLayers) {
+                  updatedItem.layers = newLayers;
+                }
+
                 return updatedItem;
               }
               return item;
@@ -6791,20 +6697,12 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
             // Also update window.__SESSION_MEDIA_FILES if it exists
             if (window.__SESSION_MEDIA_FILES) {
               const existingIndex = window.__SESSION_MEDIA_FILES.findIndex(f => String(f.scene_number) === String(regenerateSceneNumber));
-              const layersForSession =
-                newLayers ||
-                getCurrentVideoLayers(newSceneData || {}) ||
-                newSceneData?.videos?.v1?.layers ||
-                newSceneData?.video?.v1?.layers ||
-                newSceneData?.layers ||
-                null;
               if (existingIndex !== -1) {
                 if (newSceneData) {
                   window.__SESSION_MEDIA_FILES[existingIndex] = {
                     ...window.__SESSION_MEDIA_FILES[existingIndex],
                     ...newSceneData,
-                    url: newVideoUrl,
-                    layers: layersForSession || window.__SESSION_MEDIA_FILES[existingIndex].layers
+                    url: newVideoUrl
                   };
                 } else {
                   window.__SESSION_MEDIA_FILES[existingIndex].url = newVideoUrl;
@@ -6813,7 +6711,6 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
                 window.__SESSION_MEDIA_FILES.push(newSceneData ? {
                   ...newSceneData,
                   url: newVideoUrl,
-                  layers: layersForSession || newSceneData?.layers,
                   type: 'video'
                 } : {
                   scene_number: regenerateSceneNumber,
