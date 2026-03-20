@@ -382,6 +382,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [isLoadingGeneratedImages, setIsLoadingGeneratedImages] = useState(false);
   const [imageNaturalDims, setImageNaturalDims] = useState({});
   const [isSceneUpdating, setIsSceneUpdating] = useState(false);
+  const [isImageRefreshLoading, setIsImageRefreshLoading] = useState(false); // Loader shown after background update until images refresh
   // Edit description/narration state
   const [editingField, setEditingField] = useState(null); // 'description' | 'narration' | null
   const [editedDescription, setEditedDescription] = useState('');
@@ -491,8 +492,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
       const nextNarration = (editedNarration || '').trim();
 
+      // Determine word limit based on model: PLOTLY/Financial = 16, all others = 13
+      const selectedModelUpper = String(selected?.model || '').toUpperCase();
+      const isFinancialModel = selectedModelUpper === 'PLOTLY';
+      const narrationWordLimit = isFinancialModel ? 16 : 13;
+
       const wordCount = computeWordCount(nextNarration);
-      if (wordCount > 20) {
+      if (wordCount > narrationWordLimit) {
         setShowNarrationLimitPopup(true);
         setIsSavingField(false);
         return;
@@ -640,15 +646,34 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
   // Helper functions for model detection and frame management
   const getSceneModel = useCallback((sceneNumber) => {
+    // 1. Try rows first (most up-to-date)
     const scene = rows.find(r => (r.scene_number || r.sceneNumber) === sceneNumber);
-    const model = String(scene?.model || scene?.mode || '').toUpperCase();
-    // If model is not found, try to use the currently selected scene's model as fallback
-    if (!model && selected && (selected.sceneNumber === sceneNumber || selected.scene_number === sceneNumber)) {
-      return String(selected?.model || selected?.mode || 'SORA').toUpperCase();
+    const modelFromRows = String(scene?.model || scene?.mode || '').toUpperCase();
+    if (modelFromRows) return modelFromRows;
+
+    // 2. Try currently selected scene
+    if (selected && (selected.sceneNumber === sceneNumber || selected.scene_number === sceneNumber)) {
+      const modelFromSelected = String(selected?.model || selected?.mode || '').toUpperCase();
+      if (modelFromSelected) return modelFromSelected;
     }
-    // Default to SORA if still not found
-    return model || 'SORA';
-  }, [rows, selected]);
+
+    // 3. Try scriptsData (airesponse array) — most reliable source for model/mode field
+    if (Array.isArray(scriptsData) && scriptsData.length > 0) {
+      const airesponse = Array.isArray(scriptsData[0]?.airesponse)
+        ? scriptsData[0].airesponse
+        : (Array.isArray(scriptsData[0]) ? scriptsData[0] : []);
+      const scriptScene = airesponse.find(s =>
+        Number(s?.scene_number) === Number(sceneNumber) ||
+        Number(s?.sceneNumber) === Number(sceneNumber)
+      );
+      const modelFromScript = String(scriptScene?.model || scriptScene?.mode || '').toUpperCase();
+      if (modelFromScript) return modelFromScript;
+    }
+
+    // 4. Final fallback — use selected model if available, otherwise SORA
+    const fallback = String(selected?.model || selected?.mode || '').toUpperCase();
+    return fallback || 'SORA';
+  }, [rows, selected, scriptsData]);
 
   const isVEO3Model = useCallback((model) => model === 'VEO3', []);
   const isSORAModel = useCallback((model) => model === 'SORA', []);
@@ -4239,11 +4264,16 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
     // Set default frames based on model
     if (isVEO3Model(model)) {
-      setRegenerateFrames(['background']); // VEO3 always use background
+      // VEO3: background frame only
+      setRegenerateFrames(['background']);
     } else if (isANCHORModel(model)) {
-      setRegenerateFrames(['opening', 'closing']); // ANCHOR uses opening and closing
+      // ANCHOR: opening and closing frames
+      setRegenerateFrames(['opening', 'closing']);
+    } else if (model === 'PLOTLY') {
+      // PLOTLY/Financial: background frame only
+      setRegenerateFrames(['background']);
     } else {
-      // For all other models (SORA, PLOTLY, etc.): default to both frames
+      // SORA and any other models: opening and closing frames
       setRegenerateFrames(['opening', 'closing']);
     }
 
@@ -4291,12 +4321,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       // Determine frames to regenerate based on model
       let framesToRegenerate = [];
       if (isVEO3Model(model)) {
-        // VEO3: always regenerate background only
+        // VEO3: background frame only — never send opening/closing
+        framesToRegenerate = ['background'];
+      } else if (isANCHORModel(model)) {
+        // ANCHOR: opening and closing frames
+        framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
+      } else if (model === 'PLOTLY') {
+        // PLOTLY/Financial: background frame only
         framesToRegenerate = ['background'];
       } else {
-        // For ANCHOR, SORA, PLOTLY, and other models: use selected frames (opening, closing, or both)
+        // SORA and other infographic models: opening and closing frames
         framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
       }
+      console.log('[Regenerate] scene:', regeneratingSceneNumber, '| model:', model, '| frames:', framesToRegenerate);
 
       // Get the original user query from the script as fallback
       let originalUserQuery = '';
@@ -4997,15 +5034,19 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       const aspectRatio = await getAspectRatio();
       const isVEO3 = isVEO3Model(model);
 
-      // Determine frames to upload - use selected frames, or default based on model
+      // Determine frames to upload based on model
       let framesToUpload = [];
       if (isVEO3) {
-        // For VEO3, always use background
+        // VEO3/ANCHOR: background frame only
+        framesToUpload = ['background'];
+      } else if (model === 'PLOTLY') {
+        // PLOTLY/Financial: background frame only
         framesToUpload = ['background'];
       } else {
-        // For other models, use selected frames (opening, closing, or both)
+        // SORA and other models: use selected frames (opening, closing, or both)
         framesToUpload = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
       }
+      console.log('[SaveBackground] scene:', uploadingBackgroundSceneNumber, '| model:', model, '| frames:', framesToUpload);
 
       // Call regenerate API with selected image URL
       const payload = {
@@ -5048,8 +5089,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       setUploadingBackgroundSceneNumber(null);
       setUploadFrames(['background']);
 
-      // Refresh images
-      await refreshLoad(sceneNumberToRefresh);
+      // Show refresh loader until new images are loaded
+      setIsImageRefreshLoading(true);
+      try {
+        await refreshLoad(sceneNumberToRefresh);
+      } finally {
+        setIsImageRefreshLoading(false);
+      }
     } catch (e) {
       setError(e?.message || 'Failed to upload background');
     } finally {
@@ -5084,23 +5130,27 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       const aspectRatio = await getAspectRatio();
       const isVEO3 = isVEO3Model(model);
 
-      // Determine frames to regenerate - use selected frames, or default based on model
+      // Determine frames to regenerate based on model
       let framesToRegenerate = [];
       if (isVEO3) {
-        // For VEO3, always use background
+        // VEO3/ANCHOR: background frame only
+        framesToRegenerate = ['background'];
+      } else if (model === 'PLOTLY') {
+        // PLOTLY/Financial: background frame only
         framesToRegenerate = ['background'];
       } else {
-        // For other models, use selected frames (opening, closing, or both)
+        // SORA and other models: use selected frames (opening, closing, or both)
         framesToRegenerate = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
       }
+      console.log('[GenerateFromRef] scene:', uploadingBackgroundSceneNumber, '| model:', model, '| frames:', framesToRegenerate);
 
       // Call generate-from-reference API
       const payload = {
-        user_id: user_id,
         session_id: session_id,
+        user_id: user_id,
         scene_number: uploadingBackgroundSceneNumber,
         model: model,
-        reference_image_url: imageUrl,
+        reference_image_urls: [imageUrl].filter(Boolean),
         user_query: query.trim(),
         frames_to_regenerate: framesToRegenerate,
         aspect_ratio: aspectRatio
@@ -5136,8 +5186,13 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       setUploadFrames(['background']);
       setUserQuery('');
 
-      // Refresh images
-      await refreshLoad(sceneNumberToRefresh);
+      // Show refresh loader until new images are loaded
+      setIsImageRefreshLoading(true);
+      try {
+        await refreshLoad(sceneNumberToRefresh);
+      } finally {
+        setIsImageRefreshLoading(false);
+      }
     } catch (e) {
       setError(e?.message || 'Failed to generate from reference');
     } finally {
@@ -6899,6 +6954,29 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               />
             </div>
           )}
+        </div>
+      )}
+
+      {/* Image Refresh Loader - shown after background save/generate until images reload */}
+      {isImageRefreshLoading && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl px-10 py-8 flex flex-col items-center gap-4 min-w-[260px] text-center">
+            <div className="relative w-16 h-16">
+              <svg className="w-16 h-16 animate-spin" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="42" stroke="#E5E7EB" strokeWidth="10" fill="none" />
+                <circle cx="50" cy="50" r="42" stroke="#13008B" strokeWidth="10" fill="none"
+                  strokeLinecap="round" strokeDasharray="264" strokeDashoffset="66"
+                  style={{ transformOrigin: '50% 50%' }} />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-4 h-4 rounded-full bg-[#13008B]" />
+              </div>
+            </div>
+            <div>
+              <p className="text-base font-semibold text-[#13008B]">Updating Images…</p>
+              <p className="text-xs text-gray-500 mt-1">Please wait while your new background is applied.</p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -9042,7 +9120,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     };
 
                     return (
-                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative w-full">
+                      <div className="bg-gray-50 rounded-lg p-4 border border-[#D8DFFF] relative w-full">
                         {/* Loading Overlay - Shows until update-scene-field API completes */}
                         {isSavingVeo3Template && (
                           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm rounded-lg pointer-events-auto">
@@ -9955,21 +10033,26 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                               {editingField === 'narration' ? (
                                 (() => {
                                   const wordCount = computeWordCount(editedNarration);
-                                  const isOptimalWordCount = wordCount >= 18 && wordCount <= 20;
+                                  // PLOTLY/Financial = 16 words, all others (SORA/ANCHOR) = 13
+                                  const currentModelUpper = String(selected?.model || '').toUpperCase();
+                                  const isFinancial = currentModelUpper === 'PLOTLY';
+                                  const maxWords = isFinancial ? 16 : 13;
+                                  const isOptimalWordCount = wordCount >= (maxWords - 1) && wordCount <= maxWords;
+                                  const isOverLimit = wordCount > maxWords;
                                   return (
                                     <>
                                       <textarea
-                                        className={`w-full h-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' : 'border-red-300 bg-red-50'
+                                        className={`w-full h-24 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#13008B] ${isOptimalWordCount ? 'border-green-500 bg-green-50' : isOverLimit ? 'border-red-300 bg-red-50' : ''
                                           }`}
                                         value={editedNarration}
                                         onChange={(e) => setEditedNarration(e.target.value)}
                                       />
                                       <div className="mt-2 flex items-center justify-between">
                                         <p className="text-xs text-gray-500 italic">
-                                          Keep 18-20 words for a perfect 10 second audio
+                                          {isFinancial ? 'Keep 15–16 words for best results' : 'Keep 12–13 words for a short narration'}
                                         </p>
-                                        <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : 'text-red-600'}`}>
-                                          {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                                        <p className={`text-xs font-medium ${isOptimalWordCount ? 'text-green-600' : isOverLimit ? 'text-red-600' : 'text-gray-500'}`}>
+                                          {wordCount} / {maxWords} {wordCount === 1 ? 'word' : 'words'}
                                         </p>
                                       </div>
                                     </>
@@ -10116,7 +10199,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                   };
 
                   return (
-                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 relative w-full">
+                    <div className="bg-gray-50 rounded-lg p-4 border border-[#D8DFFF] relative w-full">
                       {/* Loading Overlay */}
                       {isSavingDescription && (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm rounded-lg">
@@ -10507,7 +10590,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                           };
 
                           return (
-                            <div className="border rounded-lg p-4 bg-white">
+                            <div className="border border-[#D8DFFF] rounded-lg p-4 bg-white">
                               <div className="flex items-center justify-between mb-3">
                                 <h4 className="text-sm font-semibold text-gray-800">Description</h4>
                                 {isInlineEditing ? (
@@ -10618,7 +10701,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         })()}
 
                         {/* Logo and Voiceover Section */}
-                        <div className="border rounded-lg p-4 bg-white">
+                        <div className="border border-[#D8DFFF] rounded-lg p-4 bg-white">
                           <button
                             type="button"
                             onClick={() => toggleAdvancedOptions('assets')}
@@ -10996,7 +11079,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         </div>
 
                         {/* Subtitles Section (global toggle) */}
-                        <div className="border rounded-lg p-4 bg-white">
+                        <div className="border border-[#D8DFFF] rounded-lg p-4 bg-white">
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input
                               type="checkbox"
@@ -11015,7 +11098,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
                         {/* Transitions Section - Hidden for SORA, PLOTLY, and ANCHOR (shown directly in place of description) */}
                         {modelUpper !== 'VEO3' && !isSoraPlotlyAnchor && (
-                          <div className="border rounded-lg p-4 bg-white">
+                          <div className="border border-[#D8DFFF] rounded-lg p-4 bg-white">
                             <button
                               type="button"
                               onClick={() => toggleAdvancedOptions('transitions')}
@@ -11028,7 +11111,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                             {isTransitionsOpen && (
                               <div className="mt-3 space-y-3">
                                 {/* Design Your Own Section - First */}
-                                <div className="border border-grey-200 rounded-lg p-3 bg-gray-50">
+                                <div className="border border-[#D8DFFF] rounded-lg p-3 bg-white">
                                   <label className="text-sm font-medium text-gray-700 mb-3 block">Design Your Own</label>
                                   {(() => {
                                     // Get animation_desc from the scene data (from images object)
@@ -11219,7 +11302,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
                         {/* Transition Advanced Accordion - SORA only */}
                         {modelUpper === 'SORA' && (
-                          <div className="border rounded-lg p-4 bg-white">
+                          <div className="border border-[#D8DFFF] rounded-lg p-4 bg-white">
                             <button
                               type="button"
                               onClick={() => toggleAdvancedOptions('transitionAdvanced')}
@@ -11634,7 +11717,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               {rows.map((r, i) => {
                 const modelUpper = String(r?.model || '').toUpperCase();
                 const narrationWordCount = computeWordCount(r?.narration || '');
-                const isNarrationTooLong = narrationWordCount > 13;
+                // PLOTLY/Financial = 16 word limit, all others (VEO3/ANCHOR/SORA) = 13
+                const sceneModelUpper = String(r?.model || '').toUpperCase();
+                const sceneWordLimit = sceneModelUpper === 'PLOTLY' ? 16 : 13;
+                const isNarrationTooLong = narrationWordCount > sceneWordLimit;
                 let orderedSceneImages = getSceneImages(r);
 
                 // Fallback: if no generated images are available for VEO3/ANCHOR, use avatar image only
@@ -11754,7 +11840,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                     ) : null}
                     {isNarrationTooLong ? (
                       <div className="mt-1 text-xs text-red-600">
-                        Narration too long ({narrationWordCount} words). Keep it to 12–13 words.
+                        Narration too long ({narrationWordCount} words). Keep it to {sceneModelUpper === 'PLOTLY' ? '15–16' : '12–13'} words.
                       </div>
                     ) : null}
                   </div>
@@ -13325,7 +13411,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               </button>
             </div>
             <p className="text-sm text-gray-700">
-              Narration exceed the video duration. Maximum allowed is 20 words.
+              Narration exceeds the limit. Maximum allowed is {selected?.model?.toUpperCase() === 'PLOTLY' ? 16 : 13} words.
             </p>
           </div>
         </div>
@@ -13335,4 +13421,4 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   );
 };
 
-export default ImageList;
+export default ImageList; 

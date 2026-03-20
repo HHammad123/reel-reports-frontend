@@ -1488,7 +1488,6 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
           <button
             onClick={async () => {
               if (onSave && !isSaving) {
-                // ✅ ADD VALIDATION HERE
                 const type = String(chartType || '').toLowerCase();
                 if (type === 'waterfall' || type === 'waterfall_bar' || type === 'waterfall_column') {
                   const validationError = validateWaterfallData(localChartData);
@@ -1497,36 +1496,58 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
                     return;
                   }
                 }
-
                 setIsSaving(true);
                 try {
                   await onSave(localChartData);
-                  // Update original data after successful save
                   setOriginalChartData(JSON.parse(JSON.stringify(localChartData)));
                 } catch (err) {
                   console.error('Error saving chart data:', err);
-                  // Error is already handled by onSave callback
                 } finally {
                   setIsSaving(false);
                 }
               }
             }}
+            disabled={isSaving}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: 'none',
+              background: isSaving ? '#4ade80' : '#16a34a',
+              color: 'white',
+              fontSize: '13px',
+              fontWeight: '600',
+              cursor: isSaving ? 'not-allowed' : 'pointer',
+              boxShadow: isSaving ? 'none' : '0 1px 3px rgba(0,0,0,0.2)',
+              transition: 'background 0.15s',
+              letterSpacing: '0.01em'
+            }}
+            onMouseEnter={e => { if (!isSaving) e.currentTarget.style.background = '#15803d'; }}
+            onMouseLeave={e => { if (!isSaving) e.currentTarget.style.background = '#16a34a'; }}
           >
             {isSaving ? (
               <>
                 <div style={{
-                  width: '14px',
-                  height: '14px',
-                  border: '2px solid white',
-                  borderTop: '2px solid transparent',
+                  width: '13px', height: '13px',
+                  border: '2px solid rgba(255,255,255,0.5)',
+                  borderTop: '2px solid white',
                   borderRadius: '50%',
                   animation: 'spin 0.8s linear infinite',
                   flexShrink: 0
                 }} />
-                <span>Saving...</span>
+                <span>Saving…</span>
               </>
             ) : (
-              '💾 Save Changes'
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                  <polyline points="17 21 17 13 7 13 7 21"/>
+                  <polyline points="7 3 7 8 15 8"/>
+                </svg>
+                <span>Save Changes</span>
+              </>
             )}
           </button>
         )}
@@ -1540,4 +1561,3 @@ const ChartDataEditor = ({ chartType, chartData, onDataChange, onSave }) => {
 };
 
 export default ChartDataEditor;
-
