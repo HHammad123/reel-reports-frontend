@@ -364,6 +364,9 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [showUserQueryPopup, setShowUserQueryPopup] = useState(false);
   const [userQuery, setUserQuery] = useState('');
   const [isGeneratingFromReference, setIsGeneratingFromReference] = useState(false);
+  const [generateFromRefPhase, setGenerateFromRefPhase] = useState('generating'); // 'generating' | 'updating'
+  const [generateFromRefProgress, setGenerateFromRefProgress] = useState(0);
+  const generateFromRefIntervalRef = useRef(null);
 
   // Asset modal state (for background selection)
   const [assetsData, setAssetsData] = useState({ logos: [], icons: [], uploaded_images: [], templates: [], documents_images: [] });
@@ -383,6 +386,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   const [imageNaturalDims, setImageNaturalDims] = useState({});
   const [isSceneUpdating, setIsSceneUpdating] = useState(false);
   const [isImageRefreshLoading, setIsImageRefreshLoading] = useState(false); // Loader shown after background update until images refresh
+  const [uploadBackgroundSourceTab, setUploadBackgroundSourceTab] = useState(0); // Track which image tab triggered the upload
   // Edit description/narration state
   const [editingField, setEditingField] = useState(null); // 'description' | 'narration' | null
   const [editedDescription, setEditedDescription] = useState('');
@@ -4328,7 +4332,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
       } else if (model === 'PLOTLY') {
         // PLOTLY/Financial: background frame only
-        framesToRegenerate = ['background'];
+        framesToRegenerate = ['opening', 'closing'];
       } else {
         // SORA and other infographic models: opening and closing frames
         framesToRegenerate = regenerateFrames.length > 0 ? regenerateFrames : ['opening', 'closing'];
@@ -5110,13 +5114,30 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
     try {
       setIsGeneratingFromReference(true);
+      setGenerateFromRefPhase('generating');
+      setGenerateFromRefProgress(0);
       setError('');
+
+      // Start slow progress animation (0 → 85% over ~40s)
+      const DURATION_MS = 40000;
+      const INTERVAL_MS = 300;
+      const TARGET_PROGRESS = 85;
+      const startTime = Date.now();
+      if (generateFromRefIntervalRef.current) clearInterval(generateFromRefIntervalRef.current);
+      generateFromRefIntervalRef.current = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const pct = Math.min(TARGET_PROGRESS, (elapsed / DURATION_MS) * TARGET_PROGRESS);
+        setGenerateFromRefProgress(Math.round(pct));
+      }, INTERVAL_MS);
+
       const session_id = localStorage.getItem('session_id');
       const user_id = localStorage.getItem('token');
 
       if (!session_id || !user_id) {
         setError('Missing session or user');
         setIsGeneratingFromReference(false);
+        clearInterval(generateFromRefIntervalRef.current);
+        setGenerateFromRefProgress(0);
         return;
       }
 
@@ -5124,6 +5145,8 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       if (!model) {
         setError('Unable to determine scene model');
         setIsGeneratingFromReference(false);
+        clearInterval(generateFromRefIntervalRef.current);
+        setGenerateFromRefProgress(0);
         return;
       }
 
@@ -5133,13 +5156,10 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       // Determine frames to regenerate based on model
       let framesToRegenerate = [];
       if (isVEO3) {
-        // VEO3/ANCHOR: background frame only
         framesToRegenerate = ['background'];
       } else if (model === 'PLOTLY') {
-        // PLOTLY/Financial: background frame only
-        framesToRegenerate = ['background'];
+        framesToRegenerate = ['opening', 'closing'];
       } else {
-        // SORA and other models: use selected frames (opening, closing, or both)
         framesToRegenerate = uploadFrames.length > 0 ? uploadFrames : ['opening', 'closing'];
       }
       console.log('[GenerateFromRef] scene:', uploadingBackgroundSceneNumber, '| model:', model, '| frames:', framesToRegenerate);
@@ -5174,7 +5194,15 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
         throw new Error(`Generate from reference failed: ${response.status} ${text}`);
       }
 
-      // Handle successful generation
+      // API success → stop slow animation, jump to 100%
+      clearInterval(generateFromRefIntervalRef.current);
+      generateFromRefIntervalRef.current = null;
+      setGenerateFromRefProgress(100);
+
+      // Brief pause so user sees 100%, then switch to "updating" phase
+      await new Promise(resolve => setTimeout(resolve, 600));
+      setGenerateFromRefPhase('updating');
+
       const sceneNumberToRefresh = uploadingBackgroundSceneNumber;
 
       // Close popups
@@ -5190,16 +5218,23 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
       setIsImageRefreshLoading(true);
       try {
         await refreshLoad(sceneNumberToRefresh);
+        // Switch back to the tab that triggered this operation (Image 1 = tab 0, Image 2 = tab 1)
+        setActiveImageTab(uploadBackgroundSourceTab);
       } finally {
         setIsImageRefreshLoading(false);
       }
     } catch (e) {
+      clearInterval(generateFromRefIntervalRef.current);
+      generateFromRefIntervalRef.current = null;
+      setGenerateFromRefProgress(0);
       setError(e?.message || 'Failed to generate from reference');
     } finally {
       setIsGeneratingFromReference(false);
+      setGenerateFromRefProgress(0);
+      setGenerateFromRefPhase('generating');
       setIsLoading(false);
     }
-  }, [uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad]);
+  }, [uploadingBackgroundSceneNumber, uploadFrames, getSceneModel, getAspectRatio, isVEO3Model, refreshLoad, uploadBackgroundSourceTab]);
 
   // Reset active image tab when scene changes
   useEffect(() => {
@@ -7046,6 +7081,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                         setUploadedBackgroundFile(null);
                         setUploadedBackgroundPreview(null);
                         setError('');
+                        setUploadBackgroundSourceTab(activeImageTab); // Remember which tab triggered this
                         setShowUploadBackgroundPopup(true);
                       }}
                       className="bg-[#13008B] hover:bg-blue-800 text-white px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2"
@@ -9897,7 +9933,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.subject_description || '', 4)}
                                         disabled
-                                        className="w-full h-10 rounded-lg py-2 text-sm bg-blue-50 text-gray-700 cursor-default"
+                                        className="w-full h-10 rounded-lg px-3 py-2 text-sm bg-blue-50 text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
@@ -9917,7 +9953,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.scene_description || '', 4)}
                                         disabled
-                                        className="w-full h-10  rounded-lg px-3 py-2 text-sm  text-gray-700 cursor-default"
+                                        className="w-full h-10 rounded-lg px-3 py-2 text-sm bg-blue-50 text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
@@ -9937,7 +9973,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.action_specification || '', 4)}
                                         disabled
-                                        className="w-full h-10  rounded-lg px-3 py-2 text-sm text-gray-700 cursor-default"
+                                        className="w-full h-10 rounded-lg px-3 py-2 text-sm bg-blue-50 text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
@@ -9957,7 +9993,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
                                         type="text"
                                         value={truncateText(displayNotes?.content_modification || '', 4)}
                                         disabled
-                                        className="w-full h-10 rounded-lg px-3 py-2 text-sm  text-gray-700 cursor-default"
+                                        className="w-full h-10 rounded-lg px-3 py-2 text-sm bg-blue-50 text-gray-700 cursor-default"
                                       />
                                     )}
                                   </div>
@@ -13354,41 +13390,38 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
 
               {/* Loading Overlay */}
               {isGeneratingFromReference && (
-                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                  <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-                    <div className="relative w-16 h-16">
-                      <svg className="w-16 h-16" viewBox="0 0 100 100">
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          stroke="#E5E7EB"
-                          strokeWidth="8"
-                          fill="none"
-                        />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="45"
-                          stroke="#13008B"
-                          strokeWidth="8"
-                          fill="none"
-                          strokeLinecap="round"
-                          strokeDasharray="283"
-                          strokeDashoffset="70"
-                          className="animate-spin"
+                <div className="absolute inset-0 bg-black/5 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
+                  <div className="flex flex-col items-center gap-4 p-5 w-full max-w-sm bg-white rounded-sm">
+                    {/* Logo / icon */}
+                    <img src={loadingGif} alt="Loading" className="w-16 h-16 object-contain" />
+
+                    {generateFromRefPhase === 'generating' ? (
+                      <>
+                        <p className="text-lg font-bold text-[#13008B]">Generating Image</p>
+                        <p className="text-sm text-gray-500">Please wait while we create your new image…</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-bold text-[#13008B]">Updating Scene</p>
+                        <p className="text-sm text-gray-500">Applying your new image to the scene…</p>
+                      </>
+                    )}
+
+                    {/* Progress bar */}
+                    <div className="w-full">
+                      <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="h-2.5 rounded-full transition-all duration-300 ease-out"
                           style={{
-                            transformOrigin: '50% 50%',
-                            animation: 'spin 1.5s linear infinite'
+                            width: `${generateFromRefPhase === 'updating' ? 100 : generateFromRefProgress}%`,
+                            background: 'linear-gradient(90deg, #13008B 0%, #4F46E5 100%)'
                           }}
                         />
-                      </svg>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-3 h-3 bg-[#13008B] rounded-full" />
                       </div>
+                      <p className="text-xs text-gray-400 mt-1.5 text-right">
+                        {generateFromRefPhase === 'updating' ? '100%' : `${generateFromRefProgress}%`}
+                      </p>
                     </div>
-                    <p className="text-lg font-semibold text-[#13008B]">Generating from Reference...</p>
-                    <p className="text-sm text-gray-600">Please wait while we generate your image...</p>
                   </div>
                 </div>
               )}
@@ -13421,4 +13454,4 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
   );
 };
 
-export default ImageList; 
+export default ImageList;
