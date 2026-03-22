@@ -13391,7 +13391,7 @@ const ImageList = ({ jobId, onClose, onGenerateVideos, hasVideos = false, onGoTo
               {/* Loading Overlay */}
               {isGeneratingFromReference && (
                 <div className="absolute inset-0 bg-black/5 backdrop-blur-sm rounded-lg flex items-center justify-center z-20 px-6 text-center">
-                  <div className="flex flex-col items-center gap-4 p-5 w-full max-w-sm bg-white rounded-sm">
+                  <div className="flex flex-col items-center gap-4 p-5 w-full max-w-sm bg-white rounded-lg">
                     {/* Logo / icon */}
                     <img src={loadingGif} alt="Loading" className="w-16 h-16 object-contain" />
 

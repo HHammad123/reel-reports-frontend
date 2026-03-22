@@ -6348,10 +6348,15 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       const responseData = await sessionRes.json();
       const sessionData = responseData?.session_data || responseData?.session || responseData;
 
-      // User instruction: fetch all scene from session_data.scripts[0].airesponse
-      const scenes = sessionData?.scripts?.[0]?.airesponse || [];
-      // Use all scenes for regeneration (do not filter by VEO3)
-      console.log('Scenes fetched from airesponse (all scenes):', scenes);
+      // Fetch all scenes from session_data.videos (not from scripts)
+      const videos = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
+      // Map videos to scene-like objects for the modal
+      const scenes = videos.map((v) => ({
+        scene_number: v.scene_number ?? v.sceneNumber ?? v.scene_no,
+        model: v.model || v.mode || '',
+        scene_heading: v.title || v.name || v.desc || v.description || '',
+      })).filter((s) => s.scene_number != null);
+      console.log('Scenes fetched from session_data.videos (all scenes):', scenes);
       setAvailableScenes(scenes);
     } catch (error) {
       console.error('Error fetching scenes:', error);
@@ -6392,11 +6397,16 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
       const responseData = await sessionRes.json();
       const sessionData = responseData?.session_data || responseData?.session || responseData;
 
-      // Fetch all scenes from airesponse and filter by model === 'VEO3'
-      const scenes = sessionData?.scripts?.[0]?.airesponse || [];
-      const filteredScenes = scenes.filter(scene => scene.model === 'VEO3');
+      // Fetch all scenes from session_data.videos and filter by model === 'VEO3'
+      const videos = Array.isArray(sessionData?.videos) ? sessionData.videos : [];
+      const allScenes = videos.map((v) => ({
+        scene_number: v.scene_number ?? v.sceneNumber ?? v.scene_no,
+        model: v.model || v.mode || '',
+        scene_heading: v.title || v.name || v.desc || v.description || '',
+      })).filter((s) => s.scene_number != null);
+      const filteredScenes = allScenes.filter(scene => String(scene.model).toUpperCase() === 'VEO3');
 
-      console.log('Scenes fetched for audio replacement:', filteredScenes);
+      console.log('Scenes fetched for audio replacement (VEO3 only from session_data.videos):', filteredScenes);
       setAvailableAudioScenes(filteredScenes);
     } catch (error) {
       console.error('Error fetching audio scenes:', error);
@@ -9486,104 +9496,139 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
       {/* Upload Base Video Modal */}
       {showUploadBaseVideoModal && (
-        <>
-          {/* Modal Backdrop */}
-          <div
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
-            onClick={() => !isUploadingBaseVideo && setShowUploadBaseVideoModal(false)}
-          />
-
-          {/* Modal Content */}
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
-              {/* Close Button */}
-              {!isUploadingBaseVideo && (
-                <button
-                  onClick={() => setShowUploadBaseVideoModal(false)}
-                  className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <X className="w-5 h-5 text-gray-600" />
-                </button>
-              )}
-
-              {/* Modal Header */}
-              <h2 className="text-xl font-semibold text-[#13008B] mb-6">Upload Base Video</h2>
-
-              {/* Error Message */}
-              {uploadBaseVideoError && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-600">{uploadBaseVideoError}</p>
-                </div>
-              )}
-
-              {/* Scene Dropdown */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Scene
-                </label>
-                <select
-                  value={selectedSceneForUpload || ''}
-                  onChange={(e) => setSelectedSceneForUpload(Number(e.target.value))}
-                  disabled={isUploadingBaseVideo}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#13008B] focus:border-transparent disabled:bg-gray-100"
-                >
-                  <option value="">Choose a scene...</option>
-                  {items.map((item, index) => {
-                    const sceneNumber = item.sceneNumber || item.scene_number || (index + 1);
-                    const sceneTitle = item.title || item.name || `Scene ${sceneNumber}`;
-                    return (
-                      <option key={item.id || index} value={sceneNumber}>
-                        Scene {sceneNumber} - {sceneTitle}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
-              {/* File Upload */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Upload Video (MP4)
-                </label>
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-[#13008B] transition-colors">
-                  <input
-                    type="file"
-                    accept="video/mp4"
-                    onChange={(e) => setUploadBaseVideoFile(e.target.files?.[0] || null)}
-                    disabled={isUploadingBaseVideo}
-                    className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[#13008B] file:text-white hover:file:bg-[#0f0069] file:cursor-pointer disabled:opacity-50"
-                  />
-                  {uploadBaseVideoFile && (
-                    <p className="mt-2 text-xs text-green-600 font-medium">
-                      ✓ {uploadBaseVideoFile.name} ({(uploadBaseVideoFile.size / 1024 / 1024).toFixed(2)} MB)
-                    </p>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            {!selectedSceneForUpload ? (
+              /* VIEW 1: SCENE LIST */
+              <>
+                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                  <h3 className="text-lg font-semibold text-gray-900">Upload Base Video</h3>
+                  {!isUploadingBaseVideo && (
+                    <button
+                      onClick={() => setShowUploadBaseVideoModal(false)}
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
                   )}
                 </div>
-              </div>
+                <div className="p-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Select a scene to upload video
+                  </label>
+                  <div className="max-h-[400px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                    {items.length > 0 ? (
+                      items.map((item, index) => {
+                        const sceneNumber = item.sceneNumber || item.scene_number || (index + 1);
+                        const sceneTitle = item.title || item.name || `Scene ${sceneNumber}`;
+                        const model = String(item.model || '').toUpperCase();
+                        const modelLabel = model === 'VEO3' ? 'Avatar' : model === 'SORA' ? 'Infographic' : model === 'PLOTLY' ? 'Financial' : model || 'Unknown Model';
+                        return (
+                          <div
+                            key={item.id || index}
+                            onClick={() => setSelectedSceneForUpload(sceneNumber)}
+                            className="p-3 rounded-lg border border-gray-100 hover:border-[#13008B] hover:bg-[#F5F3FF] cursor-pointer transition-all group"
+                          >
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium text-gray-700 group-hover:text-[#13008B]">
+                                Scene {sceneNumber}
+                              </span>
+                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full group-hover:bg-white group-hover:text-[#13008B]">
+                                {modelLabel}
+                              </span>
+                            </div>
+                            {sceneTitle && sceneTitle !== `Scene ${sceneNumber}` && (
+                              <div className="text-xs text-gray-500 mt-1 truncate">{sceneTitle}</div>
+                            )}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center text-gray-500 py-4 text-sm">No scenes available</div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* VIEW 2: FILE UPLOAD */
+              <>
+                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { setSelectedSceneForUpload(null); setUploadBaseVideoFile(null); setUploadBaseVideoError(''); }}
+                      disabled={isUploadingBaseVideo}
+                      className="text-gray-400 hover:text-[#13008B] transition-colors disabled:opacity-40"
+                    >
+                      <ChevronRight className="w-5 h-5 rotate-180" />
+                    </button>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Upload Video – Scene {selectedSceneForUpload}
+                    </h3>
+                  </div>
+                  {!isUploadingBaseVideo && (
+                    <button
+                      onClick={() => { setShowUploadBaseVideoModal(false); setSelectedSceneForUpload(null); setUploadBaseVideoFile(null); setUploadBaseVideoError(''); }}
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
 
-              {/* Action Buttons */}
-              <div className="flex gap-3 justify-end">
-                <button
-                  onClick={() => setShowUploadBaseVideoModal(false)}
-                  disabled={isUploadingBaseVideo}
-                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleUploadBaseVideo}
-                  disabled={isUploadingBaseVideo || !selectedSceneForUpload || !uploadBaseVideoFile}
-                  className={`px-6 py-2 rounded-lg text-white font-medium ${isUploadingBaseVideo || !selectedSceneForUpload || !uploadBaseVideoFile
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-[#13008B] hover:bg-[#0f0069]'
-                    }`}
-                >
-                  {isUploadingBaseVideo ? 'Uploading...' : 'Upload & Save'}
-                </button>
-              </div>
-            </div>
+                <div className="p-6 space-y-4">
+                  {uploadBaseVideoError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <p className="text-sm text-red-600">{uploadBaseVideoError}</p>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Upload Video (MP4)
+                    </label>
+                    <div className="border-2 border-dashed border-gray-200 rounded-lg p-6 hover:border-[#13008B] transition-colors text-center">
+                      <input
+                        type="file"
+                        accept="video/mp4"
+                        onChange={(e) => setUploadBaseVideoFile(e.target.files?.[0] || null)}
+                        disabled={isUploadingBaseVideo}
+                        className="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[#13008B] file:text-white hover:file:bg-[#0f0069] file:cursor-pointer disabled:opacity-50"
+                      />
+                      {uploadBaseVideoFile ? (
+                        <p className="mt-2 text-xs text-green-600 font-medium">
+                          ✓ {uploadBaseVideoFile.name} ({(uploadBaseVideoFile.size / 1024 / 1024).toFixed(2)} MB)
+                        </p>
+                      ) : (
+                        <p className="mt-2 text-xs text-gray-400">MP4 files only</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+                  <button
+                    onClick={() => { setShowUploadBaseVideoModal(false); setSelectedSceneForUpload(null); setUploadBaseVideoFile(null); setUploadBaseVideoError(''); }}
+                    disabled={isUploadingBaseVideo}
+                    className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUploadBaseVideo}
+                    disabled={isUploadingBaseVideo || !uploadBaseVideoFile}
+                    className={`px-6 py-2.5 rounded-lg text-white font-medium transition-colors flex items-center justify-center gap-2 ${isUploadingBaseVideo || !uploadBaseVideoFile ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#13008B] hover:bg-[#0f0069]'}`}
+                  >
+                    {isUploadingBaseVideo ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        Uploading...
+                      </>
+                    ) : 'Upload & Save'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Regenerate Video Modal */}
@@ -9797,106 +9842,122 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
       {/* Replace Audio Modal */}
       {showReplaceAudioModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50">
-              <h3 className="text-xl font-semibold text-[#13008B] flex items-center gap-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-                Replace Audio
-              </h3>
-              <button
-                onClick={() => setShowReplaceAudioModal(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Select Scene
-                </label>
-                {isLoadingAudioScenes ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-                    <div className="w-4 h-4 border-2 border-gray-300 border-t-[#13008B] rounded-full animate-spin"></div>
-                    Loading audio scenes...
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <div
-                      onClick={() => setShowReplaceAudioDropdown(!showReplaceAudioDropdown)}
-                      className="w-full pl-4 pr-4 py-2.5 rounded-lg border border-gray-200 bg-white text-gray-700 cursor-pointer shadow-sm flex items-center justify-between hover:border-gray-300 transition-all focus:ring-2 focus:ring-[#13008B]/20 focus:border-[#13008B]"
-                    >
-                      <span className={replaceAudioSceneNumber ? 'text-gray-900' : 'text-gray-500'}>
-                        {replaceAudioSceneNumber
-                          ? (() => {
-                            const s = availableAudioScenes.find(sc => String(sc.scene_number) === String(replaceAudioSceneNumber));
-                            return s ? `Scene ${s.scene_number} ${s.scene_heading ? `- ${s.scene_heading}` : ''}` : replaceAudioSceneNumber;
-                          })()
-                          : 'Select a scene to replace audio'}
-                      </span>
-                      <svg
-                        className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${showReplaceAudioDropdown ? 'rotate-180' : ''}`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
-                      </svg>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            {!replaceAudioSceneNumber ? (
+              /* VIEW 1: SCENE LIST */
+              <>
+                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                  <h3 className="text-lg font-semibold text-gray-900">Replace Audio</h3>
+                  <button
+                    onClick={() => setShowReplaceAudioModal(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
+                    Select a scene to replace audio
+                  </label>
+                  {isLoadingAudioScenes ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-4 justify-center">
+                      <div className="w-5 h-5 border-2 border-gray-300 border-t-[#13008B] rounded-full animate-spin"></div>
+                      Loading scenes...
                     </div>
-
-                    {showReplaceAudioDropdown && (
-                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-100 rounded-lg shadow-xl max-h-20 overflow-y-scroll">
-                        {availableAudioScenes.length > 0 ? (
-                          availableAudioScenes.map((scene, idx) => (
-                            <div
-                              key={scene.scene_number || idx}
-                              onClick={() => {
-                                setReplaceAudioSceneNumber(scene.scene_number);
-                                setShowReplaceAudioDropdown(false);
-                              }}
-                              className="px-4 py-2.5 hover:bg-gray-50 cursor-pointer text-sm text-gray-700 transition-colors border-b border-gray-50 last:border-0"
-                            >
-                              Scene {scene.scene_number} {scene.scene_heading ? `- ${scene.scene_heading}` : ''}
+                  ) : (
+                    <div className="max-h-[400px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                      {availableAudioScenes.length > 0 ? (
+                        availableAudioScenes.map((scene, idx) => (
+                          <div
+                            key={scene.scene_number || idx}
+                            onClick={() => setReplaceAudioSceneNumber(scene.scene_number)}
+                            className="p-3 rounded-lg border border-gray-100 hover:border-[#13008B] hover:bg-[#F5F3FF] cursor-pointer transition-all group"
+                          >
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium text-gray-700 group-hover:text-[#13008B]">
+                                Scene {scene.scene_number}
+                              </span>
+                              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full group-hover:bg-white group-hover:text-[#13008B]">
+                                VEO3
+                              </span>
                             </div>
-                          ))
-                        ) : (
-                          <div className="px-4 py-2.5 text-sm text-gray-500">
-                            No VEO3 scenes available
+                            {scene.scene_heading && (
+                              <div className="text-xs text-gray-500 mt-1 truncate">{scene.scene_heading}</div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    )}
+                        ))
+                      ) : (
+                        <div className="text-center text-gray-500 py-4 text-sm">
+                          No VEO3 scenes available
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              /* VIEW 2: CONFIRM */
+              <>
+                <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setReplaceAudioSceneNumber('')}
+                      className="text-gray-400 hover:text-[#13008B] transition-colors"
+                    >
+                      <ChevronRight className="w-5 h-5 rotate-180" />
+                    </button>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Replace Audio – Scene {replaceAudioSceneNumber}
+                    </h3>
                   </div>
-                )}
-                <p className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#13008B]"></span>
-                  Choose the scene to replace audio (only VEO3 scenes).
-                </p>
-              </div>
-            </div>
+                  <button
+                    onClick={() => { setShowReplaceAudioModal(false); setReplaceAudioSceneNumber(''); }}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
 
-            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
-              <button
-                onClick={() => setShowReplaceAudioModal(false)}
-                className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleReplaceAudio}
-                disabled={!replaceAudioSceneNumber || isReplacingAudio}
-                className={`px-4 py-2 rounded-lg text-white font-medium text-sm transition-all shadow-lg shadow-[#13008B]/20 ${!replaceAudioSceneNumber || isReplacingAudio
-                  ? 'bg-gray-400 cursor-not-allowed shadow-none'
-                  : 'bg-[#13008B] hover:bg-[#0f0069] hover:shadow-xl hover:shadow-[#13008B]/30 transform active:scale-95'
-                  }`}
-              >
-                {isReplacingAudio ? 'Replacing...' : 'Replace Audio'}
-              </button>
-            </div>
+                <div className="p-6">
+                  <p className="text-sm text-gray-600">
+                    This will extract and replace the audio for <span className="font-semibold text-[#13008B]">Scene {replaceAudioSceneNumber}</span> using the VEO3 extracted audio. This action cannot be undone.
+                  </p>
+                  <p className="text-xs text-gray-500 mt-3 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#13008B]"></span>
+                    Only VEO3 scenes support audio replacement.
+                  </p>
+                </div>
+
+                <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+                  <button
+                    onClick={() => { setShowReplaceAudioModal(false); setReplaceAudioSceneNumber(''); }}
+                    className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleReplaceAudio}
+                    disabled={isReplacingAudio}
+                    className={`px-6 py-2.5 rounded-lg text-white font-medium transition-colors flex items-center justify-center gap-2 ${isReplacingAudio ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#13008B] hover:bg-[#0f0069]'}`}
+                  >
+                    {isReplacingAudio ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        Replacing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                        </svg>
+                        Replace Audio
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -9955,8 +10016,8 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
 
       {/* Success popup */}
       {showSuccessPopup && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md mx-4 animate-in fade-in zoom-in duration-300">
             <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
               <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -9968,10 +10029,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         </div>
       )}
 
-      {/* Regenerate Success Popup */}
       {showRegenerateSuccess && (
-        <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md animate-in fade-in zoom-in duration-300">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md mx-4 animate-in fade-in zoom-in duration-300">
             <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
               <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -9983,10 +10043,9 @@ const VideosList = ({ jobId, onClose, onGenerateFinalReel, onJobPhaseDone, onAdd
         </div>
       )}
 
-      {/* Replace Audio Success Popup */}
       {showReplaceAudioSuccess && (
-        <div className="absolute inset-0 z-[120] flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md animate-in fade-in zoom-in duration-300">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white shadow-2xl rounded-2xl px-8 py-9 text-center space-y-3 max-w-md mx-4 animate-in fade-in zoom-in duration-300">
             <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto">
               <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
