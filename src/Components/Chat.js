@@ -2174,22 +2174,7 @@ const Chat = ({ addUserChat, userChat, setuserChat, sendUserSessionData, chatHis
           <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden">
             <div className="py-1">
               {/* Generate Summary - hide if summary scene already exists */}
-              {!hasSummaryScene && (
-                <button
-                  onClick={() => {
-                    setOpen(false);
-                    if (!isGeneratingSummary && onGenerateSummary) onGenerateSummary();
-                  }}
-                  disabled={!hasScenes || isGeneratingSummary}
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm ${(!hasScenes || isGeneratingSummary)
-                    ? 'text-gray-400 cursor-not-allowed'
-                    : 'hover:bg-gray-50'
-                    }`}
-                >
-                  <FileText className="w-4 h-4 text-[#13008B]" />
-                  <span>Generate Summary</span>
-                </button>
-              )}
+            
               {/* Regenerate Scene - hide when on summary scene */}
               {!isSummaryScene && (
                 <button onClick={() => { setOpen(false); onRegenerate(); }} className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50">
